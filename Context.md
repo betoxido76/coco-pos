@@ -37,14 +37,15 @@ coco-pos/
 │   │   ├── Ventas.jsx          # POS + historial de facturas + devoluciones
 │   │   ├── Productos.jsx       # Maestro de productos terminados
 │   │   ├── MateriasPrimas.jsx  # Maestro de MP y Materiales de Empaque (con tabs)
-│   │   ├── Compras.jsx         # Recepción de inventario + órdenes de compra
+│   │   ├── Compras.jsx         # Órdenes de Compra + Recepciones (vinculadas o libres)
 │   │   ├── Clientes.jsx        # Maestro de clientes + condiciones de pago
 │   │   ├── CuentasCobrar.jsx   # Seguimiento de créditos + cobros parciales
 │   │   └── Configuracion.jsx   # Tasas de cambio BCV / Euro / Binance
 │   ├── index.css
 │   └── main.jsx                # Router + AuthProvider + rutas protegidas
 ├── docs/
-│   └── seed-materias-primas.sql # Script de datos de prueba para insumos
+│   ├── seed-materias-primas.sql # Script de datos de prueba para insumos
+│   └── migracion-ordenes-compra.sql # Estructura para OC y vinculación
 ├── .env                        # Variables de entorno (no commitear)
 ├── tailwind.config.js
 ├── postcss.config.js
@@ -79,8 +80,10 @@ VITE_SUPABASE_ANON_KEY=TU_ANON_KEY
 | `ventas` | Cabecera de facturas de venta |
 | `venta_items` | Detalle de líneas por factura |
 | `cobros` | Abonos/pagos parciales sobre facturas a crédito |
-| `compras` | Órdenes de compra / recepción de inventario |
-| `compra_items` | Detalle de compras (tipo_insumo, insumo_id, cantidad, precio) |
+| `compras` | Recepciones de inventario (entradas) |
+| `compra_items` | Detalle de recepciones |
+| `ordenes_compra` | Órdenes de compra (compromiso con proveedor) |
+| `orden_compra_items` | Detalle de OC con control de recibido/pendiente |
 | `lotes_produccion` | Órdenes de producción / lotes |
 | `lote_consumos` | Insumos consumidos por lote |
 | `recetas` | Fórmulas de producción |
@@ -95,18 +98,22 @@ VITE_SUPABASE_ANON_KEY=TU_ANON_KEY
 
 ### Campos destacados por tabla
 
-**`materias_primas` / `materiales_empaque`**
+**`ordenes_compra`**
 ```sql
-id, nombre, codigo, descripcion, unidad_medida,
-costo_compra_promedio, stock_actual, stock_minimo,
-fecha_vencimiento,
-categoria_1, categoria_2, categoria_3, categoria_4,
-tipo_producto, activo, created_at
+id, proveedor_id, usuario_id, numero_oc, subtotal, total,
+estado, -- 'pendiente' | 'aprobada' | 'recibida_parcial' | 'recibida_total' | 'cancelada'
+fecha_emision, fecha_entrega_esperada, notas, created_at
 ```
 
-**`compras`** (actualizada con multimoneda y crédito)
+**`orden_compra_items`**
 ```sql
-id, proveedor_id, usuario_id, numero_doc,
+id, orden_id, tipo_insumo, insumo_id,
+cantidad_solicitada, cantidad_recibida, precio_unitario_esperado, created_at
+```
+
+**`compras`** (actualizada con multimoneda, crédito y vínculo a OC)
+```sql
+id, proveedor_id, usuario_id, numero_doc, orden_compra_id (FK opcional),
 subtotal, total,
 estado,           -- 'recibida' | 'pendiente' | 'anulada'
 estado_cobro,     -- 'pendiente' | 'parcial' | 'pagado'
@@ -115,6 +122,15 @@ dias_credito, fecha_vencimiento_pago,
 tasa_cambio, tipo_tasa,
 pago_usd, pago_bs, metodo_usd, metodo_bs,
 fecha_compra, notas, created_at
+```
+
+**`materias_primas` / `materiales_empaque`**
+```sql
+id, nombre, codigo, descripcion, unidad_medida,
+costo_compra_promedio, stock_actual, stock_minimo,
+fecha_vencimiento,
+categoria_1, categoria_2, categoria_3, categoria_4,
+tipo_producto, activo, created_at
 ```
 
 **`clientes`**
@@ -196,12 +212,13 @@ actualizado_at
 - Alerta de stock bajo y fechas de vencimiento
 
 #### Recepción de Inventario / Compras (`/compras`)
-- Historial de órdenes de compra con badges de estado y cobro
-- **Nueva recepción:** búsqueda unificada de MP, empaque y PT
-- Carrito de compras con cantidades editables y cálculo de IVA
+- **Tabs:** Órdenes de Compra y Recepciones
+- **Crear OC:** selección de proveedor, fecha entrega, carrito de insumos (MP, empaque, PT comprados)
+- **Recepción:** modo libre o vinculado a OC pendiente/aprobada
+- **Control de cantidades:** al recibir contra OC, actualiza `cantidad_recibida` y cambia estado a `recibida_parcial` o `recibida_total`
 - **Modal de pago:** contado/crédito, días de crédito, fecha de vencimiento, pago mixto USD/Bs., tasa del día
 - Actualización automática de `stock_actual` al confirmar
-- Vista de detalle tipo factura/orden
+- Vista de detalle tipo factura/orden con badge de vinculación
 
 #### Maestro de Clientes (`/clientes`)
 - Lista con búsqueda por nombre/RIF
