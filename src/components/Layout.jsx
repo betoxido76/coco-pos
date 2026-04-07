@@ -9,9 +9,7 @@ const nav = [
     { to: '/ventas', icon: ShoppingCart, label: 'Ventas' },
     { to: '/compras', icon: Truck, label: 'Compras' },
     { to: '/administracion', icon: FolderTree, label: 'Administración' },
-    { to: '/clientes', icon: Users, label: 'Clientes' },
     { to: '/cuentas-cobrar', icon: CreditCard, label: 'Cuentas x Cobrar' },
-    { to: '/configuracion', icon: Settings, label: 'Configuración' },
 ]
 
 export default function Layout() {
