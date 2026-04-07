@@ -1,8 +1,13 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
-import { Package, AlertTriangle, Search, Filter } from 'lucide-react'
+import { Package, AlertTriangle, Search, Layers, Beaker, Truck } from 'lucide-react'
 
-const CATEGORIAS = ['Todas', 'Bebidas', 'Alimentos', 'Helados', 'Aceites']
+const TIPOS_INVENTARIO = [
+    { key: 'todos', label: 'Todo el inventario', icon: Layers },
+    { key: 'pt', label: 'Productos Terminados', icon: Package },
+    { key: 'mp', label: 'Materias Primas', icon: Beaker },
+    { key: 'emp', label: 'Materiales de Empaque', icon: Truck },
+]
 
 function BadgeStock({ stock, minimo }) {
     if (stock === 0)
@@ -13,36 +18,45 @@ function BadgeStock({ stock, minimo }) {
 }
 
 export default function Inventario() {
-    const [productos, setProductos] = useState([])
+    const [inventario, setInventario] = useState([])
     const [loading, setLoading] = useState(true)
     const [busqueda, setBusqueda] = useState('')
-    const [categoria, setCategoria] = useState('Todas')
+    const [tipoFiltro, setTipoFiltro] = useState('todos')
 
     useEffect(() => {
-        cargarProductos()
-    }, [])
+        cargarInventario()
+    }, [tipoFiltro])
 
-    async function cargarProductos() {
+    async function cargarInventario() {
         setLoading(true)
-        const { data, error } = await supabase
-            .from('productos_terminados')
-            .select('*')
-            .eq('activo', true)
-            .order('nombre')
-        if (!error) setProductos(data)
+        let datos = []
+
+        if (tipoFiltro === 'todos' || tipoFiltro === 'pt') {
+            const { data } = await supabase.from('productos_terminados').select('*').eq('activo', true)
+            if (data) datos = [...datos, ...data.map(p => ({ ...p, tipo: 'Producto Terminado', codigo: p.sku, precio: p.precio_venta, vencimiento: null }))]
+        }
+        if (tipoFiltro === 'todos' || tipoFiltro === 'mp') {
+            const { data } = await supabase.from('materias_primas').select('*').eq('activo', true)
+            if (data) datos = [...datos, ...data.map(p => ({ ...p, tipo: 'Materia Prima', codigo: p.codigo, precio: p.costo_compra_promedio, vencimiento: p.fecha_vencimiento }))]
+        }
+        if (tipoFiltro === 'todos' || tipoFiltro === 'emp') {
+            const { data } = await supabase.from('materiales_empaque').select('*').eq('activo', true)
+            if (data) datos = [...datos, ...data.map(p => ({ ...p, tipo: 'Material Empaque', codigo: p.codigo, precio: p.costo_compra_promedio, vencimiento: p.fecha_vencimiento }))]
+        }
+
+        setInventario(datos.sort((a, b) => a.nombre.localeCompare(b.nombre)))
         setLoading(false)
     }
 
-    const filtrados = productos.filter(p => {
+    const filtrados = inventario.filter(p => {
         const coincideBusqueda = p.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
-            p.sku?.toLowerCase().includes(busqueda.toLowerCase())
-        const coincideCategoria = categoria === 'Todas' || p.categoria_1 === categoria
-        return coincideBusqueda && coincideCategoria
+            p.codigo?.toLowerCase().includes(busqueda.toLowerCase())
+        return coincideBusqueda
     })
 
-    const criticos = productos.filter(p => p.stock_actual <= p.stock_minimo).length
-    const sinStock = productos.filter(p => p.stock_actual === 0).length
-    const totalUnidades = productos.reduce((sum, p) => sum + (p.stock_actual || 0), 0)
+    const criticos = filtrados.filter(p => p.stock_actual <= p.stock_minimo).length
+    const sinStock = filtrados.filter(p => p.stock_actual === 0).length
+    const totalUnidades = filtrados.reduce((sum, p) => sum + (p.stock_actual || 0), 0)
 
     return (
         <div className="p-6 space-y-6">
@@ -51,15 +65,15 @@ export default function Inventario() {
             <div className="flex items-center justify-between">
                 <div>
                     <h1 className="text-xl font-semibold text-gray-800">Inventario</h1>
-                    <p className="text-sm text-gray-500 mt-0.5">Productos terminados</p>
+                    <p className="text-sm text-gray-500 mt-0.5">Gestión unificada de stock</p>
                 </div>
             </div>
 
             {/* KPIs */}
             <div className="grid grid-cols-3 gap-4">
                 <div className="bg-white rounded-xl border border-gray-200 p-4">
-                    <p className="text-xs text-gray-500">Total productos</p>
-                    <p className="text-2xl font-semibold text-gray-800 mt-1">{productos.length}</p>
+                    <p className="text-xs text-gray-500">Total registros</p>
+                    <p className="text-2xl font-semibold text-gray-800 mt-1">{filtrados.length}</p>
                 </div>
                 <div className={`bg-white rounded-xl border p-4 ${criticos > 0 ? 'border-amber-200' : 'border-gray-200'}`}>
                     <p className="text-xs text-gray-500">Stock crítico</p>
@@ -86,16 +100,17 @@ export default function Inventario() {
                     />
                 </div>
                 <div className="flex gap-2 flex-wrap">
-                    {CATEGORIAS.map(cat => (
+                    {TIPOS_INVENTARIO.map(tipo => (
                         <button
-                            key={cat}
-                            onClick={() => setCategoria(cat)}
-                            className={`px-3 py-2 rounded-lg text-sm transition-colors
-                ${categoria === cat
+                            key={tipo.key}
+                            onClick={() => setTipoFiltro(tipo.key)}
+                            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors
+                ${tipoFiltro === tipo.key
                                     ? 'bg-green-600 text-white'
                                     : 'bg-white border border-gray-300 text-gray-600 hover:bg-gray-50'}`}
                         >
-                            {cat}
+                            <tipo.icon size={14} />
+                            {tipo.label}
                         </button>
                     ))}
                 </div>
@@ -104,19 +119,19 @@ export default function Inventario() {
             {/* Tabla */}
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
                 {loading ? (
-                    <div className="p-12 text-center text-sm text-gray-400">Cargando productos...</div>
+                    <div className="p-12 text-center text-sm text-gray-400">Cargando inventario...</div>
                 ) : filtrados.length === 0 ? (
-                    <div className="p-12 text-center text-sm text-gray-400">No se encontraron productos</div>
+                    <div className="p-12 text-center text-sm text-gray-400">No se encontraron registros</div>
                 ) : (
                     <table className="w-full">
                         <thead>
                             <tr className="border-b border-gray-100 bg-gray-50">
-                                <th className="text-left text-xs font-medium text-gray-500 px-4 py-3">Producto</th>
+                                <th className="text-left text-xs font-medium text-gray-500 px-4 py-3">Nombre</th>
                                 <th className="text-left text-xs font-medium text-gray-500 px-4 py-3">Código</th>
-                                <th className="text-left text-xs font-medium text-gray-500 px-4 py-3">Categoría</th>
-                                <th className="text-right text-xs font-medium text-gray-500 px-4 py-3">Stock actual</th>
+                                <th className="text-left text-xs font-medium text-gray-500 px-4 py-3">Tipo</th>
+                                <th className="text-right text-xs font-medium text-gray-500 px-4 py-3">Stock</th>
                                 <th className="text-right text-xs font-medium text-gray-500 px-4 py-3">Mínimo</th>
-                                <th className="text-right text-xs font-medium text-gray-500 px-4 py-3">Precio</th>
+                                <th className="text-right text-xs font-medium text-gray-500 px-4 py-3">Valor</th>
                                 <th className="text-center text-xs font-medium text-gray-500 px-4 py-3">Estado</th>
                             </tr>
                         </thead>
@@ -141,10 +156,10 @@ export default function Inventario() {
                                         </div>
                                     </td>
                                     <td className="px-4 py-3">
-                                        <span className="text-xs font-mono text-gray-500">{p.sku}</span>
+                                        <span className="text-xs font-mono text-gray-500">{p.codigo}</span>
                                     </td>
                                     <td className="px-4 py-3">
-                                        <span className="text-xs text-gray-600">{p.categoria_1}</span>
+                                        <span className="text-xs text-gray-600">{p.tipo}</span>
                                     </td>
                                     <td className="px-4 py-3 text-right">
                                         <span className={`text-sm font-semibold
@@ -158,7 +173,9 @@ export default function Inventario() {
                                         <span className="text-xs text-gray-400">{p.stock_minimo}</span>
                                     </td>
                                     <td className="px-4 py-3 text-right">
-                                        <span className="text-sm text-gray-700">${p.precio_venta?.toFixed(2)}</span>
+                                        <span className="text-sm text-gray-700">
+                                            {p.precio != null ? `$${Number(p.precio).toFixed(2)}` : '—'}
+                                        </span>
                                     </td>
                                     <td className="px-4 py-3 text-center">
                                         <BadgeStock stock={p.stock_actual} minimo={p.stock_minimo} />
@@ -174,7 +191,7 @@ export default function Inventario() {
             {criticos > 0 && (
                 <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-700">
                     <AlertTriangle size={16} />
-                    <span>{criticos} producto(s) con stock por debajo del mínimo requieren reposición</span>
+                    <span>{criticos} registro(s) con stock por debajo del mínimo requieren atención</span>
                 </div>
             )}
         </div>
