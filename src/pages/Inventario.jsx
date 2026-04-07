@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
-import { Package, AlertTriangle, Search, Layers, Beaker, Truck } from 'lucide-react'
+import { Package, AlertTriangle, Search, Layers, Beaker, Truck, ArrowDownLeft, ArrowUpRight, History, Filter } from 'lucide-react'
 
 const TIPOS_INVENTARIO = [
     { key: 'todos', label: 'Todo el inventario', icon: Layers },
@@ -18,14 +18,47 @@ function BadgeStock({ stock, minimo }) {
 }
 
 export default function Inventario() {
+    const [tabActiva, setTabActiva] = useState('stock') // 'stock' | 'movimientos'
+
+    return (
+        <div className="p-6 space-y-6">
+            {/* Header y Tabs */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                    <h1 className="text-xl font-semibold text-gray-800">Inventario</h1>
+                    <p className="text-sm text-gray-500 mt-0.5">Gestión unificada de stock y movimientos</p>
+                </div>
+                <div className="flex bg-gray-100 p-1 rounded-lg">
+                    {[
+                        { key: 'stock', label: 'Stock Actual', icon: Package },
+                        { key: 'movimientos', label: 'Movimientos', icon: History }
+                    ].map(tab => (
+                        <button
+                            key={tab.key}
+                            onClick={() => setTabActiva(tab.key)}
+                            className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all
+                                ${tabActiva === tab.key ? 'bg-white text-green-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                        >
+                            <tab.icon size={14} />
+                            {tab.label}
+                        </button>
+                    ))}
+                </div>
+            </div>
+
+            {tabActiva === 'stock' ? <VistaStock /> : <VistaMovimientos />}
+        </div>
+    )
+}
+
+// ─── Vista: Stock Actual ──────────────────────────────────────
+function VistaStock() {
     const [inventario, setInventario] = useState([])
     const [loading, setLoading] = useState(true)
     const [busqueda, setBusqueda] = useState('')
     const [tipoFiltro, setTipoFiltro] = useState('todos')
 
-    useEffect(() => {
-        cargarInventario()
-    }, [tipoFiltro])
+    useEffect(() => { cargarInventario() }, [tipoFiltro])
 
     async function cargarInventario() {
         setLoading(true)
@@ -55,20 +88,10 @@ export default function Inventario() {
     })
 
     const criticos = filtrados.filter(p => p.stock_actual <= p.stock_minimo).length
-    const sinStock = filtrados.filter(p => p.stock_actual === 0).length
     const totalUnidades = filtrados.reduce((sum, p) => sum + (p.stock_actual || 0), 0)
 
     return (
-        <div className="p-6 space-y-6">
-
-            {/* Header */}
-            <div className="flex items-center justify-between">
-                <div>
-                    <h1 className="text-xl font-semibold text-gray-800">Inventario</h1>
-                    <p className="text-sm text-gray-500 mt-0.5">Gestión unificada de stock</p>
-                </div>
-            </div>
-
+        <>
             {/* KPIs */}
             <div className="grid grid-cols-3 gap-4">
                 <div className="bg-white rounded-xl border border-gray-200 p-4">
@@ -194,6 +217,137 @@ export default function Inventario() {
                     <span>{criticos} registro(s) con stock por debajo del mínimo requieren atención</span>
                 </div>
             )}
-        </div>
+        </>
+    )
+}
+
+// ─── Vista: Movimientos ───────────────────────────────────────
+function VistaMovimientos() {
+    const [movimientos, setMovimientos] = useState([])
+    const [loading, setLoading] = useState(true)
+    const [tipoFiltro, setTipoFiltro] = useState('todos')
+    const [busqueda, setBusqueda] = useState('')
+    const [fechaDesde, setFechaDesde] = useState(() => {
+        const d = new Date(); d.setDate(d.getDate() - 7); return d.toISOString().split('T')[0]
+    })
+    const [fechaHasta, setFechaHasta] = useState(() => new Date().toISOString().split('T')[0])
+
+    useEffect(() => { cargarMovimientos() }, [tipoFiltro, busqueda, fechaDesde, fechaHasta])
+
+    async function cargarMovimientos() {
+        setLoading(true)
+        let query = supabase
+            .from('movimientos_inventario')
+            .select('*')
+            .gte('fecha', `${fechaDesde}T00:00:00`)
+            .lte('fecha', `${fechaHasta}T23:59:59`)
+            .order('fecha', { ascending: false })
+
+        if (tipoFiltro !== 'todos') {
+            const mapa = { pt: 'producto_terminado', mp: 'materia_prima', emp: 'material_empaque' }
+            query = query.eq('tipo_item', mapa[tipoFiltro])
+        }
+        if (busqueda) {
+            query = query.or(`item_nombre.ilike.%${busqueda}%,item_codigo.ilike.%${busqueda}%`)
+        }
+
+        const { data } = await query.limit(200)
+        if (data) setMovimientos(data)
+        setLoading(false)
+    }
+
+    return (
+        <>
+            {/* Filtros */}
+            <div className="bg-white p-4 rounded-xl border border-gray-200 space-y-4">
+                <div className="flex items-center gap-2 text-sm font-medium text-gray-700">
+                    <Filter size={14} /> Filtros de consulta
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                    <div className="relative">
+                        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                        <input
+                            type="text" placeholder="Buscar código o nombre..."
+                            value={busqueda} onChange={e => setBusqueda(e.target.value)}
+                            className="w-full pl-8 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                        />
+                    </div>
+                    <select value={tipoFiltro} onChange={e => setTipoFiltro(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-white">
+                        <option value="todos">Todos los tipos</option>
+                        <option value="pt">Productos Terminados</option>
+                        <option value="mp">Materias Primas</option>
+                        <option value="emp">Materiales de Empaque</option>
+                    </select>
+                    <div>
+                        <label className="block text-xs text-gray-500 mb-1">Desde</label>
+                        <input type="date" value={fechaDesde} onChange={e => setFechaDesde(e.target.value)}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500" />
+                    </div>
+                    <div>
+                        <label className="block text-xs text-gray-500 mb-1">Hasta</label>
+                        <input type="date" value={fechaHasta} onChange={e => setFechaHasta(e.target.value)}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500" />
+                    </div>
+                </div>
+            </div>
+
+            {/* Tabla de Movimientos */}
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                {loading ? (
+                    <div className="p-12 text-center text-sm text-gray-400">Cargando movimientos...</div>
+                ) : movimientos.length === 0 ? (
+                    <div className="p-12 text-center text-sm text-gray-400">No hay movimientos en este rango</div>
+                ) : (
+                    <table className="w-full">
+                        <thead>
+                            <tr className="border-b border-gray-100 bg-gray-50">
+                                {['Fecha', 'Tipo', 'Código', 'Producto', 'Movimiento', 'Cantidad', 'Stock Result.', 'Origen'].map(h => (
+                                    <th key={h} className="text-left text-xs font-medium text-gray-500 px-4 py-3">{h}</th>
+                                ))}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {movimientos.map(m => (
+                                <tr key={m.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
+                                    <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">
+                                        {new Date(m.fecha).toLocaleDateString('es-VE')}
+                                        <span className="text-xs text-gray-400 ml-1">{new Date(m.fecha).toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' })}</span>
+                                    </td>
+                                    <td className="px-4 py-3">
+                                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium
+                                            ${m.tipo_item === 'producto_terminado' ? 'bg-blue-50 text-blue-700' :
+                                                m.tipo_item === 'materia_prima' ? 'bg-purple-50 text-purple-700' : 'bg-orange-50 text-orange-700'}`}>
+                                            {m.tipo_item === 'producto_terminado' ? 'PT' : m.tipo_item === 'materia_prima' ? 'MP' : 'ME'}
+                                        </span>
+                                    </td>
+                                    <td className="px-4 py-3 text-xs font-mono text-gray-500">{m.item_codigo}</td>
+                                    <td className="px-4 py-3 text-sm font-medium text-gray-800">{m.item_nombre}</td>
+                                    <td className="px-4 py-3">
+                                        <div className="flex items-center gap-1.5">
+                                            {m.tipo_movimiento === 'entrada' ? (
+                                                <ArrowDownLeft size={14} className="text-green-600" />
+                                            ) : m.tipo_movimiento === 'salida' ? (
+                                                <ArrowUpRight size={14} className="text-red-600" />
+                                            ) : (
+                                                <Filter size={14} className="text-amber-600" />
+                                            )}
+                                            <span className={`text-xs font-medium ${m.tipo_movimiento === 'entrada' ? 'text-green-700' : m.tipo_movimiento === 'salida' ? 'text-red-700' : 'text-amber-700'}`}>
+                                                {m.tipo_movimiento}
+                                            </span>
+                                        </div>
+                                    </td>
+                                    <td className={`px-4 py-3 text-sm font-semibold ${m.tipo_movimiento === 'entrada' ? 'text-green-600' : 'text-red-600'}`}>
+                                        {m.tipo_movimiento === 'entrada' ? '+' : '−'}{Number(m.cantidad).toLocaleString()}
+                                    </td>
+                                    <td className="px-4 py-3 text-sm text-gray-700">{Number(m.stock_actual).toLocaleString()}</td>
+                                    <td className="px-4 py-3 text-xs text-gray-500 capitalize">{m.origen?.replace('_', ' ')}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                )}
+            </div>
+        </>
     )
 }
