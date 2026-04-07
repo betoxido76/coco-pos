@@ -6,15 +6,12 @@ const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 
 // ─── Componente principal ──────────────────────────────────────
 export default function Compras() {
-    const [tabActiva, setTabActiva] = useState('ordenes') // 'ordenes' | 'recepciones'
+    const [tabActiva, setTabActiva] = useState('ordenes')
     const [vista, setVista] = useState('lista')
     const [loading, setLoading] = useState(true)
 
-    // Estados para Órdenes
     const [ordenes, setOrdenes] = useState([])
     const [ordenActual, setOrdenActual] = useState(null)
-
-    // Estados para Recepciones
     const [recepciones, setRecepciones] = useState([])
     const [recepcionActual, setRecepcionActual] = useState(null)
 
@@ -48,7 +45,6 @@ export default function Compras() {
     function abrirDetalleOC(oc) { setOrdenActual(oc); setVista('detalle_oc') }
     function abrirDetalleRecepcion(rec) { setRecepcionActual(rec); setVista('detalle_recepcion') }
 
-    // ── Renderizado condicional ──────────────────────────────
     if (vista === 'nueva_oc')
         return <NuevaOrden onCreada={(oc) => { cargarOrdenes(); setOrdenActual(oc); setVista('detalle_oc') }} onCancelar={() => setVista('lista')} />
 
@@ -73,7 +69,6 @@ export default function Compras() {
                 </div>
             </div>
 
-            {/* Tabs principales */}
             <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
                 {[
                     { key: 'ordenes', label: 'Órdenes de Compra', icon: ClipboardList },
@@ -93,7 +88,6 @@ export default function Compras() {
                 ))}
             </div>
 
-            {/* Botón de acción según tab */}
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '16px' }}>
                 <button onClick={() => setVista(tabActiva === 'ordenes' ? 'nueva_oc' : 'nueva_recepcion')}
                     style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px 16px', fontSize: '14px', fontWeight: 500, cursor: 'pointer' }}>
@@ -101,15 +95,8 @@ export default function Compras() {
                 </button>
             </div>
 
-            {/* Tabla de Órdenes */}
-            {tabActiva === 'ordenes' && (
-                <TablaOrdenes ordenes={ordenes} loading={loading} onVer={abrirDetalleOC} />
-            )}
-
-            {/* Tabla de Recepciones */}
-            {tabActiva === 'recepciones' && (
-                <TablaRecepciones recepciones={recepciones} loading={loading} onVer={abrirDetalleRecepcion} />
-            )}
+            {tabActiva === 'ordenes' && <TablaOrdenes ordenes={ordenes} loading={loading} onVer={abrirDetalleOC} />}
+            {tabActiva === 'recepciones' && <TablaRecepciones recepciones={recepciones} loading={loading} onVer={abrirDetalleRecepcion} />}
         </div>
     )
 }
@@ -377,15 +364,27 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
     const [proveedores, setProveedores] = useState([])
     const [ocsPendientes, setOcsPendientes] = useState([])
     const [ocSeleccionada, setOcSeleccionada] = useState('')
-    const [modo, setModo] = useState('libre') // 'libre' | 'contra_oc'
+    const [modo, setModo] = useState('libre')
     const [items, setItems] = useState([])
     const [guardando, setGuardando] = useState(false)
     const [error, setError] = useState('')
     const [mostrarModal, setMostrarModal] = useState(false)
+    const [mapaNombres, setMapaNombres] = useState({})
 
     useEffect(() => {
         supabase.from('proveedores').select('id, nombre').eq('activo', true).order('nombre')
             .then(({ data }) => setProveedores(data || []))
+        
+        // Cargar mapa de nombres para resolver insumos
+        Promise.all([
+            supabase.from('materias_primas').select('id, nombre'),
+            supabase.from('materiales_empaque').select('id, nombre'),
+            supabase.from('productos_terminados').select('id, nombre')
+        ]).then(([mp, emp, pt]) => {
+            const mapa = {}
+            ;[...(mp.data||[]), ...(emp.data||[]), ...(pt.data||[])].forEach(i => mapa[i.id] = i.nombre)
+            setMapaNombres(mapa)
+        })
     }, [])
 
     useEffect(() => {
@@ -401,7 +400,9 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
         const oc = ocsPendientes.find(o => o.id === ocId)
         if (!oc) return
         setItems(oc.orden_compra_items.map(i => ({
-            id: i.insumo_id, tipo: i.tipo_insumo, nombre: i.insumo_id, // Se resolverá en UI real
+            id: i.insumo_id, 
+            tipo: i.tipo_insumo, 
+            nombre: mapaNombres[i.insumo_id] || 'Cargando...',
             cantidad: i.cantidad_solicitada - i.cantidad_recibida,
             precio_unitario: i.precio_unitario_esperado,
             pendiente: i.cantidad_solicitada - i.cantidad_recibida,
@@ -438,21 +439,18 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
             items.map(i => ({ compra_id: rec.id, tipo_insumo: i.tipo, insumo_id: i.id, cantidad: i.cantidad, precio_unitario: i.precio_unitario }))
         )
 
-        // Actualizar stock y OC
         for (const item of items) {
             const tabla = item.tipo === 'materias_primas' ? 'materias_primas' : item.tipo === 'materiales_empaque' ? 'materiales_empaque' : 'productos_terminados'
             const { data: actual } = await supabase.from(tabla).select('stock_actual').eq('id', item.id).single()
             await supabase.from(tabla).update({ stock_actual: (actual?.stock_actual || 0) + item.cantidad }).eq('id', item.id)
 
             if (item.orden_item_id) {
-                // Corrección: supabase.raw no existe en el cliente JS. Hacemos fetch + update.
                 const { data: current } = await supabase.from('orden_compra_items').select('cantidad_recibida').eq('id', item.orden_item_id).single()
                 const nuevoRecibido = (current?.cantidad_recibida || 0) + item.cantidad
                 await supabase.from('orden_compra_items').update({ cantidad_recibida: nuevoRecibido }).eq('id', item.orden_item_id)
             }
         }
 
-        // Actualizar estado de OC si aplica
         if (modo === 'contra_oc' && ocSeleccionada) {
             const { data: itemsOC } = await supabase.from('orden_compra_items').select('cantidad_solicitada, cantidad_recibida').eq('orden_id', ocSeleccionada)
             const totalSolicitado = itemsOC.reduce((s, i) => s + i.cantidad_solicitada, 0)
@@ -462,7 +460,10 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
         }
 
         setGuardando(false); setMostrarModal(false)
-        onCreada({ ...rec, proveedores: { nombre: modo === 'contra_oc' ? ocsPendientes.find(o => o.id === ocSeleccionada)?.proveedores?.nombre : 'Recepción Libre' } })
+        const provNombre = modo === 'contra_oc' 
+            ? ocsPendientes.find(o => o.id === ocSeleccionada)?.proveedores?.nombre 
+            : 'Recepción Libre'
+        onCreada({ ...rec, proveedores: { nombre: provNombre } })
     }
 
     return (
@@ -613,9 +614,22 @@ function ModalPagoCompra({ total, onCerrar, onConfirmar }) {
 function DetalleOrden({ orden, onVolver }) {
     const [items, setItems] = useState([])
     const [loading, setLoading] = useState(true)
+    const [mapaNombres, setMapaNombres] = useState({})
 
     useEffect(() => {
-        supabase.from('orden_compra_items').select('*').eq('orden_id', orden.id).then(({ data }) => { if(data) setItems(data); setLoading(false) })
+        Promise.all([
+            supabase.from('materias_primas').select('id, nombre'),
+            supabase.from('materiales_empaque').select('id, nombre'),
+            supabase.from('productos_terminados').select('id, nombre')
+        ]).then(([mp, emp, pt]) => {
+            const mapa = {}
+            ;[...(mp.data||[]), ...(emp.data||[]), ...(pt.data||[])].forEach(i => mapa[i.id] = i.nombre)
+            setMapaNombres(mapa)
+        })
+
+        supabase.from('orden_compra_items').select('*').eq('orden_id', orden.id).then(({ data }) => { 
+            if(data) setItems(data); setLoading(false) 
+        })
     }, [orden.id])
 
     return (
@@ -639,7 +653,7 @@ function DetalleOrden({ orden, onVolver }) {
                         <tbody>
                             {items.map((item, idx) => (
                                 <tr key={idx} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                                    <td style={{ padding: '10px 0', fontSize: '13px', color: '#1f2937' }}>{item.insumo_id}</td>
+                                    <td style={{ padding: '10px 0', fontSize: '13px', color: '#1f2937' }}>{mapaNombres[item.insumo_id] || item.insumo_id}</td>
                                     <td style={{ padding: '10px 0', fontSize: '11px', color: '#6b7280', textTransform: 'uppercase' }}>{item.tipo_insumo.replace('_', ' ')}</td>
                                     <td style={{ padding: '10px 0', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{item.cantidad_solicitada}</td>
                                     <td style={{ padding: '10px 0', fontSize: '13px', color: item.cantidad_recibida >= item.cantidad_solicitada ? '#16a34a' : '#d97706', textAlign: 'right', fontWeight: 600 }}>{item.cantidad_recibida}</td>
@@ -662,9 +676,22 @@ function DetalleOrden({ orden, onVolver }) {
 function DetalleRecepcion({ recepcion, onVolver }) {
     const [items, setItems] = useState([])
     const [loading, setLoading] = useState(true)
+    const [mapaNombres, setMapaNombres] = useState({})
 
     useEffect(() => {
-        supabase.from('compra_items').select('*').eq('compra_id', recepcion.id).then(({ data }) => { if(data) setItems(data); setLoading(false) })
+        Promise.all([
+            supabase.from('materias_primas').select('id, nombre'),
+            supabase.from('materiales_empaque').select('id, nombre'),
+            supabase.from('productos_terminados').select('id, nombre')
+        ]).then(([mp, emp, pt]) => {
+            const mapa = {}
+            ;[...(mp.data||[]), ...(emp.data||[]), ...(pt.data||[])].forEach(i => mapa[i.id] = i.nombre)
+            setMapaNombres(mapa)
+        })
+
+        supabase.from('compra_items').select('*').eq('compra_id', recepcion.id).then(({ data }) => { 
+            if(data) setItems(data); setLoading(false) 
+        })
     }, [recepcion.id])
 
     return (
@@ -694,7 +721,7 @@ function DetalleRecepcion({ recepcion, onVolver }) {
                         <tbody>
                             {items.map((item, idx) => (
                                 <tr key={idx} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                                    <td style={{ padding: '10px 0', fontSize: '13px', color: '#1f2937' }}>{item.insumo_id}</td>
+                                    <td style={{ padding: '10px 0', fontSize: '13px', color: '#1f2937' }}>{mapaNombres[item.insumo_id] || item.insumo_id}</td>
                                     <td style={{ padding: '10px 0', fontSize: '11px', color: '#6b7280', textTransform: 'uppercase' }}>{item.tipo_insumo.replace('_', ' ')}</td>
                                     <td style={{ padding: '10px 0', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{item.cantidad}</td>
                                     <td style={{ padding: '10px 0', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{fmt(item.precio_unitario)}</td>
