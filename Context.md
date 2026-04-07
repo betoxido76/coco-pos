@@ -34,13 +34,17 @@ coco-pos/
 │   │   ├── Login.jsx           # Pantalla de login
 │   │   ├── Dashboard.jsx       # KPIs (pendiente desarrollo)
 │   │   ├── Inventario.jsx      # Stock de productos terminados
-│   │   ├── Ventas.jsx          # POS + historial de facturas
+│   │   ├── Ventas.jsx          # POS + historial de facturas + devoluciones
 │   │   ├── Productos.jsx       # Maestro de productos terminados
+│   │   ├── MateriasPrimas.jsx  # Maestro de MP y Materiales de Empaque (con tabs)
+│   │   ├── Compras.jsx         # Recepción de inventario + órdenes de compra
 │   │   ├── Clientes.jsx        # Maestro de clientes + condiciones de pago
 │   │   ├── CuentasCobrar.jsx   # Seguimiento de créditos + cobros parciales
 │   │   └── Configuracion.jsx   # Tasas de cambio BCV / Euro / Binance
 │   ├── index.css
 │   └── main.jsx                # Router + AuthProvider + rutas protegidas
+├── docs/
+│   └── seed-materias-primas.sql # Script de datos de prueba para insumos
 ├── .env                        # Variables de entorno (no commitear)
 ├── tailwind.config.js
 ├── postcss.config.js
@@ -67,16 +71,16 @@ VITE_SUPABASE_ANON_KEY=TU_ANON_KEY
 |---|---|
 | `usuarios` | Perfil del usuario autenticado (id = UUID de Supabase Auth) |
 | `productos_terminados` | Maestro de productos con stock, precios, categorías, vida útil |
-| `materias_primas` | Insumos para producción |
-| `materiales_empaque` | Materiales de empaque |
+| `materias_primas` | Insumos para producción (código, costo, stock, vencimiento, categorías) |
+| `materiales_empaque` | Materiales de empaque (misma estructura que MP) |
 | `clientes` | Maestro de clientes con condición de pago y días de crédito |
 | `proveedores` | Maestro de proveedores |
 | `ubicaciones` | Localidades/almacenes donde hay inventario |
 | `ventas` | Cabecera de facturas de venta |
 | `venta_items` | Detalle de líneas por factura |
 | `cobros` | Abonos/pagos parciales sobre facturas a crédito |
-| `compras` | Órdenes de compra |
-| `compra_items` | Detalle de compras |
+| `compras` | Órdenes de compra / recepción de inventario |
+| `compra_items` | Detalle de compras (tipo_insumo, insumo_id, cantidad, precio) |
 | `lotes_produccion` | Órdenes de producción / lotes |
 | `lote_consumos` | Insumos consumidos por lote |
 | `recetas` | Fórmulas de producción |
@@ -86,20 +90,31 @@ VITE_SUPABASE_ANON_KEY=TU_ANON_KEY
 | `inventario_ubicacion` | Stock por producto × ubicación (fuente de verdad) |
 | `producto_ubicacion` | Config de proveedor/costo preferido por producto × ubicación |
 | `configuracion` | Parámetros del sistema (tasas de cambio) |
+| `devoluciones` | Cabecera de devoluciones de venta |
+| `devolucion_items` | Detalle de productos devueltos |
 
 ### Campos destacados por tabla
 
-**`productos_terminados`**
+**`materias_primas` / `materiales_empaque`**
 ```sql
-id, nombre, sku, descripcion, unidad_medida,
-precio_venta, costo_promedio,
-stock_actual,    -- cache, fuente de verdad es inventario_ubicacion
-stock_minimo,
+id, nombre, codigo, descripcion, unidad_medida,
+costo_compra_promedio, stock_actual, stock_minimo,
+fecha_vencimiento,
 categoria_1, categoria_2, categoria_3, categoria_4,
-tipo_producto,   -- 'producido' | 'comprado'
-vida_util_dias,
-activo,
-created_at
+tipo_producto, activo, created_at
+```
+
+**`compras`** (actualizada con multimoneda y crédito)
+```sql
+id, proveedor_id, usuario_id, numero_doc,
+subtotal, total,
+estado,           -- 'recibida' | 'pendiente' | 'anulada'
+estado_cobro,     -- 'pendiente' | 'parcial' | 'pagado'
+condicion_pago,   -- 'contado' | 'credito'
+dias_credito, fecha_vencimiento_pago,
+tasa_cambio, tipo_tasa,
+pago_usd, pago_bs, metodo_usd, metodo_bs,
+fecha_compra, notas, created_at
 ```
 
 **`clientes`**
@@ -107,7 +122,7 @@ created_at
 id, nombre, rif, telefono, email,
 condicion_pago,  -- 'contado' | 'credito'
 dias_credito,    -- número de días (ej: 30)
-activo
+lista_precio_id, activo, created_at
 ```
 
 **`ventas`**
@@ -120,8 +135,7 @@ tipo_tasa,              -- 'tasa_bcv' | 'tasa_euro' | 'tasa_binance'
 pago_usd, pago_bs,      -- montos cobrados por moneda
 metodo_usd, metodo_bs,  -- vía de pago por moneda
 fecha_vencimiento_pago, -- para facturas a crédito
-fecha_venta,
-created_at
+fecha_venta, notas, created_at
 ```
 
 **`cobros`** (abonos sobre facturas a crédito)
@@ -130,7 +144,7 @@ id, venta_id, fecha_cobro,
 monto_usd, monto_bs,
 tasa_cambio, tipo_tasa,
 metodo_usd, metodo_bs,
-nota, usuario_id
+nota, usuario_id, created_at
 ```
 
 **`configuracion`**
@@ -166,13 +180,28 @@ actualizado_at
 - **Factura a crédito:** botón alternativo que aparece solo si el cliente tiene `condicion_pago = 'credito'`, calcula `fecha_vencimiento_pago` automáticamente
 - Vista de factura con totales en USD y Bs., forma de pago, tasa aplicada
 - Descuento automático de stock al confirmar venta
-- Estado de cobro: `pagado` (cobro inmediato) o `pendiente` (crédito)
+- **Devoluciones:** registro parcial o total, reposición automática de stock, cambio de estado a `anulado` si es total
 
 #### Maestro de Productos (`/productos`)
 - Lista con filtros por nombre/SKU y por categoría
 - Crear y editar productos con todos los campos (SKU, precio, costo, stock, 4 categorías, tipo, vida útil, unidad)
 - Toggle activo/inactivo directo desde la tabla
 - Alerta de stock bajo en la lista
+
+#### Maestro de Insumos (`/materias-primas`)
+- **Pestañas integradas:** Materias Primas y Materiales de Empaque
+- Lista con filtros por nombre/código y categoría
+- Crear y editar insumos (código, costo, stock, vencimiento, 4 categorías, tipo, unidad)
+- Toggle activo/inactivo directo desde la tabla
+- Alerta de stock bajo y fechas de vencimiento
+
+#### Recepción de Inventario / Compras (`/compras`)
+- Historial de órdenes de compra con badges de estado y cobro
+- **Nueva recepción:** búsqueda unificada de MP, empaque y PT
+- Carrito de compras con cantidades editables y cálculo de IVA
+- **Modal de pago:** contado/crédito, días de crédito, fecha de vencimiento, pago mixto USD/Bs., tasa del día
+- Actualización automática de `stock_actual` al confirmar
+- Vista de detalle tipo factura/orden
 
 #### Maestro de Clientes (`/clientes`)
 - Lista con búsqueda por nombre/RIF
@@ -198,8 +227,6 @@ actualizado_at
 |---|---|---|
 | **Dashboard** | Alta | KPIs: ventas del día, stock crítico, cuentas por cobrar, últimas facturas |
 | **Producción** | Alta | Crear lotes, consumir materias primas, generar stock de PT |
-| **Compras** | Media | Órdenes de compra, recepción, actualización de stock MP/empaque |
-| **Maestro MP y Empaque** | Media | Similar a Productos pero para insumos |
 | **Reportes** | Media | Ventas por período, rotación de inventario, CxC aging |
 | **Listas de precio** | Media | Asignar lista por cliente, usar en ventas |
 | **Deploy a Vercel** | Alta | Para demo con cliente sin compartir pantalla |
@@ -222,7 +249,7 @@ actualizado_at
 - RLS habilitado en todas las tablas
 - Policy base: `FOR ALL USING (auth.uid() IS NOT NULL)` para usuarios autenticados
 - Queries directas desde el frontend — sin backend intermedio por ahora
-- `stock_actual` en `productos_terminados` es un cache — se actualiza manualmente al confirmar ventas (triggers pendientes)
+- `stock_actual` en `productos_terminados`, `materias_primas` y `materiales_empaque` es un cache — se actualiza manualmente al confirmar ventas/compras (triggers pendientes)
 
 ### Multimoneda
 - Precios y totales internos siempre en **USD**
@@ -245,15 +272,19 @@ actualizado_at
 | `/inventario` | Inventario.jsx |
 | `/ventas` | Ventas.jsx |
 | `/productos` | Productos.jsx |
+| `/materias-primas` | MateriasPrimas.jsx |
+| `/compras` | Compras.jsx |
+| `/configuracion` | Configuracion.jsx |
 | `/clientes` | Clientes.jsx |
 | `/cuentas-cobrar` | CuentasCobrar.jsx |
-| `/configuracion` | Configuracion.jsx |
 
 ---
 
 ## Datos de prueba cargados
 
 - **8 productos terminados:** aguas de coco, harinas, helados, aceite
+- **25 materias primas:** pulpa, agua, aceite, harina, azúcar, lácteos, aditivos, saborizantes, etc.
+- **25 materiales de empaque:** botellas, tapas, etiquetas, cajas, bolsas, bandejas, insumos logísticos
 - **5 clientes:** supermercados, distribuidoras, restaurante
 - **3 ubicaciones:** Planta Principal, Almacén Centro, Punto de Venta Este
 - **Tasas iniciales:** todas en 1.00 (actualizar antes del demo)
