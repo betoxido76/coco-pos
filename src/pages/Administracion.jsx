@@ -1,8 +1,9 @@
 import { useState } from 'react'
-import { Package, Beaker, Layers, Users, Settings } from 'lucide-react'
+import { Package, Beaker, Layers, Users, Settings, Truck } from 'lucide-react'
 import Productos from './Productos'
 import MateriasPrimas from './MateriasPrimas'
 import Clientes from './Clientes'
+import Proveedores from './Proveedores'
 import Configuracion from './Configuracion'
 
 const TABS = [
@@ -10,6 +11,7 @@ const TABS = [
     { key: 'mp', label: 'Materias Primas', icon: Beaker },
     { key: 'empaque', label: 'Materiales de Empaque', icon: Layers },
     { key: 'clientes', label: 'Clientes', icon: Users },
+    { key: 'proveedores', label: 'Proveedores', icon: Truck },
     { key: 'tasas', label: 'Tasas de Cambio', icon: Settings },
 ]
 
@@ -49,6 +51,7 @@ export default function Administracion() {
                 {tabActiva === 'mp' && <MateriasPrimas tabInicial="materias_primas" />}
                 {tabActiva === 'empaque' && <MateriasPrimas tabInicial="materiales_empaque" />}
                 {tabActiva === 'clientes' && <Clientes />}
+                {tabActiva === 'proveedores' && <Proveedores />}
                 {tabActiva === 'tasas' && <Configuracion />}
             </div>
         </div>

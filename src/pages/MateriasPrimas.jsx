@@ -9,14 +9,15 @@ const UNIDADES = ['kg', 'g', 'litro', 'ml', 'unidad', 'metro', 'rollo', 'caja', 
 const VACIO = {
     nombre: '', codigo: '', descripcion: '', unidad_medida: 'kg',
     costo_compra_promedio: '', stock_actual: '', stock_minimo: '',
-    fecha_vencimiento: '',
+    fecha_vencimiento: '', proveedor_preferido_id: '',
     categoria_1: '', categoria_2: '', categoria_3: '', categoria_4: '',
     tipo_producto: 'comprado', activo: true,
 }
 
-export default function MateriasPrimas() {
-    const [tabActiva, setTabActiva] = useState('materias_primas')
+export default function MateriasPrimas({ tabInicial = 'materias_primas' }) {
+    const [tabActiva, setTabActiva] = useState(tabInicial)
     const [items, setItems] = useState([])
+    const [proveedores, setProveedores] = useState([])
     const [loading, setLoading] = useState(true)
     const [busqueda, setBusqueda] = useState('')
     const [filtrocat, setFiltrocat] = useState('Todas')
@@ -29,7 +30,11 @@ export default function MateriasPrimas() {
 
     const tabla = tabActiva === 'materias_primas' ? 'materias_primas' : 'materiales_empaque'
 
-    useEffect(() => { cargar() }, [tabActiva])
+    useEffect(() => { 
+        cargar() 
+        supabase.from('proveedores').select('id, nombre').eq('activo', true).order('nombre')
+            .then(({ data }) => setProveedores(data || []))
+    }, [tabActiva])
 
     async function cargar() {
         setLoading(true)
@@ -56,6 +61,7 @@ export default function MateriasPrimas() {
             stock_actual: p.stock_actual ?? '',
             stock_minimo: p.stock_minimo ?? '',
             fecha_vencimiento: p.fecha_vencimiento ? p.fecha_vencimiento.split('T')[0] : '',
+            proveedor_preferido_id: p.proveedor_preferido_id || '',
             categoria_1: p.categoria_1 || '',
             categoria_2: p.categoria_2 || '',
             categoria_3: p.categoria_3 || '',
@@ -86,6 +92,7 @@ export default function MateriasPrimas() {
             stock_actual: form.stock_actual !== '' ? Number(form.stock_actual) : 0,
             stock_minimo: form.stock_minimo !== '' ? Number(form.stock_minimo) : 0,
             fecha_vencimiento: form.fecha_vencimiento || null,
+            proveedor_preferido_id: form.proveedor_preferido_id || null,
             categoria_1: form.categoria_1 || null,
             categoria_2: form.categoria_2 || null,
             categoria_3: form.categoria_3 || null,
@@ -188,6 +195,13 @@ export default function MateriasPrimas() {
                     <input type="date" value={form.fecha_vencimiento}
                         onChange={e => campo('fecha_vencimiento', e.target.value)}
                         style={inputStyle} />
+                </Campo>
+
+                <Campo label="Proveedor preferido" span={2}>
+                    <select value={form.proveedor_preferido_id} onChange={e => campo('proveedor_preferido_id', e.target.value)} style={inputStyle}>
+                        <option value="">— Sin asignar —</option>
+                        {proveedores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+                    </select>
                 </Campo>
 
                 <div style={{ gridColumn: 'span 2' }}>
