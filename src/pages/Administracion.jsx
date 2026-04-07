@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Package, Beaker, Layers, Users, Settings, Truck } from 'lucide-react'
+import { Package, Beaker, Users, Settings, Truck } from 'lucide-react'
 import Productos from './Productos'
 import MateriasPrimas from './MateriasPrimas'
 import Clientes from './Clientes'
@@ -8,8 +8,7 @@ import Configuracion from './Configuracion'
 
 const TABS = [
     { key: 'productos', label: 'Productos', icon: Package },
-    { key: 'mp', label: 'Materias Primas', icon: Beaker },
-    { key: 'empaque', label: 'Materiales de Empaque', icon: Layers },
+    { key: 'insumos', label: 'Insumos', icon: Beaker },
     { key: 'clientes', label: 'Clientes', icon: Users },
     { key: 'proveedores', label: 'Proveedores', icon: Truck },
     { key: 'tasas', label: 'Tasas de Cambio', icon: Settings },
@@ -48,8 +47,7 @@ export default function Administracion() {
             {/* Contenido del tab */}
             <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
                 {tabActiva === 'productos' && <Productos />}
-                {tabActiva === 'mp' && <MateriasPrimas tabInicial="materias_primas" />}
-                {tabActiva === 'empaque' && <MateriasPrimas tabInicial="materiales_empaque" />}
+                {tabActiva === 'insumos' && <MateriasPrimas />}
                 {tabActiva === 'clientes' && <Clientes />}
                 {tabActiva === 'proveedores' && <Proveedores />}
                 {tabActiva === 'tasas' && <Configuracion />}

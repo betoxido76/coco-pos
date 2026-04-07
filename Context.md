@@ -36,11 +36,12 @@ coco-pos/
 │   │   ├── Inventario.jsx      # Stock unificado + Movimientos
 │   │   ├── Ventas.jsx          # POS + historial de facturas + devoluciones
 │   │   ├── Compras.jsx         # Órdenes de Compra + Recepciones
-│   │   ├── Administracion.jsx  # Módulo unificado: Productos, MP, Empaque, Clientes, Tasas
+│   │   ├── Administracion.jsx  # Módulo unificado: Productos, Insumos, Clientes, Proveedores, Tasas
 │   │   ├── CuentasCobrar.jsx   # Seguimiento de créditos + cobros parciales
 │   │   ├── Productos.jsx       # Maestro de productos terminados
-│   │   ├── MateriasPrimas.jsx  # Maestro de MP y Materiales de Empaque
+│   │   ├── MateriasPrimas.jsx  # Maestro de MP y Materiales de Empaque (con sub-tabs)
 │   │   ├── Clientes.jsx        # Maestro de clientes
+│   │   ├── Proveedores.jsx     # Maestro de proveedores
 │   │   └── Configuracion.jsx   # Tasas de cambio
 │   ├── index.css
 │   └── main.jsx                # Router + AuthProvider + rutas protegidas
@@ -49,6 +50,7 @@ coco-pos/
 │   ├── seed-proveedores.sql
 │   ├── migracion-ordenes-compra.sql
 │   ├── migracion-movimientos-inventario.sql
+│   ├── migracion-proveedor-preferido.sql
 │   └── fix-rls-compras.sql
 ├── .env
 ├── tailwind.config.js
@@ -132,11 +134,12 @@ VITE_SUPABASE_ANON_KEY=TU_ANON_KEY
 - Modal de pago multimoneda y crédito
 
 #### Administración y Configuración (`/administracion`)
-- **Tabs:** Productos, Materias Primas, Materiales de Empaque, Clientes, Tasas de Cambio
+- **Tabs:** Productos, Insumos (MP + Empaque con sub-tabs), Clientes, Proveedores, Tasas de Cambio
 - CRUD completo para cada maestro
 - Filtros, búsqueda, toggle activo/inactivo
 - Alertas de stock bajo y vencimientos
 - Gestión de tasas de cambio en tiempo real
+- Asignación de proveedor preferido en productos e insumos
 
 #### Cuentas por Cobrar (`/cuentas-cobrar`)
 - Lista de facturas con semáforo de vencimiento
