@@ -445,7 +445,10 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
             await supabase.from(tabla).update({ stock_actual: (actual?.stock_actual || 0) + item.cantidad }).eq('id', item.id)
 
             if (item.orden_item_id) {
-                await supabase.from('orden_compra_items').update({ cantidad_recibida: supabase.raw(`cantidad_recibida + ${item.cantidad}`) }).eq('id', item.orden_item_id)
+                // Corrección: supabase.raw no existe en el cliente JS. Hacemos fetch + update.
+                const { data: current } = await supabase.from('orden_compra_items').select('cantidad_recibida').eq('id', item.orden_item_id).single()
+                const nuevoRecibido = (current?.cantidad_recibida || 0) + item.cantidad
+                await supabase.from('orden_compra_items').update({ cantidad_recibida: nuevoRecibido }).eq('id', item.orden_item_id)
             }
         }
 
