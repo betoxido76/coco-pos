@@ -1,18 +1,17 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
-import { LayoutDashboard, Package, ShoppingCart, Layers, Settings, Users, CreditCard, LogOut, Menu, X, Beaker, Truck } from 'lucide-react'
+import { LayoutDashboard, Package, ShoppingCart, Settings, Users, CreditCard, LogOut, Menu, X, Truck, FolderTree } from 'lucide-react'
 import { useState } from 'react'
 
 const nav = [
     { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
     { to: '/inventario', icon: Package, label: 'Inventario' },
     { to: '/ventas', icon: ShoppingCart, label: 'Ventas' },
-    { to: '/productos', icon: Layers, label: 'Productos' },
-    { to: '/materias-primas', icon: Beaker, label: 'Insumos' },
     { to: '/compras', icon: Truck, label: 'Compras' },
-    { to: '/configuracion', icon: Settings, label: 'Configuración' },
+    { to: '/administracion', icon: FolderTree, label: 'Administración' },
     { to: '/clientes', icon: Users, label: 'Clientes' },
     { to: '/cuentas-cobrar', icon: CreditCard, label: 'Cuentas x Cobrar' },
+    { to: '/configuracion', icon: Settings, label: 'Configuración' },
 ]
 
 export default function Layout() {

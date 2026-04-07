@@ -7,13 +7,10 @@ import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import Inventario from './pages/Inventario'
 import Ventas from './pages/Ventas'
-import Productos from './pages/Productos'
-import MateriasPrimas from './pages/MateriasPrimas'
 import Compras from './pages/Compras'
-import Configuracion from './pages/Configuracion'
-import './index.css'
-import Clientes from './pages/Clientes'
+import Administracion from './pages/Administracion'
 import CuentasCobrar from './pages/CuentasCobrar'
+import './index.css'
 
 function RutaProtegida({ children }) {
   const { user, loading } = useAuth()
@@ -37,11 +34,8 @@ function App() {
         <Route index element={<Dashboard />} />
         <Route path="inventario" element={<Inventario />} />
         <Route path="ventas" element={<Ventas />} />
-        <Route path="productos" element={<Productos />} />
-        <Route path="materias-primas" element={<MateriasPrimas />} />
         <Route path="compras" element={<Compras />} />
-        <Route path="configuracion" element={<Configuracion />} />
-        <Route path="clientes" element={<Clientes />} />
+        <Route path="administracion" element={<Administracion />} />
         <Route path="cuentas-cobrar" element={<CuentasCobrar />} />
       </Route>
     </Routes>
