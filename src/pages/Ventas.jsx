@@ -1,0 +1,632 @@
+import { useEffect, useState } from 'react'
+import { supabase } from '../lib/supabaseClient'
+import { Plus, Search, Trash2, CheckCircle, FileText, RotateCcw, AlertTriangle } from 'lucide-react'
+
+const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
+
+// ─── Componente principal ──────────────────────────────────────
+export default function Ventas() {
+    const [vista, setVista] = useState('lista')
+    const [ventas, setVentas] = useState([])
+    const [ventaActual, setVentaActual] = useState(null)
+    const [loading, setLoading] = useState(true)
+
+    useEffect(() => { cargarVentas() }, [])
+
+    async function cargarVentas() {
+        setLoading(true)
+        const { data } = await supabase
+            .from('ventas')
+            .select(`*, clientes(nombre), devoluciones(id)`)
+            .order('created_at', { ascending: false })
+            .limit(50)
+        if (data) setVentas(data)
+        setLoading(false)
+    }
+
+    function abrirFactura(venta) {
+        setVentaActual(venta)
+        setVista('factura')
+    }
+
+    if (vista === 'nueva')
+        return <NuevaVenta
+            onVentaCreada={(v) => { cargarVentas(); setVentaActual(v); setVista('factura') }}
+            onCancelar={() => setVista('lista')}
+        />
+
+    if (vista === 'factura')
+        return <Factura
+            venta={ventaActual}
+            onVolver={() => { cargarVentas(); setVista('lista') }}
+            onDevolucionCreada={() => { cargarVentas(); setVista('lista') }}
+        />
+
+    return (
+        <div style={{ padding: '24px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                <div>
+                    <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Ventas</h1>
+                    <p style={{ fontSize: '13px', color: '#6b7280', margin: '4px 0 0' }}>Historial de facturas</p>
+                </div>
+                <button
+                    onClick={() => setVista('nueva')}
+                    style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px 16px', fontSize: '14px', fontWeight: 500, cursor: 'pointer' }}
+                >
+                    <Plus size={16} /> Nueva venta
+                </button>
+            </div>
+
+            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                {loading ? (
+                    <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
+                ) : ventas.length === 0 ? (
+                    <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>No hay ventas registradas.</div>
+                ) : (
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead>
+                            <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                                {['Factura', 'Cliente', 'Fecha', 'Total', 'Estado', ''].map((h, i) => (
+                                    <th key={i} style={{ padding: '10px 16px', textAlign: i === 3 ? 'right' : 'left', fontSize: '12px', fontWeight: 500, color: '#6b7280' }}>{h}</th>
+                                ))}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {ventas.map(v => (
+                                <tr key={v.id} style={{ borderBottom: '1px solid #f3f4f6' }}
+                                    onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
+                                    onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}
+                                >
+                                    <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                            {v.numero_factura}
+                                            {v.devoluciones?.length > 0 && (
+                                                <span style={{ fontSize: '10px', backgroundColor: '#fef3c7', color: '#92400e', padding: '1px 6px', borderRadius: '20px', fontFamily: 'sans-serif' }}>
+                                                    Con devolución
+                                                </span>
+                                            )}
+                                        </div>
+                                    </td>
+                                    <td style={{ padding: '12px 16px', fontSize: '13px', color: '#374151' }}>{v.clientes?.nombre || '—'}</td>
+                                    <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{new Date(v.fecha_venta).toLocaleDateString('es-VE')}</td>
+                                    <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(v.total)}</td>
+                                    <td style={{ padding: '12px 16px' }}><BadgeCobro estado={v.estado_cobro} /></td>
+                                    <td style={{ padding: '12px 16px' }}>
+                                        <button onClick={() => abrirFactura(v)}
+                                            style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
+                                            <FileText size={13} /> Ver
+                                        </button>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                )}
+            </div>
+        </div>
+    )
+}
+
+// ─── Badge cobro ───────────────────────────────────────────────
+function BadgeCobro({ estado }) {
+    const estilos = {
+        pendiente: { bg: '#fef9c3', color: '#854d0e' },
+        parcial: { bg: '#dbeafe', color: '#1e40af' },
+        pagado: { bg: '#dcfce7', color: '#166534' },
+        anulado: { bg: '#fee2e2', color: '#991b1b' },
+    }
+    const s = estilos[estado] || estilos.pendiente
+    return (
+        <span style={{ backgroundColor: s.bg, color: s.color, padding: '2px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 500 }}>
+            {estado}
+        </span>
+    )
+}
+
+// ─── Nueva Venta ───────────────────────────────────────────────
+function NuevaVenta({ onVentaCreada, onCancelar }) {
+    const [clientes, setClientes] = useState([])
+    const [productos, setProductos] = useState([])
+    const [clienteId, setClienteId] = useState('')
+    const [busqueda, setBusqueda] = useState('')
+    const [items, setItems] = useState([])
+    const [guardando, setGuardando] = useState(false)
+    const [error, setError] = useState('')
+
+    useEffect(() => {
+        supabase.from('clientes').select('id, nombre').eq('activo', true).order('nombre')
+            .then(({ data }) => setClientes(data || []))
+        supabase.from('productos_terminados').select('id, nombre, sku, precio_venta, stock_actual, unidad_medida').eq('activo', true).order('nombre')
+            .then(({ data }) => setProductos(data || []))
+    }, [])
+
+    const productosFiltrados = productos.filter(p =>
+        p.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
+        p.sku?.toLowerCase().includes(busqueda.toLowerCase())
+    )
+
+    function agregarProducto(producto) {
+        setItems(prev => {
+            const existe = prev.find(i => i.producto_id === producto.id)
+            if (existe) return prev.map(i => i.producto_id === producto.id ? { ...i, cantidad: i.cantidad + 1 } : i)
+            return [...prev, { producto_id: producto.id, nombre: producto.nombre, sku: producto.sku, cantidad: 1, precio_unitario: producto.precio_venta, stock: producto.stock_actual }]
+        })
+        setBusqueda('')
+    }
+
+    function cambiarCantidad(id, valor) {
+        const n = parseInt(valor)
+        if (isNaN(n) || n < 1) return
+        setItems(prev => prev.map(i => i.producto_id === id ? { ...i, cantidad: n } : i))
+    }
+
+    function eliminarItem(id) {
+        setItems(prev => prev.filter(i => i.producto_id !== id))
+    }
+
+    const subtotal = items.reduce((s, i) => s + i.cantidad * i.precio_unitario, 0)
+    const impuesto = subtotal * 0.16
+    const total = subtotal + impuesto
+
+    async function confirmarVenta() {
+        if (!clienteId) { setError('Selecciona un cliente'); return }
+        if (items.length === 0) { setError('Agrega al menos un producto'); return }
+        setGuardando(true)
+        setError('')
+
+        const numero = `FAC-${Date.now().toString().slice(-6)}`
+        const { data: { user } } = await supabase.auth.getUser()
+
+        const { data: venta, error: errVenta } = await supabase
+            .from('ventas')
+            .insert({ cliente_id: clienteId, usuario_id: user.id, numero_factura: numero, subtotal, total, estado_cobro: 'pendiente' })
+            .select()
+            .single()
+
+        if (errVenta) { setError('Error al crear la venta: ' + errVenta.message); setGuardando(false); return }
+
+        await supabase.from('venta_items').insert(
+            items.map(i => ({ venta_id: venta.id, producto_id: i.producto_id, cantidad: i.cantidad, precio_unitario: i.precio_unitario }))
+        )
+
+        for (const item of items) {
+            const prod = productos.find(p => p.id === item.producto_id)
+            await supabase.from('productos_terminados')
+                .update({ stock_actual: prod.stock_actual - item.cantidad })
+                .eq('id', item.producto_id)
+        }
+
+        onVentaCreada({ ...venta, clientes: { nombre: clientes.find(c => c.id === clienteId)?.nombre }, items })
+    }
+
+    return (
+        <div style={{ padding: '24px', maxWidth: '900px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
+                <button onClick={onCancelar} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', fontSize: '13px' }}>← Volver</button>
+                <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Nueva venta</h1>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: '20px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+
+                    <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px' }}>
+                        <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '8px' }}>Cliente</label>
+                        <select value={clienteId} onChange={e => setClienteId(e.target.value)}
+                            style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', color: '#374151', backgroundColor: '#fff' }}>
+                            <option value="">Seleccionar cliente...</option>
+                            {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                        </select>
+                    </div>
+
+                    <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px' }}>
+                        <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '8px' }}>Agregar productos</label>
+                        <div style={{ position: 'relative' }}>
+                            <Search size={15} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
+                            <input type="text" placeholder="Buscar por nombre o código..." value={busqueda}
+                                onChange={e => setBusqueda(e.target.value)}
+                                style={{ width: '100%', padding: '8px 12px 8px 32px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', boxSizing: 'border-box' }} />
+                        </div>
+                        {busqueda && (
+                            <div style={{ marginTop: '8px', border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden', maxHeight: '200px', overflowY: 'auto' }}>
+                                {productosFiltrados.length === 0
+                                    ? <div style={{ padding: '12px', fontSize: '13px', color: '#9ca3af', textAlign: 'center' }}>Sin resultados</div>
+                                    : productosFiltrados.map(p => (
+                                        <div key={p.id} onClick={() => agregarProducto(p)}
+                                            style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', cursor: 'pointer', borderBottom: '1px solid #f3f4f6', fontSize: '13px' }}
+                                            onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f0fdf4'}
+                                            onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                                            <div>
+                                                <span style={{ fontWeight: 500, color: '#1f2937' }}>{p.nombre}</span>
+                                                <span style={{ color: '#9ca3af', marginLeft: '8px', fontFamily: 'monospace', fontSize: '11px' }}>{p.sku}</span>
+                                            </div>
+                                            <div style={{ textAlign: 'right' }}>
+                                                <div style={{ fontWeight: 600, color: '#16a34a' }}>{fmt(p.precio_venta)}</div>
+                                                <div style={{ fontSize: '11px', color: '#9ca3af' }}>Stock: {p.stock_actual}</div>
+                                            </div>
+                                        </div>
+                                    ))}
+                            </div>
+                        )}
+                    </div>
+
+                    {items.length > 0 && (
+                        <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                <thead>
+                                    <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                                        {['Producto', 'Precio', 'Cant.', 'Subtotal', ''].map((h, i) => (
+                                            <th key={i} style={{ padding: '10px 12px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left' }}>{h}</th>
+                                        ))}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {items.map(item => (
+                                        <tr key={item.producto_id} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                                            <td style={{ padding: '10px 12px', fontSize: '13px', color: '#1f2937' }}>{item.nombre}</td>
+                                            <td style={{ padding: '10px 12px', fontSize: '13px', color: '#6b7280' }}>{fmt(item.precio_unitario)}</td>
+                                            <td style={{ padding: '10px 12px' }}>
+                                                <input type="number" min="1" max={item.stock} value={item.cantidad}
+                                                    onChange={e => cambiarCantidad(item.producto_id, e.target.value)}
+                                                    style={{ width: '60px', padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px', textAlign: 'center' }} />
+                                            </td>
+                                            <td style={{ padding: '10px 12px', fontSize: '13px', fontWeight: 600, color: '#1f2937' }}>{fmt(item.cantidad * item.precio_unitario)}</td>
+                                            <td style={{ padding: '10px 12px' }}>
+                                                <button onClick={() => eliminarItem(item.producto_id)}
+                                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', padding: '4px' }}>
+                                                    <Trash2 size={14} />
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+                </div>
+
+                <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '20px', height: 'fit-content', position: 'sticky', top: '24px' }}>
+                    <h2 style={{ fontSize: '15px', fontWeight: 600, color: '#1f2937', margin: '0 0 16px' }}>Resumen</h2>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
+                        {[['Subtotal', fmt(subtotal)], ['IVA (16%)', fmt(impuesto)]].map(([l, v]) => (
+                            <div key={l} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#6b7280' }}>
+                                <span>{l}</span><span>{v}</span>
+                            </div>
+                        ))}
+                        <div style={{ height: '1px', backgroundColor: '#e5e7eb', margin: '4px 0' }} />
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '16px', fontWeight: 700, color: '#1f2937' }}>
+                            <span>Total</span><span style={{ color: '#16a34a' }}>{fmt(total)}</span>
+                        </div>
+                    </div>
+                    <div style={{ fontSize: '12px', color: '#9ca3af', marginBottom: '16px' }}>
+                        {items.length} producto(s) · {items.reduce((s, i) => s + i.cantidad, 0)} unidades
+                    </div>
+                    {error && (
+                        <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', color: '#dc2626', marginBottom: '12px' }}>
+                            {error}
+                        </div>
+                    )}
+                    <button onClick={confirmarVenta} disabled={guardando || items.length === 0}
+                        style={{ width: '100%', backgroundColor: items.length === 0 ? '#d1d5db' : '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '12px', fontSize: '14px', fontWeight: 600, cursor: items.length === 0 ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                        <CheckCircle size={16} />
+                        {guardando ? 'Procesando...' : 'Confirmar venta'}
+                    </button>
+                </div>
+            </div>
+        </div>
+    )
+}
+
+// ─── Factura + Devolución ──────────────────────────────────────
+function Factura({ venta, onVolver, onDevolucionCreada }) {
+    const [items, setItems] = useState(venta.items || [])
+    const [devoluciones, setDevoluciones] = useState([])
+    const [mostrarDevolucion, setMostrarDevolucion] = useState(false)
+    const [loadingItems, setLoadingItems] = useState(false)
+
+    useEffect(() => {
+        cargarItems()
+        cargarDevoluciones()
+    }, [venta.id])
+
+    async function cargarItems() {
+        if (venta.items) return
+        setLoadingItems(true)
+        const { data } = await supabase
+            .from('venta_items')
+            .select(`*, productos_terminados(nombre, sku)`)
+            .eq('venta_id', venta.id)
+        if (data) setItems(data)
+        setLoadingItems(false)
+    }
+
+    async function cargarDevoluciones() {
+        const { data } = await supabase
+            .from('devoluciones')
+            .select(`*, devolucion_items(*, productos_terminados(nombre))`)
+            .eq('venta_id', venta.id)
+            .order('fecha', { ascending: false })
+        if (data) setDevoluciones(data)
+    }
+
+    const subtotal = venta.subtotal || items.reduce((s, i) => s + i.cantidad * i.precio_unitario, 0)
+    const impuesto = subtotal * 0.16
+    const total = venta.total || subtotal + impuesto
+    const puedeDevolver = venta.estado_cobro !== 'anulado'
+
+    if (mostrarDevolucion)
+        return <FormDevolucion
+            venta={venta}
+            items={items}
+            onCancelar={() => setMostrarDevolucion(false)}
+            onConfirmada={() => { onDevolucionCreada(); }}
+        />
+
+    return (
+        <div style={{ padding: '24px', maxWidth: '680px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
+                <button onClick={onVolver} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', fontSize: '13px' }}>← Volver</button>
+                <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Factura</h1>
+                {puedeDevolver && (
+                    <button onClick={() => setMostrarDevolucion(true)}
+                        style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '8px 14px', fontSize: '13px', color: '#374151', cursor: 'pointer' }}>
+                        <RotateCcw size={14} /> Registrar devolución
+                    </button>
+                )}
+            </div>
+
+            {/* Factura */}
+            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '32px', marginBottom: '16px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '32px' }}>
+                    <div>
+                        <div style={{ fontSize: '22px', marginBottom: '4px' }}>🥥</div>
+                        <div style={{ fontSize: '16px', fontWeight: 700, color: '#1f2937' }}>Empresa de Cocos</div>
+                        <div style={{ fontSize: '12px', color: '#6b7280' }}>RIF: J-00000000-0</div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontSize: '20px', fontWeight: 700, color: '#16a34a', fontFamily: 'monospace' }}>{venta.numero_factura}</div>
+                        <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
+                            {new Date(venta.fecha_venta || Date.now()).toLocaleDateString('es-VE', { day: '2-digit', month: 'long', year: 'numeric' })}
+                        </div>
+                        <div style={{ marginTop: '6px' }}><BadgeCobro estado={venta.estado_cobro} /></div>
+                    </div>
+                </div>
+
+                <div style={{ backgroundColor: '#f9fafb', borderRadius: '8px', padding: '12px 16px', marginBottom: '24px' }}>
+                    <div style={{ fontSize: '11px', color: '#9ca3af', marginBottom: '2px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Cliente</div>
+                    <div style={{ fontSize: '15px', fontWeight: 600, color: '#1f2937' }}>{venta.clientes?.nombre || '—'}</div>
+                </div>
+
+                {loadingItems ? (
+                    <div style={{ padding: '20px', textAlign: 'center', color: '#9ca3af', fontSize: '13px' }}>Cargando items...</div>
+                ) : (
+                    <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '24px' }}>
+                        <thead>
+                            <tr style={{ borderBottom: '2px solid #e5e7eb' }}>
+                                {['Producto', 'Cant.', 'Precio unit.', 'Total'].map((h, i) => (
+                                    <th key={i} style={{ padding: '8px 0', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: i > 0 ? 'right' : 'left' }}>{h}</th>
+                                ))}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {items.map((item, idx) => (
+                                <tr key={idx} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                                    <td style={{ padding: '10px 0', fontSize: '13px', color: '#1f2937' }}>
+                                        {item.productos_terminados?.nombre || item.nombre}
+                                        <span style={{ fontSize: '11px', color: '#9ca3af', marginLeft: '6px', fontFamily: 'monospace' }}>
+                                            {item.productos_terminados?.sku || item.sku}
+                                        </span>
+                                    </td>
+                                    <td style={{ padding: '10px 0', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{item.cantidad}</td>
+                                    <td style={{ padding: '10px 0', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{fmt(item.precio_unitario)}</td>
+                                    <td style={{ padding: '10px 0', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(item.cantidad * item.precio_unitario)}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                )}
+
+                <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: '16px' }}>
+                    {[['Subtotal', fmt(subtotal)], ['IVA (16%)', fmt(impuesto)]].map(([l, v]) => (
+                        <div key={l} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#6b7280', marginBottom: '6px' }}>
+                            <span>{l}</span><span>{v}</span>
+                        </div>
+                    ))}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '18px', fontWeight: 700, color: '#1f2937', marginTop: '8px', paddingTop: '8px', borderTop: '2px solid #e5e7eb' }}>
+                        <span>Total</span><span style={{ color: '#16a34a' }}>{fmt(total)}</span>
+                    </div>
+                </div>
+
+                <div style={{ marginTop: '32px', textAlign: 'center', fontSize: '12px', color: '#d1d5db' }}>Gracias por su compra</div>
+            </div>
+
+            {/* Historial de devoluciones */}
+            {devoluciones.length > 0 && (
+                <div style={{ backgroundColor: '#fffbeb', borderRadius: '12px', border: '1px solid #fde68a', padding: '16px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '12px' }}>
+                        <AlertTriangle size={15} style={{ color: '#d97706' }} />
+                        <span style={{ fontSize: '13px', fontWeight: 600, color: '#92400e' }}>Devoluciones registradas</span>
+                    </div>
+                    {devoluciones.map(dev => (
+                        <div key={dev.id} style={{ backgroundColor: '#fff', borderRadius: '8px', border: '1px solid #fde68a', padding: '12px', marginBottom: '8px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                                <div style={{ fontSize: '12px', color: '#6b7280' }}>
+                                    {new Date(dev.fecha).toLocaleDateString('es-VE')} · {dev.tipo_devolucion.replace('_', ' ')}
+                                </div>
+                                <div style={{ fontSize: '13px', fontWeight: 600, color: '#dc2626' }}>−{fmt(dev.monto_devuelto)}</div>
+                            </div>
+                            <div style={{ fontSize: '12px', color: '#374151', marginBottom: '6px' }}>
+                                <strong>Motivo:</strong> {dev.motivo}
+                            </div>
+                            {dev.devolucion_items?.map((di, i) => (
+                                <div key={i} style={{ fontSize: '12px', color: '#6b7280' }}>
+                                    · {di.productos_terminados?.nombre} — {di.cantidad_devuelta} unid.
+                                </div>
+                            ))}
+                            {dev.es_total && (
+                                <div style={{ marginTop: '6px' }}>
+                                    <span style={{ fontSize: '11px', backgroundColor: '#fee2e2', color: '#991b1b', padding: '1px 8px', borderRadius: '20px' }}>Devolución total</span>
+                                </div>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    )
+}
+
+// ─── Formulario de Devolución ──────────────────────────────────
+function FormDevolucion({ venta, items, onCancelar, onConfirmada }) {
+    const [seleccion, setSeleccion] = useState(
+        items.map(i => ({ ...i, devolver: false, cantidad_devuelta: 1 }))
+    )
+    const [motivo, setMotivo] = useState('')
+    const [tipoDevolucion, setTipoDevolucion] = useState('reposicion_stock')
+    const [guardando, setGuardando] = useState(false)
+    const [error, setError] = useState('')
+
+    function toggleItem(idx) {
+        setSeleccion(prev => prev.map((i, j) => j === idx ? { ...i, devolver: !i.devolver } : i))
+    }
+
+    function setCantidad(idx, valor) {
+        const n = parseInt(valor)
+        if (isNaN(n) || n < 1) return
+        const max = seleccion[idx].cantidad
+        setSeleccion(prev => prev.map((i, j) => j === idx ? { ...i, cantidad_devuelta: Math.min(n, max) } : i))
+    }
+
+    const itemsADevolver = seleccion.filter(i => i.devolver)
+    const montoDevuelto = itemsADevolver.reduce((s, i) => s + i.cantidad_devuelta * i.precio_unitario, 0)
+    const esTotal = itemsADevolver.length === items.length &&
+        itemsADevolver.every((i, idx) => i.cantidad_devuelta === i.cantidad)
+
+    async function confirmar() {
+        if (itemsADevolver.length === 0) { setError('Selecciona al menos un producto a devolver'); return }
+        if (!motivo.trim()) { setError('Ingresa el motivo de la devolución'); return }
+        setGuardando(true)
+        setError('')
+
+        const { data: { user } } = await supabase.auth.getUser()
+
+        const { data: dev, error: errDev } = await supabase
+            .from('devoluciones')
+            .insert({ venta_id: venta.id, usuario_id: user.id, motivo, tipo_devolucion: tipoDevolucion, monto_devuelto: montoDevuelto, es_total: esTotal })
+            .select()
+            .single()
+
+        if (errDev) { setError('Error: ' + errDev.message); setGuardando(false); return }
+
+        await supabase.from('devolucion_items').insert(
+            itemsADevolver.map(i => ({
+                devolucion_id: dev.id,
+                producto_id: i.producto_id || i.productos_terminados?.id || i.id,
+                cantidad_devuelta: i.cantidad_devuelta,
+                precio_unitario: i.precio_unitario
+            }))
+        )
+
+        // Reponer stock
+        for (const item of itemsADevolver) {
+            const prodId = item.producto_id || item.productos_terminados?.id
+            const { data: prod } = await supabase.from('productos_terminados').select('stock_actual').eq('id', prodId).single()
+            await supabase.from('productos_terminados').update({ stock_actual: prod.stock_actual + item.cantidad_devuelta }).eq('id', prodId)
+        }
+
+        // Actualizar estado de la venta
+        const nuevoEstado = esTotal ? 'anulado' : venta.estado_cobro
+        await supabase.from('ventas').update({ estado_cobro: nuevoEstado }).eq('id', venta.id)
+
+        onConfirmada()
+    }
+
+    return (
+        <div style={{ padding: '24px', maxWidth: '640px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
+                <button onClick={onCancelar} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', fontSize: '13px' }}>← Cancelar</button>
+                <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Registrar devolución</h1>
+            </div>
+
+            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '20px', marginBottom: '16px' }}>
+                <div style={{ fontSize: '13px', color: '#6b7280', marginBottom: '4px' }}>Factura</div>
+                <div style={{ fontSize: '15px', fontWeight: 600, color: '#1f2937', fontFamily: 'monospace' }}>{venta.numero_factura}</div>
+                <div style={{ fontSize: '13px', color: '#6b7280', marginTop: '2px' }}>{venta.clientes?.nombre}</div>
+            </div>
+
+            {/* Selección de productos */}
+            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden', marginBottom: '16px' }}>
+                <div style={{ padding: '14px 16px', borderBottom: '1px solid #e5e7eb', fontSize: '13px', fontWeight: 500, color: '#374151' }}>
+                    Selecciona los productos a devolver
+                </div>
+                {seleccion.map((item, idx) => (
+                    <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 16px', borderBottom: '1px solid #f3f4f6', backgroundColor: item.devolver ? '#f0fdf4' : 'transparent' }}>
+                        <input type="checkbox" checked={item.devolver} onChange={() => toggleItem(idx)}
+                            style={{ width: '16px', height: '16px', cursor: 'pointer', accentColor: '#16a34a' }} />
+                        <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>
+                                {item.productos_terminados?.nombre || item.nombre}
+                            </div>
+                            <div style={{ fontSize: '12px', color: '#6b7280' }}>
+                                Vendido: {item.cantidad} unid. · {fmt(item.precio_unitario)} c/u
+                            </div>
+                        </div>
+                        {item.devolver && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <span style={{ fontSize: '12px', color: '#6b7280' }}>Cant. a devolver:</span>
+                                <input type="number" min="1" max={item.cantidad} value={item.cantidad_devuelta}
+                                    onChange={e => setCantidad(idx, e.target.value)}
+                                    style={{ width: '60px', padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px', textAlign: 'center' }} />
+                            </div>
+                        )}
+                    </div>
+                ))}
+            </div>
+
+            {/* Tipo y motivo */}
+            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px', marginBottom: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div>
+                    <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Tipo de devolución</label>
+                    <select value={tipoDevolucion} onChange={e => setTipoDevolucion(e.target.value)}
+                        style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', color: '#374151', backgroundColor: '#fff' }}>
+                        <option value="reposicion_stock">Reposición a inventario</option>
+                        <option value="nota_credito">Nota de crédito</option>
+                        <option value="reembolso">Reembolso al cliente</option>
+                    </select>
+                </div>
+                <div>
+                    <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Motivo</label>
+                    <textarea value={motivo} onChange={e => setMotivo(e.target.value)} rows={3}
+                        placeholder="Ej: Producto vencido, error en pedido, producto en mal estado..."
+                        style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', resize: 'vertical', boxSizing: 'border-box', fontFamily: 'inherit' }} />
+                </div>
+            </div>
+
+            {/* Resumen */}
+            {itemsADevolver.length > 0 && (
+                <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '12px', padding: '16px', marginBottom: '16px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', color: '#374151' }}>
+                        <span>{itemsADevolver.length} producto(s) · {itemsADevolver.reduce((s, i) => s + i.cantidad_devuelta, 0)} unidades</span>
+                        <span style={{ fontWeight: 700, color: '#dc2626' }}>−{fmt(montoDevuelto)}</span>
+                    </div>
+                    {esTotal && (
+                        <div style={{ fontSize: '12px', color: '#dc2626', marginTop: '4px' }}>
+                            Devolución total — la factura quedará como anulada
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {error && (
+                <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', color: '#dc2626', marginBottom: '12px' }}>
+                    {error}
+                </div>
+            )}
+
+            <button onClick={confirmar} disabled={guardando}
+                style={{ width: '100%', backgroundColor: '#dc2626', color: '#fff', border: 'none', borderRadius: '8px', padding: '12px', fontSize: '14px', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', opacity: guardando ? 0.6 : 1 }}>
+                <RotateCcw size={16} />
+                {guardando ? 'Procesando...' : 'Confirmar devolución'}
+            </button>
+        </div>
+    )
+}
