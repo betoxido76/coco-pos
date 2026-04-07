@@ -8,6 +8,7 @@ import Dashboard from './pages/Dashboard'
 import Inventario from './pages/Inventario'
 import Ventas from './pages/Ventas'
 import Productos from './pages/Productos'
+import MateriasPrimas from './pages/MateriasPrimas'
 import Configuracion from './pages/Configuracion'
 import './index.css'
 import Clientes from './pages/Clientes'
@@ -36,6 +37,7 @@ function App() {
         <Route path="inventario" element={<Inventario />} />
         <Route path="ventas" element={<Ventas />} />
         <Route path="productos" element={<Productos />} />
+        <Route path="materias-primas" element={<MateriasPrimas />} />
         <Route path="configuracion" element={<Configuracion />} />
         <Route path="clientes" element={<Clientes />} />
         <Route path="cuentas-cobrar" element={<CuentasCobrar />} />
