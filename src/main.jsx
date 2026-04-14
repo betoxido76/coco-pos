@@ -13,6 +13,9 @@ import CuentasCobrar from './pages/CuentasCobrar'
 import CuentasPagar from './pages/CuentasPagar'
 import Produccion from './pages/Produccion'
 import Mermas from './pages/Mermas'
+import Pedidos from './pages/Pedidos'
+import NuevoPedido from './pages/NuevoPedido'
+import CambiosManoMano from './pages/CambiosManoMano'
 import './index.css'
 
 function RutaProtegida({ children }) {
@@ -27,8 +30,23 @@ function RutaProtegida({ children }) {
 }
 
 function App() {
-  const { user, loading } = useAuth()
+  const { user, perfil, loading } = useAuth()
   if (loading) return null
+
+  // Vendedores van directo al módulo de pedidos sin ver el resto del sistema
+  if (user && perfil?.rol === 'vendedor') {
+    return (
+      <Routes>
+        <Route path="/login" element={<Navigate to="/nuevo-pedido" replace />} />
+        <Route path="/nuevo-pedido" element={
+          <RutaProtegida>
+            <NuevoPedido onPedidoCreado={() => { }} />
+          </RutaProtegida>
+        } />
+        <Route path="*" element={<Navigate to="/nuevo-pedido" replace />} />
+      </Routes>
+    )
+  }
 
   return (
     <Routes>
@@ -43,6 +61,9 @@ function App() {
         <Route path="cuentas-pagar" element={<CuentasPagar />} />
         <Route path="produccion" element={<Produccion />} />
         <Route path="mermas" element={<Mermas />} />
+        <Route path="pedidos" element={<Pedidos />} />
+        <Route path="nuevo-pedido" element={<NuevoPedido onPedidoCreado={() => { }} />} />
+        <Route path="cambios-mano-mano" element={<CambiosManoMano />} />
       </Route>
     </Routes>
   )

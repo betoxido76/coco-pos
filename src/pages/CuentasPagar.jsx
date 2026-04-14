@@ -40,8 +40,16 @@ export default function CuentasPagar() {
     const [compraSeleccionada, setCompraSeleccionada] = useState(null)
     const [mostrarModal, setMostrarModal] = useState(false)
     const [tasas, setTasas] = useState({})
+    const [proveedores, setProveedores] = useState([])
+    const [filtroProveedor, setFiltroProveedor] = useState('')
 
-    useEffect(() => { cargarDatos() }, [filtro])
+    useEffect(() => { cargarDatos() }, [filtro, filtroProveedor])
+
+    useEffect(() => {
+        supabase.from('proveedores').select('id, nombre')
+            .eq('empresa_id', perfil.empresa_id).eq('activo', true).order('nombre')
+            .then(({ data }) => setProveedores(data || []))
+    }, [])
 
     async function cargarDatos() {
         setLoading(true)
@@ -59,6 +67,7 @@ export default function CuentasPagar() {
             .order('fecha_vencimiento_pago', { ascending: true })
 
         if (filtro !== 'todos') query = query.eq('estado_cobro', filtro)
+        if (filtroProveedor) query = query.eq('proveedor_id', filtroProveedor)
 
         const { data } = await query
         if (!data) { setLoading(false); return }
@@ -124,13 +133,18 @@ export default function CuentasPagar() {
             </div>
 
             {/* Filtros */}
-            <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
                 {[['pendiente', 'Pendientes'], ['parcial', 'Parciales'], ['pagado', 'Pagadas'], ['todos', 'Todas']].map(([val, label]) => (
                     <button key={val} onClick={() => setFiltro(val)}
                         style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', cursor: 'pointer', backgroundColor: filtro === val ? '#16a34a' : '#fff', color: filtro === val ? '#fff' : '#374151', fontWeight: filtro === val ? 500 : 400 }}>
                         {label}
                     </button>
                 ))}
+                <select value={filtroProveedor} onChange={e => setFiltroProveedor(e.target.value)}
+                    style={{ padding: '6px 12px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', color: '#374151', backgroundColor: '#fff', cursor: 'pointer' }}>
+                    <option value="">Todos los proveedores</option>
+                    {proveedores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+                </select>
             </div>
 
             {/* Tabla */}

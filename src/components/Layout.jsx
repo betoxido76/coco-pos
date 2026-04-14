@@ -1,19 +1,25 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
-import { LayoutDashboard, Package, ShoppingCart, Settings, Users, TrendingDown, CreditCard, LogOut, Menu, X, Truck, FolderTree } from 'lucide-react'
+import {
+    LayoutDashboard, Package, ShoppingCart, Settings, Users,
+    TrendingDown, CreditCard, LogOut, Menu, X, Truck, FolderTree,
+    ClipboardList, PlusCircle
+} from 'lucide-react'
 import { useState } from 'react'
 import { FlaskConical } from 'lucide-react'
 import { AlertTriangle } from 'lucide-react'
-
+import { ArrowLeftRight } from 'lucide-react'
 
 const nav = [
     { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
     { to: '/inventario', icon: Package, label: 'Inventario' },
     { to: '/ventas', icon: ShoppingCart, label: 'Ventas' },
+    { to: '/pedidos', icon: ClipboardList, label: 'Pedidos' },
     { to: '/compras', icon: Truck, label: 'Compras' },
     { to: '/cuentas-cobrar', icon: CreditCard, label: 'Cuentas x Cobrar' },
     { to: '/cuentas-pagar', icon: TrendingDown, label: 'Cuentas x Pagar' },
     { to: '/produccion', icon: FlaskConical, label: 'Producción' },
+    { to: '/cambios-mano-mano', icon: ArrowLeftRight, label: 'Cambios Mano a Mano' },
     { to: '/mermas', icon: AlertTriangle, label: 'Mermas' },
     { to: '/administracion', icon: FolderTree, label: 'Administración' },
 ]
@@ -64,7 +70,7 @@ export default function Layout() {
                 </div>
 
                 {/* Nav links */}
-                <nav style={{ flex: 1, padding: '12px 8px' }}>
+                <nav style={{ flex: 1, padding: '12px 8px', overflowY: 'auto' }}>
                     {nav.map(({ to, icon: Icon, label }) => (
                         <NavLink
                             key={to}

@@ -23,17 +23,27 @@ export default function CuentasCobrar() {
     const [filtro, setFiltro] = useState('pendiente')
     const [modalVenta, setModalVenta] = useState(null)
     const [tasas, setTasas] = useState({ tasa_bcv: 1, tasa_euro: 1, tasa_binance: 1 })
+    const [clientes, setClientes] = useState([])
+    const [filtroCliente, setFiltroCliente] = useState('')
 
-    useEffect(() => { cargar() }, [filtro])
+    useEffect(() => { cargar() }, [filtro, filtroCliente])
+
+    useEffect(() => {
+        supabase.from('clientes').select('id, nombre')
+            .eq('empresa_id', perfil.empresa_id).eq('activo', true).order('nombre')
+            .then(({ data }) => setClientes(data || []))
+    }, [])
 
     async function cargar() {
         setLoading(true)
-        const { data } = await supabase
+        let q = supabase
             .from('ventas')
             .select('*, clientes(nombre, condicion_pago, dias_credito)')
             .eq('empresa_id', perfil.empresa_id)
             .in('estado_cobro', filtro === 'todos' ? ['pendiente', 'parcial', 'pagado'] : [filtro])
             .order('fecha_vencimiento_pago', { ascending: true })
+        if (filtroCliente) q = q.eq('cliente_id', filtroCliente)
+        const { data } = await q
         if (data) setVentas(data)
 
         const { data: cfg } = await supabase.from('configuracion').select('clave, valor')
@@ -71,7 +81,7 @@ export default function CuentasCobrar() {
             </div>
 
             {/* Filtros */}
-            <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
                 {[['pendiente', 'Pendientes'], ['parcial', 'Parciales'], ['pagado', 'Pagadas'], ['todos', 'Todas']].map(([val, lbl]) => (
                     <button key={val} onClick={() => setFiltro(val)}
                         style={{
@@ -83,6 +93,11 @@ export default function CuentasCobrar() {
                         {lbl}
                     </button>
                 ))}
+                <select value={filtroCliente} onChange={e => setFiltroCliente(e.target.value)}
+                    style={{ padding: '7px 12px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', color: '#374151', backgroundColor: '#fff', cursor: 'pointer' }}>
+                    <option value="">Todos los clientes</option>
+                    {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                </select>
             </div>
 
             {/* Tabla */}

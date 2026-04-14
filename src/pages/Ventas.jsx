@@ -1,19 +1,24 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
-import { Plus, Search, Trash2, CheckCircle, FileText, RotateCcw, AlertTriangle } from 'lucide-react'
+import { Plus, Search, Trash2, CheckCircle, FileText, RotateCcw, AlertTriangle, ClipboardList, ChevronRight } from 'lucide-react'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 
 // ─── Componente principal ──────────────────────────────────────
 export default function Ventas() {
     const { perfil } = useAuth()
+    const [tabActiva, setTabActiva] = useState('ventas')
     const [vista, setVista] = useState('lista')
     const [ventas, setVentas] = useState([])
     const [ventaActual, setVentaActual] = useState(null)
     const [loading, setLoading] = useState(true)
+    const [pedidosAprobados, setPedidosAprobados] = useState([])
+    const [loadingPedidos, setLoadingPedidos] = useState(false)
+    const [pedidoActual, setPedidoActual] = useState(null)
 
     useEffect(() => { cargarVentas() }, [])
+    useEffect(() => { if (tabActiva === 'pedidos') cargarPedidosAprobados() }, [tabActiva])
 
     async function cargarVentas() {
         setLoading(true)
@@ -25,6 +30,18 @@ export default function Ventas() {
             .limit(50)
         if (data) setVentas(data)
         setLoading(false)
+    }
+
+    async function cargarPedidosAprobados() {
+        setLoadingPedidos(true)
+        const { data } = await supabase
+            .from('pedidos')
+            .select('*, clientes(nombre, rif), usuarios(nombre)')
+            .eq('empresa_id', perfil.empresa_id)
+            .eq('estado', 'aprobado')
+            .order('created_at', { ascending: false })
+        if (data) setPedidosAprobados(data)
+        setLoadingPedidos(false)
     }
 
     function abrirFactura(venta) {
@@ -45,66 +62,325 @@ export default function Ventas() {
             onDevolucionCreada={() => { cargarVentas(); setVista('lista') }}
         />
 
+    if (vista === 'facturar_pedido' && pedidoActual)
+        return <FacturarPedido
+            pedido={pedidoActual}
+            onFacturado={() => { cargarVentas(); cargarPedidosAprobados(); setVista('lista'); setTabActiva('ventas') }}
+            onCancelar={() => setVista('lista')}
+        />
+
     return (
         <div style={{ padding: '24px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
                 <div>
                     <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Ventas</h1>
-                    <p style={{ fontSize: '13px', color: '#6b7280', margin: '4px 0 0' }}>Historial de facturas</p>
+                    <p style={{ fontSize: '13px', color: '#6b7280', margin: '4px 0 0' }}>Historial de facturas y pedidos por facturar</p>
                 </div>
-                <button
-                    onClick={() => setVista('nueva')}
-                    style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px 16px', fontSize: '14px', fontWeight: 500, cursor: 'pointer' }}
-                >
-                    <Plus size={16} /> Nueva venta
+                {tabActiva === 'ventas' && (
+                    <button onClick={() => setVista('nueva')}
+                        style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px 16px', fontSize: '14px', fontWeight: 500, cursor: 'pointer' }}>
+                        <Plus size={16} /> Nueva venta
+                    </button>
+                )}
+            </div>
+
+            {/* Tabs */}
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
+                <button onClick={() => setTabActiva('ventas')}
+                    style={{
+                        display: 'flex', alignItems: 'center', gap: '6px',
+                        padding: '8px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 500,
+                        border: '1px solid', cursor: 'pointer',
+                        borderColor: tabActiva === 'ventas' ? '#16a34a' : '#e5e7eb',
+                        backgroundColor: tabActiva === 'ventas' ? '#f0fdf4' : '#fff',
+                        color: tabActiva === 'ventas' ? '#16a34a' : '#6b7280',
+                    }}>
+                    <FileText size={14} /> Facturas
+                </button>
+                <button onClick={() => setTabActiva('pedidos')}
+                    style={{
+                        display: 'flex', alignItems: 'center', gap: '6px',
+                        padding: '8px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 500,
+                        border: '1px solid', cursor: 'pointer',
+                        borderColor: tabActiva === 'pedidos' ? '#16a34a' : '#e5e7eb',
+                        backgroundColor: tabActiva === 'pedidos' ? '#f0fdf4' : '#fff',
+                        color: tabActiva === 'pedidos' ? '#16a34a' : '#6b7280',
+                    }}>
+                    <ClipboardList size={14} /> Pedidos por facturar
+                    {pedidosAprobados.length > 0 && (
+                        <span style={{ backgroundColor: '#16a34a', color: '#fff', borderRadius: '20px', padding: '1px 7px', fontSize: '11px', fontWeight: 700 }}>
+                            {pedidosAprobados.length}
+                        </span>
+                    )}
                 </button>
             </div>
 
-            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+            {/* Tab Ventas */}
+            {tabActiva === 'ventas' && (
+                <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                    {loading ? (
+                        <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
+                    ) : ventas.length === 0 ? (
+                        <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>No hay ventas registradas.</div>
+                    ) : (
+                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                            <thead>
+                                <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                                    {['Factura', 'Cliente', 'Fecha', 'Total', 'Estado', ''].map((h, i) => (
+                                        <th key={i} style={{ padding: '10px 16px', textAlign: i === 3 ? 'right' : 'left', fontSize: '12px', fontWeight: 500, color: '#6b7280' }}>{h}</th>
+                                    ))}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {ventas.map(v => (
+                                    <tr key={v.id} style={{ borderBottom: '1px solid #f3f4f6' }}
+                                        onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
+                                        onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                                        <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                {v.numero_factura}
+                                                {v.devoluciones?.length > 0 && (
+                                                    <span style={{ fontSize: '10px', backgroundColor: '#fef3c7', color: '#92400e', padding: '1px 6px', borderRadius: '20px', fontFamily: 'sans-serif' }}>
+                                                        Con devolución
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </td>
+                                        <td style={{ padding: '12px 16px', fontSize: '13px', color: '#374151' }}>{v.clientes?.nombre || '—'}</td>
+                                        <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{new Date(v.fecha_venta || v.created_at).toLocaleDateString('es-VE')}</td>
+                                        <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(v.total)}</td>
+                                        <td style={{ padding: '12px 16px' }}><BadgeCobro estado={v.estado_cobro} /></td>
+                                        <td style={{ padding: '12px 16px' }}>
+                                            <button onClick={() => abrirFactura(v)}
+                                                style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
+                                                <FileText size={13} /> Ver
+                                            </button>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    )}
+                </div>
+            )}
+
+            {/* Tab Pedidos por facturar */}
+            {tabActiva === 'pedidos' && (
+                <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                    {loadingPedidos ? (
+                        <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
+                    ) : pedidosAprobados.length === 0 ? (
+                        <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>No hay pedidos aprobados pendientes de facturar</div>
+                    ) : (
+                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                            <thead>
+                                <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                                    {['Pedido', 'Cliente', 'Vendedor', 'Entrega', ''].map((h, i) => (
+                                        <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left' }}>{h}</th>
+                                    ))}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {pedidosAprobados.map(p => (
+                                    <tr key={p.id} style={{ borderBottom: '1px solid #f3f4f6' }}
+                                        onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
+                                        onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                                        <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', fontWeight: 600, color: '#374151' }}>{p.numero_pedido || '—'}</td>
+                                        <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>
+                                            {p.clientes?.nombre || '—'}
+                                            {p.clientes?.rif && <div style={{ fontSize: '11px', color: '#9ca3af', fontFamily: 'monospace' }}>{p.clientes.rif}</div>}
+                                        </td>
+                                        <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{p.usuarios?.nombre || '—'}</td>
+                                        <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>
+                                            {p.fecha_entrega ? new Date(p.fecha_entrega + 'T00:00:00').toLocaleDateString('es-VE') : '—'}
+                                        </td>
+                                        <td style={{ padding: '12px 16px' }}>
+                                            <button onClick={() => { setPedidoActual(p); setVista('facturar_pedido') }}
+                                                style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#1d4ed8', color: '#fff', border: 'none', borderRadius: '6px', padding: '6px 12px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>
+                                                <ChevronRight size={13} /> Facturar
+                                            </button>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    )}
+                </div>
+            )}
+        </div>
+    )
+}
+
+// ─── Facturar desde pedido ─────────────────────────────────────
+function FacturarPedido({ pedido, onFacturado, onCancelar }) {
+    const { perfil } = useAuth()
+    const [items, setItems] = useState([])
+    const [loading, setLoading] = useState(true)
+    const [procesando, setProcesando] = useState(false)
+    const [error, setError] = useState('')
+
+    useEffect(() => {
+        supabase.from('pedido_items')
+            .select('*, productos_terminados(nombre, sku, stock_actual)')
+            .eq('pedido_id', pedido.id)
+            .then(({ data }) => { if (data) setItems(data); setLoading(false) })
+    }, [pedido.id])
+
+    const descGlobal = Number(pedido.descuento_global || 0)
+    const subtotalConDescItems = items.reduce((s, i) => s + Number(i.cantidad) * Number(i.precio_unitario) * (1 - Number(i.descuento_item || 0) / 100), 0)
+    const subtotalFinal = subtotalConDescItems * (1 - descGlobal / 100)
+    const iva = subtotalFinal * 0.16
+    const total = subtotalFinal + iva
+
+    async function facturar() {
+        setProcesando(true); setError('')
+        const numero = `FAC-${Date.now().toString().slice(-6)}`
+        const { data: { user } } = await supabase.auth.getUser()
+
+        const { data: venta, error: errVenta } = await supabase
+            .from('ventas')
+            .insert({
+                cliente_id: pedido.cliente_id,
+                usuario_id: user.id,
+                numero_factura: numero,
+                subtotal: subtotalFinal,
+                total,
+                estado_cobro: 'pendiente',
+                empresa_id: perfil.empresa_id,
+            })
+            .select().single()
+
+        if (errVenta) { setError('Error: ' + errVenta.message); setProcesando(false); return }
+
+        await supabase.from('venta_items').insert(
+            items.map(i => ({
+                venta_id: venta.id,
+                producto_id: i.producto_id,
+                cantidad: i.cantidad,
+                precio_unitario: Number(i.precio_unitario) * (1 - Number(i.descuento_item || 0) / 100) * (1 - descGlobal / 100),
+                empresa_id: perfil.empresa_id,
+            }))
+        )
+
+        // Descontar stock
+        for (const item of items) {
+            const prod = item.productos_terminados
+            if (prod) {
+                await supabase.from('productos_terminados')
+                    .update({ stock_actual: prod.stock_actual - Number(item.cantidad) })
+                    .eq('id', item.producto_id)
+            }
+        }
+
+        await supabase.from('pedidos')
+            .update({ estado: 'facturado', venta_id: venta.id })
+            .eq('id', pedido.id)
+
+        setProcesando(false)
+        onFacturado()
+    }
+
+    return (
+        <div style={{ padding: '24px', maxWidth: '680px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
+                <button onClick={onCancelar} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', fontSize: '13px' }}>← Volver</button>
+                <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Facturar pedido {pedido.numero_pedido}</h1>
+            </div>
+
+            {/* Info */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '20px' }}>
+                {[
+                    { label: 'Cliente', valor: pedido.clientes?.nombre || '—' },
+                    { label: 'Vendedor', valor: pedido.usuarios?.nombre || '—' },
+                    { label: 'Fecha pedido', valor: new Date(pedido.fecha_pedido).toLocaleDateString('es-VE') },
+                    { label: 'Entrega prometida', valor: pedido.fecha_entrega ? new Date(pedido.fecha_entrega + 'T00:00:00').toLocaleDateString('es-VE') : '—' },
+                ].map(f => (
+                    <div key={f.label} style={{ backgroundColor: '#f9fafb', borderRadius: '10px', border: '1px solid #e5e7eb', padding: '12px 16px' }}>
+                        <p style={{ fontSize: '11px', color: '#9ca3af', margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{f.label}</p>
+                        <p style={{ fontSize: '14px', fontWeight: 500, color: '#1f2937', margin: 0 }}>{f.valor}</p>
+                    </div>
+                ))}
+            </div>
+
+            {pedido.notas && (
+                <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: '10px', padding: '12px 16px', marginBottom: '20px' }}>
+                    <p style={{ fontSize: '11px', color: '#d97706', margin: '0 0 4px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Notas del vendedor</p>
+                    <p style={{ fontSize: '13px', color: '#78350f', margin: 0 }}>{pedido.notas}</p>
+                </div>
+            )}
+
+            {/* Items */}
+            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden', marginBottom: '20px' }}>
                 {loading ? (
-                    <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
-                ) : ventas.length === 0 ? (
-                    <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>No hay ventas registradas.</div>
+                    <div style={{ padding: '24px', textAlign: 'center', color: '#9ca3af' }}>Cargando items...</div>
                 ) : (
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
                             <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                {['Factura', 'Cliente', 'Fecha', 'Total', 'Estado', ''].map((h, i) => (
-                                    <th key={i} style={{ padding: '10px 16px', textAlign: i === 3 ? 'right' : 'left', fontSize: '12px', fontWeight: 500, color: '#6b7280' }}>{h}</th>
+                                {['Producto', 'Cant.', 'Precio', 'Desc.', 'Subtotal'].map((h, i) => (
+                                    <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: i > 0 ? 'right' : 'left' }}>{h}</th>
                                 ))}
                             </tr>
                         </thead>
                         <tbody>
-                            {ventas.map(v => (
-                                <tr key={v.id} style={{ borderBottom: '1px solid #f3f4f6' }}
-                                    onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
-                                    onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}
-                                >
-                                    <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                            {v.numero_factura}
-                                            {v.devoluciones?.length > 0 && (
-                                                <span style={{ fontSize: '10px', backgroundColor: '#fef3c7', color: '#92400e', padding: '1px 6px', borderRadius: '20px', fontFamily: 'sans-serif' }}>
-                                                    Con devolución
-                                                </span>
+                            {items.map((item, idx) => {
+                                const subtotal = Number(item.cantidad) * Number(item.precio_unitario) * (1 - Number(item.descuento_item || 0) / 100)
+                                return (
+                                    <tr key={idx} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                                        <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>
+                                            {item.nombre_producto || item.productos_terminados?.nombre || '—'}
+                                            {item.productos_terminados?.sku && (
+                                                <span style={{ fontSize: '11px', color: '#9ca3af', marginLeft: '6px', fontFamily: 'monospace' }}>{item.productos_terminados.sku}</span>
                                             )}
-                                        </div>
-                                    </td>
-                                    <td style={{ padding: '12px 16px', fontSize: '13px', color: '#374151' }}>{v.clientes?.nombre || '—'}</td>
-                                    <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{new Date(v.fecha_venta).toLocaleDateString('es-VE')}</td>
-                                    <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(v.total)}</td>
-                                    <td style={{ padding: '12px 16px' }}><BadgeCobro estado={v.estado_cobro} /></td>
-                                    <td style={{ padding: '12px 16px' }}>
-                                        <button onClick={() => abrirFactura(v)}
-                                            style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
-                                            <FileText size={13} /> Ver
-                                        </button>
-                                    </td>
-                                </tr>
-                            ))}
+                                        </td>
+                                        <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{Number(item.cantidad).toLocaleString('es-VE')}</td>
+                                        <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{fmt(item.precio_unitario)}</td>
+                                        <td style={{ padding: '12px 16px', fontSize: '13px', textAlign: 'right' }}>
+                                            {Number(item.descuento_item || 0) > 0
+                                                ? <span style={{ color: '#16a34a', fontWeight: 500 }}>-{item.descuento_item}%</span>
+                                                : <span style={{ color: '#9ca3af' }}>—</span>}
+                                        </td>
+                                        <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(subtotal)}</td>
+                                    </tr>
+                                )
+                            })}
                         </tbody>
                     </table>
                 )}
+            </div>
+
+            {/* Totales */}
+            <div style={{ backgroundColor: '#f9fafb', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px 20px', marginBottom: '20px' }}>
+                {descGlobal > 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#16a34a', marginBottom: '6px' }}>
+                        <span>Descuento global ({descGlobal}%)</span>
+                        <span>-{fmt(subtotalConDescItems - subtotalFinal)}</span>
+                    </div>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#6b7280', marginBottom: '6px' }}>
+                    <span>IVA (16%)</span><span>{fmt(iva)}</span>
+                </div>
+                <div style={{ height: '1px', backgroundColor: '#e5e7eb', margin: '10px 0' }} />
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '18px', fontWeight: 700, color: '#1f2937' }}>
+                    <span>Total</span><span style={{ color: '#16a34a' }}>{fmt(total)}</span>
+                </div>
+            </div>
+
+            {error && (
+                <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 14px', fontSize: '13px', color: '#dc2626', marginBottom: '16px' }}>
+                    {error}
+                </div>
+            )}
+
+            <div style={{ display: 'flex', gap: '10px' }}>
+                <button onClick={facturar} disabled={procesando || loading}
+                    style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '12px 24px', fontSize: '14px', fontWeight: 600, cursor: 'pointer', opacity: procesando ? 0.6 : 1 }}>
+                    <CheckCircle size={16} /> {procesando ? 'Creando factura...' : 'Confirmar y crear factura'}
+                </button>
+                <button onClick={onCancelar}
+                    style={{ padding: '12px 20px', borderRadius: '8px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: '#374151', fontSize: '14px', cursor: 'pointer' }}>
+                    Cancelar
+                </button>
             </div>
         </div>
     )

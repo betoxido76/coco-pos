@@ -6,6 +6,7 @@ import { useAuth } from '../contexts/AuthContext'
 const VACIO = {
     nombre: '', rif: '', telefono: '', email: '',
     condicion_pago: 'contado', dias_credito: 0, activo: true,
+    contribuyente_especial: false, tipo_cliente_id: '',
 }
 
 const inputStyle = {
@@ -25,8 +26,14 @@ export default function Clientes() {
     const [guardando, setGuardando] = useState(false)
     const [error, setError] = useState('')
     const [exito, setExito] = useState('')
+    const [tiposCliente, setTiposCliente] = useState([])
 
-    useEffect(() => { cargar() }, [])
+    useEffect(() => {
+        cargar()
+        supabase.from('perfilamiento_clientes').select('id, nombre')
+            .eq('empresa_id', perfil.empresa_id).eq('activo', true).order('nombre')
+            .then(({ data }) => setTiposCliente(data || []))
+    }, [])
 
     async function cargar() {
         setLoading(true)
@@ -51,6 +58,8 @@ export default function Clientes() {
             condicion_pago: c.condicion_pago || 'contado',
             dias_credito: c.dias_credito ?? 0,
             activo: c.activo ?? true,
+            contribuyente_especial: c.contribuyente_especial ?? false,
+            tipo_cliente_id: c.tipo_cliente_id || '',
         })
         setError(''); setVista('form')
     }
@@ -68,6 +77,8 @@ export default function Clientes() {
             condicion_pago: form.condicion_pago,
             dias_credito: form.condicion_pago === 'credito' ? Number(form.dias_credito) : 0,
             activo: form.activo,
+            contribuyente_especial: form.contribuyente_especial,
+            tipo_cliente_id: form.tipo_cliente_id || null,
         }
         const { error: err } = editando
             ? await supabase.from('clientes').update(payload).eq('id', editando)
@@ -125,6 +136,20 @@ export default function Clientes() {
                         style={{ width: '16px', height: '16px', accentColor: '#16a34a' }} />
                     <label htmlFor="activo" style={{ fontSize: '14px', color: '#374151', cursor: 'pointer' }}>Cliente activo</label>
                 </div>
+
+                <div style={{ gridColumn: 'span 2', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <input type="checkbox" id="contribuyente_especial" checked={form.contribuyente_especial}
+                        onChange={e => campo('contribuyente_especial', e.target.checked)}
+                        style={{ width: '16px', height: '16px', accentColor: '#16a34a' }} />
+                    <label htmlFor="contribuyente_especial" style={{ fontSize: '14px', color: '#374151', cursor: 'pointer' }}>Contribuyente Especial</label>
+                </div>
+
+                <Campo label="Tipo de cliente" span={2}>
+                    <select value={form.tipo_cliente_id} onChange={e => campo('tipo_cliente_id', e.target.value)} style={inputStyle}>
+                        <option value="">— Sin clasificar —</option>
+                        {tiposCliente.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
+                    </select>
+                </Campo>
             </div>
 
             <div style={{ marginTop: '24px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
