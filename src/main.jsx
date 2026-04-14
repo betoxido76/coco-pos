@@ -12,6 +12,7 @@ import Administracion from './pages/Administracion'
 import CuentasCobrar from './pages/CuentasCobrar'
 import CuentasPagar from './pages/CuentasPagar'
 import Produccion from './pages/Produccion'
+import Mermas from './pages/Mermas'
 import './index.css'
 
 function RutaProtegida({ children }) {
@@ -41,6 +42,7 @@ function App() {
         <Route path="cuentas-cobrar" element={<CuentasCobrar />} />
         <Route path="cuentas-pagar" element={<CuentasPagar />} />
         <Route path="produccion" element={<Produccion />} />
+        <Route path="mermas" element={<Mermas />} />
       </Route>
     </Routes>
   )

@@ -3,6 +3,8 @@ import { useAuth } from '../contexts/AuthContext'
 import { LayoutDashboard, Package, ShoppingCart, Settings, Users, TrendingDown, CreditCard, LogOut, Menu, X, Truck, FolderTree } from 'lucide-react'
 import { useState } from 'react'
 import { FlaskConical } from 'lucide-react'
+import { AlertTriangle } from 'lucide-react'
+
 
 const nav = [
     { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
@@ -12,6 +14,7 @@ const nav = [
     { to: '/cuentas-cobrar', icon: CreditCard, label: 'Cuentas x Cobrar' },
     { to: '/cuentas-pagar', icon: TrendingDown, label: 'Cuentas x Pagar' },
     { to: '/produccion', icon: FlaskConical, label: 'Producción' },
+    { to: '/mermas', icon: AlertTriangle, label: 'Mermas' },
     { to: '/administracion', icon: FolderTree, label: 'Administración' },
 ]
 
