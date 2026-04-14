@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import { useAuth } from '../contexts/AuthContext'
 import { Plus, Search, Trash2, CheckCircle, FileText, RotateCcw, AlertTriangle } from 'lucide-react'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 
 // ─── Componente principal ──────────────────────────────────────
 export default function Ventas() {
+    const { perfil } = useAuth()
     const [vista, setVista] = useState('lista')
     const [ventas, setVentas] = useState([])
     const [ventaActual, setVentaActual] = useState(null)
@@ -18,6 +20,7 @@ export default function Ventas() {
         const { data } = await supabase
             .from('ventas')
             .select(`*, clientes(nombre), devoluciones(id)`)
+            .eq('empresa_id', perfil.empresa_id)
             .order('created_at', { ascending: false })
             .limit(50)
         if (data) setVentas(data)
@@ -125,6 +128,7 @@ function BadgeCobro({ estado }) {
 
 // ─── Nueva Venta ───────────────────────────────────────────────
 function NuevaVenta({ onVentaCreada, onCancelar }) {
+    const { perfil } = useAuth()
     const [clientes, setClientes] = useState([])
     const [productos, setProductos] = useState([])
     const [clienteId, setClienteId] = useState('')
@@ -134,9 +138,9 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
     const [error, setError] = useState('')
 
     useEffect(() => {
-        supabase.from('clientes').select('id, nombre').eq('activo', true).order('nombre')
+        supabase.from('clientes').select('id, nombre').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
             .then(({ data }) => setClientes(data || []))
-        supabase.from('productos_terminados').select('id, nombre, sku, precio_venta, stock_actual, unidad_medida').eq('activo', true).order('nombre')
+        supabase.from('productos_terminados').select('id, nombre, sku, precio_venta, stock_actual, unidad_medida').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
             .then(({ data }) => setProductos(data || []))
     }, [])
 
@@ -179,14 +183,14 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
 
         const { data: venta, error: errVenta } = await supabase
             .from('ventas')
-            .insert({ cliente_id: clienteId, usuario_id: user.id, numero_factura: numero, subtotal, total, estado_cobro: 'pendiente' })
+            .insert({ cliente_id: clienteId, usuario_id: user.id, numero_factura: numero, subtotal, total, estado_cobro: 'pendiente', empresa_id: perfil.empresa_id })
             .select()
             .single()
 
         if (errVenta) { setError('Error al crear la venta: ' + errVenta.message); setGuardando(false); return }
 
         await supabase.from('venta_items').insert(
-            items.map(i => ({ venta_id: venta.id, producto_id: i.producto_id, cantidad: i.cantidad, precio_unitario: i.precio_unitario }))
+            items.map(i => ({ venta_id: venta.id, producto_id: i.producto_id, cantidad: i.cantidad, precio_unitario: i.precio_unitario, empresa_id: perfil.empresa_id }))
         )
 
         for (const item of items) {
@@ -477,6 +481,7 @@ function Factura({ venta, onVolver, onDevolucionCreada }) {
 
 // ─── Formulario de Devolución ──────────────────────────────────
 function FormDevolucion({ venta, items, onCancelar, onConfirmada }) {
+    const { perfil } = useAuth()
     const [seleccion, setSeleccion] = useState(
         items.map(i => ({ ...i, devolver: false, cantidad_devuelta: 1 }))
     )
@@ -511,7 +516,7 @@ function FormDevolucion({ venta, items, onCancelar, onConfirmada }) {
 
         const { data: dev, error: errDev } = await supabase
             .from('devoluciones')
-            .insert({ venta_id: venta.id, usuario_id: user.id, motivo, tipo_devolucion: tipoDevolucion, monto_devuelto: montoDevuelto, es_total: esTotal })
+            .insert({ venta_id: venta.id, usuario_id: user.id, motivo, tipo_devolucion: tipoDevolucion, monto_devuelto: montoDevuelto, es_total: esTotal, empresa_id: perfil.empresa_id })
             .select()
             .single()
 
@@ -522,7 +527,8 @@ function FormDevolucion({ venta, items, onCancelar, onConfirmada }) {
                 devolucion_id: dev.id,
                 producto_id: i.producto_id || i.productos_terminados?.id || i.id,
                 cantidad_devuelta: i.cantidad_devuelta,
-                precio_unitario: i.precio_unitario
+                precio_unitario: i.precio_unitario,
+                empresa_id: perfil.empresa_id,
             }))
         )
 

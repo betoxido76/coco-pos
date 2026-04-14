@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { Plus, Pencil, Check, Search } from 'lucide-react'
+import { useAuth } from '../contexts/AuthContext'
 
 const VACIO = {
     nombre: '', rif: '', telefono: '', email: '',
@@ -14,6 +15,7 @@ const inputStyle = {
 }
 
 export default function Clientes() {
+    const { perfil } = useAuth()
     const [clientes, setClientes] = useState([])
     const [loading, setLoading] = useState(true)
     const [busqueda, setBusqueda] = useState('')
@@ -28,7 +30,8 @@ export default function Clientes() {
 
     async function cargar() {
         setLoading(true)
-        const { data } = await supabase.from('clientes').select('*').order('nombre')
+        const { data } = await supabase.from('clientes').select('*')
+            .eq('empresa_id', perfil.empresa_id).order('nombre')
         if (data) setClientes(data)
         setLoading(false)
     }
@@ -40,6 +43,7 @@ export default function Clientes() {
     function abrirEditar(c) {
         setEditando(c.id)
         setForm({
+            codigo: c.codigo || '',
             nombre: c.nombre || '',
             rif: c.rif || '',
             telefono: c.telefono || '',
@@ -67,7 +71,7 @@ export default function Clientes() {
         }
         const { error: err } = editando
             ? await supabase.from('clientes').update(payload).eq('id', editando)
-            : await supabase.from('clientes').insert(payload)
+            : await supabase.from('clientes').insert({ ...payload, empresa_id: perfil.empresa_id })
         setGuardando(false)
         if (err) { setError('Error: ' + err.message); return }
         setExito(editando ? 'Cliente actualizado' : 'Cliente creado')
@@ -93,6 +97,12 @@ export default function Clientes() {
                 <Campo label="RIF / Cédula"><input value={form.rif} onChange={e => campo('rif', e.target.value)} placeholder="J-12345678-9" style={inputStyle} /></Campo>
                 <Campo label="Teléfono"><input value={form.telefono} onChange={e => campo('telefono', e.target.value)} placeholder="0414-000-0000" style={inputStyle} /></Campo>
                 <Campo label="Email" span={2}><input type="email" value={form.email} onChange={e => campo('email', e.target.value)} placeholder="correo@empresa.com" style={inputStyle} /></Campo>
+                {editando && (
+                    <Campo label="Código de cliente" span={2}>
+                        <input value={form.codigo || '—'} disabled
+                            style={{ ...inputStyle, backgroundColor: '#f9fafb', color: '#6b7280' }} />
+                    </Campo>
+                )}
 
                 {/* Condición de pago */}
                 <Campo label="Condición de pago">
@@ -158,7 +168,7 @@ export default function Clientes() {
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
                             <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                {['Nombre', 'RIF', 'Teléfono', 'Condición', 'Días crédito', 'Estado', ''].map(h => (
+                                {['Código', 'Nombre', 'RIF', 'Teléfono', 'Condición', 'Días crédito', 'Estado', ''].map(h => (
                                     <th key={h} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left' }}>{h}</th>
                                 ))}
                             </tr>
@@ -168,6 +178,7 @@ export default function Clientes() {
                                 <tr key={c.id} style={{ borderBottom: '1px solid #f3f4f6' }}
                                     onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
                                     onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                                    <td style={{ padding: '12px 16px', fontSize: '12px', fontFamily: 'monospace', color: '#6b7280' }}>{c.codigo || '—'}</td>
                                     <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>{c.nombre}</td>
                                     <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280', fontFamily: 'monospace' }}>{c.rif || '—'}</td>
                                     <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{c.telefono || '—'}</td>

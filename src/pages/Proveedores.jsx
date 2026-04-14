@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { Plus, Pencil, Check, Search } from 'lucide-react'
+import { useAuth } from '../contexts/AuthContext'
 
 const VACIO = {
-    nombre: '', rif: '', telefono: '', contacto: '', activo: true,
+    nombre: '', rif: '', telefono: '', contacto: '', tipo: '', codigo: '', activo: true,
 }
 
 const inputStyle = {
@@ -13,6 +14,7 @@ const inputStyle = {
 }
 
 export default function Proveedores() {
+    const { perfil } = useAuth()
     const [proveedores, setProveedores] = useState([])
     const [loading, setLoading] = useState(true)
     const [busqueda, setBusqueda] = useState('')
@@ -27,7 +29,8 @@ export default function Proveedores() {
 
     async function cargar() {
         setLoading(true)
-        const { data } = await supabase.from('proveedores').select('*').order('nombre')
+        const { data } = await supabase.from('proveedores').select('*')
+            .eq('empresa_id', perfil.empresa_id).order('nombre')
         if (data) setProveedores(data)
         setLoading(false)
     }
@@ -43,6 +46,8 @@ export default function Proveedores() {
             rif: p.rif || '',
             telefono: p.telefono || '',
             contacto: p.contacto || '',
+            tipo: p.tipo || '',
+            codigo: p.codigo || '',
             activo: p.activo ?? true,
         })
         setError(''); setVista('form')
@@ -58,11 +63,12 @@ export default function Proveedores() {
             rif: form.rif.trim() || null,
             telefono: form.telefono.trim() || null,
             contacto: form.contacto.trim() || null,
+            tipo: form.tipo || null,
             activo: form.activo,
         }
         const { error: err } = editando
             ? await supabase.from('proveedores').update(payload).eq('id', editando)
-            : await supabase.from('proveedores').insert(payload)
+            : await supabase.from('proveedores').insert({ ...payload, empresa_id: perfil.empresa_id })
         setGuardando(false)
         if (err) { setError('Error: ' + err.message); return }
         setExito(editando ? 'Proveedor actualizado' : 'Proveedor creado')
@@ -88,6 +94,21 @@ export default function Proveedores() {
                 <Campo label="RIF / Cédula"><input value={form.rif} onChange={e => campo('rif', e.target.value)} placeholder="J-12345678-9" style={inputStyle} /></Campo>
                 <Campo label="Teléfono"><input value={form.telefono} onChange={e => campo('telefono', e.target.value)} placeholder="0212-000-0000" style={inputStyle} /></Campo>
                 <Campo label="Persona de contacto" span={2}><input value={form.contacto} onChange={e => campo('contacto', e.target.value)} placeholder="Nombre del contacto" style={inputStyle} /></Campo>
+                <Campo label="Tipo de proveedor" span={2}>
+                    <select value={form.tipo} onChange={e => campo('tipo', e.target.value)} style={inputStyle}>
+                        <option value="">— Sin clasificar —</option>
+                        <option value="producto_terminado">Producto terminado</option>
+                        <option value="materia_prima">Materia prima</option>
+                        <option value="material_empaque">Material de empaque</option>
+                        <option value="consumibles">Consumibles</option>
+                        <option value="servicios">Servicios</option>
+                    </select>
+                </Campo>
+
+                <Campo label="Código" span={2}>
+                    <input value={form.codigo || 'Se genera automáticamente'} disabled
+                        style={{ ...inputStyle, backgroundColor: '#f9fafb', color: '#6b7280' }} />
+                </Campo>
 
                 <div style={{ gridColumn: 'span 2', display: 'flex', alignItems: 'center', gap: '10px' }}>
                     <input type="checkbox" id="activo" checked={form.activo} onChange={e => campo('activo', e.target.checked)}
@@ -137,7 +158,7 @@ export default function Proveedores() {
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
                             <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                {['Nombre', 'RIF', 'Teléfono', 'Contacto', 'Estado', ''].map(h => (
+                                {['Código', 'Nombre', 'RIF', 'Tipo', 'Teléfono', 'Contacto', 'Estado', ''].map(h => (
                                     <th key={h} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left' }}>{h}</th>
                                 ))}
                             </tr>
@@ -147,8 +168,12 @@ export default function Proveedores() {
                                 <tr key={p.id} style={{ borderBottom: '1px solid #f3f4f6' }}
                                     onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
                                     onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                                    <td style={{ padding: '12px 16px', fontSize: '12px', fontFamily: 'monospace', color: '#6b7280' }}>{p.codigo || '—'}</td>
                                     <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>{p.nombre}</td>
                                     <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280', fontFamily: 'monospace' }}>{p.rif || '—'}</td>
+                                    <td style={{ padding: '12px 16px', fontSize: '12px', color: '#6b7280' }}>
+                                        {p.tipo ? p.tipo.replace(/_/g, ' ') : '—'}
+                                    </td>
                                     <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{p.telefono || '—'}</td>
                                     <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{p.contacto || '—'}</td>
                                     <td style={{ padding: '12px 16px' }}>

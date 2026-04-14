@@ -7,6 +7,7 @@ const TIPOS_INVENTARIO = [
     { key: 'pt', label: 'Productos Terminados', icon: Package },
     { key: 'mp', label: 'Materias Primas', icon: Beaker },
     { key: 'emp', label: 'Materiales de Empaque', icon: Truck },
+    { key: 'con', label: 'Consumibles', icon: Filter },
 ]
 
 function BadgeStock({ stock, minimo }) {
@@ -75,6 +76,10 @@ function VistaStock() {
         if (tipoFiltro === 'todos' || tipoFiltro === 'emp') {
             const { data } = await supabase.from('materiales_empaque').select('*').eq('activo', true)
             if (data) datos = [...datos, ...data.map(p => ({ ...p, tipo: 'Material Empaque', codigo: p.codigo, precio: p.costo_compra_promedio, vencimiento: p.fecha_vencimiento }))]
+        }
+        if (tipoFiltro === 'todos' || tipoFiltro === 'con') {
+            const { data } = await supabase.from('consumibles').select('*').eq('activo', true)
+            if (data) datos = [...datos, ...data.map(p => ({ ...p, tipo: 'Consumible', codigo: p.codigo, precio: p.costo_compra_promedio, vencimiento: p.fecha_vencimiento }))]
         }
 
         setInventario(datos.sort((a, b) => a.nombre.localeCompare(b.nombre)))

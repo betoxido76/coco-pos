@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { Plus, Search, Pencil, X, Check, AlertTriangle, Package, Layers } from 'lucide-react'
+import { useAuth } from '../contexts/AuthContext'
 
 const CATEGORIAS = ['Químicos', 'Orgánicos', 'Envases', 'Etiquetas', 'Cajas', 'Otros']
 const TIPOS = ['producido', 'comprado']
@@ -12,9 +13,11 @@ const VACIO = {
     fecha_vencimiento: '', proveedor_preferido_id: '',
     categoria_1: '', categoria_2: '', categoria_3: '', categoria_4: '',
     tipo_producto: 'comprado', activo: true,
+    aplica_iva: true,
 }
 
 export default function MateriasPrimas({ tabInicial = 'materias_primas' }) {
+    const { perfil } = useAuth()
     const [tabActiva, setTabActiva] = useState(tabInicial)
     const [items, setItems] = useState([])
     const [proveedores, setProveedores] = useState([])
@@ -30,15 +33,17 @@ export default function MateriasPrimas({ tabInicial = 'materias_primas' }) {
 
     const tabla = tabActiva === 'materias_primas' ? 'materias_primas' : 'materiales_empaque'
 
-    useEffect(() => { 
-        cargar() 
-        supabase.from('proveedores').select('id, nombre').eq('activo', true).order('nombre')
+    useEffect(() => {
+        cargar()
+        supabase.from('proveedores').select('id, nombre')
+            .eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
             .then(({ data }) => setProveedores(data || []))
-    }, [tabActiva])
+    }, [])
 
     async function cargar() {
         setLoading(true)
-        const { data } = await supabase.from(tabla).select('*').order('nombre')
+        const { data } = await supabase.from(tabla).select('*')
+            .eq('empresa_id', perfil.empresa_id).order('nombre')
         if (data) setItems(data)
         setLoading(false)
     }
@@ -68,6 +73,7 @@ export default function MateriasPrimas({ tabInicial = 'materias_primas' }) {
             categoria_4: p.categoria_4 || '',
             tipo_producto: p.tipo_producto || 'comprado',
             activo: p.activo ?? true,
+            aplica_iva: p.aplica_iva ?? true,
         })
         setError('')
         setVista('form')
@@ -99,13 +105,14 @@ export default function MateriasPrimas({ tabInicial = 'materias_primas' }) {
             categoria_4: form.categoria_4 || null,
             tipo_producto: form.tipo_producto,
             activo: form.activo,
+            aplica_iva: form.aplica_iva,
         }
 
         let err
         if (editando) {
             ; ({ error: err } = await supabase.from(tabla).update(payload).eq('id', editando))
         } else {
-            ; ({ error: err } = await supabase.from(tabla).insert(payload))
+            ; ({ error: err } = await supabase.from(tabla).insert({ ...payload, empresa_id: perfil.empresa_id }))
         }
 
         setGuardando(false)
@@ -235,6 +242,17 @@ export default function MateriasPrimas({ tabInicial = 'materias_primas' }) {
                         Insumo activo (visible en producción y compras)
                     </label>
                 </div>
+
+                <div style={{ gridColumn: 'span 2', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', backgroundColor: '#f9fafb', borderRadius: '8px' }}>
+                    <div>
+                        <div style={{ fontSize: '13px', fontWeight: 500, color: '#374151' }}>Aplica IVA (16%)</div>
+                        <div style={{ fontSize: '12px', color: '#6b7280' }}>Activa si este insumo está gravado con IVA</div>
+                    </div>
+                    <input type="checkbox" checked={form.aplica_iva}
+                        onChange={e => campo('aplica_iva', e.target.checked)}
+                        style={{ width: '18px', height: '18px', accentColor: '#16a34a', cursor: 'pointer' }} />
+                </div>
+
             </div>
 
             <div style={{ marginTop: '24px', display: 'flex', flexDirection: 'column', gap: '12px' }}>

@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import { useAuth } from '../contexts/AuthContext'
 import { Plus, Search, Trash2, CheckCircle, FileText, X, AlertTriangle, Truck, ClipboardList, ArrowRight } from 'lucide-react'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 
 // ─── Componente principal ──────────────────────────────────────
 export default function Compras() {
+    const { perfil } = useAuth()
     const [tabActiva, setTabActiva] = useState('ordenes')
     const [vista, setVista] = useState('lista')
     const [loading, setLoading] = useState(true)
@@ -25,6 +27,7 @@ export default function Compras() {
         const { data } = await supabase
             .from('ordenes_compra')
             .select(`*, proveedores(nombre)`)
+            .eq('empresa_id', perfil.empresa_id)
             .order('created_at', { ascending: false })
             .limit(50)
         if (data) setOrdenes(data)
@@ -36,6 +39,7 @@ export default function Compras() {
         const { data } = await supabase
             .from('compras')
             .select(`*, proveedores(nombre), ordenes_compra(numero_oc)`)
+            .eq('empresa_id', perfil.empresa_id)
             .order('created_at', { ascending: false })
             .limit(50)
         if (data) setRecepciones(data)
@@ -107,35 +111,35 @@ function TablaOrdenes({ ordenes, loading, onVer }) {
         <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
             {loading ? <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af' }}>Cargando...</div> : ordenes.length === 0 ?
                 <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af' }}>No hay órdenes registradas.</div> : (
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead>
-                        <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                            {['OC #', 'Proveedor', 'Emisión', 'Entrega', 'Total', 'Estado', ''].map((h, i) => (
-                                <th key={i} style={{ padding: '10px 16px', textAlign: i === 4 ? 'right' : 'left', fontSize: '12px', fontWeight: 500, color: '#6b7280' }}>{h}</th>
-                            ))}
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {ordenes.map(o => (
-                            <tr key={o.id} style={{ borderBottom: '1px solid #f3f4f6' }}
-                                onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
-                                onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
-                                <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>{o.numero_oc}</td>
-                                <td style={{ padding: '12px 16px', fontSize: '13px', color: '#374151' }}>{o.proveedores?.nombre || '—'}</td>
-                                <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{new Date(o.fecha_emision).toLocaleDateString('es-VE')}</td>
-                                <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{o.fecha_entrega_esperada ? new Date(o.fecha_entrega_esperada).toLocaleDateString('es-VE') : '—'}</td>
-                                <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(o.total)}</td>
-                                <td style={{ padding: '12px 16px' }}><BadgeOC estado={o.estado} /></td>
-                                <td style={{ padding: '12px 16px' }}>
-                                    <button onClick={() => onVer(o)} style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
-                                        <FileText size={13} /> Ver
-                                    </button>
-                                </td>
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead>
+                            <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                                {['OC #', 'Proveedor', 'Emisión', 'Entrega', 'Total', 'Estado', ''].map((h, i) => (
+                                    <th key={i} style={{ padding: '10px 16px', textAlign: i === 4 ? 'right' : 'left', fontSize: '12px', fontWeight: 500, color: '#6b7280' }}>{h}</th>
+                                ))}
                             </tr>
-                        ))}
-                    </tbody>
-                </table>
-            )}
+                        </thead>
+                        <tbody>
+                            {ordenes.map(o => (
+                                <tr key={o.id} style={{ borderBottom: '1px solid #f3f4f6' }}
+                                    onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
+                                    onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                                    <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>{o.numero_oc}</td>
+                                    <td style={{ padding: '12px 16px', fontSize: '13px', color: '#374151' }}>{o.proveedores?.nombre || '—'}</td>
+                                    <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{new Date(o.fecha_emision).toLocaleDateString('es-VE')}</td>
+                                    <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{o.fecha_entrega_esperada ? new Date(o.fecha_entrega_esperada).toLocaleDateString('es-VE') : '—'}</td>
+                                    <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(o.total)}</td>
+                                    <td style={{ padding: '12px 16px' }}><BadgeOC estado={o.estado} /></td>
+                                    <td style={{ padding: '12px 16px' }}>
+                                        <button onClick={() => onVer(o)} style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
+                                            <FileText size={13} /> Ver
+                                        </button>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                )}
         </div>
     )
 }
@@ -145,35 +149,35 @@ function TablaRecepciones({ recepciones, loading, onVer }) {
         <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
             {loading ? <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af' }}>Cargando...</div> : recepciones.length === 0 ?
                 <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af' }}>No hay recepciones registradas.</div> : (
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead>
-                        <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                            {['Doc', 'Proveedor', 'Fecha', 'OC Vinculada', 'Total', 'Cobro', ''].map((h, i) => (
-                                <th key={i} style={{ padding: '10px 16px', textAlign: i === 4 ? 'right' : 'left', fontSize: '12px', fontWeight: 500, color: '#6b7280' }}>{h}</th>
-                            ))}
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {recepciones.map(r => (
-                            <tr key={r.id} style={{ borderBottom: '1px solid #f3f4f6' }}
-                                onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
-                                onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
-                                <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>{r.numero_doc || 'S/N'}</td>
-                                <td style={{ padding: '12px 16px', fontSize: '13px', color: '#374151' }}>{r.proveedores?.nombre || '—'}</td>
-                                <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{new Date(r.fecha_compra).toLocaleDateString('es-VE')}</td>
-                                <td style={{ padding: '12px 16px', fontSize: '12px', color: '#6b7280' }}>{r.ordenes_compra?.numero_oc || '—'}</td>
-                                <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(r.total)}</td>
-                                <td style={{ padding: '12px 16px' }}><BadgeCobro estado={r.estado_cobro || 'pendiente'} /></td>
-                                <td style={{ padding: '12px 16px' }}>
-                                    <button onClick={() => onVer(r)} style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
-                                        <FileText size={13} /> Ver
-                                    </button>
-                                </td>
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead>
+                            <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                                {['Doc', 'Proveedor', 'Fecha', 'OC Vinculada', 'Total', 'Cobro', ''].map((h, i) => (
+                                    <th key={i} style={{ padding: '10px 16px', textAlign: i === 4 ? 'right' : 'left', fontSize: '12px', fontWeight: 500, color: '#6b7280' }}>{h}</th>
+                                ))}
                             </tr>
-                        ))}
-                    </tbody>
-                </table>
-            )}
+                        </thead>
+                        <tbody>
+                            {recepciones.map(r => (
+                                <tr key={r.id} style={{ borderBottom: '1px solid #f3f4f6' }}
+                                    onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
+                                    onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                                    <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>{r.numero_doc || 'S/N'}</td>
+                                    <td style={{ padding: '12px 16px', fontSize: '13px', color: '#374151' }}>{r.proveedores?.nombre || '—'}</td>
+                                    <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{new Date(r.fecha_compra).toLocaleDateString('es-VE')}</td>
+                                    <td style={{ padding: '12px 16px', fontSize: '12px', color: '#6b7280' }}>{r.ordenes_compra?.numero_oc || '—'}</td>
+                                    <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(r.total)}</td>
+                                    <td style={{ padding: '12px 16px' }}><BadgeCobro estado={r.estado_cobro || 'pendiente'} /></td>
+                                    <td style={{ padding: '12px 16px' }}>
+                                        <button onClick={() => onVer(r)} style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
+                                            <FileText size={13} /> Ver
+                                        </button>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                )}
         </div>
     )
 }
@@ -199,6 +203,7 @@ function BadgeCobro({ estado }) {
 
 // ─── Nueva Orden de Compra ──────────────────────────────────────
 function NuevaOrden({ onCreada, onCancelar }) {
+    const { perfil } = useAuth()
     const [proveedores, setProveedores] = useState([])
     const [insumos, setInsumos] = useState([])
     const [proveedorId, setProveedorId] = useState('')
@@ -209,13 +214,13 @@ function NuevaOrden({ onCreada, onCancelar }) {
     const [fechaEntrega, setFechaEntrega] = useState('')
 
     useEffect(() => {
-        supabase.from('proveedores').select('id, nombre').eq('activo', true).order('nombre')
+        supabase.from('proveedores').select('id, nombre').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
             .then(({ data }) => setProveedores(data || []))
-        
+
         Promise.all([
-            supabase.from('materias_primas').select('id, nombre, codigo, stock_actual, unidad_medida, costo_compra_promedio').eq('activo', true),
-            supabase.from('materiales_empaque').select('id, nombre, codigo, stock_actual, unidad_medida, costo_compra_promedio').eq('activo', true),
-            supabase.from('productos_terminados').select('id, nombre, sku, stock_actual, unidad_medida, costo_promedio, tipo_producto').eq('activo', true)
+            supabase.from('materias_primas').select('id, nombre, codigo, stock_actual, unidad_medida, costo_compra_promedio').eq('activo', true).eq('empresa_id', perfil.empresa_id),
+            supabase.from('materiales_empaque').select('id, nombre, codigo, stock_actual, unidad_medida, costo_compra_promedio').eq('activo', true).eq('empresa_id', perfil.empresa_id),
+            supabase.from('productos_terminados').select('id, nombre, sku, stock_actual, unidad_medida, costo_promedio, tipo_producto').eq('activo', true).eq('empresa_id', perfil.empresa_id)
         ]).then(([mp, emp, pt]) => {
             const unidos = [
                 ...(mp.data || []).map(i => ({ ...i, tipo: 'materias_primas', costo: i.costo_compra_promedio })),
@@ -264,7 +269,7 @@ function NuevaOrden({ onCreada, onCancelar }) {
             fecha_entrega_esperada: fechaEntrega || null
         }
 
-        const { data: oc, error: err } = await supabase.from('ordenes_compra').insert(payload).select().single()
+        const { data: oc, error: err } = await supabase.from('ordenes_compra').insert({ ...payload, empresa_id: perfil.empresa_id }).select().single()
         if (err) { setError('Error: ' + err.message); setGuardando(false); return }
 
         await supabase.from('orden_compra_items').insert(
@@ -361,6 +366,7 @@ function NuevaOrden({ onCreada, onCancelar }) {
 
 // ─── Nueva Recepción (con opción de vincular OC) ──────────────
 function NuevaRecepcion({ onCreada, onCancelar }) {
+    const { perfil } = useAuth()
     const [proveedores, setProveedores] = useState([])
     const [ocsPendientes, setOcsPendientes] = useState([])
     const [ocSeleccionada, setOcSeleccionada] = useState('')
@@ -372,17 +378,17 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
     const [mapaNombres, setMapaNombres] = useState({})
 
     useEffect(() => {
-        supabase.from('proveedores').select('id, nombre').eq('activo', true).order('nombre')
+        supabase.from('proveedores').select('id, nombre').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
             .then(({ data }) => setProveedores(data || []))
-        
+
         // Cargar mapa de nombres para resolver insumos
         Promise.all([
-            supabase.from('materias_primas').select('id, nombre'),
-            supabase.from('materiales_empaque').select('id, nombre'),
-            supabase.from('productos_terminados').select('id, nombre')
+            supabase.from('materias_primas').select('id, nombre').eq('empresa_id', perfil.empresa_id),
+            supabase.from('materiales_empaque').select('id, nombre').eq('empresa_id', perfil.empresa_id),
+            supabase.from('productos_terminados').select('id, nombre').eq('empresa_id', perfil.empresa_id)
         ]).then(([mp, emp, pt]) => {
             const mapa = {}
-            ;[...(mp.data||[]), ...(emp.data||[]), ...(pt.data||[])].forEach(i => mapa[i.id] = i.nombre)
+                ;[...(mp.data || []), ...(emp.data || []), ...(pt.data || [])].forEach(i => mapa[i.id] = i.nombre)
             setMapaNombres(mapa)
         })
     }, [])
@@ -390,6 +396,7 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
     useEffect(() => {
         if (modo === 'contra_oc' && proveedores.length > 0) {
             supabase.from('ordenes_compra').select(`*, proveedores(nombre), orden_compra_items(*)`)
+                .eq('empresa_id', perfil.empresa_id)
                 .in('estado', ['pendiente', 'aprobada', 'recibida_parcial'])
                 .order('created_at', { ascending: false })
                 .then(({ data }) => setOcsPendientes(data || []))
@@ -400,8 +407,8 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
         const oc = ocsPendientes.find(o => o.id === ocId)
         if (!oc) return
         setItems(oc.orden_compra_items.map(i => ({
-            id: i.insumo_id, 
-            tipo: i.tipo_insumo, 
+            id: i.insumo_id,
+            tipo: i.tipo_insumo,
             nombre: mapaNombres[i.insumo_id] || 'Cargando...',
             cantidad: i.cantidad_solicitada - i.cantidad_recibida,
             precio_unitario: i.precio_unitario_esperado,
@@ -432,11 +439,19 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
             ...datosPago
         }
 
-        const { data: rec, error: err } = await supabase.from('compras').insert(payload).select().single()
+        const { data: rec, error: err } = await supabase.from('compras').insert({ ...payload, empresa_id: perfil.empresa_id }).select().single()
         if (err) { setError('Error: ' + err.message); setGuardando(false); return }
 
         await supabase.from('compra_items').insert(
-            items.map(i => ({ compra_id: rec.id, tipo_insumo: i.tipo, insumo_id: i.id, cantidad: i.cantidad, precio_unitario: i.precio_unitario }))
+            items.map(i => ({
+                compra_id: rec.id,
+                tipo_insumo: i.tipo === 'materias_primas' ? 'materia_prima'
+                    : i.tipo === 'materiales_empaque' ? 'empaque'
+                        : 'materia_prima',
+                insumo_id: i.id,
+                cantidad: i.cantidad,
+                precio_unitario: i.precio_unitario
+            }))
         )
 
         for (const item of items) {
@@ -460,8 +475,8 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
         }
 
         setGuardando(false); setMostrarModal(false)
-        const provNombre = modo === 'contra_oc' 
-            ? ocsPendientes.find(o => o.id === ocSeleccionada)?.proveedores?.nombre 
+        const provNombre = modo === 'contra_oc'
+            ? ocsPendientes.find(o => o.id === ocSeleccionada)?.proveedores?.nombre
             : 'Recepción Libre'
         onCreada({ ...rec, proveedores: { nombre: provNombre } })
     }
@@ -476,8 +491,10 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
             <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
                 {['libre', 'contra_oc'].map(m => (
                     <button key={m} onClick={() => { setModo(m); setItems([]); setOcSeleccionada('') }}
-                        style={{ flex: 1, padding: '10px', borderRadius: '8px', fontSize: '13px', fontWeight: 500, border: '1px solid', cursor: 'pointer',
-                            borderColor: modo === m ? '#16a34a' : '#e5e7eb', backgroundColor: modo === m ? '#f0fdf4' : '#fff', color: modo === m ? '#16a34a' : '#6b7280' }}>
+                        style={{
+                            flex: 1, padding: '10px', borderRadius: '8px', fontSize: '13px', fontWeight: 500, border: '1px solid', cursor: 'pointer',
+                            borderColor: modo === m ? '#16a34a' : '#e5e7eb', backgroundColor: modo === m ? '#f0fdf4' : '#fff', color: modo === m ? '#16a34a' : '#6b7280'
+                        }}>
                         {m === 'libre' ? 'Recepción Libre' : 'Contra Orden de Compra'}
                     </button>
                 ))}
@@ -508,7 +525,7 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
                                             <td style={{ padding: '10px 12px', fontSize: '13px', color: '#1f2937' }}>{item.nombre}</td>
                                             <td style={{ padding: '10px 12px', fontSize: '11px', color: '#6b7280', textTransform: 'uppercase' }}>{item.tipo.replace('_', ' ')}</td>
                                             <td style={{ padding: '10px 12px', fontSize: '13px', color: '#6b7280' }}>{fmt(item.precio_unitario)}</td>
-                                            <td style={{ padding: '10px 12px' }}><input type="number" min="1" max={item.pendiente || item.cantidad} value={item.cantidad} onChange={e => { const n = parseInt(e.target.value); if(n>0) setItems(prev => prev.map((it, j) => j===idx ? {...it, cantidad: n} : it)) }} style={{ width: '60px', padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px', textAlign: 'center' }} /></td>
+                                            <td style={{ padding: '10px 12px' }}><input type="number" min="1" max={item.pendiente || item.cantidad} value={item.cantidad} onChange={e => { const n = parseInt(e.target.value); if (n > 0) setItems(prev => prev.map((it, j) => j === idx ? { ...it, cantidad: n } : it)) }} style={{ width: '60px', padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px', textAlign: 'center' }} /></td>
                                             <td style={{ padding: '10px 12px', fontSize: '13px', fontWeight: 600, color: '#1f2937' }}>{fmt(item.cantidad * item.precio_unitario)}</td>
                                             <td style={{ padding: '10px 12px' }}><button onClick={() => setItems(prev => prev.filter((_, j) => j !== idx))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', padding: '4px' }}><Trash2 size={14} /></button></td>
                                         </tr>
@@ -612,23 +629,24 @@ function ModalPagoCompra({ total, onCerrar, onConfirmar }) {
 
 // ─── Detalle Orden ────────────────────────────────────────────
 function DetalleOrden({ orden, onVolver }) {
+    const { perfil } = useAuth()
     const [items, setItems] = useState([])
     const [loading, setLoading] = useState(true)
     const [mapaNombres, setMapaNombres] = useState({})
 
     useEffect(() => {
         Promise.all([
-            supabase.from('materias_primas').select('id, nombre'),
-            supabase.from('materiales_empaque').select('id, nombre'),
-            supabase.from('productos_terminados').select('id, nombre')
+            supabase.from('materias_primas').select('id, nombre').eq('empresa_id', perfil.empresa_id),
+            supabase.from('materiales_empaque').select('id, nombre').eq('empresa_id', perfil.empresa_id),
+            supabase.from('productos_terminados').select('id, nombre').eq('empresa_id', perfil.empresa_id)
         ]).then(([mp, emp, pt]) => {
             const mapa = {}
-            ;[...(mp.data||[]), ...(emp.data||[]), ...(pt.data||[])].forEach(i => mapa[i.id] = i.nombre)
+                ;[...(mp.data || []), ...(emp.data || []), ...(pt.data || [])].forEach(i => mapa[i.id] = i.nombre)
             setMapaNombres(mapa)
         })
 
-        supabase.from('orden_compra_items').select('*').eq('orden_id', orden.id).then(({ data }) => { 
-            if(data) setItems(data); setLoading(false) 
+        supabase.from('orden_compra_items').select('*').eq('orden_id', orden.id).then(({ data }) => {
+            if (data) setItems(data); setLoading(false)
         })
     }, [orden.id])
 
@@ -674,23 +692,24 @@ function DetalleOrden({ orden, onVolver }) {
 
 // ─── Detalle Recepción ────────────────────────────────────────
 function DetalleRecepcion({ recepcion, onVolver }) {
+    const { perfil } = useAuth()
     const [items, setItems] = useState([])
     const [loading, setLoading] = useState(true)
     const [mapaNombres, setMapaNombres] = useState({})
 
     useEffect(() => {
         Promise.all([
-            supabase.from('materias_primas').select('id, nombre'),
-            supabase.from('materiales_empaque').select('id, nombre'),
-            supabase.from('productos_terminados').select('id, nombre')
+            supabase.from('materias_primas').select('id, nombre').eq('empresa_id', perfil.empresa_id),
+            supabase.from('materiales_empaque').select('id, nombre').eq('empresa_id', perfil.empresa_id),
+            supabase.from('productos_terminados').select('id, nombre').eq('empresa_id', perfil.empresa_id)
         ]).then(([mp, emp, pt]) => {
             const mapa = {}
-            ;[...(mp.data||[]), ...(emp.data||[]), ...(pt.data||[])].forEach(i => mapa[i.id] = i.nombre)
+                ;[...(mp.data || []), ...(emp.data || []), ...(pt.data || [])].forEach(i => mapa[i.id] = i.nombre)
             setMapaNombres(mapa)
         })
 
-        supabase.from('compra_items').select('*').eq('compra_id', recepcion.id).then(({ data }) => { 
-            if(data) setItems(data); setLoading(false) 
+        supabase.from('compra_items').select('*').eq('compra_id', recepcion.id).then(({ data }) => {
+            if (data) setItems(data); setLoading(false)
         })
     }, [recepcion.id])
 

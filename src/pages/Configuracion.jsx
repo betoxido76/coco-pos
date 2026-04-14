@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { Save, Check } from 'lucide-react'
+import { useAuth } from '../contexts/AuthContext'
+
 
 const TASAS = [
     { clave: 'tasa_bcv', label: 'USD · BCV', descripcion: 'Tasa oficial del Banco Central de Venezuela' },
@@ -9,6 +11,7 @@ const TASAS = [
 ]
 
 export default function Configuracion() {
+    const { perfil } = useAuth()
     const [valores, setValores] = useState({ tasa_bcv: '', tasa_euro: '', tasa_binance: '' })
     const [loading, setLoading] = useState(true)
     const [guardando, setGuardando] = useState(false)
@@ -36,12 +39,13 @@ export default function Configuracion() {
         setError('')
         const updates = TASAS.map(t => ({
             clave: t.clave,
+            empresa_id: perfil.empresa_id,
             valor: Number(valores[t.clave]),
             actualizado_at: new Date().toISOString(),
         }))
         const { error: err } = await supabase
             .from('configuracion')
-            .upsert(updates, { onConflict: 'clave' })
+            .upsert(updates, { onConflict: 'clave,empresa_id' })
         setGuardando(false)
         if (err) { setError('Error al guardar: ' + err.message); return }
         setExito(true)

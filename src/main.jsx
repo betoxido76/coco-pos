@@ -10,6 +10,8 @@ import Ventas from './pages/Ventas'
 import Compras from './pages/Compras'
 import Administracion from './pages/Administracion'
 import CuentasCobrar from './pages/CuentasCobrar'
+import CuentasPagar from './pages/CuentasPagar'
+import Produccion from './pages/Produccion'
 import './index.css'
 
 function RutaProtegida({ children }) {
@@ -37,6 +39,8 @@ function App() {
         <Route path="compras" element={<Compras />} />
         <Route path="administracion" element={<Administracion />} />
         <Route path="cuentas-cobrar" element={<CuentasCobrar />} />
+        <Route path="cuentas-pagar" element={<CuentasPagar />} />
+        <Route path="produccion" element={<Produccion />} />
       </Route>
     </Routes>
   )

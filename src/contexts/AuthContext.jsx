@@ -28,7 +28,7 @@ export function AuthProvider({ children }) {
     async function cargarPerfil(userId) {
         const { data } = await supabase
             .from('usuarios')
-            .select('*')
+            .select('*, empresas(nombre, rif, logo_url)')
             .eq('id', userId)
             .single()
         setPerfil(data)

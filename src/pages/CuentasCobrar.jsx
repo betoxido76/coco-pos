@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import { useAuth } from '../contexts/AuthContext'
 import { X, DollarSign } from 'lucide-react'
 
 const fmt = n => `$${Number(n).toFixed(2)}`
@@ -16,6 +17,7 @@ function semaforo(fechaVenc) {
 }
 
 export default function CuentasCobrar() {
+    const { perfil } = useAuth()
     const [ventas, setVentas] = useState([])
     const [loading, setLoading] = useState(true)
     const [filtro, setFiltro] = useState('pendiente')
@@ -29,6 +31,7 @@ export default function CuentasCobrar() {
         const { data } = await supabase
             .from('ventas')
             .select('*, clientes(nombre, condicion_pago, dias_credito)')
+            .eq('empresa_id', perfil.empresa_id)
             .in('estado_cobro', filtro === 'todos' ? ['pendiente', 'parcial', 'pagado'] : [filtro])
             .order('fecha_vencimiento_pago', { ascending: true })
         if (data) setVentas(data)
@@ -175,6 +178,7 @@ function SaldoPendiente({ ventaId, total }) {
 
 // ── Modal de cobro ─────────────────────────────────────────────
 function ModalCobro({ venta, tasas, onCerrar, onCobrado }) {
+    const { perfil } = useAuth()
     const OPCIONES_TASA = [
         { key: 'tasa_bcv', label: 'USD · BCV' },
         { key: 'tasa_euro', label: 'EUR · BCV' },
@@ -227,6 +231,7 @@ function ModalCobro({ venta, tasas, onCerrar, onCobrado }) {
             metodo_bs: metodoBs,
             nota: nota || null,
             usuario_id: (await supabase.auth.getUser()).data.user.id,
+            empresa_id: perfil.empresa_id,
         })
 
         const nuevoCobrado = cobradoPrev + abonoEnUsd
