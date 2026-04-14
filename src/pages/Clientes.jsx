@@ -1,12 +1,17 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
-import { Plus, Pencil, Check, Search } from 'lucide-react'
+import { Plus, Pencil, Check, Search, MapPin, X, Star } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 
 const VACIO = {
     nombre: '', rif: '', telefono: '', email: '',
     condicion_pago: 'contado', dias_credito: 0, activo: true,
     contribuyente_especial: false, tipo_cliente_id: '',
+}
+
+const VACIO_DIR = {
+    nombre: '', direccion: '', ciudad: '', estado_region: '',
+    contacto: '', telefono: '', es_principal: false, activo: true,
 }
 
 const inputStyle = {
@@ -28,6 +33,13 @@ export default function Clientes() {
     const [exito, setExito] = useState('')
     const [tiposCliente, setTiposCliente] = useState([])
 
+    // Direcciones
+    const [direcciones, setDirecciones] = useState([])
+    const [modalDir, setModalDir] = useState(null) // null | 'nuevo' | { id, ...}
+    const [formDir, setFormDir] = useState(VACIO_DIR)
+    const [guardandoDir, setGuardandoDir] = useState(false)
+    const [errorDir, setErrorDir] = useState('')
+
     useEffect(() => {
         cargar()
         supabase.from('perfilamiento_clientes').select('id, nombre')
@@ -43,8 +55,19 @@ export default function Clientes() {
         setLoading(false)
     }
 
+    async function cargarDirecciones(clienteId) {
+        const { data } = await supabase.from('direcciones_entrega')
+            .select('*')
+            .eq('cliente_id', clienteId)
+            .eq('empresa_id', perfil.empresa_id)
+            .order('es_principal', { ascending: false })
+            .order('nombre')
+        if (data) setDirecciones(data)
+    }
+
     function abrirNuevo() {
-        setEditando(null); setForm(VACIO); setError(''); setVista('form')
+        setEditando(null); setForm(VACIO); setDirecciones([])
+        setError(''); setVista('form')
     }
 
     function abrirEditar(c) {
@@ -61,10 +84,12 @@ export default function Clientes() {
             contribuyente_especial: c.contribuyente_especial ?? false,
             tipo_cliente_id: c.tipo_cliente_id || '',
         })
+        cargarDirecciones(c.id)
         setError(''); setVista('form')
     }
 
     function campo(k, v) { setForm(prev => ({ ...prev, [k]: v })) }
+    function campoDir(k, v) { setFormDir(prev => ({ ...prev, [k]: v })) }
 
     async function guardar() {
         if (!form.nombre.trim()) { setError('El nombre es obligatorio'); return }
@@ -90,6 +115,70 @@ export default function Clientes() {
         await cargar(); setVista('lista')
     }
 
+    // ── Gestión de direcciones ──
+    function abrirNuevaDir() {
+        setFormDir({ ...VACIO_DIR, es_principal: direcciones.length === 0 })
+        setErrorDir('')
+        setModalDir('nuevo')
+    }
+
+    function abrirEditarDir(dir) {
+        setFormDir({
+            nombre: dir.nombre || '',
+            direccion: dir.direccion || '',
+            ciudad: dir.ciudad || '',
+            estado_region: dir.estado_region || '',
+            contacto: dir.contacto || '',
+            telefono: dir.telefono || '',
+            es_principal: dir.es_principal,
+            activo: dir.activo,
+        })
+        setErrorDir('')
+        setModalDir(dir)
+    }
+
+    async function guardarDir() {
+        if (!formDir.nombre.trim()) { setErrorDir('El nombre es obligatorio'); return }
+        if (!formDir.direccion.trim()) { setErrorDir('La dirección es obligatoria'); return }
+        setGuardandoDir(true); setErrorDir('')
+
+        const payload = {
+            cliente_id: editando,
+            empresa_id: perfil.empresa_id,
+            nombre: formDir.nombre.trim(),
+            direccion: formDir.direccion.trim(),
+            ciudad: formDir.ciudad.trim() || null,
+            estado_region: formDir.estado_region.trim() || null,
+            contacto: formDir.contacto.trim() || null,
+            telefono: formDir.telefono.trim() || null,
+            es_principal: formDir.es_principal,
+            activo: formDir.activo,
+        }
+
+        // Si marca como principal, desmarcar las demás
+        if (formDir.es_principal) {
+            await supabase.from('direcciones_entrega')
+                .update({ es_principal: false })
+                .eq('cliente_id', editando)
+        }
+
+        const { error: err } = modalDir === 'nuevo'
+            ? await supabase.from('direcciones_entrega').insert(payload)
+            : await supabase.from('direcciones_entrega').update(payload).eq('id', modalDir.id)
+
+        setGuardandoDir(false)
+        if (err) { setErrorDir('Error: ' + err.message); return }
+        await cargarDirecciones(editando)
+        setModalDir(null)
+    }
+
+    async function toggleActivarDir(dir) {
+        await supabase.from('direcciones_entrega')
+            .update({ activo: !dir.activo })
+            .eq('id', dir.id)
+        await cargarDirecciones(editando)
+    }
+
     const filtrados = clientes.filter(c =>
         c.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
         c.rif?.toLowerCase().includes(busqueda.toLowerCase())
@@ -97,62 +186,135 @@ export default function Clientes() {
 
     // ── FORMULARIO ──
     if (vista === 'form') return (
-        <div style={{ padding: '24px', maxWidth: '600px' }}>
+        <div style={{ padding: '24px', maxWidth: '640px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
                 <button onClick={() => setVista('lista')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', fontSize: '13px' }}>← Volver</button>
                 <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>{editando ? 'Editar cliente' : 'Nuevo cliente'}</h1>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                <Campo label="Nombre *" span={2}><input value={form.nombre} onChange={e => campo('nombre', e.target.value)} style={inputStyle} /></Campo>
-                <Campo label="RIF / Cédula"><input value={form.rif} onChange={e => campo('rif', e.target.value)} placeholder="J-12345678-9" style={inputStyle} /></Campo>
-                <Campo label="Teléfono"><input value={form.telefono} onChange={e => campo('telefono', e.target.value)} placeholder="0414-000-0000" style={inputStyle} /></Campo>
-                <Campo label="Email" span={2}><input type="email" value={form.email} onChange={e => campo('email', e.target.value)} placeholder="correo@empresa.com" style={inputStyle} /></Campo>
-                {editando && (
-                    <Campo label="Código de cliente" span={2}>
-                        <input value={form.codigo || '—'} disabled
-                            style={{ ...inputStyle, backgroundColor: '#f9fafb', color: '#6b7280' }} />
+            {/* Datos del cliente */}
+            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '20px', marginBottom: '20px' }}>
+                <p style={{ fontSize: '13px', fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 16px' }}>Datos generales</p>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                    <Campo label="Nombre *" span={2}><input value={form.nombre} onChange={e => campo('nombre', e.target.value)} style={inputStyle} /></Campo>
+                    <Campo label="RIF / Cédula"><input value={form.rif} onChange={e => campo('rif', e.target.value)} placeholder="J-12345678-9" style={inputStyle} /></Campo>
+                    <Campo label="Teléfono"><input value={form.telefono} onChange={e => campo('telefono', e.target.value)} placeholder="0414-000-0000" style={inputStyle} /></Campo>
+                    <Campo label="Email" span={2}><input type="email" value={form.email} onChange={e => campo('email', e.target.value)} placeholder="correo@empresa.com" style={inputStyle} /></Campo>
+                    {editando && (
+                        <Campo label="Código de cliente" span={2}>
+                            <input value={form.codigo || '—'} disabled style={{ ...inputStyle, backgroundColor: '#f9fafb', color: '#6b7280' }} />
+                        </Campo>
+                    )}
+                    <Campo label="Condición de pago">
+                        <select value={form.condicion_pago} onChange={e => campo('condicion_pago', e.target.value)} style={inputStyle}>
+                            <option value="contado">Contado</option>
+                            <option value="credito">Crédito</option>
+                        </select>
                     </Campo>
-                )}
-
-                {/* Condición de pago */}
-                <Campo label="Condición de pago">
-                    <select value={form.condicion_pago} onChange={e => campo('condicion_pago', e.target.value)} style={inputStyle}>
-                        <option value="contado">Contado</option>
-                        <option value="credito">Crédito</option>
-                    </select>
-                </Campo>
-
-                <Campo label="Días de crédito">
-                    <input type="number" min="0" value={form.dias_credito}
-                        onChange={e => campo('dias_credito', e.target.value)}
-                        disabled={form.condicion_pago === 'contado'}
-                        placeholder="Ej: 30"
-                        style={{ ...inputStyle, backgroundColor: form.condicion_pago === 'contado' ? '#f9fafb' : '#fff', color: form.condicion_pago === 'contado' ? '#9ca3af' : '#374151' }} />
-                </Campo>
-
-                <div style={{ gridColumn: 'span 2', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <input type="checkbox" id="activo" checked={form.activo} onChange={e => campo('activo', e.target.checked)}
-                        style={{ width: '16px', height: '16px', accentColor: '#16a34a' }} />
-                    <label htmlFor="activo" style={{ fontSize: '14px', color: '#374151', cursor: 'pointer' }}>Cliente activo</label>
+                    <Campo label="Días de crédito">
+                        <input type="number" min="0" value={form.dias_credito}
+                            onChange={e => campo('dias_credito', e.target.value)}
+                            disabled={form.condicion_pago === 'contado'}
+                            placeholder="Ej: 30"
+                            style={{ ...inputStyle, backgroundColor: form.condicion_pago === 'contado' ? '#f9fafb' : '#fff', color: form.condicion_pago === 'contado' ? '#9ca3af' : '#374151' }} />
+                    </Campo>
+                    <Campo label="Tipo de cliente" span={2}>
+                        <select value={form.tipo_cliente_id} onChange={e => campo('tipo_cliente_id', e.target.value)} style={inputStyle}>
+                            <option value="">— Sin clasificar —</option>
+                            {tiposCliente.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
+                        </select>
+                    </Campo>
+                    <div style={{ gridColumn: 'span 2', display: 'flex', gap: '20px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <input type="checkbox" id="activo" checked={form.activo} onChange={e => campo('activo', e.target.checked)} style={{ width: '16px', height: '16px', accentColor: '#16a34a' }} />
+                            <label htmlFor="activo" style={{ fontSize: '14px', color: '#374151', cursor: 'pointer' }}>Cliente activo</label>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <input type="checkbox" id="contribuyente_especial" checked={form.contribuyente_especial} onChange={e => campo('contribuyente_especial', e.target.checked)} style={{ width: '16px', height: '16px', accentColor: '#16a34a' }} />
+                            <label htmlFor="contribuyente_especial" style={{ fontSize: '14px', color: '#374151', cursor: 'pointer' }}>Contribuyente Especial</label>
+                        </div>
+                    </div>
                 </div>
-
-                <div style={{ gridColumn: 'span 2', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <input type="checkbox" id="contribuyente_especial" checked={form.contribuyente_especial}
-                        onChange={e => campo('contribuyente_especial', e.target.checked)}
-                        style={{ width: '16px', height: '16px', accentColor: '#16a34a' }} />
-                    <label htmlFor="contribuyente_especial" style={{ fontSize: '14px', color: '#374151', cursor: 'pointer' }}>Contribuyente Especial</label>
-                </div>
-
-                <Campo label="Tipo de cliente" span={2}>
-                    <select value={form.tipo_cliente_id} onChange={e => campo('tipo_cliente_id', e.target.value)} style={inputStyle}>
-                        <option value="">— Sin clasificar —</option>
-                        {tiposCliente.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
-                    </select>
-                </Campo>
             </div>
 
-            <div style={{ marginTop: '24px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {/* Direcciones de entrega — solo al editar */}
+            {editando && (
+                <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '20px', marginBottom: '20px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <MapPin size={16} style={{ color: '#6b7280' }} />
+                            <p style={{ fontSize: '13px', fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', margin: 0 }}>
+                                Direcciones de entrega
+                            </p>
+                        </div>
+                        <button onClick={abrirNuevaDir}
+                            style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#f0fdf4', color: '#16a34a', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '6px 12px', fontSize: '12px', fontWeight: 500, cursor: 'pointer' }}>
+                            <Plus size={13} /> Agregar
+                        </button>
+                    </div>
+
+                    {direcciones.length === 0 ? (
+                        <div style={{ textAlign: 'center', padding: '20px', color: '#9ca3af', fontSize: '13px', backgroundColor: '#f9fafb', borderRadius: '8px', border: '1px dashed #d1d5db' }}>
+                            Sin direcciones registradas — agrega la primera
+                        </div>
+                    ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                            {direcciones.map(dir => (
+                                <div key={dir.id} style={{
+                                    backgroundColor: dir.activo ? '#f9fafb' : '#fafafa',
+                                    borderRadius: '10px', border: '1px solid #e5e7eb',
+                                    padding: '12px 14px', opacity: dir.activo ? 1 : 0.6,
+                                }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                                        <div style={{ flex: 1 }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                                                <span style={{ fontSize: '14px', fontWeight: 600, color: '#1f2937' }}>{dir.nombre}</span>
+                                                {dir.es_principal && (
+                                                    <span style={{ display: 'flex', alignItems: 'center', gap: '3px', fontSize: '11px', backgroundColor: '#fef9c3', color: '#854d0e', padding: '1px 7px', borderRadius: '20px', border: '1px solid #fde68a' }}>
+                                                        <Star size={10} /> Principal
+                                                    </span>
+                                                )}
+                                                {!dir.activo && (
+                                                    <span style={{ fontSize: '11px', backgroundColor: '#f3f4f6', color: '#9ca3af', padding: '1px 7px', borderRadius: '20px' }}>inactiva</span>
+                                                )}
+                                            </div>
+                                            <p style={{ fontSize: '13px', color: '#374151', margin: '0 0 2px' }}>{dir.direccion}</p>
+                                            {(dir.ciudad || dir.estado_region) && (
+                                                <p style={{ fontSize: '12px', color: '#6b7280', margin: '0 0 2px' }}>
+                                                    {[dir.ciudad, dir.estado_region].filter(Boolean).join(', ')}
+                                                </p>
+                                            )}
+                                            {dir.contacto && (
+                                                <p style={{ fontSize: '12px', color: '#9ca3af', margin: 0 }}>
+                                                    {dir.contacto}{dir.telefono ? ` · ${dir.telefono}` : ''}
+                                                </p>
+                                            )}
+                                        </div>
+                                        <div style={{ display: 'flex', gap: '6px', marginLeft: '12px' }}>
+                                            <button onClick={() => abrirEditarDir(dir)}
+                                                style={{ background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 8px', fontSize: '12px', color: '#374151', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                                <Pencil size={11} /> Editar
+                                            </button>
+                                            <button onClick={() => toggleActivarDir(dir)}
+                                                style={{ background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 8px', fontSize: '12px', color: dir.activo ? '#dc2626' : '#16a34a', cursor: 'pointer' }}>
+                                                {dir.activo ? 'Desactivar' : 'Activar'}
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {editando === null && (
+                <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: '10px', padding: '12px 16px', marginBottom: '20px', fontSize: '13px', color: '#854d0e' }}>
+                    💡 Guarda el cliente primero y luego podrás agregar sus direcciones de entrega.
+                </div>
+            )}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 {error && <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 14px', fontSize: '13px', color: '#dc2626' }}>{error}</div>}
                 <div style={{ display: 'flex', gap: '10px' }}>
                     <button onClick={guardar} disabled={guardando}
@@ -162,6 +324,76 @@ export default function Clientes() {
                     <button onClick={() => setVista('lista')} style={{ backgroundColor: '#f3f4f6', color: '#374151', border: 'none', borderRadius: '8px', padding: '10px 20px', fontSize: '14px', cursor: 'pointer' }}>Cancelar</button>
                 </div>
             </div>
+
+            {/* Modal de dirección */}
+            {modalDir && (
+                <>
+                    <div onClick={() => setModalDir(null)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', zIndex: 40 }} />
+                    <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', backgroundColor: '#fff', borderRadius: '16px', padding: '28px', width: '500px', zIndex: 50, boxShadow: '0 20px 60px rgba(0,0,0,0.2)', maxHeight: '90vh', overflowY: 'auto' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                            <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#1f2937', margin: 0 }}>
+                                {modalDir === 'nuevo' ? 'Nueva dirección' : 'Editar dirección'}
+                            </h3>
+                            <button onClick={() => setModalDir(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af' }}><X size={20} /></button>
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+                            <CampoDir label="Nombre del punto *" span={2}>
+                                <input value={formDir.nombre} onChange={e => campoDir('nombre', e.target.value)}
+                                    placeholder="Ej: Sede Principal, Sucursal Norte" style={inputStyle} />
+                            </CampoDir>
+                            <CampoDir label="Dirección *" span={2}>
+                                <textarea value={formDir.direccion} onChange={e => campoDir('direccion', e.target.value)}
+                                    placeholder="Dirección completa" rows={2}
+                                    style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }} />
+                            </CampoDir>
+                            <CampoDir label="Ciudad">
+                                <input value={formDir.ciudad} onChange={e => campoDir('ciudad', e.target.value)}
+                                    placeholder="Caracas" style={inputStyle} />
+                            </CampoDir>
+                            <CampoDir label="Estado">
+                                <input value={formDir.estado_region} onChange={e => campoDir('estado_region', e.target.value)}
+                                    placeholder="Miranda" style={inputStyle} />
+                            </CampoDir>
+                            <CampoDir label="Persona de contacto">
+                                <input value={formDir.contacto} onChange={e => campoDir('contacto', e.target.value)}
+                                    placeholder="Nombre del receptor" style={inputStyle} />
+                            </CampoDir>
+                            <CampoDir label="Teléfono de contacto">
+                                <input value={formDir.telefono} onChange={e => campoDir('telefono', e.target.value)}
+                                    placeholder="0414-000-0000" style={inputStyle} />
+                            </CampoDir>
+                            <div style={{ gridColumn: 'span 2', display: 'flex', gap: '20px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <input type="checkbox" id="dir_principal" checked={formDir.es_principal}
+                                        onChange={e => campoDir('es_principal', e.target.checked)}
+                                        style={{ width: '16px', height: '16px', accentColor: '#16a34a' }} />
+                                    <label htmlFor="dir_principal" style={{ fontSize: '14px', color: '#374151', cursor: 'pointer' }}>Dirección principal</label>
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <input type="checkbox" id="dir_activa" checked={formDir.activo}
+                                        onChange={e => campoDir('activo', e.target.checked)}
+                                        style={{ width: '16px', height: '16px', accentColor: '#16a34a' }} />
+                                    <label htmlFor="dir_activa" style={{ fontSize: '14px', color: '#374151', cursor: 'pointer' }}>Activa</label>
+                                </div>
+                            </div>
+                        </div>
+
+                        {errorDir && <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px', fontSize: '13px', color: '#dc2626', marginTop: '14px' }}>{errorDir}</div>}
+
+                        <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
+                            <button onClick={guardarDir} disabled={guardandoDir}
+                                style={{ flex: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '11px', fontSize: '14px', fontWeight: 600, cursor: 'pointer', opacity: guardandoDir ? 0.6 : 1 }}>
+                                <Check size={16} /> {guardandoDir ? 'Guardando...' : 'Guardar dirección'}
+                            </button>
+                            <button onClick={() => setModalDir(null)}
+                                style={{ flex: 1, padding: '11px', borderRadius: '8px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: '#374151', fontSize: '14px', cursor: 'pointer' }}>
+                                Cancelar
+                            </button>
+                        </div>
+                    </div>
+                </>
+            )}
         </div>
     )
 
@@ -208,11 +440,7 @@ export default function Clientes() {
                                     <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280', fontFamily: 'monospace' }}>{c.rif || '—'}</td>
                                     <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{c.telefono || '—'}</td>
                                     <td style={{ padding: '12px 16px' }}>
-                                        <span style={{
-                                            padding: '2px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 500,
-                                            backgroundColor: c.condicion_pago === 'credito' ? '#dbeafe' : '#f3f4f6',
-                                            color: c.condicion_pago === 'credito' ? '#1e40af' : '#6b7280'
-                                        }}>
+                                        <span style={{ padding: '2px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 500, backgroundColor: c.condicion_pago === 'credito' ? '#dbeafe' : '#f3f4f6', color: c.condicion_pago === 'credito' ? '#1e40af' : '#6b7280' }}>
                                             {c.condicion_pago || 'contado'}
                                         </span>
                                     </td>
@@ -220,11 +448,7 @@ export default function Clientes() {
                                         {c.condicion_pago === 'credito' ? `${c.dias_credito} días` : '—'}
                                     </td>
                                     <td style={{ padding: '12px 16px' }}>
-                                        <span style={{
-                                            padding: '2px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 500,
-                                            backgroundColor: c.activo ? '#dcfce7' : '#f3f4f6',
-                                            color: c.activo ? '#166534' : '#9ca3af'
-                                        }}>
+                                        <span style={{ padding: '2px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 500, backgroundColor: c.activo ? '#dcfce7' : '#f3f4f6', color: c.activo ? '#166534' : '#9ca3af' }}>
                                             {c.activo ? 'activo' : 'inactivo'}
                                         </span>
                                     </td>
@@ -245,6 +469,15 @@ export default function Clientes() {
 }
 
 function Campo({ label, children, span = 1 }) {
+    return (
+        <div style={{ gridColumn: `span ${span}` }}>
+            <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>{label}</label>
+            {children}
+        </div>
+    )
+}
+
+function CampoDir({ label, children, span = 1 }) {
     return (
         <div style={{ gridColumn: `span ${span}` }}>
             <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>{label}</label>

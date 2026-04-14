@@ -126,8 +126,8 @@ export default function Ventas() {
                         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                             <thead>
                                 <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                    {['Factura', 'Cliente', 'Fecha', 'Total', 'Estado', ''].map((h, i) => (
-                                        <th key={i} style={{ padding: '10px 16px', textAlign: i === 3 ? 'right' : 'left', fontSize: '12px', fontWeight: 500, color: '#6b7280' }}>{h}</th>
+                                    {['Factura', 'Referencia', 'Cliente', 'Fecha', 'Total', 'Estado', ''].map((h, i) => (
+                                        <th key={i} style={{ padding: '10px 16px', textAlign: i === 4 ? 'right' : 'left', fontSize: '12px', fontWeight: 500, color: '#6b7280' }}>{h}</th>
                                     ))}
                                 </tr>
                             </thead>
@@ -145,6 +145,9 @@ export default function Ventas() {
                                                     </span>
                                                 )}
                                             </div>
+                                        </td>
+                                        <td style={{ padding: '12px 16px', fontSize: '12px', fontFamily: 'monospace', color: v.nro_referencia ? '#374151' : '#d1d5db' }}>
+                                            {v.nro_referencia || '—'}
                                         </td>
                                         <td style={{ padding: '12px 16px', fontSize: '13px', color: '#374151' }}>{v.clientes?.nombre || '—'}</td>
                                         <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{new Date(v.fecha_venta || v.created_at).toLocaleDateString('es-VE')}</td>
@@ -218,6 +221,7 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
     const [loading, setLoading] = useState(true)
     const [procesando, setProcesando] = useState(false)
     const [error, setError] = useState('')
+    const [nroReferencia, setNroReferencia] = useState('')
 
     useEffect(() => {
         supabase.from('pedido_items')
@@ -247,6 +251,7 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
                 total,
                 estado_cobro: 'pendiente',
                 empresa_id: perfil.empresa_id,
+                nro_referencia: nroReferencia.trim() || null,
             })
             .select().single()
 
@@ -372,6 +377,19 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
                 </div>
             )}
 
+            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px', marginBottom: '20px' }}>
+                <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>
+                    N° de referencia <span style={{ color: '#9ca3af', fontWeight: 400 }}>(opcional)</span>
+                </label>
+                <input
+                    type="text"
+                    value={nroReferencia}
+                    onChange={e => setNroReferencia(e.target.value)}
+                    placeholder="Ej: REF-001, NP-2024..."
+                    style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', color: '#374151', backgroundColor: '#fff', boxSizing: 'border-box' }}
+                />
+            </div>
+
             <div style={{ display: 'flex', gap: '10px' }}>
                 <button onClick={facturar} disabled={procesando || loading}
                     style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '12px 24px', fontSize: '14px', fontWeight: 600, cursor: 'pointer', opacity: procesando ? 0.6 : 1 }}>
@@ -408,10 +426,13 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
     const [clientes, setClientes] = useState([])
     const [productos, setProductos] = useState([])
     const [clienteId, setClienteId] = useState('')
+    const [direcciones, setDirecciones] = useState([])
+    const [direccionId, setDireccionId] = useState('')
     const [busqueda, setBusqueda] = useState('')
     const [items, setItems] = useState([])
     const [guardando, setGuardando] = useState(false)
     const [error, setError] = useState('')
+    const [nroReferencia, setNroReferencia] = useState('')
 
     useEffect(() => {
         supabase.from('clientes').select('id, nombre').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
@@ -419,6 +440,26 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
         supabase.from('productos_terminados').select('id, nombre, sku, precio_venta, stock_actual, unidad_medida').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
             .then(({ data }) => setProductos(data || []))
     }, [])
+
+    async function seleccionarCliente(id) {
+        setClienteId(id)
+        setDireccionId('')
+        setDirecciones([])
+        if (!id) return
+        const { data } = await supabase.from('direcciones_entrega')
+            .select('*')
+            .eq('cliente_id', id)
+            .eq('empresa_id', perfil.empresa_id)
+            .eq('activo', true)
+            .order('es_principal', { ascending: false })
+            .order('nombre')
+        if (data) {
+            setDirecciones(data)
+            const principal = data.find(d => d.es_principal)
+            if (principal) setDireccionId(principal.id)
+            else if (data.length === 1) setDireccionId(data[0].id)
+        }
+    }
 
     const productosFiltrados = productos.filter(p =>
         p.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
@@ -459,7 +500,15 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
 
         const { data: venta, error: errVenta } = await supabase
             .from('ventas')
-            .insert({ cliente_id: clienteId, usuario_id: user.id, numero_factura: numero, subtotal, total, estado_cobro: 'pendiente', empresa_id: perfil.empresa_id })
+            .insert({
+                cliente_id: clienteId, usuario_id: user.id, numero_factura: numero,
+                subtotal, total, estado_cobro: 'pendiente', empresa_id: perfil.empresa_id,
+                nro_referencia: nroReferencia.trim() || null,
+                direccion_entrega_id: direccionId || null,
+                direccion_entrega_texto: direccionId
+                    ? direcciones.find(d => d.id === direccionId)?.direccion || null
+                    : null,
+            })
             .select()
             .single()
 
@@ -491,11 +540,32 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
 
                     <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px' }}>
                         <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '8px' }}>Cliente</label>
-                        <select value={clienteId} onChange={e => setClienteId(e.target.value)}
+                        <select value={clienteId} onChange={e => seleccionarCliente(e.target.value)}
                             style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', color: '#374151', backgroundColor: '#fff' }}>
                             <option value="">Seleccionar cliente...</option>
                             {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
                         </select>
+
+                        {/* Selector de dirección */}
+                        {direcciones.length > 1 && (
+                            <div style={{ marginTop: '12px' }}>
+                                <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '8px' }}>Dirección de entrega</label>
+                                <select value={direccionId} onChange={e => setDireccionId(e.target.value)}
+                                    style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', color: '#374151', backgroundColor: '#fff' }}>
+                                    <option value="">— Sin dirección específica —</option>
+                                    {direcciones.map(d => (
+                                        <option key={d.id} value={d.id}>
+                                            {d.nombre}{d.es_principal ? ' ★' : ''} — {d.direccion}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                        )}
+                        {direcciones.length === 1 && (
+                            <div style={{ marginTop: '10px', backgroundColor: '#f0fdf4', borderRadius: '8px', padding: '8px 12px', fontSize: '13px', color: '#166534' }}>
+                                📍 {direcciones[0].nombre} — {direcciones[0].direccion}
+                            </div>
+                        )}
                     </div>
 
                     <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px' }}>
@@ -579,6 +649,18 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                     </div>
                     <div style={{ fontSize: '12px', color: '#9ca3af', marginBottom: '16px' }}>
                         {items.length} producto(s) · {items.reduce((s, i) => s + i.cantidad, 0)} unidades
+                    </div>
+                    <div style={{ marginBottom: '16px' }}>
+                        <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>
+                            N° de referencia <span style={{ color: '#9ca3af', fontWeight: 400 }}>(opcional)</span>
+                        </label>
+                        <input
+                            type="text"
+                            value={nroReferencia}
+                            onChange={e => setNroReferencia(e.target.value)}
+                            placeholder="Ej: REF-001, NP-2024..."
+                            style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', color: '#374151', backgroundColor: '#fff', boxSizing: 'border-box' }}
+                        />
                     </div>
                     {error && (
                         <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', color: '#dc2626', marginBottom: '12px' }}>

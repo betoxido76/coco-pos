@@ -91,6 +91,8 @@ export default function NuevoPedido({ onPedidoCreado, onCancelar }) {
     const [clientes, setClientes] = useState([])
     const [busqCliente, setBusqCliente] = useState('')
     const [clienteSel, setClienteSel] = useState(null)
+    const [direcciones, setDirecciones] = useState([])
+    const [direccionId, setDireccionId] = useState('')
 
     // Paso 2 — Productos
     const [listas, setListas] = useState([])
@@ -169,6 +171,29 @@ export default function NuevoPedido({ onPedidoCreado, onCancelar }) {
         setVerHistorial(true)
     }
 
+    async function seleccionarCliente(c) {
+        setClienteSel(c)
+        setBusqCliente('')
+        setDireccionId('')
+        // Cargar direcciones del cliente
+        const { data } = await supabase.from('direcciones_entrega')
+            .select('*')
+            .eq('cliente_id', c.id)
+            .eq('empresa_id', perfil.empresa_id)
+            .eq('activo', true)
+            .order('es_principal', { ascending: false })
+            .order('nombre')
+        if (data) {
+            setDirecciones(data)
+            // Auto-seleccionar la principal si existe
+            const principal = data.find(d => d.es_principal)
+            if (principal) setDireccionId(principal.id)
+            else if (data.length === 1) setDireccionId(data[0].id)
+        } else {
+            setDirecciones([])
+        }
+    }
+
     const clientesFiltrados = clientes.filter(c =>
         c.nombre.toLowerCase().includes(busqCliente.toLowerCase()) ||
         c.rif?.toLowerCase().includes(busqCliente.toLowerCase())
@@ -232,6 +257,10 @@ export default function NuevoPedido({ onPedidoCreado, onCancelar }) {
             fecha_entrega: fechaEntrega || null,
             notas: notas.trim() || null,
             numero_pedido: numero,
+            direccion_entrega_id: direccionId || null,
+            direccion_entrega_texto: direccionId
+                ? direcciones.find(d => d.id === direccionId)?.direccion || null
+                : null,
         }).select().single()
 
         if (errPedido) { setError('Error: ' + errPedido.message); setGuardando(false); return }
@@ -269,7 +298,7 @@ export default function NuevoPedido({ onPedidoCreado, onCancelar }) {
             <button onClick={() => {
                 setPedidoCreado(null); setPaso(1); setClienteSel(null)
                 setBusqCliente(''); setItems([]); setNotas(''); setFechaEntrega('')
-                setDescuentoGlobal('')
+                setDescuentoGlobal(''); setDirecciones([]); setDireccionId('')
             }} style={s.btnPrimary}>
                 <Plus size={18} /> Nuevo pedido
             </button>
@@ -316,7 +345,7 @@ export default function NuevoPedido({ onPedidoCreado, onCancelar }) {
                 {/* Cliente seleccionado */}
                 {clienteSel && (
                     <div style={{ backgroundColor: '#f0fdf4', border: '2px solid #16a34a', borderRadius: '12px', padding: '14px 16px', marginBottom: '16px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: direcciones.length > 0 ? '12px' : 0 }}>
                             <div>
                                 <p style={{ fontSize: '16px', fontWeight: 700, color: '#166534', margin: '0 0 2px' }}>{clienteSel.nombre}</p>
                                 {clienteSel.rif && <p style={{ fontSize: '12px', color: '#16a34a', margin: '0 0 4px', fontFamily: 'monospace' }}>{clienteSel.rif}</p>}
@@ -329,12 +358,32 @@ export default function NuevoPedido({ onPedidoCreado, onCancelar }) {
                                     style={{ background: 'none', border: '1px solid #16a34a', borderRadius: '8px', padding: '6px 10px', fontSize: '12px', color: '#16a34a', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
                                     <Clock size={12} /> Historial
                                 </button>
-                                <button onClick={() => setClienteSel(null)}
+                                <button onClick={() => { setClienteSel(null); setDirecciones([]); setDireccionId('') }}
                                     style={{ background: 'none', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '6px 10px', fontSize: '12px', color: '#6b7280', cursor: 'pointer' }}>
                                     Cambiar
                                 </button>
                             </div>
                         </div>
+                        {/* Selector de dirección */}
+                        {direcciones.length > 1 && (
+                            <div>
+                                <p style={{ fontSize: '12px', fontWeight: 600, color: '#166534', margin: '0 0 6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Dirección de entrega</p>
+                                <select value={direccionId} onChange={e => setDireccionId(e.target.value)}
+                                    style={{ width: '100%', padding: '8px 12px', border: '1px solid #bbf7d0', borderRadius: '8px', fontSize: '14px', backgroundColor: '#fff', color: '#374151' }}>
+                                    <option value="">— Sin dirección específica —</option>
+                                    {direcciones.map(d => (
+                                        <option key={d.id} value={d.id}>
+                                            {d.nombre}{d.es_principal ? ' ★' : ''} — {d.direccion}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                        )}
+                        {direcciones.length === 1 && (
+                            <div style={{ backgroundColor: '#dcfce7', borderRadius: '8px', padding: '8px 12px', fontSize: '12px', color: '#166534' }}>
+                                📍 {direcciones[0].nombre} — {direcciones[0].direccion}
+                            </div>
+                        )}
                     </div>
                 )}
 
@@ -346,7 +395,7 @@ export default function NuevoPedido({ onPedidoCreado, onCancelar }) {
                                 {busqCliente ? 'Sin resultados' : 'Escribe para buscar'}
                             </div>
                         ) : clientesFiltrados.slice(0, 15).map(c => (
-                            <div key={c.id} onClick={() => { setClienteSel(c); setBusqCliente('') }}
+                            <div key={c.id} onClick={() => seleccionarCliente(c)}
                                 style={{ padding: '14px 16px', borderBottom: '1px solid #f3f4f6', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
                                 onTouchStart={e => e.currentTarget.style.backgroundColor = '#f0fdf4'}
                                 onTouchEnd={e => e.currentTarget.style.backgroundColor = 'transparent'}
@@ -568,6 +617,11 @@ export default function NuevoPedido({ onPedidoCreado, onCancelar }) {
                     <label style={s.label}>Cliente</label>
                     <p style={{ fontSize: '16px', fontWeight: 600, color: '#1f2937', margin: '0 0 2px' }}>{clienteSel.nombre}</p>
                     {clienteSel.rif && <p style={{ fontSize: '12px', color: '#9ca3af', margin: 0, fontFamily: 'monospace' }}>{clienteSel.rif}</p>}
+                    {direccionId && direcciones.find(d => d.id === direccionId) && (
+                        <div style={{ marginTop: '8px', backgroundColor: '#f0fdf4', borderRadius: '8px', padding: '8px 10px', fontSize: '12px', color: '#166534' }}>
+                            📍 {direcciones.find(d => d.id === direccionId)?.nombre} — {direcciones.find(d => d.id === direccionId)?.direccion}
+                        </div>
+                    )}
                 </div>
 
                 {/* Resumen items */}

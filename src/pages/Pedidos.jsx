@@ -470,6 +470,7 @@ function DetallePedido({ pedido, onVolver }) {
                     </div>
                 </>
             )}
+
         </div>
     )
 }
