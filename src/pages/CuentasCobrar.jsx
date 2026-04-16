@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
-import { X, DollarSign } from 'lucide-react'
+import { X, DollarSign, CheckSquare } from 'lucide-react'
 
 const fmt = n => `$${Number(n).toFixed(2)}`
 const fmtBs = n => `${Number(n).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`
@@ -21,12 +21,16 @@ export default function CuentasCobrar() {
     const [ventas, setVentas] = useState([])
     const [loading, setLoading] = useState(true)
     const [filtro, setFiltro] = useState('pendiente')
-    const [modalVenta, setModalVenta] = useState(null)
+    const [modalVenta, setModalVenta] = useState(null)       // cobro individual
+    const [modalMultiple, setModalMultiple] = useState(false) // cobro múltiple
     const [tasas, setTasas] = useState({ tasa_bcv: 1, tasa_euro: 1, tasa_binance: 1 })
     const [clientes, setClientes] = useState([])
     const [filtroCliente, setFiltroCliente] = useState('')
+    const [seleccionadas, setSeleccionadas] = useState([]) // ids seleccionados
 
     useEffect(() => { cargar() }, [filtro, filtroCliente])
+    // Limpiar selección al cambiar filtro
+    useEffect(() => { setSeleccionadas([]) }, [filtro, filtroCliente])
 
     useEffect(() => {
         supabase.from('clientes').select('id, nombre')
@@ -54,9 +58,29 @@ export default function CuentasCobrar() {
         setLoading(false)
     }
 
+    // Lógica de selección múltiple
+    const ventasSeleccionables = ventas.filter(v => v.estado_cobro !== 'pagado')
+    const clienteSeleccionado = seleccionadas.length > 0
+        ? ventas.find(v => v.id === seleccionadas[0])?.cliente_id
+        : null
+    const ventasSeleccionadasObj = ventas.filter(v => seleccionadas.includes(v.id))
+    const totalSeleccionado = ventasSeleccionadasObj.reduce((s, v) => s + (v.total || 0), 0)
+
+    function toggleSeleccion(venta) {
+        if (venta.estado_cobro === 'pagado') return
+        setSeleccionadas(prev => {
+            if (prev.includes(venta.id)) return prev.filter(id => id !== venta.id)
+            // Solo del mismo cliente
+            if (clienteSeleccionado && venta.cliente_id !== clienteSeleccionado) return prev
+            return [...prev, venta.id]
+        })
+    }
+
     const totalPendiente = ventas
         .filter(v => v.estado_cobro !== 'pagado')
         .reduce((s, v) => s + (v.total || 0), 0)
+
+    const mostrarCheckboxes = filtro === 'pendiente' || filtro === 'parcial'
 
     return (
         <div style={{ padding: '24px' }}>
@@ -100,6 +124,28 @@ export default function CuentasCobrar() {
                 </select>
             </div>
 
+            {/* Barra de cobro múltiple */}
+            {seleccionadas.length > 1 && (
+                <div style={{ backgroundColor: '#1d4ed8', borderRadius: '10px', padding: '12px 20px', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ color: '#fff' }}>
+                        <span style={{ fontWeight: 700, fontSize: '15px' }}>{seleccionadas.length} facturas seleccionadas</span>
+                        <span style={{ fontSize: '13px', marginLeft: '12px', opacity: 0.85 }}>
+                            {ventasSeleccionadasObj[0]?.clientes?.nombre} · Total: {fmt(totalSeleccionado)}
+                        </span>
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                        <button onClick={() => setSeleccionadas([])}
+                            style={{ padding: '7px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid rgba(255,255,255,0.3)', backgroundColor: 'transparent', color: '#fff', cursor: 'pointer' }}>
+                            Cancelar
+                        </button>
+                        <button onClick={() => setModalMultiple(true)}
+                            style={{ padding: '7px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 600, border: 'none', backgroundColor: '#fff', color: '#1d4ed8', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <DollarSign size={14} /> Cobrar {fmt(totalSeleccionado)}
+                        </button>
+                    </div>
+                </div>
+            )}
+
             {/* Tabla */}
             <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
                 {loading ? <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
@@ -108,19 +154,35 @@ export default function CuentasCobrar() {
                             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                                 <thead>
                                     <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                        {['', 'Factura', 'Cliente', 'Emisión', 'Vencimiento', 'Total', 'Cobrado', 'Saldo', 'Estado', ''].map(h => (
-                                            <th key={h} style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
+                                        {[mostrarCheckboxes ? '☑' : '', '', 'Factura', 'Cliente', 'Emisión', 'Vencimiento', 'Total', 'Cobrado', 'Saldo', 'Estado', ''].map((h, i) => (
+                                            <th key={i} style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
                                         ))}
                                     </tr>
                                 </thead>
                                 <tbody>
                                     {ventas.map(v => {
                                         const sem = semaforo(v.fecha_vencimiento_pago)
+                                        const seleccionada = seleccionadas.includes(v.id)
+                                        const deshabilitada = v.estado_cobro === 'pagado' ||
+                                            (clienteSeleccionado && v.cliente_id !== clienteSeleccionado && !seleccionada)
                                         return (
-                                            <tr key={v.id} style={{ borderBottom: '1px solid #f3f4f6', backgroundColor: sem?.bg || 'transparent' }}
-                                                onMouseEnter={e => e.currentTarget.style.opacity = '0.85'}
-                                                onMouseLeave={e => e.currentTarget.style.opacity = '1'}>
-                                                <td style={{ padding: '12px 8px 12px 14px', fontSize: '18px' }}>{sem?.dot || '⚪'}</td>
+                                            <tr key={v.id} style={{
+                                                borderBottom: '1px solid #f3f4f6',
+                                                backgroundColor: seleccionada ? '#eff6ff' : sem?.bg || 'transparent',
+                                                opacity: deshabilitada && mostrarCheckboxes ? 0.45 : 1,
+                                                outline: seleccionada ? '2px solid #1d4ed8' : 'none',
+                                                outlineOffset: '-2px',
+                                            }}>
+                                                {/* Checkbox */}
+                                                <td style={{ padding: '12px 8px 12px 14px' }}>
+                                                    {mostrarCheckboxes && v.estado_cobro !== 'pagado' && (
+                                                        <input type="checkbox" checked={seleccionada}
+                                                            disabled={deshabilitada && !seleccionada}
+                                                            onChange={() => toggleSeleccion(v)}
+                                                            style={{ width: '16px', height: '16px', cursor: deshabilitada && !seleccionada ? 'not-allowed' : 'pointer', accentColor: '#1d4ed8' }} />
+                                                    )}
+                                                </td>
+                                                <td style={{ padding: '12px 8px 12px 0', fontSize: '18px' }}>{sem?.dot || '⚪'}</td>
                                                 <td style={{ padding: '12px 14px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>{v.numero_factura}</td>
                                                 <td style={{ padding: '12px 14px', fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>{v.clientes?.nombre || '—'}</td>
                                                 <td style={{ padding: '12px 14px', fontSize: '13px', color: '#6b7280' }}>
@@ -145,7 +207,7 @@ export default function CuentasCobrar() {
                                                     {v.estado_cobro !== 'pagado' && (
                                                         <button onClick={() => setModalVenta(v)}
                                                             style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', padding: '5px 12px', fontSize: '12px', fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                                                            <DollarSign size={12} /> Registrar cobro
+                                                            <DollarSign size={12} /> Cobrar
                                                         </button>
                                                     )}
                                                 </td>
@@ -157,10 +219,20 @@ export default function CuentasCobrar() {
                         )}
             </div>
 
+            {/* Modal cobro individual */}
             {modalVenta && (
                 <ModalCobro venta={modalVenta} tasas={tasas}
                     onCerrar={() => setModalVenta(null)}
                     onCobrado={() => { setModalVenta(null); cargar() }} />
+            )}
+
+            {/* Modal cobro múltiple */}
+            {modalMultiple && (
+                <ModalCobroMultiple
+                    ventas={ventasSeleccionadasObj}
+                    tasas={tasas}
+                    onCerrar={() => setModalMultiple(false)}
+                    onCobrado={() => { setModalMultiple(false); setSeleccionadas([]); cargar() }} />
             )}
         </div>
     )
@@ -191,7 +263,7 @@ function SaldoPendiente({ ventaId, total }) {
     return <span>{saldo > 0.01 ? fmt(saldo) : <span style={{ color: '#16a34a' }}>✓ Pagado</span>}</span>
 }
 
-// ── Modal de cobro ─────────────────────────────────────────────
+// ── Modal cobro individual ─────────────────────────────────────
 function ModalCobro({ venta, tasas, onCerrar, onCobrado }) {
     const { perfil } = useAuth()
     const OPCIONES_TASA = [
@@ -204,7 +276,7 @@ function ModalCobro({ venta, tasas, onCerrar, onCobrado }) {
 
     const [cobradoPrev, setCobradoPrev] = useState(0)
     const [tipoTasa, setTipoTasa] = useState('tasa_bcv')
-    const [pagoUsd, setPagoUsd] = useState(0)
+    const [pagoUsd, setPagoUsd] = useState(venta.total)
     const [pagoBs, setPagoBs] = useState(0)
     const [metodoUsd, setMetodoUsd] = useState('Efectivo')
     const [metodoBs, setMetodoBs] = useState('Pago Móvil')
@@ -215,7 +287,11 @@ function ModalCobro({ venta, tasas, onCerrar, onCobrado }) {
     useEffect(() => {
         supabase.from('cobros').select('monto_usd, monto_bs, tasa_cambio').eq('venta_id', venta.id)
             .then(({ data }) => {
-                if (data) setCobradoPrev(data.reduce((s, c) => s + c.monto_usd + (c.monto_bs / (c.tasa_cambio || 1)), 0))
+                if (data) {
+                    const prev = data.reduce((s, c) => s + c.monto_usd + (c.monto_bs / (c.tasa_cambio || 1)), 0)
+                    setCobradoPrev(prev)
+                    setPagoUsd(Math.max(0, venta.total - prev))
+                }
             })
     }, [venta.id])
 
@@ -229,6 +305,12 @@ function ModalCobro({ venta, tasas, onCerrar, onCobrado }) {
         const n = Math.max(0, Number(val))
         setPagoUsd(n)
         setPagoBs(parseFloat((Math.max(0, saldo - n) * tasa).toFixed(2)))
+    }
+
+    function handleTasaChange(nuevaTasa) {
+        setTipoTasa(nuevaTasa)
+        const t = tasas[nuevaTasa] || 1
+        setPagoBs(parseFloat((Math.max(0, saldo - pagoUsd) * t).toFixed(2)))
     }
 
     async function confirmar() {
@@ -260,14 +342,13 @@ function ModalCobro({ venta, tasas, onCerrar, onCobrado }) {
     return (
         <>
             <div onClick={onCerrar} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', zIndex: 40 }} />
-            <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', backgroundColor: '#fff', borderRadius: '16px', padding: '28px', width: '460px', zIndex: 50, boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+            <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', backgroundColor: '#fff', borderRadius: '16px', padding: '28px', width: '460px', zIndex: 50, boxShadow: '0 20px 60px rgba(0,0,0,0.2)', maxHeight: '90vh', overflowY: 'auto' }}>
 
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                     <h2 style={{ fontSize: '17px', fontWeight: 700, color: '#1f2937', margin: 0 }}>Registrar cobro</h2>
                     <button onClick={onCerrar} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af' }}><X size={20} /></button>
                 </div>
 
-                {/* Info factura */}
                 <div style={{ backgroundColor: '#f9fafb', borderRadius: '10px', padding: '12px 16px', marginBottom: '20px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '4px' }}>
                         <span style={{ color: '#6b7280' }}>Factura</span>
@@ -288,18 +369,183 @@ function ModalCobro({ venta, tasas, onCerrar, onCobrado }) {
                     </div>
                 </div>
 
-                {/* Selector tasa */}
                 <div style={{ marginBottom: '16px' }}>
                     <label style={{ fontSize: '12px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tasa de cambio</label>
                     <div style={{ display: 'flex', gap: '8px' }}>
                         {OPCIONES_TASA.map(op => (
-                            <button key={op.key} onClick={() => setTipoTasa(op.key)}
-                                style={{
-                                    flex: 1, padding: '8px 4px', borderRadius: '8px', fontSize: '12px', fontWeight: 500, border: '1px solid', cursor: 'pointer',
-                                    borderColor: tipoTasa === op.key ? '#16a34a' : '#e5e7eb',
-                                    backgroundColor: tipoTasa === op.key ? '#f0fdf4' : '#fff',
-                                    color: tipoTasa === op.key ? '#16a34a' : '#6b7280'
-                                }}>
+                            <button key={op.key} onClick={() => handleTasaChange(op.key)}
+                                style={{ flex: 1, padding: '8px 4px', borderRadius: '8px', fontSize: '12px', fontWeight: 500, border: '1px solid', cursor: 'pointer', borderColor: tipoTasa === op.key ? '#16a34a' : '#e5e7eb', backgroundColor: tipoTasa === op.key ? '#f0fdf4' : '#fff', color: tipoTasa === op.key ? '#16a34a' : '#6b7280' }}>
+                                <div>{op.label}</div>
+                                <div style={{ fontSize: '11px', marginTop: '2px', fontWeight: 400 }}>{tasas[op.key].toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.</div>
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
+                    <div>
+                        <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Pago en USD ($)</label>
+                        <input type="number" min="0" step="0.01" value={pagoUsd} onChange={e => handleUsdChange(e.target.value)}
+                            style={{ width: '100%', padding: '9px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '15px', fontWeight: 600, boxSizing: 'border-box' }} />
+                    </div>
+                    <div>
+                        <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Vía USD</label>
+                        <select value={metodoUsd} onChange={e => setMetodoUsd(e.target.value)}
+                            style={{ width: '100%', padding: '9px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', backgroundColor: '#fff' }}>
+                            {METODOS_USD.map(m => <option key={m}>{m}</option>)}
+                        </select>
+                    </div>
+                    <div>
+                        <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Pago en Bs.</label>
+                        <input type="number" min="0" step="1" value={pagoBs} onChange={e => setPagoBs(Math.max(0, Number(e.target.value)))}
+                            style={{ width: '100%', padding: '9px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '15px', fontWeight: 600, boxSizing: 'border-box' }} />
+                    </div>
+                    <div>
+                        <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Vía Bs.</label>
+                        <select value={metodoBs} onChange={e => setMetodoBs(e.target.value)}
+                            style={{ width: '100%', padding: '9px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', backgroundColor: '#fff' }}>
+                            {METODOS_BS.map(m => <option key={m}>{m}</option>)}
+                        </select>
+                    </div>
+                </div>
+
+                {pagoUsd > 0 && (
+                    <div style={{ backgroundColor: '#f9fafb', borderRadius: '8px', padding: '8px 12px', marginBottom: '12px', fontSize: '12px', color: '#6b7280' }}>
+                        ${pagoUsd.toFixed(2)} × {tasa.toLocaleString('es-VE', { minimumFractionDigits: 2 })} = <strong style={{ color: '#374151' }}>{(pagoUsd * tasa).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.</strong>
+                    </div>
+                )}
+
+                <div style={{ marginBottom: '16px' }}>
+                    <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Nota (opcional)</label>
+                    <input value={nota} onChange={e => setNota(e.target.value)} placeholder="Ej: Transferencia ref. 12345"
+                        style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', boxSizing: 'border-box' }} />
+                </div>
+
+                <div style={{ borderRadius: '8px', padding: '10px 14px', marginBottom: '16px', fontSize: '13px', textAlign: 'center', fontWeight: 500, backgroundColor: excede ? '#fef2f2' : sinAbono ? '#f9fafb' : '#f0fdf4', color: excede ? '#dc2626' : sinAbono ? '#9ca3af' : '#166534', border: `1px solid ${excede ? '#fecaca' : sinAbono ? '#e5e7eb' : '#bbf7d0'}` }}>
+                    {excede ? '⚠️ El abono supera el saldo pendiente' : sinAbono ? 'Ingresa el monto a cobrar' : `Abono: ${fmt(abonoEnUsd)} · Quedará pendiente: ${fmt(Math.max(0, saldo - abonoEnUsd))}`}
+                </div>
+
+                {error && <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px', fontSize: '13px', color: '#dc2626', marginBottom: '12px' }}>{error}</div>}
+
+                <button onClick={confirmar} disabled={guardando || sinAbono || excede}
+                    style={{ width: '100%', backgroundColor: sinAbono || excede ? '#d1d5db' : '#16a34a', color: '#fff', border: 'none', borderRadius: '10px', padding: '13px', fontSize: '15px', fontWeight: 700, cursor: sinAbono || excede ? 'default' : 'pointer' }}>
+                    {guardando ? 'Registrando...' : 'Confirmar cobro'}
+                </button>
+            </div>
+        </>
+    )
+}
+
+// ── Modal cobro múltiple ───────────────────────────────────────
+function ModalCobroMultiple({ ventas, tasas, onCerrar, onCobrado }) {
+    const { perfil } = useAuth()
+    const OPCIONES_TASA = [
+        { key: 'tasa_bcv', label: 'USD · BCV' },
+        { key: 'tasa_euro', label: 'EUR · BCV' },
+        { key: 'tasa_binance', label: 'USD · Binance' },
+    ]
+    const METODOS_USD = ['Efectivo', 'Zelle', 'Transferencia USD', 'Otros']
+    const METODOS_BS = ['Pago Móvil', 'Transferencia', 'Punto de Venta', 'Efectivo Bs.']
+
+    const totalGeneral = ventas.reduce((s, v) => s + (v.total || 0), 0)
+
+    const [tipoTasa, setTipoTasa] = useState('tasa_bcv')
+    const [pagoUsd, setPagoUsd] = useState(totalGeneral)
+    const [pagoBs, setPagoBs] = useState(0)
+    const [metodoUsd, setMetodoUsd] = useState('Efectivo')
+    const [metodoBs, setMetodoBs] = useState('Pago Móvil')
+    const [nota, setNota] = useState('')
+    const [guardando, setGuardando] = useState(false)
+    const [error, setError] = useState('')
+
+    const tasa = tasas[tipoTasa] || 1
+    const abonoEnUsd = pagoUsd + (pagoBs / tasa)
+    const cubre = Math.abs(abonoEnUsd - totalGeneral) <= 0.01
+    const excede = abonoEnUsd > totalGeneral + 0.01
+    const sinAbono = abonoEnUsd < 0.01
+
+    function handleUsdChange(val) {
+        const n = Math.max(0, Number(val))
+        setPagoUsd(n)
+        setPagoBs(parseFloat((Math.max(0, totalGeneral - n) * tasa).toFixed(2)))
+    }
+
+    function handleTasaChange(nuevaTasa) {
+        setTipoTasa(nuevaTasa)
+        const t = tasas[nuevaTasa] || 1
+        setPagoBs(parseFloat((Math.max(0, totalGeneral - pagoUsd) * t).toFixed(2)))
+    }
+
+    async function confirmar() {
+        if (sinAbono) { setError('Ingresa un monto a cobrar'); return }
+        if (excede) { setError('El monto supera el total de las facturas'); return }
+        if (!cubre) { setError('El monto debe cubrir exactamente el total — no se aceptan pagos parciales en cobro múltiple'); return }
+        setGuardando(true); setError('')
+
+        const { data: { user } } = await supabase.auth.getUser()
+
+        // Insertar un cobro por cada factura con su proporción del total
+        for (const venta of ventas) {
+            const proporcion = venta.total / totalGeneral
+            await supabase.from('cobros').insert({
+                venta_id: venta.id,
+                monto_usd: parseFloat((pagoUsd * proporcion).toFixed(2)),
+                monto_bs: parseFloat((pagoBs * proporcion).toFixed(2)),
+                tasa_cambio: tasa,
+                tipo_tasa: tipoTasa,
+                metodo_usd: metodoUsd,
+                metodo_bs: metodoBs,
+                nota: nota || null,
+                usuario_id: user.id,
+                empresa_id: perfil.empresa_id,
+            })
+            await supabase.from('ventas').update({ estado_cobro: 'pagado' }).eq('id', venta.id)
+        }
+
+        setGuardando(false)
+        onCobrado()
+    }
+
+    return (
+        <>
+            <div onClick={onCerrar} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', zIndex: 40 }} />
+            <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', backgroundColor: '#fff', borderRadius: '16px', padding: '28px', width: '480px', zIndex: 50, boxShadow: '0 20px 60px rgba(0,0,0,0.2)', maxHeight: '90vh', overflowY: 'auto' }}>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                    <div>
+                        <h2 style={{ fontSize: '17px', fontWeight: 700, color: '#1f2937', margin: '0 0 2px' }}>Cobro múltiple</h2>
+                        <p style={{ fontSize: '12px', color: '#6b7280', margin: 0 }}>{ventas[0]?.clientes?.nombre} · {ventas.length} facturas</p>
+                    </div>
+                    <button onClick={onCerrar} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af' }}><X size={20} /></button>
+                </div>
+
+                {/* Lista de facturas incluidas */}
+                <div style={{ backgroundColor: '#f9fafb', borderRadius: '10px', padding: '12px 16px', marginBottom: '20px' }}>
+                    {ventas.map((v, i) => (
+                        <div key={v.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: i < ventas.length - 1 ? '6px' : 0 }}>
+                            <span style={{ fontFamily: 'monospace', color: '#374151' }}>{v.numero_factura}</span>
+                            <span style={{ fontWeight: 600, color: '#1f2937' }}>{fmt(v.total)}</span>
+                        </div>
+                    ))}
+                    <div style={{ height: '1px', backgroundColor: '#e5e7eb', margin: '10px 0' }} />
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '16px', fontWeight: 700 }}>
+                        <span style={{ color: '#6b7280' }}>Total a cobrar</span>
+                        <span style={{ color: '#1d4ed8' }}>{fmt(totalGeneral)}</span>
+                    </div>
+                </div>
+
+                {/* Aviso pago exacto */}
+                <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: '8px', padding: '10px 14px', marginBottom: '16px', fontSize: '12px', color: '#854d0e' }}>
+                    ⚠️ El monto debe coincidir exactamente con el total. No se aceptan pagos parciales en cobro múltiple.
+                </div>
+
+                {/* Selector de tasa */}
+                <div style={{ marginBottom: '16px' }}>
+                    <label style={{ fontSize: '12px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tasa de cambio</label>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                        {OPCIONES_TASA.map(op => (
+                            <button key={op.key} onClick={() => handleTasaChange(op.key)}
+                                style={{ flex: 1, padding: '8px 4px', borderRadius: '8px', fontSize: '12px', fontWeight: 500, border: '1px solid', cursor: 'pointer', borderColor: tipoTasa === op.key ? '#16a34a' : '#e5e7eb', backgroundColor: tipoTasa === op.key ? '#f0fdf4' : '#fff', color: tipoTasa === op.key ? '#16a34a' : '#6b7280' }}>
                                 <div>{op.label}</div>
                                 <div style={{ fontSize: '11px', marginTop: '2px', fontWeight: 400 }}>{tasas[op.key].toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.</div>
                             </button>
@@ -335,30 +581,31 @@ function ModalCobro({ venta, tasas, onCerrar, onCobrado }) {
                     </div>
                 </div>
 
-                {/* Nota */}
+                {pagoUsd > 0 && (
+                    <div style={{ backgroundColor: '#f9fafb', borderRadius: '8px', padding: '8px 12px', marginBottom: '12px', fontSize: '12px', color: '#6b7280' }}>
+                        ${pagoUsd.toFixed(2)} × {tasa.toLocaleString('es-VE', { minimumFractionDigits: 2 })} = <strong style={{ color: '#374151' }}>{(pagoUsd * tasa).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.</strong>
+                    </div>
+                )}
+
                 <div style={{ marginBottom: '16px' }}>
                     <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Nota (opcional)</label>
                     <input value={nota} onChange={e => setNota(e.target.value)} placeholder="Ej: Transferencia ref. 12345"
                         style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', boxSizing: 'border-box' }} />
                 </div>
 
-                {/* Resumen abono */}
-                <div style={{
-                    borderRadius: '8px', padding: '10px 14px', marginBottom: '16px', fontSize: '13px', textAlign: 'center', fontWeight: 500,
-                    backgroundColor: excede ? '#fef2f2' : sinAbono ? '#f9fafb' : '#f0fdf4',
-                    color: excede ? '#dc2626' : sinAbono ? '#9ca3af' : '#166534',
-                    border: `1px solid ${excede ? '#fecaca' : sinAbono ? '#e5e7eb' : '#bbf7d0'}`
-                }}>
-                    {excede ? '⚠️ El abono supera el saldo pendiente'
+                {/* Resumen */}
+                <div style={{ borderRadius: '8px', padding: '10px 14px', marginBottom: '16px', fontSize: '13px', textAlign: 'center', fontWeight: 500, backgroundColor: excede ? '#fef2f2' : sinAbono ? '#f9fafb' : cubre ? '#f0fdf4' : '#fffbeb', color: excede ? '#dc2626' : sinAbono ? '#9ca3af' : cubre ? '#166534' : '#854d0e', border: `1px solid ${excede ? '#fecaca' : sinAbono ? '#e5e7eb' : cubre ? '#bbf7d0' : '#fde68a'}` }}>
+                    {excede ? '⚠️ El monto supera el total de las facturas'
                         : sinAbono ? 'Ingresa el monto a cobrar'
-                            : `Abono: ${fmt(abonoEnUsd)} · Quedará pendiente: ${fmt(Math.max(0, saldo - abonoEnUsd))}`}
+                        : cubre ? `✓ Monto exacto — ${ventas.length} facturas quedarán pagadas`
+                        : `Faltan ${fmt(totalGeneral - abonoEnUsd)} para cubrir el total`}
                 </div>
 
                 {error && <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px', fontSize: '13px', color: '#dc2626', marginBottom: '12px' }}>{error}</div>}
 
-                <button onClick={confirmar} disabled={guardando || sinAbono || excede}
-                    style={{ width: '100%', backgroundColor: sinAbono || excede ? '#d1d5db' : '#16a34a', color: '#fff', border: 'none', borderRadius: '10px', padding: '13px', fontSize: '15px', fontWeight: 700, cursor: sinAbono || excede ? 'default' : 'pointer' }}>
-                    {guardando ? 'Registrando...' : 'Confirmar cobro'}
+                <button onClick={confirmar} disabled={guardando || !cubre || excede}
+                    style={{ width: '100%', backgroundColor: !cubre || excede ? '#d1d5db' : '#1d4ed8', color: '#fff', border: 'none', borderRadius: '10px', padding: '13px', fontSize: '15px', fontWeight: 700, cursor: !cubre || excede ? 'default' : 'pointer' }}>
+                    {guardando ? 'Registrando...' : `Confirmar cobro de ${ventas.length} facturas`}
                 </button>
             </div>
         </>

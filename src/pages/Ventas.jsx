@@ -231,10 +231,11 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
     }, [pedido.id])
 
     const descGlobal = Number(pedido.descuento_global || 0)
-    const subtotalConDescItems = items.reduce((s, i) => s + Number(i.cantidad) * Number(i.precio_unitario) * (1 - Number(i.descuento_item || 0) / 100), 0)
-    const subtotalFinal = subtotalConDescItems * (1 - descGlobal / 100)
-    const iva = subtotalFinal * 0.16
-    const total = subtotalFinal + iva
+    const totalConDescItems = items.reduce((s, i) => s + Number(i.cantidad) * Number(i.precio_unitario) * (1 - Number(i.descuento_item || 0) / 100), 0)
+    const totalConIVA = totalConDescItems * (1 - descGlobal / 100)
+    const subtotal = totalConIVA / 1.16
+    const iva = totalConIVA - subtotal
+    const total = totalConIVA
 
     async function facturar() {
         setProcesando(true); setError('')
@@ -262,7 +263,7 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
                 venta_id: venta.id,
                 producto_id: i.producto_id,
                 cantidad: i.cantidad,
-                precio_unitario: Number(i.precio_unitario) * (1 - Number(i.descuento_item || 0) / 100) * (1 - descGlobal / 100),
+                precio_unitario: (Number(i.precio_unitario) * (1 - Number(i.descuento_item || 0) / 100) * (1 - descGlobal / 100)) / 1.16,
                 empresa_id: perfil.empresa_id,
             }))
         )
@@ -485,9 +486,10 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
         setItems(prev => prev.filter(i => i.producto_id !== id))
     }
 
-    const subtotal = items.reduce((s, i) => s + i.cantidad * i.precio_unitario, 0)
-    const impuesto = subtotal * 0.16
-    const total = subtotal + impuesto
+    const totalConIVA = items.reduce((s, i) => s + i.cantidad * i.precio_unitario, 0)
+    const subtotal = totalConIVA / 1.16
+    const impuesto = totalConIVA - subtotal
+    const total = totalConIVA
 
     async function confirmarVenta() {
         if (!clienteId) { setError('Selecciona un cliente'); return }
@@ -613,7 +615,23 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                                     {items.map(item => (
                                         <tr key={item.producto_id} style={{ borderBottom: '1px solid #f3f4f6' }}>
                                             <td style={{ padding: '10px 12px', fontSize: '13px', color: '#1f2937' }}>{item.nombre}</td>
-                                            <td style={{ padding: '10px 12px', fontSize: '13px', color: '#6b7280' }}>{fmt(item.precio_unitario)}</td>
+                                            <td style={{ padding: '10px 12px' }}>
+                                                <input
+                                                    type="number"
+                                                    min="0"
+                                                    step="0.01"
+                                                    value={item.precio_unitario}
+                                                    onChange={e => cambiarPrecio(item.producto_id, e.target.value)}
+                                                    style={{
+                                                        width: '80px',
+                                                        padding: '4px 8px',
+                                                        border: '1px solid #d1d5db',
+                                                        borderRadius: '6px',
+                                                        fontSize: '13px',
+                                                        textAlign: 'right'
+                                                    }}
+                                                />
+                                            </td>
                                             <td style={{ padding: '10px 12px' }}>
                                                 <input type="number" min="1" max={item.stock} value={item.cantidad}
                                                     onChange={e => cambiarCantidad(item.producto_id, e.target.value)}
@@ -679,6 +697,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
 }
 
 // ─── Factura + Devolución ──────────────────────────────────────
+// ─── Factura + Devolución (CORREGIDO PARA IMPRESIÓN) ──────────────────────
 function Factura({ venta, onVolver, onDevolucionCreada }) {
     const [items, setItems] = useState(venta.items || [])
     const [devoluciones, setDevoluciones] = useState([])
@@ -715,6 +734,9 @@ function Factura({ venta, onVolver, onDevolucionCreada }) {
     const total = venta.total || subtotal + impuesto
     const puedeDevolver = venta.estado_cobro !== 'anulado'
 
+    // Lógica para mostrar NE- en lugar de FAC-
+    const numeroDoc = venta.numero_factura ? venta.numero_factura.replace('FAC-', 'NE-') : '';
+
     if (mostrarDevolucion)
         return <FormDevolucion
             venta={venta}
@@ -725,19 +747,54 @@ function Factura({ venta, onVolver, onDevolucionCreada }) {
 
     return (
         <div style={{ padding: '24px', maxWidth: '680px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
+
+            {/* 🖨️ ESTILOS PARA IMPRESIÓN */}
+            <style>{`
+                @media print {
+                    /* Ocultar todo el body por defecto */
+                    body * { visibility: hidden; }
+                    
+                    /* Hacer visible solo el documento */
+                    .print-target, .print-target * { visibility: visible; }
+                    
+                    /* Ajustar posición y márgenes del documento para impresión */
+                    .print-target {
+                        position: absolute;
+                        left: 0;
+                        top: 0;
+                        width: 100%;
+                        margin: 0;
+                        padding: 20px !important;
+                        border: none !important;
+                        box-shadow: none !important;
+                        background: white !important;
+                    }
+                    
+                    /* Asegurar que elementos ocultos no ocupen espacio */
+                    .no-print { display: none !important; }
+                }
+            `}</style>
+
+            {/* Encabezado de la App (Se oculta al imprimir) */}
+            <div className="no-print" style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
                 <button onClick={onVolver} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', fontSize: '13px' }}>← Volver</button>
-                <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Factura</h1>
+                <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Nota de Entrega</h1>
+
+                <button onClick={() => window.print()}
+                    style={{ marginLeft: 'auto', marginRight: '8px', display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '8px 14px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}>
+                    🖨️ Imprimir
+                </button>
+
                 {puedeDevolver && (
                     <button onClick={() => setMostrarDevolucion(true)}
-                        style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '8px 14px', fontSize: '13px', color: '#374151', cursor: 'pointer' }}>
+                        style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '8px 14px', fontSize: '13px', color: '#374151', cursor: 'pointer' }}>
                         <RotateCcw size={14} /> Registrar devolución
                     </button>
                 )}
             </div>
 
-            {/* Factura */}
-            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '32px', marginBottom: '16px' }}>
+            {/* Documento (Lo único que se imprime) */}
+            <div className="print-target" style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '32px', marginBottom: '16px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '32px' }}>
                     <div>
                         <div style={{ fontSize: '22px', marginBottom: '4px' }}>🥥</div>
@@ -745,11 +802,21 @@ function Factura({ venta, onVolver, onDevolucionCreada }) {
                         <div style={{ fontSize: '12px', color: '#6b7280' }}>RIF: J-00000000-0</div>
                     </div>
                     <div style={{ textAlign: 'right' }}>
-                        <div style={{ fontSize: '20px', fontWeight: 700, color: '#16a34a', fontFamily: 'monospace' }}>{venta.numero_factura}</div>
+                        <div style={{ fontSize: '14px', fontWeight: 600, color: '#6b7280', marginBottom: '4px' }}>Nota de Entrega</div>
+                        <div style={{ fontSize: '20px', fontWeight: 700, color: '#16a34a', fontFamily: 'monospace' }}>{numeroDoc}</div>
+
+                        {venta.nro_referencia && (
+                            <div style={{ fontSize: '12px', color: '#374151', marginTop: '4px', fontFamily: 'monospace' }}>
+                                Ref: {venta.nro_referencia}
+                            </div>
+                        )}
+
                         <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
                             {new Date(venta.fecha_venta || Date.now()).toLocaleDateString('es-VE', { day: '2-digit', month: 'long', year: 'numeric' })}
                         </div>
-                        <div style={{ marginTop: '6px' }}><BadgeCobro estado={venta.estado_cobro} /></div>
+                        <div style={{ marginTop: '6px' }}>
+                            <BadgeCobro estado={venta.estado_cobro} />
+                        </div>
                     </div>
                 </div>
 
@@ -790,11 +857,11 @@ function Factura({ venta, onVolver, onDevolucionCreada }) {
                 <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: '16px' }}>
                     {[['Subtotal', fmt(subtotal)], ['IVA (16%)', fmt(impuesto)]].map(([l, v]) => (
                         <div key={l} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#6b7280', marginBottom: '6px' }}>
-                            <span>{l}</span><span>{v}</span>
+                            <span>{l}</span> <span>{v}</span>
                         </div>
                     ))}
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '18px', fontWeight: 700, color: '#1f2937', marginTop: '8px', paddingTop: '8px', borderTop: '2px solid #e5e7eb' }}>
-                        <span>Total</span><span style={{ color: '#16a34a' }}>{fmt(total)}</span>
+                        <span>Total</span> <span style={{ color: '#16a34a' }}>{fmt(total)}</span>
                     </div>
                 </div>
 
