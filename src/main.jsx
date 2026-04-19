@@ -16,6 +16,7 @@ import Mermas from './pages/Mermas'
 import Pedidos from './pages/Pedidos'
 import NuevoPedido from './pages/NuevoPedido'
 import CambiosManoMano from './pages/CambiosManoMano'
+import SuperAdmin from './pages/SuperAdmin'
 import './index.css'
 
 function RutaProtegida({ children }) {
@@ -64,6 +65,7 @@ function App() {
         <Route path="pedidos" element={<Pedidos />} />
         <Route path="nuevo-pedido" element={<NuevoPedido onPedidoCreado={() => { }} />} />
         <Route path="cambios-mano-mano" element={<CambiosManoMano />} />
+        <Route path="/superadmin" element={<SuperAdmin />} />
       </Route>
     </Routes>
   )

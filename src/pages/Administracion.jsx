@@ -9,6 +9,7 @@ import Configuracion from './Configuracion'
 import CargaDatos from './CargaDatos'
 import ListasPrecios from './ListasPrecios'
 import GestionAlmacenes from './GestionAlmacenes'
+import AccesosUsuarios from './AccesosUsuarios'
 import { Database } from 'lucide-react'
 
 const TABS = [
@@ -21,6 +22,7 @@ const TABS = [
     { key: 'listas_precio', label: 'Listas de Precio', icon: Tag },
     { key: 'almacenes', label: 'Almacenes', icon: Warehouse },
     { key: 'carga', label: 'Carga de Datos', icon: Database },
+    { key: 'accesos', label: 'Usuarios y accesos', icon: Users },
 ]
 
 export default function Administracion() {
@@ -61,6 +63,7 @@ export default function Administracion() {
                 {tabActiva === 'listas_precio' && <ListasPrecios />}
                 {tabActiva === 'almacenes' && <GestionAlmacenes />}
                 {tabActiva === 'carga' && <CargaDatos />}
+                {tabActiva === 'accesos' && <AccesosUsuarios />}
             </div>
         </div>
     )
