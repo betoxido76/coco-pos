@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
-import { Plus, Pencil, Check, Search, MapPin, X, Star } from 'lucide-react'
+import { Plus, Pencil, Check, Search, MapPin, X, Star, Trash2, AlertTriangle } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 
 const VACIO = {
@@ -8,6 +8,7 @@ const VACIO = {
     condicion_pago: 'contado', dias_credito: 0, activo: true,
     contribuyente_especial: false, tipo_cliente_id: '',
     direccion_fiscal: '',
+    cat1_id: '', cat2_id: '', cat3_id: '', cat4_id: '',
 }
 
 const VACIO_DIR = {
@@ -26,17 +27,25 @@ export default function Clientes() {
     const [clientes, setClientes] = useState([])
     const [loading, setLoading] = useState(true)
     const [busqueda, setBusqueda] = useState('')
-    const [vista, setVista] = useState('lista')
+    const [vista, setVista] = useState('lista') // 'lista' | 'form' | 'categorias'
     const [editando, setEditando] = useState(null)
     const [form, setForm] = useState(VACIO)
     const [guardando, setGuardando] = useState(false)
     const [error, setError] = useState('')
     const [exito, setExito] = useState('')
     const [tiposCliente, setTiposCliente] = useState([])
+    const [tab, setTab] = useState('clientes') // 'clientes' | 'categorias'
+
+    // Categorías
+    const [categorias, setCategorias] = useState([]) // todas las categorías planas
+    const [cats1, setCats1] = useState([])
+    const [cats2, setCats2] = useState([])
+    const [cats3, setCats3] = useState([])
+    const [cats4, setCats4] = useState([])
 
     // Direcciones
     const [direcciones, setDirecciones] = useState([])
-    const [modalDir, setModalDir] = useState(null) // null | 'nuevo' | { id, ...}
+    const [modalDir, setModalDir] = useState(null)
     const [formDir, setFormDir] = useState(VACIO_DIR)
     const [guardandoDir, setGuardandoDir] = useState(false)
     const [errorDir, setErrorDir] = useState('')
@@ -46,7 +55,23 @@ export default function Clientes() {
         supabase.from('perfilamiento_clientes').select('id, nombre')
             .eq('empresa_id', perfil.empresa_id).eq('activo', true).order('nombre')
             .then(({ data }) => setTiposCliente(data || []))
+        cargarCategorias()
     }, [])
+
+    async function cargarCategorias() {
+        const { data } = await supabase.from('categorias_clientes')
+            .select('id, nombre, nivel, padre_id, activo')
+            .eq('empresa_id', perfil.empresa_id)
+            .eq('activo', true)
+            .order('nivel').order('nombre')
+        if (data) {
+            setCategorias(data)
+            setCats1(data.filter(c => c.nivel === 1))
+            setCats2(data.filter(c => c.nivel === 2))
+            setCats3(data.filter(c => c.nivel === 3))
+            setCats4(data.filter(c => c.nivel === 4))
+        }
+    }
 
     async function cargar() {
         setLoading(true)
@@ -84,6 +109,11 @@ export default function Clientes() {
             activo: c.activo ?? true,
             contribuyente_especial: c.contribuyente_especial ?? false,
             tipo_cliente_id: c.tipo_cliente_id || '',
+            direccion_fiscal: c.direccion_fiscal || '',
+            cat1_id: c.cat1_id || '',
+            cat2_id: c.cat2_id || '',
+            cat3_id: c.cat3_id || '',
+            cat4_id: c.cat4_id || '',
         })
         cargarDirecciones(c.id)
         setError(''); setVista('form')
@@ -106,7 +136,11 @@ export default function Clientes() {
             activo: form.activo,
             contribuyente_especial: form.contribuyente_especial,
             tipo_cliente_id: form.tipo_cliente_id || null,
-            direccion_fiscal: form.direccion_fiscal.trim() || null, // 👈 INCLUIR EN PAYLOAD
+            direccion_fiscal: form.direccion_fiscal.trim() || null,
+            cat1_id: form.cat1_id || null,
+            cat2_id: form.cat2_id || null,
+            cat3_id: form.cat3_id || null,
+            cat4_id: form.cat4_id || null,
         }
 
         let nuevoClienteId = editando
@@ -282,6 +316,32 @@ export default function Clientes() {
                 </div>
             </div>
 
+            {/* Clasificación por categorías */}
+            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '20px', marginBottom: '20px' }}>
+                <p style={{ fontSize: '13px', fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 16px' }}>Clasificación</p>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px' }}>
+                    {[
+                        { label: 'Categoría 1', key: 'cat1_id', lista: cats1 },
+                        { label: 'Categoría 2', key: 'cat2_id', lista: cats2 },
+                        { label: 'Categoría 3', key: 'cat3_id', lista: cats3 },
+                        { label: 'Categoría 4', key: 'cat4_id', lista: cats4 },
+                    ].map(({ label, key, lista }) => (
+                        <div key={key}>
+                            <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>{label}</label>
+                            <select value={form[key]} onChange={e => campo(key, e.target.value)} style={inputStyle}>
+                                <option value="">— Sin categoría —</option>
+                                {lista.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                            </select>
+                            {lista.length === 0 && (
+                                <p style={{ fontSize: '11px', color: '#9ca3af', margin: '4px 0 0' }}>
+                                    Sin opciones — agrega en la pestaña Categorías
+                                </p>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            </div>
+
             {/* 👈 SECCIÓN DE DIRECCIONES (AHORA VISIBLE SIEMPRE) */}
             <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '20px', marginBottom: '20px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
@@ -433,13 +493,42 @@ export default function Clientes() {
                     <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Clientes</h1>
                     <p style={{ fontSize: '13px', color: '#6b7280', margin: '4px 0 0' }}>{clientes.length} clientes registrados</p>
                 </div>
-                <button onClick={abrirNuevo}
-                    style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px 16px', fontSize: '14px', fontWeight: 500, cursor: 'pointer' }}>
-                    <Plus size={16} /> Nuevo cliente
-                </button>
+                {tab === 'clientes' && (
+                    <button onClick={abrirNuevo}
+                        style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px 16px', fontSize: '14px', fontWeight: 500, cursor: 'pointer' }}>
+                        <Plus size={16} /> Nuevo cliente
+                    </button>
+                )}
+            </div>
+
+            {/* Tabs */}
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
+                {[
+                    { key: 'clientes', label: 'Clientes' },
+                    { key: 'categorias', label: '⚙️ Categorías' },
+                ].map(t => (
+                    <button key={t.key} onClick={() => setTab(t.key)}
+                        style={{
+                            padding: '8px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 500,
+                            border: '1px solid', cursor: 'pointer',
+                            borderColor: tab === t.key ? '#16a34a' : '#e5e7eb',
+                            backgroundColor: tab === t.key ? '#f0fdf4' : '#fff',
+                            color: tab === t.key ? '#16a34a' : '#6b7280',
+                        }}>
+                        {t.label}
+                    </button>
+                ))}
             </div>
 
             {exito && <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '10px 14px', fontSize: '13px', color: '#166534', marginBottom: '16px' }}>{exito}</div>}
+
+            {/* Tab Categorías */}
+            {tab === 'categorias' && (
+                <CategoriasClientes onActualizado={cargarCategorias} />
+            )}
+
+            {/* Tab Clientes */}
+            {tab === 'clientes' && (<>
 
             <div style={{ position: 'relative', marginBottom: '16px', maxWidth: '360px' }}>
                 <Search size={15} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
@@ -492,6 +581,137 @@ export default function Clientes() {
                     </table>
                 )}
             </div>
+            </>)}
+        </div>
+    )
+}
+
+// ══════════════════════════════════════════════════════════════
+// GESTIÓN DE CATEGORÍAS DE CLIENTES
+// ══════════════════════════════════════════════════════════════
+function CategoriasClientes({ onActualizado }) {
+    const { perfil } = useAuth()
+    const [cats, setCats] = useState([])
+    const [loading, setLoading] = useState(true)
+    const [nuevos, setNuevos] = useState({ 1: '', 2: '', 3: '', 4: '' })
+    const [editando, setEditando] = useState(null) // { id, nombre }
+    const [error, setError] = useState('')
+    const [guardando, setGuardando] = useState({})
+
+    useEffect(() => { cargar() }, [])
+
+    async function cargar() {
+        setLoading(true)
+        const { data } = await supabase.from('categorias_clientes')
+            .select('id, nombre, nivel, activo')
+            .eq('empresa_id', perfil.empresa_id)
+            .order('nivel').order('nombre')
+        if (data) setCats(data)
+        setLoading(false)
+    }
+
+    async function agregar(nivel) {
+        const nombre = nuevos[nivel].trim()
+        if (!nombre) return
+        setGuardando(prev => ({ ...prev, [nivel]: true }))
+        const { error: err } = await supabase.from('categorias_clientes').insert({
+            empresa_id: perfil.empresa_id, nombre, nivel,
+        })
+        if (err) { setError('Error: ' + err.message) }
+        else { setNuevos(prev => ({ ...prev, [nivel]: '' })) }
+        setGuardando(prev => ({ ...prev, [nivel]: false }))
+        cargar(); onActualizado()
+    }
+
+    async function guardarEdicion() {
+        if (!editando?.nombre.trim()) return
+        await supabase.from('categorias_clientes').update({ nombre: editando.nombre.trim() }).eq('id', editando.id)
+        setEditando(null)
+        cargar(); onActualizado()
+    }
+
+    async function eliminar(id) {
+        const { count } = await supabase.from('clientes')
+            .select('id', { count: 'exact', head: true })
+            .or(`cat1_id.eq.${id},cat2_id.eq.${id},cat3_id.eq.${id},cat4_id.eq.${id}`)
+        if (count > 0) {
+            setError(`No se puede eliminar — ${count} cliente(s) la usan. Renómbrala en su lugar.`)
+            return
+        }
+        await supabase.from('categorias_clientes').delete().eq('id', id)
+        cargar(); onActualizado()
+    }
+
+    if (loading) return <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af' }}>Cargando...</div>
+
+    return (
+        <div>
+            {error && (
+                <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 14px', fontSize: '13px', color: '#dc2626', marginBottom: '16px', display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <AlertTriangle size={14} style={{ flexShrink: 0 }} /> {error}
+                    <button onClick={() => setError('')} style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626' }}><X size={14} /></button>
+                </div>
+            )}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px' }}>
+                {[1, 2, 3, 4].map(nivel => {
+                    const lista = cats.filter(c => c.nivel === nivel)
+                    return (
+                        <div key={nivel} style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                            <div style={{ padding: '12px 14px', borderBottom: '1px solid #f3f4f6', backgroundColor: '#f9fafb' }}>
+                                <span style={{ fontSize: '13px', fontWeight: 600, color: '#374151' }}>Categoría {nivel}</span>
+                                <span style={{ fontSize: '11px', color: '#9ca3af', marginLeft: '6px' }}>({lista.length})</span>
+                            </div>
+
+                            {lista.length === 0 ? (
+                                <div style={{ padding: '16px', fontSize: '12px', color: '#9ca3af', textAlign: 'center' }}>Sin categorías</div>
+                            ) : lista.map(c => (
+                                <div key={c.id} style={{ padding: '10px 12px', borderBottom: '1px solid #f9fafb', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    {editando?.id === c.id ? (
+                                        <>
+                                            <input value={editando.nombre}
+                                                onChange={e => setEditando({ ...editando, nombre: e.target.value })}
+                                                onKeyDown={e => { if (e.key === 'Enter') guardarEdicion(); if (e.key === 'Escape') setEditando(null) }}
+                                                style={{ flex: 1, padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '12px' }}
+                                                autoFocus />
+                                            <button onClick={guardarEdicion} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#16a34a' }}><Check size={13} /></button>
+                                            <button onClick={() => setEditando(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af' }}><X size={13} /></button>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <span style={{ flex: 1, fontSize: '13px', color: '#1f2937' }}>{c.nombre}</span>
+                                            <button onClick={() => { setEditando({ id: c.id, nombre: c.nombre }); setError('') }}
+                                                style={{ background: 'none', border: '1px solid #e5e7eb', borderRadius: '4px', padding: '2px 6px', cursor: 'pointer', color: '#6b7280' }}>
+                                                <Pencil size={11} />
+                                            </button>
+                                            <button onClick={() => { setError(''); eliminar(c.id) }}
+                                                style={{ background: 'none', border: '1px solid #fecaca', borderRadius: '4px', padding: '2px 6px', cursor: 'pointer', color: '#dc2626' }}>
+                                                <Trash2 size={11} />
+                                            </button>
+                                        </>
+                                    )}
+                                </div>
+                            ))}
+
+                            {/* Input para agregar */}
+                            <div style={{ padding: '10px 12px', borderTop: '1px solid #f3f4f6', display: 'flex', gap: '6px' }}>
+                                <input
+                                    value={nuevos[nivel]}
+                                    onChange={e => setNuevos(prev => ({ ...prev, [nivel]: e.target.value }))}
+                                    onKeyDown={e => e.key === 'Enter' && agregar(nivel)}
+                                    placeholder="Nueva..."
+                                    style={{ flex: 1, padding: '5px 8px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '12px' }} />
+                                <button onClick={() => agregar(nivel)} disabled={guardando[nivel]}
+                                    style={{ padding: '5px 8px', borderRadius: '6px', border: 'none', backgroundColor: '#16a34a', color: '#fff', cursor: 'pointer', fontSize: '12px' }}>
+                                    <Plus size={13} />
+                                </button>
+                            </div>
+                        </div>
+                    )
+                })}
+            </div>
+            <p style={{ fontSize: '12px', color: '#9ca3af', marginTop: '12px' }}>
+                Las categorías usadas por clientes no pueden eliminarse — solo renombrarse.
+            </p>
         </div>
     )
 }

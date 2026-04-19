@@ -156,6 +156,37 @@ export default function SuperAdmin() {
         setUsuarios(prev => prev.map(u => u.id === usuario.id ? { ...u, activo: !u.activo } : u))
     }
 
+    // ── Reset de contraseña ──
+    const [modalReset, setModalReset] = useState(null) // { id, nombre }
+    const [nuevaPass, setNuevaPass] = useState('')
+    const [mostrarNuevaPass, setMostrarNuevaPass] = useState(false)
+    const [guardandoReset, setGuardandoReset] = useState(false)
+    const [errorReset, setErrorReset] = useState('')
+    const [exitoReset, setExitoReset] = useState(false)
+
+    async function resetearPassword() {
+        if (!nuevaPass || nuevaPass.length < 6) { setErrorReset('La contraseña debe tener al menos 6 caracteres'); return }
+        setGuardandoReset(true); setErrorReset('')
+        const { data: { session } } = await supabase.auth.getSession()
+        const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/resetear-password`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${session.access_token}`,
+            },
+            body: JSON.stringify({ usuario_id: modalReset.id, nueva_password: nuevaPass }),
+        })
+        const result = await res.json()
+        if (!res.ok || result.error) {
+            setErrorReset(result.error || 'Error al resetear la contraseña')
+            setGuardandoReset(false)
+            return
+        }
+        setGuardandoReset(false)
+        setExitoReset(true)
+        setTimeout(() => { setModalReset(null); setNuevaPass(''); setExitoReset(false) }, 2000)
+    }
+
     // ── Nueva empresa ──
     async function guardarEmpresa() {
         if (!formEmpresa.nombre.trim()) { setErrorEmpresa('El nombre es obligatorio'); return }
@@ -416,6 +447,10 @@ export default function SuperAdmin() {
                                                             style={{ padding: '5px 10px', borderRadius: '6px', fontSize: '11px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: '#6b7280', cursor: 'pointer' }}>
                                                             {usuarioActual.activo ? 'Desactivar' : 'Activar'}
                                                         </button>
+                                                        <button onClick={() => { setModalReset({ id: usuarioActual.id, nombre: usuarioActual.nombre }); setNuevaPass(''); setErrorReset(''); setExitoReset(false) }}
+                                                            style={{ padding: '5px 10px', borderRadius: '6px', fontSize: '11px', border: '1px solid #fde68a', backgroundColor: '#fefce8', color: '#854d0e', cursor: 'pointer' }}>
+                                                            🔑 Resetear clave
+                                                        </button>
                                                     </div>
                                                 </div>
 
@@ -557,6 +592,60 @@ export default function SuperAdmin() {
                                 Cancelar
                             </button>
                         </div>
+                    </div>
+                </>
+            )}
+
+            {/* Modal reset de contraseña */}
+            {modalReset && (
+                <>
+                    <div onClick={() => setModalReset(null)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', zIndex: 40 }} />
+                    <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', backgroundColor: '#fff', borderRadius: '16px', padding: '28px', width: '400px', zIndex: 50, boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+                        <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#1f2937', margin: '0 0 6px' }}>🔑 Resetear contraseña</h3>
+                        <p style={{ fontSize: '13px', color: '#6b7280', margin: '0 0 20px' }}>
+                            Usuario: <strong>{modalReset.nombre}</strong>
+                        </p>
+
+                        {exitoReset ? (
+                            <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '12px 16px', fontSize: '13px', color: '#166534', textAlign: 'center' }}>
+                                ✅ Contraseña actualizada correctamente
+                            </div>
+                        ) : (
+                            <>
+                                <div>
+                                    <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Nueva contraseña *</label>
+                                    <div style={{ position: 'relative' }}>
+                                        <input
+                                            type={mostrarNuevaPass ? 'text' : 'password'}
+                                            value={nuevaPass}
+                                            onChange={e => setNuevaPass(e.target.value)}
+                                            placeholder="Mínimo 6 caracteres"
+                                            style={{ ...inputStyle, paddingRight: '40px' }}
+                                            autoFocus
+                                        />
+                                        <button onClick={() => setMostrarNuevaPass(!mostrarNuevaPass)}
+                                            style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af' }}>
+                                            {mostrarNuevaPass ? <EyeOff size={16} /> : <Eye size={16} />}
+                                        </button>
+                                    </div>
+                                </div>
+                                {errorReset && (
+                                    <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px', fontSize: '13px', color: '#dc2626', marginTop: '12px' }}>
+                                        {errorReset}
+                                    </div>
+                                )}
+                                <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
+                                    <button onClick={resetearPassword} disabled={guardandoReset}
+                                        style={{ flex: 2, backgroundColor: '#d97706', color: '#fff', border: 'none', borderRadius: '8px', padding: '11px', fontSize: '14px', fontWeight: 600, cursor: 'pointer', opacity: guardandoReset ? 0.6 : 1 }}>
+                                        {guardandoReset ? 'Actualizando...' : 'Confirmar nueva contraseña'}
+                                    </button>
+                                    <button onClick={() => setModalReset(null)}
+                                        style={{ flex: 1, padding: '11px', borderRadius: '8px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: '#374151', fontSize: '14px', cursor: 'pointer' }}>
+                                        Cancelar
+                                    </button>
+                                </div>
+                            </>
+                        )}
                     </div>
                 </>
             )}

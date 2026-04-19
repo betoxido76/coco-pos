@@ -20,7 +20,6 @@ const NAV_ITEMS = [
     { key: 'cambios',        to: '/cambios-mano-mano',  icon: ArrowLeftRight,  label: 'Cambios Mano a Mano' },
     { key: 'mermas',         to: '/mermas',             icon: AlertTriangle,   label: 'Mermas' },
     { key: 'administracion', to: '/administracion',     icon: FolderTree,      label: 'Administración' },
-    { key: 'gastos', to: '/gastos', icon: DollarSign, label: 'Gastos' },
 ]
 
 export default function Layout() {
@@ -53,6 +52,39 @@ export default function Layout() {
     const navFiltrado = modulosActivos === null
         ? []
         : NAV_ITEMS.filter(item => modulosActivos.includes(item.key))
+
+    const [modalPass, setModalPass] = useState(false)
+    const [passActual, setPassActual] = useState('')
+    const [passNueva, setPassNueva] = useState('')
+    const [passConfirmar, setPassConfirmar] = useState('')
+    const [guardandoPass, setGuardandoPass] = useState(false)
+    const [errorPass, setErrorPass] = useState('')
+    const [exitoPass, setExitoPass] = useState(false)
+
+    function abrirModalPass() {
+        setPassActual(''); setPassNueva(''); setPassConfirmar('')
+        setErrorPass(''); setExitoPass(false); setModalPass(true)
+    }
+
+    async function cambiarPassword() {
+        if (!passNueva || passNueva.length < 6) { setErrorPass('La nueva contraseña debe tener al menos 6 caracteres'); return }
+        if (passNueva !== passConfirmar) { setErrorPass('Las contraseñas no coinciden'); return }
+        setGuardandoPass(true); setErrorPass('')
+
+        // Verificar contraseña actual reautenticando
+        const { error: errLogin } = await supabase.auth.signInWithPassword({
+            email: perfil.email,
+            password: passActual,
+        })
+        if (errLogin) { setErrorPass('La contraseña actual es incorrecta'); setGuardandoPass(false); return }
+
+        const { error } = await supabase.auth.updateUser({ password: passNueva })
+        if (error) { setErrorPass('Error: ' + error.message); setGuardandoPass(false); return }
+
+        setGuardandoPass(false)
+        setExitoPass(true)
+        setTimeout(() => setModalPass(false), 2000)
+    }
 
     async function handleLogout() {
         await logout()
@@ -106,6 +138,10 @@ export default function Layout() {
                         <div style={{ padding: '0 12px', marginBottom: '8px' }}>
                             <p style={{ fontSize: '13px', fontWeight: 500, color: '#374151', margin: 0 }}>{perfil.nombre}</p>
                             <p style={{ fontSize: '11px', color: '#9ca3af', margin: '2px 0 0' }}>{perfil.rol}</p>
+                            <button onClick={abrirModalPass}
+                                style={{ marginTop: '4px', background: 'none', border: 'none', cursor: 'pointer', fontSize: '11px', color: '#9ca3af', padding: 0, textDecoration: 'underline' }}>
+                                Cambiar contraseña
+                            </button>
                         </div>
                     )}
                     <button onClick={handleLogout}
@@ -125,6 +161,54 @@ export default function Layout() {
             <main style={{ flex: 1, minWidth: 0, overflowY: 'auto' }}>
                 <Outlet />
             </main>
+
+            {/* Modal cambiar contraseña */}
+            {modalPass && (
+                <>
+                    <div onClick={() => setModalPass(false)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', zIndex: 40 }} />
+                    <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', backgroundColor: '#fff', borderRadius: '16px', padding: '28px', width: '380px', zIndex: 50, boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+                        <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#1f2937', margin: '0 0 20px' }}>Cambiar contraseña</h3>
+
+                        {exitoPass ? (
+                            <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '12px 16px', fontSize: '13px', color: '#166534', textAlign: 'center' }}>
+                                ✅ Contraseña actualizada correctamente
+                            </div>
+                        ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                                {[
+                                    { label: 'Contraseña actual', value: passActual, set: setPassActual, placeholder: '••••••••' },
+                                    { label: 'Nueva contraseña', value: passNueva, set: setPassNueva, placeholder: 'Mínimo 6 caracteres' },
+                                    { label: 'Confirmar nueva contraseña', value: passConfirmar, set: setPassConfirmar, placeholder: 'Repite la nueva contraseña' },
+                                ].map(f => (
+                                    <div key={f.label}>
+                                        <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>{f.label}</label>
+                                        <input type="password" value={f.value} onChange={e => f.set(e.target.value)}
+                                            placeholder={f.placeholder}
+                                            style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', color: '#374151', backgroundColor: '#fff', boxSizing: 'border-box' }} />
+                                    </div>
+                                ))}
+
+                                {errorPass && (
+                                    <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px', fontSize: '13px', color: '#dc2626' }}>
+                                        {errorPass}
+                                    </div>
+                                )}
+
+                                <div style={{ display: 'flex', gap: '10px', marginTop: '4px' }}>
+                                    <button onClick={cambiarPassword} disabled={guardandoPass}
+                                        style={{ flex: 2, backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px', fontSize: '14px', fontWeight: 600, cursor: 'pointer', opacity: guardandoPass ? 0.6 : 1 }}>
+                                        {guardandoPass ? 'Guardando...' : 'Guardar'}
+                                    </button>
+                                    <button onClick={() => setModalPass(false)}
+                                        style={{ flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: '#374151', fontSize: '14px', cursor: 'pointer' }}>
+                                        Cancelar
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </>
+            )}
         </div>
     )
 }

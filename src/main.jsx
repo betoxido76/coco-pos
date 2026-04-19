@@ -18,6 +18,7 @@ import NuevoPedido from './pages/NuevoPedido'
 import CambiosManoMano from './pages/CambiosManoMano'
 import SuperAdmin from './pages/SuperAdmin'
 import Gastos from './pages/Gastos'
+import ResetPassword from './pages/ResetPassword'
 import './index.css'
 
 function RutaProtegida({ children }) {
@@ -68,6 +69,7 @@ function App() {
         <Route path="cambios-mano-mano" element={<CambiosManoMano />} />
         <Route path="/superadmin" element={<SuperAdmin />} />
         <Route path="/gastos" element={<Gastos />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
       </Route>
     </Routes>
   )
