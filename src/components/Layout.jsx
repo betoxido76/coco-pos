@@ -20,7 +20,7 @@ const NAV_ITEMS = [
     { key: 'cambios',        to: '/cambios-mano-mano',  icon: ArrowLeftRight,  label: 'Cambios Mano a Mano' },
     { key: 'mermas',         to: '/mermas',             icon: AlertTriangle,   label: 'Mermas' },
     { key: 'administracion', to: '/administracion',     icon: FolderTree,      label: 'Administración' },
-    { key: 'gastos', to: '/gastos', icon: Receipt, label: 'Gastos' },
+    { key: 'gastos', to: '/gastos', icon: DollarSign, label: 'Gastos' },
 ]
 
 export default function Layout() {
