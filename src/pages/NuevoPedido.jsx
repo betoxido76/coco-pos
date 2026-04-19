@@ -235,11 +235,11 @@ export default function NuevoPedido({ onPedidoCreado, onCancelar }) {
     }
 
     // Cálculos
-    const subtotalBruto = items.reduce((s, i) => s + i.cantidad * i.precio, 0)
-    const subtotalConDescItems = items.reduce((s, i) => s + i.cantidad * i.precio * (1 - Number(i.descuento_item || 0) / 100), 0)
-    const subtotalFinal = subtotalConDescItems * (1 - Number(descuentoGlobal || 0) / 100)
-    const iva = subtotalFinal * 0.16
-    const total = subtotalFinal + iva
+    const totalConDescItems = items.reduce((s, i) => s + i.cantidad * i.precio * (1 - Number(i.descuento_item || 0) / 100), 0)
+    const totalConIVA = totalConDescItems * (1 - Number(descuentoGlobal || 0) / 100)
+    const subtotal = totalConIVA / 1.16
+    const iva = totalConIVA - subtotal
+    const total = totalConIVA
 
     async function guardar() {
         setGuardando(true); setError('')
@@ -251,7 +251,7 @@ export default function NuevoPedido({ onPedidoCreado, onCancelar }) {
             cliente_id: clienteSel.id,
             vendedor_id: user.id,
             lista_precio_id: listaId || null,
-            descuento_global: descuentoGlobal,
+            descuento_global: Number(descuentoGlobal) || 0,
             estado: 'pendiente',
             fecha_pedido: new Date().toISOString(),
             fecha_entrega: fechaEntrega || null,
@@ -272,9 +272,9 @@ export default function NuevoPedido({ onPedidoCreado, onCancelar }) {
                 producto_id: i.id,
                 nombre_producto: i.nombre,
                 cantidad: i.cantidad,
-                precio_unitario: i.precio,
-                descuento_item: i.descuento_item,
-                subtotal: i.cantidad * i.precio * (1 - i.descuento_item / 100),
+                precio_unitario: i.precio / 1.16,
+                descuento_item: Number(i.descuento_item) || 0,
+                subtotal: i.cantidad * i.precio * (1 - Number(i.descuento_item || 0) / 100),
             }))
         )
 
@@ -647,14 +647,20 @@ export default function NuevoPedido({ onPedidoCreado, onCancelar }) {
                         {descuentoGlobal > 0 && (
                             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#16a34a', marginBottom: '4px' }}>
                                 <span>Descuento global ({descuentoGlobal}%)</span>
-                                <span>-{fmt(subtotalConDescItems - subtotalFinal)}</span>
+                                <span>-{fmt(totalConDescItems - totalConIVA)}</span>  {/* 👈 Usar nuevas variables */}
                             </div>
                         )}
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#6b7280', marginBottom: '4px' }}>
-                            <span>IVA (16%)</span><span>{fmt(iva)}</span>
+                            <span>Subtotal</span>
+                            <span>{fmt(subtotal)}</span>  {/* 👈 Base imponible (sin IVA) */}
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#6b7280', marginBottom: '4px' }}>
+                            <span>IVA (16%)</span>
+                            <span>{fmt(iva)}</span>
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '18px', fontWeight: 700, color: '#1f2937', paddingTop: '8px', borderTop: '2px solid #e5e7eb' }}>
-                            <span>Total</span><span style={{ color: '#16a34a' }}>{fmt(total)}</span>
+                            <span>Total</span>
+                            <span style={{ color: '#16a34a' }}>{fmt(total)}</span>
                         </div>
                     </div>
                 </div>
@@ -694,8 +700,8 @@ export default function NuevoPedido({ onPedidoCreado, onCancelar }) {
 }
 
 const ESTADOS = {
-    pendiente:  { bg: '#fef9c3', color: '#854d0e',  label: 'Pendiente' },
-    aprobado:   { bg: '#dbeafe', color: '#1e40af',  label: 'Aprobado' },
-    rechazado:  { bg: '#fee2e2', color: '#991b1b',  label: 'Rechazado' },
-    facturado:  { bg: '#dcfce7', color: '#166534',  label: 'Facturado' },
+    pendiente: { bg: '#fef9c3', color: '#854d0e', label: 'Pendiente' },
+    aprobado: { bg: '#dbeafe', color: '#1e40af', label: 'Aprobado' },
+    rechazado: { bg: '#fee2e2', color: '#991b1b', label: 'Rechazado' },
+    facturado: { bg: '#dcfce7', color: '#166534', label: 'Facturado' },
 }

@@ -6,10 +6,10 @@ import { Plus, Search, Check, X, RefreshCw, Trash2, ArrowRight } from 'lucide-re
 const fmt = (n) => Number(n || 0).toLocaleString('es-VE', { minimumFractionDigits: 0, maximumFractionDigits: 3 })
 
 const MOTIVOS = [
-    { key: 'vencido',    label: 'Vencido' },
-    { key: 'danado',     label: 'Dañado' },
+    { key: 'vencido', label: 'Vencido' },
+    { key: 'danado', label: 'Dañado' },
     { key: 'mal_estado', label: 'Mal estado' },
-    { key: 'otro',       label: 'Otro' },
+    { key: 'otro', label: 'Otro' },
 ]
 
 const inputStyle = {
@@ -115,7 +115,7 @@ export default function CambiosManoMano() {
             {/* Tabs */}
             <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
                 {[
-                    { key: 'cambios',   label: 'Cambios registrados' },
+                    { key: 'cambios', label: 'Cambios registrados' },
                     { key: 'reproceso', label: 'Stock de reproceso', badge: enReproceso },
                 ].map(tab => (
                     <button key={tab.key} onClick={() => setTabActiva(tab.key)}
@@ -212,7 +212,7 @@ function TabStockReproceso({ stock, loading, onActualizado }) {
     const { perfil } = useAuth()
     const [modalSalida, setModalSalida] = useState(null)
 
-    async function procesarSalida(item, accion, notas) {
+    async function procesarSalida(item, accion, notas, almacenDestino) {
         const { data: { user } } = await supabase.auth.getUser()
 
         // Actualizar stock_reproceso
@@ -225,17 +225,57 @@ function TabStockReproceso({ stock, loading, onActualizado }) {
             })
             .eq('id', item.id)
 
-        // Si se reprocesa, devolver al inventario normal
+        // Si se reprocesa, devolver al inventario
         if (accion === 'reprocesar') {
             const { data: prod } = await supabase
-                .from('productos_terminados')
-                .select('stock_actual')
-                .eq('id', item.producto_id)
-                .single()
+                .from('productos_terminados').select('stock_actual').eq('id', item.producto_id).single()
             if (prod) {
+                const nuevoStock = prod.stock_actual + Number(item.cantidad)
                 await supabase.from('productos_terminados')
-                    .update({ stock_actual: prod.stock_actual + Number(item.cantidad) })
-                    .eq('id', item.producto_id)
+                    .update({ stock_actual: nuevoStock }).eq('id', item.producto_id)
+
+                // Sumar a stock_ubicacion del almacén destino
+                if (almacenDestino) {
+                    const { data: su } = await supabase.from('stock_ubicacion')
+                        .select('id, cantidad')
+                        .eq('almacen_id', almacenDestino)
+                        .eq('tipo_item', 'producto_terminado')
+                        .eq('item_id', item.producto_id)
+                        .eq('empresa_id', perfil.empresa_id)
+                        .is('almacen_ubicacion_id', null)
+                        .maybeSingle()
+                    if (su) {
+                        await supabase.from('stock_ubicacion')
+                            .update({ cantidad: Number(su.cantidad) + Number(item.cantidad), updated_at: new Date().toISOString() })
+                            .eq('id', su.id)
+                    } else {
+                        await supabase.from('stock_ubicacion').insert({
+                            almacen_id: almacenDestino,
+                            almacen_ubicacion_id: null,
+                            tipo_item: 'producto_terminado',
+                            item_id: item.producto_id,
+                            cantidad: Number(item.cantidad),
+                            empresa_id: perfil.empresa_id,
+                            updated_at: new Date().toISOString(),
+                        })
+                    }
+                }
+
+                // Registrar movimiento
+                await supabase.from('movimientos_inventario').insert({
+                    empresa_id: perfil.empresa_id,
+                    tipo_item: 'producto_terminado',
+                    item_id: item.producto_id,
+                    item_nombre: item.productos_terminados?.nombre || '',
+                    item_codigo: item.productos_terminados?.sku || null,
+                    tipo_movimiento: 'entrada',
+                    cantidad: Number(item.cantidad),
+                    stock_anterior: prod.stock_actual,
+                    stock_actual: nuevoStock,
+                    origen: 'reproceso',
+                    almacen_id: almacenDestino || null,
+                    fecha: new Date().toISOString()
+                })
             }
         }
 
@@ -318,7 +358,7 @@ function TabStockReproceso({ stock, loading, onActualizado }) {
             {modalSalida && (
                 <ModalSalida
                     item={modalSalida}
-                    onConfirmar={(accion, notas) => procesarSalida(modalSalida, accion, notas)}
+                    onConfirmar={(accion, notas, almacenDestino) => procesarSalida(modalSalida, accion, notas, almacenDestino)}
                     onCerrar={() => setModalSalida(null)}
                 />
             )}
@@ -333,10 +373,26 @@ function ModalSalida({ item, onConfirmar, onCerrar }) {
     const [accion, setAccion] = useState('reprocesar')
     const [notas, setNotas] = useState('')
     const [procesando, setProcesando] = useState(false)
+    const [almacenes, setAlmacenes] = useState([])
+    const [almacenDestino, setAlmacenDestino] = useState('')
+    const { perfil } = useAuth()
+
+    useEffect(() => {
+        supabase.from('almacenes').select('id, nombre, es_default')
+            .eq('empresa_id', perfil.empresa_id).eq('activo', true)
+            .order('es_default', { ascending: false }).order('nombre')
+            .then(({ data }) => {
+                if (data) {
+                    setAlmacenes(data)
+                    const def = data.find(a => a.es_default) || data[0]
+                    if (def) setAlmacenDestino(def.id)
+                }
+            })
+    }, [])
 
     async function confirmar() {
         setProcesando(true)
-        await onConfirmar(accion, notas)
+        await onConfirmar(accion, notas, almacenDestino)
         setProcesando(false)
     }
 
@@ -406,6 +462,24 @@ function ModalSalida({ item, onConfirmar, onCerrar }) {
                         : `✗ Se registrará como merma y se dará de baja definitivamente`}
                 </div>
 
+                {/* Almacén destino — solo al reprocesar */}
+                {accion === 'reprocesar' && (
+                    <div style={{ marginBottom: '16px' }}>
+                        <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>
+                            Almacén de destino *
+                        </label>
+                        <select value={almacenDestino} onChange={e => setAlmacenDestino(e.target.value)}
+                            style={{ ...inputStyle }}>
+                            <option value="">Seleccionar almacén...</option>
+                            {almacenes.map(a => (
+                                <option key={a.id} value={a.id}>
+                                    {a.nombre}{a.es_default ? ' (principal)' : ''}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+                )}
+
                 {/* Notas */}
                 <div style={{ marginBottom: '20px' }}>
                     <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>
@@ -456,6 +530,14 @@ function NuevoCambio({ onRegistrado, onCancelar }) {
     const [guardando, setGuardando] = useState(false)
     const [error, setError] = useState('')
 
+    // Almacén de origen
+    const [almacenes, setAlmacenes] = useState([])
+    const [almacenId, setAlmacenId] = useState('')
+    const [stockEnAlmacen, setStockEnAlmacen] = useState(null)
+
+    // Almacén destino del reproceso
+    const [almacenReproceso, setAlmacenReproceso] = useState('')
+
     useEffect(() => {
         supabase.from('clientes').select('id, nombre').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
             .then(({ data }) => setClientes(data || []))
@@ -465,7 +547,32 @@ function NuevoCambio({ onRegistrado, onCancelar }) {
 
         supabase.from('productos_terminados').select('id, nombre, sku, unidad_medida, stock_actual').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
             .then(({ data }) => setProductos(data || []))
+
+        supabase.from('almacenes').select('id, nombre, es_default')
+            .eq('empresa_id', perfil.empresa_id).eq('activo', true)
+            .order('es_default', { ascending: false }).order('nombre')
+            .then(({ data }) => {
+                if (data) {
+                    setAlmacenes(data)
+                    const def = data.find(a => a.es_default) || data[0]
+                    if (def) { setAlmacenId(def.id); setAlmacenReproceso(def.id) }
+                }
+            })
     }, [])
+
+    // Cargar stock del producto en el almacén seleccionado
+    useEffect(() => {
+        if (!productoSel || !almacenId) { setStockEnAlmacen(null); return }
+        supabase.from('stock_ubicacion')
+            .select('cantidad')
+            .eq('almacen_id', almacenId)
+            .eq('tipo_item', 'producto_terminado')
+            .eq('item_id', productoSel.id)
+            .eq('empresa_id', perfil.empresa_id)
+            .is('almacen_ubicacion_id', null)
+            .maybeSingle()
+            .then(({ data }) => setStockEnAlmacen(data ? Number(data.cantidad) : 0))
+    }, [productoSel, almacenId])
 
     const productosFiltrados = productos.filter(p =>
         p.nombre.toLowerCase().includes(busqProducto.toLowerCase()) ||
@@ -473,11 +580,16 @@ function NuevoCambio({ onRegistrado, onCancelar }) {
     )
 
     async function guardar() {
-        if (!clienteId)     { setError('Selecciona el cliente'); return }
+        if (!clienteId) { setError('Selecciona el cliente'); return }
         if (!despachadorId) { setError('Selecciona el despachador'); return }
-        if (!productoSel)   { setError('Selecciona el producto'); return }
+        if (!productoSel) { setError('Selecciona el producto'); return }
         if (!cantidad || Number(cantidad) <= 0) { setError('Ingresa una cantidad válida'); return }
-        if (!motivo)        { setError('Selecciona el motivo'); return }
+        if (!motivo) { setError('Selecciona el motivo'); return }
+        if (!almacenId) { setError('Selecciona el almacén de origen'); return }
+        if (stockEnAlmacen !== null && Number(cantidad) > stockEnAlmacen) {
+            setError(`Stock insuficiente en ese almacén. Disponible: ${stockEnAlmacen} ${productoSel.unidad_medida}`)
+            return
+        }
 
         setGuardando(true); setError('')
         const { data: { user } } = await supabase.auth.getUser()
@@ -485,53 +597,88 @@ function NuevoCambio({ onRegistrado, onCancelar }) {
 
         // 1. Registrar el cambio
         const { data: cambio, error: errCambio } = await supabase.from('cambios_mano_mano').insert({
-            empresa_id:     perfil.empresa_id,
-            numero_cambio:  numero,
-            cliente_id:     clienteId,
+            empresa_id: perfil.empresa_id,
+            numero_cambio: numero,
+            cliente_id: clienteId,
             despachador_id: despachadorId,
-            producto_id:    productoSel.id,
-            cantidad:       Number(cantidad),
+            producto_id: productoSel.id,
+            cantidad: Number(cantidad),
             motivo,
             destino,
             fecha,
             notas: notas.trim() || null,
             usuario_id: user.id,
+            almacen_id: almacenId,
         }).select().single()
 
         if (errCambio) { setError('Error: ' + errCambio.message); setGuardando(false); return }
 
-        // 2. Descontar del inventario normal (producto nuevo entregado)
+        // 2. Descontar stock global
+        const nuevoStock = productoSel.stock_actual - Number(cantidad)
         await supabase.from('productos_terminados')
-            .update({ stock_actual: productoSel.stock_actual - Number(cantidad) })
+            .update({ stock_actual: nuevoStock })
             .eq('id', productoSel.id)
 
-        // 3. Si destino = reprocesar, agregar a stock_reproceso
+        // 3. Descontar stock_ubicacion del almacén origen
+        const { data: su } = await supabase.from('stock_ubicacion')
+            .select('id, cantidad')
+            .eq('almacen_id', almacenId)
+            .eq('tipo_item', 'producto_terminado')
+            .eq('item_id', productoSel.id)
+            .eq('empresa_id', perfil.empresa_id)
+            .is('almacen_ubicacion_id', null)
+            .maybeSingle()
+        if (su) {
+            await supabase.from('stock_ubicacion')
+                .update({ cantidad: Math.max(0, Number(su.cantidad) - Number(cantidad)), updated_at: new Date().toISOString() })
+                .eq('id', su.id)
+        }
+
+        // 4. Registrar movimiento de salida
+        await supabase.from('movimientos_inventario').insert({
+            empresa_id: perfil.empresa_id,
+            tipo_item: 'producto_terminado',
+            item_id: productoSel.id,
+            item_nombre: productoSel.nombre,
+            item_codigo: productoSel.sku || null,
+            tipo_movimiento: 'salida',
+            cantidad: Number(cantidad),
+            stock_anterior: productoSel.stock_actual,
+            stock_actual: nuevoStock,
+            origen: 'cambio_mano_mano',
+            almacen_id: almacenId,
+            fecha: new Date().toISOString()
+        })
+
+        // 5. Si destino = reprocesar, agregar a stock_reproceso
         if (destino === 'reprocesar') {
             await supabase.from('stock_reproceso').insert({
-                empresa_id:   perfil.empresa_id,
-                producto_id:  productoSel.id,
-                cantidad:     Number(cantidad),
-                cambio_id:    cambio.id,
-                estado:       'pendiente',
+                empresa_id: perfil.empresa_id,
+                producto_id: productoSel.id,
+                cantidad: Number(cantidad),
+                cambio_id: cambio.id,
+                estado: 'pendiente',
                 fecha_entrada: fecha,
+                almacen_id: almacenReproceso || null,
             })
         }
 
-        // 4. Si destino = desechar, registrar directamente como merma
+        // 6. Si destino = desechar, registrar como merma
         if (destino === 'desechar') {
             await supabase.from('mermas').insert({
-                empresa_id:    perfil.empresa_id,
-                tipo_item:     'producto_terminado',
-                item_id:       productoSel.id,
-                item_nombre:   productoSel.nombre,
-                item_codigo:   productoSel.sku || null,
+                empresa_id: perfil.empresa_id,
+                tipo_item: 'producto_terminado',
+                item_id: productoSel.id,
+                item_nombre: productoSel.nombre,
+                item_codigo: productoSel.sku || null,
                 unidad_medida: productoSel.unidad_medida || null,
-                cantidad:      Number(cantidad),
-                tipo_merma:    'inventario',
-                motivo:        'Desecho de cambio mano a mano',
-                descripcion:   `Cambio ${numero} · Motivo: ${MOTIVOS.find(m => m.key === motivo)?.label}${notas ? ' · ' + notas : ''}`,
+                cantidad: Number(cantidad),
+                tipo_merma: 'inventario',
+                motivo: 'Desecho de cambio mano a mano',
+                descripcion: `Cambio ${numero} · Motivo: ${MOTIVOS.find(m => m.key === motivo)?.label}${notas ? ' · ' + notas : ''}`,
                 fecha,
-                usuario_id:    user.id,
+                usuario_id: user.id,
+                almacen_id: almacenId,
             })
         }
 
@@ -614,6 +761,28 @@ function NuevoCambio({ onRegistrado, onCancelar }) {
                     )}
                 </div>
 
+                {/* Almacén de origen */}
+                <div>
+                    <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '8px' }}>
+                        Almacén de origen *
+                    </label>
+                    <select value={almacenId} onChange={e => setAlmacenId(e.target.value)} style={inputStyle}>
+                        <option value="">Seleccionar almacén...</option>
+                        {almacenes.map(a => (
+                            <option key={a.id} value={a.id}>
+                                {a.nombre}{a.es_default ? ' (principal)' : ''}
+                            </option>
+                        ))}
+                    </select>
+                    {productoSel && almacenId && stockEnAlmacen !== null && (
+                        <p style={{ fontSize: '12px', margin: '6px 0 0', color: stockEnAlmacen <= 0 ? '#dc2626' : '#6b7280' }}>
+                            Stock en este almacén: <strong style={{ color: stockEnAlmacen <= 0 ? '#dc2626' : '#374151' }}>
+                                {stockEnAlmacen} {productoSel.unidad_medida}
+                            </strong>
+                        </p>
+                    )}
+                </div>
+
                 {/* Cantidad y Fecha */}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                     <div>
@@ -682,6 +851,23 @@ function NuevoCambio({ onRegistrado, onCancelar }) {
                         </button>
                     </div>
                 </div>
+
+                {/* Almacén destino del reproceso */}
+                {destino === 'reprocesar' && (
+                    <div>
+                        <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>
+                            Almacén donde entra el reproceso *
+                        </label>
+                        <select value={almacenReproceso} onChange={e => setAlmacenReproceso(e.target.value)} style={inputStyle}>
+                            <option value="">Seleccionar almacén...</option>
+                            {almacenes.map(a => (
+                                <option key={a.id} value={a.id}>
+                                    {a.nombre}{a.es_default ? ' (principal)' : ''}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+                )}
 
                 {/* Resumen */}
                 {productoSel && cantidad && Number(cantidad) > 0 && motivo && (

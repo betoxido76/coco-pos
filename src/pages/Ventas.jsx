@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
-import { Plus, Search, Trash2, CheckCircle, FileText, RotateCcw, AlertTriangle, ClipboardList, ChevronRight } from 'lucide-react'
+import { Plus, Search, Trash2, CheckCircle, FileText, RotateCcw, AlertTriangle, ClipboardList, ChevronRight, Edit } from 'lucide-react'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 
@@ -95,7 +95,7 @@ export default function Ventas() {
                         backgroundColor: tabActiva === 'ventas' ? '#f0fdf4' : '#fff',
                         color: tabActiva === 'ventas' ? '#16a34a' : '#6b7280',
                     }}>
-                    <FileText size={14} /> Facturas
+                    <FileText size={14} /> Notas de Entrega
                 </button>
                 <button onClick={() => setTabActiva('pedidos')}
                     style={{
@@ -106,7 +106,7 @@ export default function Ventas() {
                         backgroundColor: tabActiva === 'pedidos' ? '#f0fdf4' : '#fff',
                         color: tabActiva === 'pedidos' ? '#16a34a' : '#6b7280',
                     }}>
-                    <ClipboardList size={14} /> Pedidos por facturar
+                    <ClipboardList size={14} /> Pedidos por registrar
                     {pedidosAprobados.length > 0 && (
                         <span style={{ backgroundColor: '#16a34a', color: '#fff', borderRadius: '20px', padding: '1px 7px', fontSize: '11px', fontWeight: 700 }}>
                             {pedidosAprobados.length}
@@ -126,7 +126,7 @@ export default function Ventas() {
                         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                             <thead>
                                 <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                    {['Factura', 'Referencia', 'Cliente', 'Fecha', 'Total', 'Estado', ''].map((h, i) => (
+                                    {['Nota de Entrega', 'Referencia', 'Cliente', 'Fecha', 'Total', 'Estado', ''].map((h, i) => (
                                         <th key={i} style={{ padding: '10px 16px', textAlign: i === 4 ? 'right' : 'left', fontSize: '12px', fontWeight: 500, color: '#6b7280' }}>{h}</th>
                                     ))}
                                 </tr>
@@ -200,7 +200,7 @@ export default function Ventas() {
                                         <td style={{ padding: '12px 16px' }}>
                                             <button onClick={() => { setPedidoActual(p); setVista('facturar_pedido') }}
                                                 style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#1d4ed8', color: '#fff', border: 'none', borderRadius: '6px', padding: '6px 12px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>
-                                                <ChevronRight size={13} /> Facturar
+                                                <ChevronRight size={13} /> Registrar
                                             </button>
                                         </td>
                                     </tr>
@@ -239,7 +239,7 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
 
     async function facturar() {
         setProcesando(true); setError('')
-        const numero = `FAC-${Date.now().toString().slice(-6)}`
+        const numero = `NE-${Date.now().toString().slice(-6)}`
         const { data: { user } } = await supabase.auth.getUser()
 
         const { data: venta, error: errVenta } = await supabase
@@ -248,7 +248,7 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
                 cliente_id: pedido.cliente_id,
                 usuario_id: user.id,
                 numero_factura: numero,
-                subtotal: subtotalFinal,
+                subtotal: subtotal,  // 👈 CAMBIAR: era subtotalFinal
                 total,
                 estado_cobro: 'pendiente',
                 empresa_id: perfil.empresa_id,
@@ -263,7 +263,7 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
                 venta_id: venta.id,
                 producto_id: i.producto_id,
                 cantidad: i.cantidad,
-                precio_unitario: (Number(i.precio_unitario) * (1 - Number(i.descuento_item || 0) / 100) * (1 - descGlobal / 100)) / 1.16,
+                precio_unitario: Number(i.precio_unitario) * (1 - Number(i.descuento_item || 0) / 100) * (1 - descGlobal / 100),  // 👈 CAMBIAR: quitar / 1.16
                 empresa_id: perfil.empresa_id,
             }))
         )
@@ -272,9 +272,24 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
         for (const item of items) {
             const prod = item.productos_terminados
             if (prod) {
+                const nuevoStock = prod.stock_actual - Number(item.cantidad)
                 await supabase.from('productos_terminados')
-                    .update({ stock_actual: prod.stock_actual - Number(item.cantidad) })
+                    .update({ stock_actual: nuevoStock })
                     .eq('id', item.producto_id)
+
+                // REGISTRAR MOVIMIENTO ✅
+                await supabase.from('movimientos_inventario').insert({
+                    empresa_id: perfil.empresa_id,
+                    tipo_item: 'producto_terminado',
+                    item_id: item.producto_id,
+                    item_nombre: prod.nombre,
+                    item_codigo: prod.sku,
+                    tipo_movimiento: 'salida',
+                    cantidad: Number(item.cantidad),
+                    stock_actual: nuevoStock,
+                    origen: 'pedido_facturado',
+                    fecha: new Date().toISOString()
+                })
             }
         }
 
@@ -290,7 +305,7 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
         <div style={{ padding: '24px', maxWidth: '680px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
                 <button onClick={onCancelar} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', fontSize: '13px' }}>← Volver</button>
-                <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Facturar pedido {pedido.numero_pedido}</h1>
+                <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Registrar pedido {pedido.numero_pedido}</h1>
             </div>
 
             {/* Info */}
@@ -394,7 +409,7 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
             <div style={{ display: 'flex', gap: '10px' }}>
                 <button onClick={facturar} disabled={procesando || loading}
                     style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '12px 24px', fontSize: '14px', fontWeight: 600, cursor: 'pointer', opacity: procesando ? 0.6 : 1 }}>
-                    <CheckCircle size={16} /> {procesando ? 'Creando factura...' : 'Confirmar y crear factura'}
+                    <CheckCircle size={16} /> {procesando ? 'Registrando...' : 'Confirmar y registrar'}
                 </button>
                 <button onClick={onCancelar}
                     style={{ padding: '12px 20px', borderRadius: '8px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: '#374151', fontSize: '14px', cursor: 'pointer' }}>
@@ -497,7 +512,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
         setGuardando(true)
         setError('')
 
-        const numero = `FAC-${Date.now().toString().slice(-6)}`
+        const numero = `NE-${Date.now().toString().slice(-6)}`
         const { data: { user } } = await supabase.auth.getUser()
 
         const { data: venta, error: errVenta } = await supabase
@@ -522,9 +537,24 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
 
         for (const item of items) {
             const prod = productos.find(p => p.id === item.producto_id)
+            const nuevoStock = prod.stock_actual - item.cantidad
             await supabase.from('productos_terminados')
                 .update({ stock_actual: prod.stock_actual - item.cantidad })
                 .eq('id', item.producto_id)
+
+            // REGISTRAR MOVIMIENTO ✅
+            await supabase.from('movimientos_inventario').insert({
+                empresa_id: perfil.empresa_id,
+                tipo_item: 'producto_terminado',
+                item_id: item.producto_id,
+                item_nombre: item.nombre,
+                item_codigo: item.sku,
+                tipo_movimiento: 'salida',
+                cantidad: item.cantidad,
+                stock_actual: nuevoStock,
+                origen: 'venta',
+                fecha: new Date().toISOString()
+            })
         }
 
         onVentaCreada({ ...venta, clientes: { nombre: clientes.find(c => c.id === clienteId)?.nombre }, items })
@@ -733,6 +763,18 @@ function Factura({ venta, onVolver, onDevolucionCreada }) {
     const impuesto = subtotal * 0.16
     const total = venta.total || subtotal + impuesto
     const puedeDevolver = venta.estado_cobro !== 'anulado'
+    const [refEditando, setRefEditando] = useState(false)
+    const [refValor, setRefValor] = useState(venta.nro_referencia || '')
+
+    async function guardarRef() {
+        const { error } = await supabase.from('ventas').update({ nro_referencia: refValor.trim() || null }).eq('id', venta.id)
+        if (!error) {
+            setRefEditando(false)
+            // Actualiza el estado local si es necesario, o recarga
+        } else {
+            alert('Error al guardar la referencia')
+        }
+    }
 
     // Lógica para mostrar NE- en lugar de FAC-
     const numeroDoc = venta.numero_factura ? venta.numero_factura.replace('FAC-', 'NE-') : '';
@@ -805,11 +847,31 @@ function Factura({ venta, onVolver, onDevolucionCreada }) {
                         <div style={{ fontSize: '14px', fontWeight: 600, color: '#6b7280', marginBottom: '4px' }}>Nota de Entrega</div>
                         <div style={{ fontSize: '20px', fontWeight: 700, color: '#16a34a', fontFamily: 'monospace' }}>{numeroDoc}</div>
 
-                        {venta.nro_referencia && (
-                            <div style={{ fontSize: '12px', color: '#374151', marginTop: '4px', fontFamily: 'monospace' }}>
-                                Ref: {venta.nro_referencia}
-                            </div>
-                        )}
+                        <div style={{ marginTop: '4px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            {refEditando ? (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#fff', border: '1px solid #d1d5db', borderRadius: '6px', padding: '2px 6px' }}>
+                                    <input
+                                        value={refValor}
+                                        onChange={e => setRefValor(e.target.value)}
+                                        style={{ border: 'none', outline: 'none', fontSize: '12px', width: '120px', fontFamily: 'monospace' }}
+                                        autoFocus
+                                        onKeyDown={e => {
+                                            if (e.key === 'Enter') guardarRef()
+                                            if (e.key === 'Escape') { setRefValor(venta.nro_referencia || ''); setRefEditando(false) }
+                                        }}
+                                    />
+                                    <button onClick={guardarRef} style={{ background: '#16a34a', color: '#fff', border: 'none', borderRadius: '4px', padding: '2px 6px', fontSize: '11px', cursor: 'pointer' }}>OK</button>
+                                    <button onClick={() => { setRefValor(venta.nro_referencia || ''); setRefEditando(false) }} style={{ background: '#ef4444', color: '#fff', border: 'none', borderRadius: '4px', padding: '2px 6px', fontSize: '11px', cursor: 'pointer' }}>X</button>
+                                </div>
+                            ) : (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontFamily: 'monospace', color: refValor ? '#374151' : '#9ca3af' }}>
+                                    <span>Ref: {refValor || '—'}</span>
+                                    <button onClick={() => { setRefValor(venta.nro_referencia || ''); setRefEditando(true) }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', padding: '2px' }}>
+                                        <Edit size={12} />
+                                    </button>
+                                </div>
+                            )}
+                        </div>
 
                         <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
                             {new Date(venta.fecha_venta || Date.now()).toLocaleDateString('es-VE', { day: '2-digit', month: 'long', year: 'numeric' })}
@@ -961,7 +1023,28 @@ function FormDevolucion({ venta, items, onCancelar, onConfirmada }) {
         for (const item of itemsADevolver) {
             const prodId = item.producto_id || item.productos_terminados?.id
             const { data: prod } = await supabase.from('productos_terminados').select('stock_actual').eq('id', prodId).single()
-            await supabase.from('productos_terminados').update({ stock_actual: prod.stock_actual + item.cantidad_devuelta }).eq('id', prodId)
+
+            if (prod) {
+                const nuevoStock = prod.stock_actual + item.cantidad_devuelta
+
+                await supabase.from('productos_terminados')
+                    .update({ stock_actual: nuevoStock })
+                    .eq('id', prodId)
+
+                // REGISTRAR MOVIMIENTO ✅
+                await supabase.from('movimientos_inventario').insert({
+                    empresa_id: perfil.empresa_id,
+                    tipo_item: 'producto_terminado',
+                    item_id: prodId,
+                    item_nombre: item.productos_terminados?.nombre || item.nombre,
+                    item_codigo: item.productos_terminados?.sku || item.sku || '',
+                    tipo_movimiento: 'entrada',
+                    cantidad: item.cantidad_devuelta,
+                    stock_actual: nuevoStock,
+                    origen: 'devolucion',
+                    fecha: new Date().toISOString()
+                })
+            }
         }
 
         // Actualizar estado de la venta
@@ -979,7 +1062,7 @@ function FormDevolucion({ venta, items, onCancelar, onConfirmada }) {
             </div>
 
             <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '20px', marginBottom: '16px' }}>
-                <div style={{ fontSize: '13px', color: '#6b7280', marginBottom: '4px' }}>Factura</div>
+                <div style={{ fontSize: '13px', color: '#6b7280', marginBottom: '4px' }}>Nota de Entrega</div>
                 <div style={{ fontSize: '15px', fontWeight: 600, color: '#1f2937', fontFamily: 'monospace' }}>{venta.numero_factura}</div>
                 <div style={{ fontSize: '13px', color: '#6b7280', marginTop: '2px' }}>{venta.clientes?.nombre}</div>
             </div>

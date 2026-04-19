@@ -432,6 +432,23 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
     const [busquedaInsumo, setBusquedaInsumo] = useState('')
     const [proveedorLibreId, setProveedorLibreId] = useState('')
 
+    // Almacén destino
+    const [almacenes, setAlmacenes] = useState([])
+    const [almacenId, setAlmacenId] = useState('')
+
+    useEffect(() => {
+        supabase.from('almacenes').select('id, nombre, es_default')
+            .eq('empresa_id', perfil.empresa_id).eq('activo', true)
+            .order('es_default', { ascending: false }).order('nombre')
+            .then(({ data }) => {
+                if (data) {
+                    setAlmacenes(data)
+                    const def = data.find(a => a.es_default) || data[0]
+                    if (def) setAlmacenId(def.id)
+                }
+            })
+    }, [])
+
     useEffect(() => {
         supabase.from('proveedores').select('id, nombre').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
             .then(({ data }) => setProveedores(data || []))
@@ -507,6 +524,7 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
     function abrirConfirmacion() {
         if (modo === 'contra_oc' && !ocSeleccionada) { setError('Selecciona una OC'); return }
         if (items.length === 0) { setError('Agrega insumos o selecciona una OC'); return }
+        if (!almacenId) { setError('Selecciona el almacén de destino'); return }
         setError(''); setMostrarModal(true)
     }
 
@@ -548,7 +566,60 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
                     : item.tipo === 'consumibles' ? 'consumibles'
                         : 'productos_terminados'
             const { data: actual } = await supabase.from(tabla).select('stock_actual').eq('id', item.id).single()
-            await supabase.from(tabla).update({ stock_actual: (actual?.stock_actual || 0) + item.cantidad }).eq('id', item.id)
+            const nuevoStock = (actual?.stock_actual || 0) + item.cantidad
+
+            await supabase.from(tabla).update({ stock_actual: nuevoStock }).eq('id', item.id)
+
+            // Actualizar stock_ubicacion en el almacén seleccionado
+            const tipoItemMap = {
+                materias_primas: 'materia_prima',
+                materiales_empaque: 'material_empaque',
+                consumibles: 'consumible',
+                productos_terminados: 'producto_terminado',
+            }
+            const tipoItem = tipoItemMap[item.tipo] || 'materia_prima'
+
+            // Buscar si ya existe registro en ese almacén
+            const { data: stockExistente } = await supabase.from('stock_ubicacion')
+                .select('id, cantidad')
+                .eq('almacen_id', almacenId)
+                .eq('tipo_item', tipoItem)
+                .eq('item_id', item.id)
+                .eq('empresa_id', perfil.empresa_id)
+                .is('almacen_ubicacion_id', null)
+                .maybeSingle()
+
+            if (stockExistente) {
+                await supabase.from('stock_ubicacion')
+                    .update({ cantidad: Number(stockExistente.cantidad) + item.cantidad, updated_at: new Date().toISOString() })
+                    .eq('id', stockExistente.id)
+            } else {
+                await supabase.from('stock_ubicacion').insert({
+                    almacen_id: almacenId,
+                    almacen_ubicacion_id: null,
+                    tipo_item: tipoItem,
+                    item_id: item.id,
+                    cantidad: item.cantidad,
+                    empresa_id: perfil.empresa_id,
+                    updated_at: new Date().toISOString(),
+                })
+            }
+
+            // Registrar movimiento
+            await supabase.from('movimientos_inventario').insert({
+                empresa_id: perfil.empresa_id,
+                tipo_item: tipoItem,
+                item_id: item.id,
+                item_nombre: item.nombre,
+                item_codigo: item.codigo || item.sku || '',
+                tipo_movimiento: 'entrada',
+                cantidad: item.cantidad,
+                stock_anterior: actual?.stock_actual || 0,
+                stock_actual: nuevoStock,
+                origen: 'recepcion_compra',
+                almacen_id: almacenId,
+                fecha: new Date().toISOString()
+            })
 
             if (item.orden_item_id) {
                 const { data: current } = await supabase.from('orden_compra_items').select('cantidad_recibida').eq('id', item.orden_item_id).single()
@@ -596,6 +667,34 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
                         {m === 'libre' ? 'Recepción Libre' : 'Contra Orden de Compra'}
                     </button>
                 ))}
+            </div>
+
+            {/* Selector de almacén destino — aplica a ambos modos */}
+            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px', marginBottom: '16px' }}>
+                <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '8px' }}>
+                    Almacén de destino *
+                </label>
+                {almacenes.length === 0 ? (
+                    <p style={{ fontSize: '13px', color: '#ef4444', margin: 0 }}>
+                        No hay almacenes configurados — créalos en Administración → Almacenes
+                    </p>
+                ) : (
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                        {almacenes.map(a => (
+                            <button key={a.id} onClick={() => setAlmacenId(a.id)}
+                                style={{
+                                    padding: '7px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 500,
+                                    border: '1px solid', cursor: 'pointer',
+                                    borderColor: almacenId === a.id ? '#16a34a' : '#e5e7eb',
+                                    backgroundColor: almacenId === a.id ? '#f0fdf4' : '#fff',
+                                    color: almacenId === a.id ? '#16a34a' : '#6b7280',
+                                }}>
+                                {a.nombre}
+                                {a.es_default && <span style={{ fontSize: '10px', marginLeft: '6px', opacity: 0.6 }}>(principal)</span>}
+                            </button>
+                        ))}
+                    </div>
+                )}
             </div>
 
             {/* Modo libre — proveedor y buscador de insumos */}

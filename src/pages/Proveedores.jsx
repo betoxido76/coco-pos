@@ -4,7 +4,7 @@ import { Plus, Pencil, Check, Search } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 
 const VACIO = {
-    nombre: '', rif: '', telefono: '', contacto: '', tipo: '', codigo: '', activo: true,
+    nombre: '', rif: '', telefono: '', contacto: '', tipo: '', codigo: '', activo: true, direccion_fiscal: '',
 }
 
 const inputStyle = {
@@ -46,6 +46,7 @@ export default function Proveedores() {
             rif: p.rif || '',
             telefono: p.telefono || '',
             contacto: p.contacto || '',
+            direccion_fiscal: p.direccion_fiscal || '',  // 👈 NUEVO CAMPO
             tipo: p.tipo || '',
             codigo: p.codigo || '',
             activo: p.activo ?? true,
@@ -63,6 +64,7 @@ export default function Proveedores() {
             rif: form.rif.trim() || null,
             telefono: form.telefono.trim() || null,
             contacto: form.contacto.trim() || null,
+            direccion_fiscal: form.direccion_fiscal.trim() || null,
             tipo: form.tipo || null,
             activo: form.activo,
         }
@@ -94,6 +96,15 @@ export default function Proveedores() {
                 <Campo label="RIF / Cédula"><input value={form.rif} onChange={e => campo('rif', e.target.value)} placeholder="J-12345678-9" style={inputStyle} /></Campo>
                 <Campo label="Teléfono"><input value={form.telefono} onChange={e => campo('telefono', e.target.value)} placeholder="0212-000-0000" style={inputStyle} /></Campo>
                 <Campo label="Persona de contacto" span={2}><input value={form.contacto} onChange={e => campo('contacto', e.target.value)} placeholder="Nombre del contacto" style={inputStyle} /></Campo>
+                <Campo label="Dirección Fiscal" span={2}>
+                    <textarea
+                        value={form.direccion_fiscal}
+                        onChange={e => campo('direccion_fiscal', e.target.value)}
+                        placeholder="Dirección completa para facturación / domicilio fiscal..."
+                        rows={2}
+                        style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }}
+                    />
+                </Campo>
                 <Campo label="Tipo de proveedor" span={2}>
                     <select value={form.tipo} onChange={e => campo('tipo', e.target.value)} style={inputStyle}>
                         <option value="">— Sin clasificar —</option>

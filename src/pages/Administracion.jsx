@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Package, Beaker, Users, Settings, Truck, Filter, Tag } from 'lucide-react'
+import { Package, Beaker, Users, Settings, Truck, Filter, Tag, Warehouse } from 'lucide-react'
 import Productos from './Productos'
 import MateriasPrimas from './MateriasPrimas'
 import Consumibles from './Consumibles'
@@ -8,6 +8,7 @@ import Proveedores from './Proveedores'
 import Configuracion from './Configuracion'
 import CargaDatos from './CargaDatos'
 import ListasPrecios from './ListasPrecios'
+import GestionAlmacenes from './GestionAlmacenes'
 import { Database } from 'lucide-react'
 
 const TABS = [
@@ -18,6 +19,7 @@ const TABS = [
     { key: 'proveedores', label: 'Proveedores', icon: Truck },
     { key: 'tasas', label: 'Tasas de Cambio', icon: Settings },
     { key: 'listas_precio', label: 'Listas de Precio', icon: Tag },
+    { key: 'almacenes', label: 'Almacenes', icon: Warehouse },
     { key: 'carga', label: 'Carga de Datos', icon: Database },
 ]
 
@@ -33,9 +35,7 @@ export default function Administracion() {
 
                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                     {TABS.map(tab => (
-                        <button
-                            key={tab.key}
-                            onClick={() => setTabActiva(tab.key)}
+                        <button key={tab.key} onClick={() => setTabActiva(tab.key)}
                             style={{
                                 display: 'flex', alignItems: 'center', gap: '6px',
                                 padding: '8px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 500,
@@ -43,8 +43,7 @@ export default function Administracion() {
                                 borderColor: tabActiva === tab.key ? '#16a34a' : '#e5e7eb',
                                 backgroundColor: tabActiva === tab.key ? '#f0fdf4' : '#fff',
                                 color: tabActiva === tab.key ? '#16a34a' : '#6b7280'
-                            }}
-                        >
+                            }}>
                             <tab.icon size={14} /> {tab.label}
                         </button>
                     ))}
@@ -60,6 +59,7 @@ export default function Administracion() {
                 {tabActiva === 'proveedores' && <Proveedores />}
                 {tabActiva === 'tasas' && <Configuracion />}
                 {tabActiva === 'listas_precio' && <ListasPrecios />}
+                {tabActiva === 'almacenes' && <GestionAlmacenes />}
                 {tabActiva === 'carga' && <CargaDatos />}
             </div>
         </div>

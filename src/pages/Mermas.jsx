@@ -6,20 +6,20 @@ import { Plus, Search, X, Check, AlertTriangle } from 'lucide-react'
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 
 const TIPOS_MERMA = [
-    { key: 'inventario', label: 'Inventario',       bg: '#fef9c3', color: '#854d0e' },
-    { key: 'despacho',   label: 'Despacho/Entrega', bg: '#dbeafe', color: '#1e40af' },
+    { key: 'inventario', label: 'Inventario', bg: '#fef9c3', color: '#854d0e' },
+    { key: 'despacho', label: 'Despacho/Entrega', bg: '#dbeafe', color: '#1e40af' },
 ]
 
 const MOTIVOS = {
     inventario: ['Vencimiento', 'Daño físico', 'Contaminación', 'Robo/Hurto', 'Otro'],
-    despacho:   ['Rotura en entrega', 'Producto incorrecto', 'Daño en transporte', 'Error de despacho', 'Otro'],
+    despacho: ['Rotura en entrega', 'Producto incorrecto', 'Daño en transporte', 'Error de despacho', 'Otro'],
 }
 
 const TIPOS_ITEM = [
-    { key: 'producto_terminado', label: 'Producto terminado',  tabla: 'productos_terminados', campoNombre: 'nombre', campoCodigo: 'sku',    campoCosto: 'costo_promedio' },
-    { key: 'materia_prima',      label: 'Materia prima',       tabla: 'materias_primas',      campoNombre: 'nombre', campoCodigo: 'codigo', campoCosto: 'costo_compra_promedio' },
-    { key: 'empaque',            label: 'Material de empaque', tabla: 'materiales_empaque',   campoNombre: 'nombre', campoCodigo: 'codigo', campoCosto: 'costo_compra_promedio' },
-    { key: 'consumible',         label: 'Consumible',          tabla: 'consumibles',          campoNombre: 'nombre', campoCodigo: 'codigo', campoCosto: 'costo_compra_promedio' },
+    { key: 'producto_terminado', label: 'Producto terminado', tabla: 'productos_terminados', campoNombre: 'nombre', campoCodigo: 'sku', campoCosto: 'costo_promedio' },
+    { key: 'materia_prima', label: 'Materia prima', tabla: 'materias_primas', campoNombre: 'nombre', campoCodigo: 'codigo', campoCosto: 'costo_compra_promedio' },
+    { key: 'empaque', label: 'Material de empaque', tabla: 'materiales_empaque', campoNombre: 'nombre', campoCodigo: 'codigo', campoCosto: 'costo_compra_promedio' },
+    { key: 'consumible', label: 'Consumible', tabla: 'consumibles', campoNombre: 'nombre', campoCodigo: 'codigo', campoCosto: 'costo_compra_promedio' },
 ]
 
 function BadgeTipo({ tipo }) {
@@ -36,13 +36,13 @@ function BadgeTipo({ tipo }) {
 // ══════════════════════════════════════════════════════════════
 export default function Mermas() {
     const { perfil } = useAuth()
-    const [mermas, setMermas]             = useState([])
-    const [loading, setLoading]           = useState(true)
-    const [vista, setVista]               = useState('lista')
-    const [filtroTipo, setFiltroTipo]     = useState('todos')
-    const [filtroMes, setFiltroMes]       = useState('')
-    const [busqueda, setBusqueda]         = useState('')
-    const [modalAnular, setModalAnular]   = useState(null)
+    const [mermas, setMermas] = useState([])
+    const [loading, setLoading] = useState(true)
+    const [vista, setVista] = useState('lista')
+    const [filtroTipo, setFiltroTipo] = useState('todos')
+    const [filtroMes, setFiltroMes] = useState('')
+    const [busqueda, setBusqueda] = useState('')
+    const [modalAnular, setModalAnular] = useState(null)
 
     useEffect(() => { cargar() }, [filtroTipo, filtroMes])
 
@@ -80,6 +80,21 @@ export default function Mermas() {
                 await supabase.from(def.tabla)
                     .update({ stock_actual: item.stock_actual + Number(merma.cantidad) })
                     .eq('id', merma.item_id)
+
+                // Registrar movimiento de Entrada por Anulación ✅
+                const stockResultante = item.stock_actual + Number(merma.cantidad)
+                await supabase.from('movimientos_inventario').insert({
+                    empresa_id: perfil.empresa_id,
+                    tipo_item: merma.tipo_item,
+                    item_id: merma.item_id,
+                    item_nombre: merma.item_nombre,
+                    item_codigo: merma.item_codigo || null,
+                    tipo_movimiento: 'entrada',
+                    cantidad: Number(merma.cantidad),
+                    stock_actual: stockResultante,
+                    origen: 'anulacion_merma',
+                    fecha: new Date().toISOString()
+                })
             }
         }
         await supabase.from('mermas')
@@ -90,10 +105,10 @@ export default function Mermas() {
     }
 
     // KPIs
-    const mermasHoy     = mermas.filter(m => m.fecha === new Date().toISOString().split('T')[0]).length
-    const perdidaTotal  = mermas.reduce((s, m) => s + (Number(m.cantidad) * Number(m.costo_unitario || 0)), 0)
+    const mermasHoy = mermas.filter(m => m.fecha === new Date().toISOString().split('T')[0]).length
+    const perdidaTotal = mermas.reduce((s, m) => s + (Number(m.cantidad) * Number(m.costo_unitario || 0)), 0)
     const porInventario = mermas.filter(m => m.tipo_merma === 'inventario').length
-    const porDespacho   = mermas.filter(m => m.tipo_merma === 'despacho').length
+    const porDespacho = mermas.filter(m => m.tipo_merma === 'despacho').length
 
     const filtradas = mermas.filter(m =>
         m.item_nombre?.toLowerCase().includes(busqueda.toLowerCase()) ||
@@ -125,10 +140,10 @@ export default function Mermas() {
             {/* KPIs */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '24px' }}>
                 {[
-                    { label: 'Total registradas', valor: mermas.length,   color: '#1f2937' },
-                    { label: 'Mermas hoy',         valor: mermasHoy,       color: mermasHoy > 0 ? '#dc2626' : '#1f2937' },
-                    { label: 'De inventario',      valor: porInventario,   color: '#854d0e' },
-                    { label: 'De despacho',        valor: porDespacho,     color: '#1e40af' },
+                    { label: 'Total registradas', valor: mermas.length, color: '#1f2937' },
+                    { label: 'Mermas hoy', valor: mermasHoy, color: mermasHoy > 0 ? '#dc2626' : '#1f2937' },
+                    { label: 'De inventario', valor: porInventario, color: '#854d0e' },
+                    { label: 'De despacho', valor: porDespacho, color: '#1e40af' },
                 ].map(k => (
                     <div key={k.label} style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px 20px' }}>
                         <p style={{ fontSize: '12px', color: '#6b7280', margin: '0 0 4px' }}>{k.label}</p>
@@ -159,10 +174,12 @@ export default function Mermas() {
 
                 {[['todos', 'Todas'], ['inventario', 'Inventario'], ['despacho', 'Despacho']].map(([val, lbl]) => (
                     <button key={val} onClick={() => setFiltroTipo(val)}
-                        style={{ padding: '8px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid', cursor: 'pointer',
+                        style={{
+                            padding: '8px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid', cursor: 'pointer',
                             borderColor: filtroTipo === val ? '#16a34a' : '#e5e7eb',
                             backgroundColor: filtroTipo === val ? '#16a34a' : '#fff',
-                            color: filtroTipo === val ? '#fff' : '#6b7280' }}>
+                            color: filtroTipo === val ? '#fff' : '#6b7280'
+                        }}>
                         {lbl}
                     </button>
                 ))}
@@ -261,19 +278,24 @@ export default function Mermas() {
 // ══════════════════════════════════════════════════════════════
 function NuevaMerma({ onRegistrada, onCancelar }) {
     const { perfil } = useAuth()
-    const [tipoMerma,    setTipoMerma]    = useState('inventario')
-    const [tipoItem,     setTipoItem]     = useState('producto_terminado')
-    const [items,        setItems]        = useState([])
-    const [busqueda,     setBusqueda]     = useState('')
-    const [itemSel,      setItemSel]      = useState(null)
-    const [cantidad,     setCantidad]     = useState('')
-    const [motivo,       setMotivo]       = useState('')
-    const [descripcion,  setDescripcion]  = useState('')
-    const [fecha,        setFecha]        = useState(new Date().toISOString().split('T')[0])
-    const [ventaId,      setVentaId]      = useState('')
-    const [ventas,       setVentas]       = useState([])
-    const [guardando,    setGuardando]    = useState(false)
-    const [error,        setError]        = useState('')
+    const [tipoMerma, setTipoMerma] = useState('inventario')
+    const [tipoItem, setTipoItem] = useState('producto_terminado')
+    const [items, setItems] = useState([])
+    const [busqueda, setBusqueda] = useState('')
+    const [itemSel, setItemSel] = useState(null)
+    const [cantidad, setCantidad] = useState('')
+    const [motivo, setMotivo] = useState('')
+    const [descripcion, setDescripcion] = useState('')
+    const [fecha, setFecha] = useState(new Date().toISOString().split('T')[0])
+    const [ventaId, setVentaId] = useState('')
+    const [ventas, setVentas] = useState([])
+    const [guardando, setGuardando] = useState(false)
+    const [error, setError] = useState('')
+
+    // Almacenes — solo para mermas de inventario
+    const [almacenes, setAlmacenes] = useState([])
+    const [almacenId, setAlmacenId] = useState('')
+    const [stockEnAlmacen, setStockEnAlmacen] = useState(null) // null = no cargado
 
     const def = TIPOS_ITEM.find(t => t.key === tipoItem)
 
@@ -289,6 +311,40 @@ function NuevaMerma({ onRegistrada, onCancelar }) {
         setItemSel(null)
         setBusqueda('')
     }, [tipoItem])
+
+    // Cargar almacenes
+    useEffect(() => {
+        supabase.from('almacenes').select('id, nombre, es_default')
+            .eq('empresa_id', perfil.empresa_id).eq('activo', true)
+            .order('es_default', { ascending: false }).order('nombre')
+            .then(({ data }) => {
+                if (data) {
+                    setAlmacenes(data)
+                    const def = data.find(a => a.es_default) || data[0]
+                    if (def) setAlmacenId(def.id)
+                }
+            })
+    }, [])
+
+    // Cargar stock del item en el almacén seleccionado
+    useEffect(() => {
+        if (!itemSel || !almacenId || tipoMerma !== 'inventario') { setStockEnAlmacen(null); return }
+        const tipoItemMap = {
+            producto_terminado: 'producto_terminado',
+            materia_prima: 'materia_prima',
+            empaque: 'material_empaque',
+            consumible: 'consumible',
+        }
+        supabase.from('stock_ubicacion')
+            .select('cantidad')
+            .eq('almacen_id', almacenId)
+            .eq('tipo_item', tipoItemMap[tipoItem] || tipoItem)
+            .eq('item_id', itemSel.id)
+            .eq('empresa_id', perfil.empresa_id)
+            .is('almacen_ubicacion_id', null)
+            .maybeSingle()
+            .then(({ data }) => setStockEnAlmacen(data ? Number(data.cantidad) : 0))
+    }, [itemSel, almacenId, tipoMerma])
 
     // Cargar ventas recientes para vincular (solo tipo despacho)
     useEffect(() => {
@@ -314,11 +370,16 @@ function NuevaMerma({ onRegistrada, onCancelar }) {
     }
 
     async function guardar() {
-        if (!itemSel)                       { setError('Selecciona un ítem'); return }
+        if (!itemSel) { setError('Selecciona un ítem'); return }
         if (!cantidad || Number(cantidad) <= 0) { setError('Ingresa una cantidad válida'); return }
-        if (!motivo)                        { setError('Selecciona un motivo'); return }
+        if (!motivo) { setError('Selecciona un motivo'); return }
+        if (tipoMerma === 'inventario' && !almacenId) { setError('Selecciona el almacén de origen'); return }
         if (Number(cantidad) > itemSel.stock_actual) {
             setError(`Stock insuficiente. Disponible: ${itemSel.stock_actual} ${itemSel.unidad_medida}`)
+            return
+        }
+        if (tipoMerma === 'inventario' && stockEnAlmacen !== null && Number(cantidad) > stockEnAlmacen) {
+            setError(`Stock insuficiente en ese almacén. Disponible: ${stockEnAlmacen} ${itemSel.unidad_medida}`)
             return
         }
         setGuardando(true); setError('')
@@ -327,28 +388,69 @@ function NuevaMerma({ onRegistrada, onCancelar }) {
 
         // 1. Registrar la merma
         const { error: errMerma } = await supabase.from('mermas').insert({
-            empresa_id:    perfil.empresa_id,
-            tipo_item:     tipoItem,
-            item_id:       itemSel.id,
-            item_nombre:   itemSel[def.campoNombre],
-            item_codigo:   itemSel[def.campoCodigo] || null,
+            empresa_id: perfil.empresa_id,
+            tipo_item: tipoItem,
+            item_id: itemSel.id,
+            item_nombre: itemSel[def.campoNombre],
+            item_codigo: itemSel[def.campoCodigo] || null,
             unidad_medida: itemSel.unidad_medida,
-            cantidad:      Number(cantidad),
+            cantidad: Number(cantidad),
             costo_unitario: itemSel[def.campoCosto] || null,
-            tipo_merma:    tipoMerma,
+            tipo_merma: tipoMerma,
             motivo,
-            descripcion:   descripcion.trim() || null,
-            venta_id:      ventaId || null,
-            usuario_id:    user.id,
+            descripcion: descripcion.trim() || null,
+            venta_id: ventaId || null,
+            usuario_id: user.id,
             fecha,
+            almacen_id: tipoMerma === 'inventario' ? almacenId : null,
         })
 
         if (errMerma) { setError('Error: ' + errMerma.message); setGuardando(false); return }
 
-        // 2. Descontar stock
+        // 2. Descontar stock global
+        const nuevoStock = itemSel.stock_actual - Number(cantidad)
         await supabase.from(def.tabla)
-            .update({ stock_actual: itemSel.stock_actual - Number(cantidad) })
+            .update({ stock_actual: nuevoStock })
             .eq('id', itemSel.id)
+
+        // 3. Descontar stock_ubicacion si es merma de inventario
+        if (tipoMerma === 'inventario' && almacenId) {
+            const tipoItemMap = {
+                producto_terminado: 'producto_terminado',
+                materia_prima: 'materia_prima',
+                empaque: 'material_empaque',
+                consumible: 'consumible',
+            }
+            const { data: su } = await supabase.from('stock_ubicacion')
+                .select('id, cantidad')
+                .eq('almacen_id', almacenId)
+                .eq('tipo_item', tipoItemMap[tipoItem] || tipoItem)
+                .eq('item_id', itemSel.id)
+                .eq('empresa_id', perfil.empresa_id)
+                .is('almacen_ubicacion_id', null)
+                .maybeSingle()
+            if (su) {
+                await supabase.from('stock_ubicacion')
+                    .update({ cantidad: Math.max(0, Number(su.cantidad) - Number(cantidad)), updated_at: new Date().toISOString() })
+                    .eq('id', su.id)
+            }
+        }
+
+        // 4. Registrar movimiento
+        await supabase.from('movimientos_inventario').insert({
+            empresa_id: perfil.empresa_id,
+            tipo_item: tipoItem,
+            item_id: itemSel.id,
+            item_nombre: itemSel[def.campoNombre],
+            item_codigo: itemSel[def.campoCodigo] || null,
+            tipo_movimiento: 'salida',
+            cantidad: Number(cantidad),
+            stock_anterior: itemSel.stock_actual,
+            stock_actual: nuevoStock,
+            origen: 'merma',
+            almacen_id: tipoMerma === 'inventario' ? almacenId : null,
+            fecha: new Date().toISOString()
+        })
 
         setGuardando(false)
         onRegistrada()
@@ -375,10 +477,12 @@ function NuevaMerma({ onRegistrada, onCancelar }) {
                     <div style={{ display: 'flex', gap: '8px' }}>
                         {TIPOS_MERMA.map(t => (
                             <button key={t.key} onClick={() => { setTipoMerma(t.key); setMotivo('') }}
-                                style={{ flex: 1, padding: '10px', borderRadius: '8px', fontSize: '13px', fontWeight: 500, border: '1px solid', cursor: 'pointer',
+                                style={{
+                                    flex: 1, padding: '10px', borderRadius: '8px', fontSize: '13px', fontWeight: 500, border: '1px solid', cursor: 'pointer',
                                     borderColor: tipoMerma === t.key ? '#16a34a' : '#e5e7eb',
                                     backgroundColor: tipoMerma === t.key ? '#f0fdf4' : '#fff',
-                                    color: tipoMerma === t.key ? '#16a34a' : '#6b7280' }}>
+                                    color: tipoMerma === t.key ? '#16a34a' : '#6b7280'
+                                }}>
                                 {t.label}
                             </button>
                         ))}
@@ -391,10 +495,12 @@ function NuevaMerma({ onRegistrada, onCancelar }) {
                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                         {TIPOS_ITEM.map(t => (
                             <button key={t.key} onClick={() => setTipoItem(t.key)}
-                                style={{ padding: '7px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid', cursor: 'pointer',
+                                style={{
+                                    padding: '7px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid', cursor: 'pointer',
                                     borderColor: tipoItem === t.key ? '#16a34a' : '#e5e7eb',
                                     backgroundColor: tipoItem === t.key ? '#16a34a' : '#fff',
-                                    color: tipoItem === t.key ? '#fff' : '#6b7280' }}>
+                                    color: tipoItem === t.key ? '#fff' : '#6b7280'
+                                }}>
                                 {t.label}
                             </button>
                         ))}
@@ -454,6 +560,39 @@ function NuevaMerma({ onRegistrada, onCancelar }) {
                         </div>
                     )}
                 </div>
+
+                {/* Almacén de origen — solo para inventario */}
+                {tipoMerma === 'inventario' && (
+                    <div>
+                        <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '8px' }}>
+                            Almacén de origen *
+                        </label>
+                        {almacenes.length === 0 ? (
+                            <p style={{ fontSize: '13px', color: '#ef4444', margin: 0 }}>No hay almacenes configurados</p>
+                        ) : (
+                            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                {almacenes.map(a => (
+                                    <button key={a.id} onClick={() => setAlmacenId(a.id)}
+                                        style={{
+                                            padding: '7px 14px', borderRadius: '8px', fontSize: '13px', fontWeight: 500,
+                                            border: '1px solid', cursor: 'pointer',
+                                            borderColor: almacenId === a.id ? '#dc2626' : '#e5e7eb',
+                                            backgroundColor: almacenId === a.id ? '#fef2f2' : '#fff',
+                                            color: almacenId === a.id ? '#dc2626' : '#6b7280',
+                                        }}>
+                                        {a.nombre}
+                                        {a.es_default && <span style={{ fontSize: '10px', marginLeft: '5px', opacity: 0.6 }}>(principal)</span>}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                        {itemSel && almacenId && stockEnAlmacen !== null && (
+                            <p style={{ fontSize: '12px', margin: '6px 0 0', color: stockEnAlmacen <= 0 ? '#dc2626' : '#6b7280' }}>
+                                Stock en este almacén: <strong style={{ color: stockEnAlmacen <= 0 ? '#dc2626' : '#374151' }}>{stockEnAlmacen} {itemSel.unidad_medida}</strong>
+                            </p>
+                        )}
+                    </div>
+                )}
 
                 {/* Cantidad y fecha */}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
@@ -559,7 +698,7 @@ function NuevaMerma({ onRegistrada, onCancelar }) {
 // ══════════════════════════════════════════════════════════════
 function ModalAnular({ merma, onConfirmar, onCerrar }) {
     const [motivo, setMotivo] = useState('')
-    const [error,  setError]  = useState('')
+    const [error, setError] = useState('')
 
     function confirmar() {
         if (!motivo.trim()) { setError('Ingresa el motivo de anulación'); return }

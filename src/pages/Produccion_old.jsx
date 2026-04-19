@@ -194,10 +194,6 @@ function NuevaOrden({ onCreada, onCancelar }) {
     const [consumos, setConsumos] = useState([])  // insumos escalados de la receta
     const [insumosMp, setInsumosMp] = useState([])
     const [insumosMe, setInsumosMe] = useState([])
-
-    // Almacenes para selección de origen
-    const [almacenes, setAlmacenes] = useState([])
-    const [stockPorAlmacen, setStockPorAlmacen] = useState({}) // { item_id: [{ almacen_id, nombre, cantidad }] }
     const [guardando, setGuardando] = useState(false)
     const [error, setError] = useState('')
     const [alertaLote, setAlertaLote] = useState(false)
@@ -209,32 +205,6 @@ function NuevaOrden({ onCreada, onCancelar }) {
             .then(({ data }) => setInsumosMp(data || []))
         supabase.from('materiales_empaque').select('id, nombre, codigo, unidad_medida, stock_actual').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
             .then(({ data }) => setInsumosMe(data || []))
-
-        // Cargar almacenes
-        supabase.from('almacenes').select('id, nombre, es_default')
-            .eq('empresa_id', perfil.empresa_id).eq('activo', true)
-            .order('es_default', { ascending: false }).order('nombre')
-            .then(({ data }) => setAlmacenes(data || []))
-
-        // Cargar stock por almacén para todos los insumos
-        supabase.from('stock_ubicacion')
-            .select('item_id, tipo_item, cantidad, almacen_id, almacenes(nombre)')
-            .eq('empresa_id', perfil.empresa_id)
-            .in('tipo_item', ['materia_prima', 'material_empaque'])
-            .gt('cantidad', 0)
-            .then(({ data }) => {
-                if (!data) return
-                const mapa = {}
-                data.forEach(s => {
-                    if (!mapa[s.item_id]) mapa[s.item_id] = []
-                    mapa[s.item_id].push({
-                        almacen_id: s.almacen_id,
-                        nombre: s.almacenes?.nombre || '—',
-                        cantidad: Number(s.cantidad),
-                    })
-                })
-                setStockPorAlmacen(mapa)
-            })
     }, [])
 
     async function cargarReceta() {
@@ -279,28 +249,11 @@ function NuevaOrden({ onCreada, onCancelar }) {
                 cantidad_sugerida: parseFloat((item.cantidad * factor).toFixed(4)),
                 cantidad_real: parseFloat((item.cantidad * factor).toFixed(4)),
                 es_nuevo: false,
-                almacen_id: '', // se asigna abajo
-                stock_disponible_almacen: 0,
             }
         }))
 
-        // Asignar almacén por defecto y stock en ese almacén
-        const defAlmacen = almacenes.find(a => a.es_default)?.id || almacenes[0]?.id || ''
-        const itemsConAlmacen = itemsConNombre.map(c => {
-            const stockEnAlmacen = (stockPorAlmacen[c.insumo_id] || []).find(s => s.almacen_id === defAlmacen)?.cantidad || 0
-            return { ...c, almacen_id: defAlmacen, stock_disponible_almacen: stockEnAlmacen }
-        })
-
-        setConsumos(itemsConAlmacen)
+        setConsumos(itemsConNombre)
         setPaso(2)
-    }
-
-    function cambiarAlmacenConsumo(key, nuevoAlmacenId) {
-        setConsumos(prev => prev.map(c => {
-            if (c._key !== key) return c
-            const stockEnAlmacen = (stockPorAlmacen[c.insumo_id] || []).find(s => s.almacen_id === nuevoAlmacenId)?.cantidad || 0
-            return { ...c, almacen_id: nuevoAlmacenId, stock_disponible_almacen: stockEnAlmacen }
-        }))
     }
 
     function actualizarConsumo(key, campo, valor) {
@@ -312,7 +265,6 @@ function NuevaOrden({ onCreada, onCancelar }) {
     }
 
     function agregarInsumo() {
-        const defAlmacen = almacenes.find(a => a.es_default)?.id || almacenes[0]?.id || ''
         setConsumos(prev => [...prev, {
             _key: `nuevo-${Date.now()}`,
             tipo_insumo: 'materia_prima',
@@ -323,15 +275,12 @@ function NuevaOrden({ onCreada, onCancelar }) {
             cantidad_sugerida: 0,
             cantidad_real: '',
             es_nuevo: true,
-            almacen_id: defAlmacen,
         }])
     }
 
     function handleInsumoSelect(key, tipo, id) {
         const lista = tipo === 'materia_prima' ? insumosMp : insumosMe
         const insumo = lista.find(i => i.id === id)
-        const defAlmacen = almacenes.find(a => a.es_default)?.id || almacenes[0]?.id || ''
-        const stockEnAlmacen = (stockPorAlmacen[id] || []).find(s => s.almacen_id === defAlmacen)?.cantidad || 0
         setConsumos(prev => prev.map(c => c._key === key ? {
             ...c,
             tipo_insumo: tipo,
@@ -339,20 +288,13 @@ function NuevaOrden({ onCreada, onCancelar }) {
             nombre: insumo?.nombre || '',
             stock_disponible: insumo?.stock_actual || 0,
             unidad_medida: insumo?.unidad_medida || '',
-            almacen_id: defAlmacen,
-            stock_disponible_almacen: stockEnAlmacen,
         } : c))
     }
 
     const productoSel = productos.find(p => p.id === productoId)
 
     // Alertas de stock insuficiente
-    // Alertas de stock insuficiente — basadas en el almacén seleccionado
-    const alertasStock = consumos.filter(c => {
-        if (!c.insumo_id) return false
-        const stockRef = c.almacen_id ? (c.stock_disponible_almacen || 0) : c.stock_disponible
-        return Number(c.cantidad_real) > stockRef
-    })
+    const alertasStock = consumos.filter(c => c.insumo_id && Number(c.cantidad_real) > c.stock_disponible)
 
     async function confirmarOrden() {
         if (!numeroLote.trim()) {
@@ -406,7 +348,7 @@ function NuevaOrden({ onCreada, onCancelar }) {
             await supabase.from('lote_consumos').insert(
                 consumosValidos.map(c => ({
                     orden_id: orden.id,
-                    lote_id: orden.id,
+                    lote_id: orden.id, // referencia backward-compat
                     tipo_insumo: c.tipo_insumo,
                     insumo_id: c.insumo_id,
                     insumo_nombre: c.nombre,
@@ -414,7 +356,6 @@ function NuevaOrden({ onCreada, onCancelar }) {
                     cantidad_consumida: Number(c.cantidad_real),
                     nota: null,
                     empresa_id: perfil.empresa_id,
-                    almacen_id: c.almacen_id || null,
                 }))
             )
 
@@ -426,26 +367,12 @@ function NuevaOrden({ onCreada, onCancelar }) {
 
                 if (insumo) {
                     const nuevoStock = insumo.stock_actual - Number(c.cantidad_real)
-                    await supabase.from(tabla).update({ stock_actual: nuevoStock }).eq('id', c.insumo_id)
 
-                    // Descontar de stock_ubicacion si hay almacén seleccionado
-                    if (c.almacen_id) {
-                        const { data: su } = await supabase.from('stock_ubicacion')
-                            .select('id, cantidad')
-                            .eq('almacen_id', c.almacen_id)
-                            .eq('tipo_item', c.tipo_insumo === 'materia_prima' ? 'materia_prima' : 'material_empaque')
-                            .eq('item_id', c.insumo_id)
-                            .eq('empresa_id', perfil.empresa_id)
-                            .is('almacen_ubicacion_id', null)
-                            .maybeSingle()
-                        if (su) {
-                            await supabase.from('stock_ubicacion')
-                                .update({ cantidad: Math.max(0, Number(su.cantidad) - Number(c.cantidad_real)), updated_at: new Date().toISOString() })
-                                .eq('id', su.id)
-                        }
-                    }
+                    await supabase.from(tabla)
+                        .update({ stock_actual: nuevoStock })
+                        .eq('id', c.insumo_id)
 
-                    // Registrar movimiento
+                    // REGISTRAR MOVIMIENTO ✅
                     await supabase.from('movimientos_inventario').insert({
                         empresa_id: perfil.empresa_id,
                         tipo_item: c.tipo_insumo === 'materia_prima' ? 'materia_prima' : 'material_empaque',
@@ -454,10 +381,8 @@ function NuevaOrden({ onCreada, onCancelar }) {
                         item_codigo: insumo.codigo || '',
                         tipo_movimiento: 'salida',
                         cantidad: Number(c.cantidad_real),
-                        stock_anterior: insumo.stock_actual,
                         stock_actual: nuevoStock,
                         origen: 'produccion_consumo',
-                        almacen_id: c.almacen_id || null,
                         fecha: new Date().toISOString()
                     })
                 }
@@ -564,7 +489,7 @@ function NuevaOrden({ onCreada, onCancelar }) {
                         <p style={{ fontSize: '13px', fontWeight: 600, color: '#854d0e', margin: '0 0 4px' }}>Stock insuficiente en {alertasStock.length} insumo(s)</p>
                         {alertasStock.map(a => (
                             <p key={a._key} style={{ fontSize: '12px', color: '#854d0e', margin: '2px 0' }}>
-                                • {a.nombre}: necesitas {fmt(a.cantidad_real)} pero hay {fmt(a.almacen_id ? (a.stock_disponible_almacen || 0) : a.stock_disponible)} disponibles{a.almacen_id ? ' en el almacén seleccionado' : ''}
+                                • {a.nombre}: necesitas {fmt(a.cantidad_real)} pero hay {fmt(a.stock_disponible)} disponibles
                             </p>
                         ))}
                     </div>
@@ -593,14 +518,14 @@ function NuevaOrden({ onCreada, onCancelar }) {
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
                             <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                {['Tipo', 'Insumo', 'Stock disp.', 'Almacén origen', 'Stock en almacén', 'Cant. sugerida', 'Cant. a consumir', 'Unidad', ''].map(h => (
+                                {['Tipo', 'Insumo', 'Stock disp.', 'Cant. sugerida', 'Cant. a consumir', 'Unidad', ''].map(h => (
                                     <th key={h} style={{ padding: '9px 12px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
                                 ))}
                             </tr>
                         </thead>
                         <tbody>
                             {consumos.map(c => (
-                                <tr key={c._key} style={{ borderBottom: '1px solid #f3f4f6', backgroundColor: c.insumo_id && c.almacen_id && Number(c.cantidad_real) > (c.stock_disponible_almacen || 0) ? '#fffbeb' : 'transparent' }}>
+                                <tr key={c._key} style={{ borderBottom: '1px solid #f3f4f6', backgroundColor: Number(c.cantidad_real) > c.stock_disponible && c.insumo_id ? '#fffbeb' : 'transparent' }}>
                                     <td style={{ padding: '10px 12px' }}>
                                         {c.es_nuevo ? (
                                             <select value={c.tipo_insumo} onChange={e => handleInsumoSelect(c._key, e.target.value, c.insumo_id)}
@@ -633,36 +558,6 @@ function NuevaOrden({ onCreada, onCancelar }) {
                                             {c.insumo_id ? fmt(c.stock_disponible) : '—'}
                                         </span>
                                     </td>
-                                    {/* Selector de almacén */}
-                                    <td style={{ padding: '10px 12px' }}>
-                                        {c.insumo_id ? (
-                                            <select value={c.almacen_id || ''}
-                                                onChange={e => cambiarAlmacenConsumo(c._key, e.target.value)}
-                                                style={{ ...inputStyle, fontSize: '12px', padding: '4px 8px', minWidth: '140px' }}>
-                                                <option value="">— Almacén —</option>
-                                                {(stockPorAlmacen[c.insumo_id] || []).map(s => (
-                                                    <option key={s.almacen_id} value={s.almacen_id}>
-                                                        {s.nombre} ({fmt(s.cantidad)})
-                                                    </option>
-                                                ))}
-                                                {/* Si no hay en stock_ubicacion, mostrar todos los almacenes */}
-                                                {!(stockPorAlmacen[c.insumo_id]?.length) && almacenes.map(a => (
-                                                    <option key={a.id} value={a.id}>{a.nombre} (0)</option>
-                                                ))}
-                                            </select>
-                                        ) : <span style={{ color: '#9ca3af', fontSize: '13px' }}>—</span>}
-                                    </td>
-                                    {/* Stock disponible en almacén seleccionado */}
-                                    <td style={{ padding: '10px 12px' }}>
-                                        {c.insumo_id && c.almacen_id ? (
-                                            <span style={{
-                                                fontSize: '13px', fontWeight: 600,
-                                                color: Number(c.cantidad_real) > (c.stock_disponible_almacen || 0) ? '#ef4444' : '#16a34a'
-                                            }}>
-                                                {fmt(c.stock_disponible_almacen || 0)}
-                                            </span>
-                                        ) : <span style={{ color: '#9ca3af', fontSize: '13px' }}>—</span>}
-                                    </td>
                                     <td style={{ padding: '10px 12px', fontSize: '13px', color: '#9ca3af' }}>
                                         {c.cantidad_sugerida ? fmt(c.cantidad_sugerida) : '—'}
                                     </td>
@@ -671,7 +566,7 @@ function NuevaOrden({ onCreada, onCancelar }) {
                                             onChange={e => actualizarConsumo(c._key, 'cantidad_real', e.target.value)}
                                             style={{
                                                 ...inputStyle, width: '100px', padding: '5px 8px', fontSize: '13px', fontWeight: 600,
-                                                borderColor: c.insumo_id && c.almacen_id && Number(c.cantidad_real) > (c.stock_disponible_almacen || 0) ? '#f87171' : '#d1d5db'
+                                                borderColor: Number(c.cantidad_real) > c.stock_disponible && c.insumo_id ? '#f87171' : '#d1d5db'
                                             }} />
                                     </td>
                                     <td style={{ padding: '10px 12px', fontSize: '13px', color: '#6b7280' }}>{c.unidad_medida}</td>
@@ -938,26 +833,8 @@ function ModalCierre({ orden, producto, consumos, onCerrar, onCerrada }) {
     const [guardando, setGuardando] = useState(false)
     const [error, setError] = useState('')
 
-    // Almacén destino para el PT
-    const [almacenes, setAlmacenes] = useState([])
-    const [almacenId, setAlmacenId] = useState('')
-
-    useEffect(() => {
-        supabase.from('almacenes').select('id, nombre, es_default')
-            .eq('empresa_id', perfil.empresa_id).eq('activo', true)
-            .order('es_default', { ascending: false }).order('nombre')
-            .then(({ data }) => {
-                if (data) {
-                    setAlmacenes(data)
-                    const def = data.find(a => a.es_default) || data[0]
-                    if (def) setAlmacenId(def.id)
-                }
-            })
-    }, [])
-
     async function cerrar() {
         if (!cantReal || Number(cantReal) <= 0) { setError('Ingresa la cantidad real producida'); return }
-        if (!almacenId) { setError('Selecciona el almacén donde entra el producto terminado'); return }
         setGuardando(true); setError('')
 
         // Actualizar orden
@@ -979,7 +856,7 @@ function ModalCierre({ orden, producto, consumos, onCerrar, onCerrada }) {
 
         if (errOrden) { setError('Error: ' + errOrden.message); setGuardando(false); return }
 
-        // Sumar PT al stock global
+        // Sumar PT al stock
         const { data: pt } = await supabase.from('productos_terminados').select('stock_actual').eq('id', orden.producto_id).single()
         if (pt) {
             const nuevoStock = pt.stock_actual + Number(cantReal)
@@ -988,33 +865,7 @@ function ModalCierre({ orden, producto, consumos, onCerrar, onCerrada }) {
                 .update({ stock_actual: nuevoStock })
                 .eq('id', orden.producto_id)
 
-            // Sumar a stock_ubicacion en el almacén seleccionado
-            const { data: su } = await supabase.from('stock_ubicacion')
-                .select('id, cantidad')
-                .eq('almacen_id', almacenId)
-                .eq('tipo_item', 'producto_terminado')
-                .eq('item_id', orden.producto_id)
-                .eq('empresa_id', perfil.empresa_id)
-                .is('almacen_ubicacion_id', null)
-                .maybeSingle()
-
-            if (su) {
-                await supabase.from('stock_ubicacion')
-                    .update({ cantidad: Number(su.cantidad) + Number(cantReal), updated_at: new Date().toISOString() })
-                    .eq('id', su.id)
-            } else {
-                await supabase.from('stock_ubicacion').insert({
-                    almacen_id: almacenId,
-                    almacen_ubicacion_id: null,
-                    tipo_item: 'producto_terminado',
-                    item_id: orden.producto_id,
-                    cantidad: Number(cantReal),
-                    empresa_id: perfil.empresa_id,
-                    updated_at: new Date().toISOString(),
-                })
-            }
-
-            // Registrar movimiento
+            // REGISTRAR MOVIMIENTO ✅
             await supabase.from('movimientos_inventario').insert({
                 empresa_id: perfil.empresa_id,
                 tipo_item: 'producto_terminado',
@@ -1023,10 +874,8 @@ function ModalCierre({ orden, producto, consumos, onCerrar, onCerrada }) {
                 item_codigo: producto?.sku || '',
                 tipo_movimiento: 'entrada',
                 cantidad: Number(cantReal),
-                stock_anterior: pt.stock_actual,
                 stock_actual: nuevoStock,
                 origen: 'produccion_cierre',
-                almacen_id: almacenId,
                 fecha: new Date().toISOString()
             })
         }
@@ -1079,32 +928,6 @@ function ModalCierre({ orden, producto, consumos, onCerrar, onCerrada }) {
                 </div>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginBottom: '20px' }}>
-
-                    {/* Almacén destino */}
-                    <div>
-                        <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '8px' }}>
-                            Almacén de ingreso *
-                        </label>
-                        {almacenes.length === 0 ? (
-                            <p style={{ fontSize: '13px', color: '#ef4444', margin: 0 }}>No hay almacenes configurados</p>
-                        ) : (
-                            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                                {almacenes.map(a => (
-                                    <button key={a.id} onClick={() => setAlmacenId(a.id)}
-                                        style={{
-                                            padding: '7px 14px', borderRadius: '8px', fontSize: '13px', fontWeight: 500,
-                                            border: '1px solid', cursor: 'pointer',
-                                            borderColor: almacenId === a.id ? '#16a34a' : '#e5e7eb',
-                                            backgroundColor: almacenId === a.id ? '#f0fdf4' : '#fff',
-                                            color: almacenId === a.id ? '#16a34a' : '#6b7280',
-                                        }}>
-                                        {a.nombre}
-                                        {a.es_default && <span style={{ fontSize: '10px', marginLeft: '5px', opacity: 0.6 }}>(principal)</span>}
-                                    </button>
-                                ))}
-                            </div>
-                        )}
-                    </div>
 
                     {/* Cantidad real */}
                     <div>

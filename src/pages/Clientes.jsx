@@ -7,6 +7,7 @@ const VACIO = {
     nombre: '', rif: '', telefono: '', email: '',
     condicion_pago: 'contado', dias_credito: 0, activo: true,
     contribuyente_especial: false, tipo_cliente_id: '',
+    direccion_fiscal: '',
 }
 
 const VACIO_DIR = {
@@ -94,6 +95,7 @@ export default function Clientes() {
     async function guardar() {
         if (!form.nombre.trim()) { setError('El nombre es obligatorio'); return }
         setGuardando(true); setError('')
+
         const payload = {
             nombre: form.nombre.trim(),
             rif: form.rif.trim() || null,
@@ -104,15 +106,38 @@ export default function Clientes() {
             activo: form.activo,
             contribuyente_especial: form.contribuyente_especial,
             tipo_cliente_id: form.tipo_cliente_id || null,
+            direccion_fiscal: form.direccion_fiscal.trim() || null, // 👈 INCLUIR EN PAYLOAD
         }
-        const { error: err } = editando
+
+        let nuevoClienteId = editando
+
+        // Guardar cliente (usamos .select() para obtener el ID si es nuevo)
+        const { data, error: err } = editando
             ? await supabase.from('clientes').update(payload).eq('id', editando)
-            : await supabase.from('clientes').insert({ ...payload, empresa_id: perfil.empresa_id })
+            : await supabase.from('clientes').insert({ ...payload, empresa_id: perfil.empresa_id }).select()
+
+        if (err) { setGuardando(false); setError('Error: ' + err.message); return }
+
+        // Si es cliente nuevo, guardar también las direcciones temporales
+        if (!editando && data && data.length > 0) {
+            nuevoClienteId = data[0].id
+            if (direcciones.length > 0) {
+                // Preparamos las direcciones para insertar en BD
+                const direccionesParaGuardar = direcciones.map(d => ({
+                    ...d,
+                    cliente_id: nuevoClienteId,
+                    empresa_id: perfil.empresa_id,
+                    id: undefined // Eliminamos IDs temporales si los hubiera
+                }))
+                await supabase.from('direcciones_entrega').insert(direccionesParaGuardar)
+            }
+        }
+
         setGuardando(false)
-        if (err) { setError('Error: ' + err.message); return }
         setExito(editando ? 'Cliente actualizado' : 'Cliente creado')
         setTimeout(() => setExito(''), 3000)
-        await cargar(); setVista('lista')
+        await cargar()
+        setVista('lista')
     }
 
     // ── Gestión de direcciones ──
@@ -140,11 +165,10 @@ export default function Clientes() {
     async function guardarDir() {
         if (!formDir.nombre.trim()) { setErrorDir('El nombre es obligatorio'); return }
         if (!formDir.direccion.trim()) { setErrorDir('La dirección es obligatoria'); return }
+
         setGuardandoDir(true); setErrorDir('')
 
         const payload = {
-            cliente_id: editando,
-            empresa_id: perfil.empresa_id,
             nombre: formDir.nombre.trim(),
             direccion: formDir.direccion.trim(),
             ciudad: formDir.ciudad.trim() || null,
@@ -155,7 +179,15 @@ export default function Clientes() {
             activo: formDir.activo,
         }
 
-        // Si marca como principal, desmarcar las demás
+        // Si es cliente NUEVO, solo agregamos a la lista local
+        if (!editando) {
+            setDirecciones(prev => [...prev, { ...payload, id: `temp_${Date.now()}` }]) // ID temporal
+            setGuardandoDir(false)
+            setModalDir(null)
+            return
+        }
+
+        // Lógica normal para clientes EXISTENTES
         if (formDir.es_principal) {
             await supabase.from('direcciones_entrega')
                 .update({ es_principal: false })
@@ -163,11 +195,12 @@ export default function Clientes() {
         }
 
         const { error: err } = modalDir === 'nuevo'
-            ? await supabase.from('direcciones_entrega').insert(payload)
+            ? await supabase.from('direcciones_entrega').insert({ ...payload, cliente_id: editando, empresa_id: perfil.empresa_id })
             : await supabase.from('direcciones_entrega').update(payload).eq('id', modalDir.id)
 
         setGuardandoDir(false)
         if (err) { setErrorDir('Error: ' + err.message); return }
+
         await cargarDirecciones(editando)
         setModalDir(null)
     }
@@ -186,7 +219,7 @@ export default function Clientes() {
 
     // ── FORMULARIO ──
     if (vista === 'form') return (
-        <div style={{ padding: '24px', maxWidth: '640px' }}>
+        <div style={{ padding: '24px', maxWidth: '700px' }}> {/* Ancho aumentado un poco */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
                 <button onClick={() => setVista('lista')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', fontSize: '13px' }}>← Volver</button>
                 <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>{editando ? 'Editar cliente' : 'Nuevo cliente'}</h1>
@@ -197,21 +230,33 @@ export default function Clientes() {
                 <p style={{ fontSize: '13px', fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 16px' }}>Datos generales</p>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                     <Campo label="Nombre *" span={2}><input value={form.nombre} onChange={e => campo('nombre', e.target.value)} style={inputStyle} /></Campo>
-                    <Campo label="RIF / Cédula"><input value={form.rif} onChange={e => campo('rif', e.target.value)} placeholder="J-12345678-9" style={inputStyle} /></Campo>
-                    <Campo label="Teléfono"><input value={form.telefono} onChange={e => campo('telefono', e.target.value)} placeholder="0414-000-0000" style={inputStyle} /></Campo>
-                    <Campo label="Email" span={2}><input type="email" value={form.email} onChange={e => campo('email', e.target.value)} placeholder="correo@empresa.com" style={inputStyle} /></Campo>
+                    <Campo label="RIF / Cédula "><input value={form.rif} onChange={e => campo('rif', e.target.value)} placeholder="J-12345678-9" style={inputStyle} /></Campo>
+                    <Campo label="Teléfono "><input value={form.telefono} onChange={e => campo('telefono', e.target.value)} placeholder="0414-000-0000" style={inputStyle} /></Campo>
+                    <Campo label="Email " span={2}><input type="email" value={form.email} onChange={e => campo('email', e.target.value)} placeholder="correo@empresa.com" style={inputStyle} /></Campo>
+
+                    {/* 👈 NUEVO CAMPO: DIRECCIÓN FISCAL */}
+                    <Campo label="Dirección Fiscal" span={2}>
+                        <textarea
+                            value={form.direccion_fiscal}
+                            onChange={e => campo('direccion_fiscal', e.target.value)}
+                            placeholder="Domicilio fiscal completo..."
+                            rows={2}
+                            style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }}
+                        />
+                    </Campo>
+
                     {editando && (
                         <Campo label="Código de cliente" span={2}>
                             <input value={form.codigo || '—'} disabled style={{ ...inputStyle, backgroundColor: '#f9fafb', color: '#6b7280' }} />
                         </Campo>
                     )}
-                    <Campo label="Condición de pago">
+                    <Campo label="Condición de pago ">
                         <select value={form.condicion_pago} onChange={e => campo('condicion_pago', e.target.value)} style={inputStyle}>
                             <option value="contado">Contado</option>
                             <option value="credito">Crédito</option>
                         </select>
                     </Campo>
-                    <Campo label="Días de crédito">
+                    <Campo label="Días de crédito ">
                         <input type="number" min="0" value={form.dias_credito}
                             onChange={e => campo('dias_credito', e.target.value)}
                             disabled={form.condicion_pago === 'contado'}
@@ -237,59 +282,52 @@ export default function Clientes() {
                 </div>
             </div>
 
-            {/* Direcciones de entrega — solo al editar */}
-            {editando && (
-                <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '20px', marginBottom: '20px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <MapPin size={16} style={{ color: '#6b7280' }} />
-                            <p style={{ fontSize: '13px', fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', margin: 0 }}>
-                                Direcciones de entrega
-                            </p>
-                        </div>
-                        <button onClick={abrirNuevaDir}
-                            style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#f0fdf4', color: '#16a34a', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '6px 12px', fontSize: '12px', fontWeight: 500, cursor: 'pointer' }}>
-                            <Plus size={13} /> Agregar
-                        </button>
+            {/* 👈 SECCIÓN DE DIRECCIONES (AHORA VISIBLE SIEMPRE) */}
+            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '20px', marginBottom: '20px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <MapPin size={16} style={{ color: '#6b7280' }} />
+                        <p style={{ fontSize: '13px', fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', margin: 0 }}>
+                            Direcciones de entrega
+                        </p>
                     </div>
+                    <button onClick={abrirNuevaDir}
+                        style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#f0fdf4', color: '#16a34a', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '6px 12px', fontSize: '12px', fontWeight: 500, cursor: 'pointer' }}>
+                        <Plus size={13} /> Agregar
+                    </button>
+                </div>
 
-                    {direcciones.length === 0 ? (
-                        <div style={{ textAlign: 'center', padding: '20px', color: '#9ca3af', fontSize: '13px', backgroundColor: '#f9fafb', borderRadius: '8px', border: '1px dashed #d1d5db' }}>
-                            Sin direcciones registradas — agrega la primera
-                        </div>
-                    ) : (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                            {direcciones.map(dir => (
-                                <div key={dir.id} style={{
-                                    backgroundColor: dir.activo ? '#f9fafb' : '#fafafa',
-                                    borderRadius: '10px', border: '1px solid #e5e7eb',
-                                    padding: '12px 14px', opacity: dir.activo ? 1 : 0.6,
-                                }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                                        <div style={{ flex: 1 }}>
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
-                                                <span style={{ fontSize: '14px', fontWeight: 600, color: '#1f2937' }}>{dir.nombre}</span>
-                                                {dir.es_principal && (
-                                                    <span style={{ display: 'flex', alignItems: 'center', gap: '3px', fontSize: '11px', backgroundColor: '#fef9c3', color: '#854d0e', padding: '1px 7px', borderRadius: '20px', border: '1px solid #fde68a' }}>
-                                                        <Star size={10} /> Principal
-                                                    </span>
-                                                )}
-                                                {!dir.activo && (
-                                                    <span style={{ fontSize: '11px', backgroundColor: '#f3f4f6', color: '#9ca3af', padding: '1px 7px', borderRadius: '20px' }}>inactiva</span>
-                                                )}
-                                            </div>
-                                            <p style={{ fontSize: '13px', color: '#374151', margin: '0 0 2px' }}>{dir.direccion}</p>
-                                            {(dir.ciudad || dir.estado_region) && (
-                                                <p style={{ fontSize: '12px', color: '#6b7280', margin: '0 0 2px' }}>
-                                                    {[dir.ciudad, dir.estado_region].filter(Boolean).join(', ')}
-                                                </p>
-                                            )}
-                                            {dir.contacto && (
-                                                <p style={{ fontSize: '12px', color: '#9ca3af', margin: 0 }}>
-                                                    {dir.contacto}{dir.telefono ? ` · ${dir.telefono}` : ''}
-                                                </p>
+                {direcciones.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: '20px', color: '#9ca3af', fontSize: '13px', backgroundColor: '#f9fafb', borderRadius: '8px', border: '1px dashed #d1d5db' }}>
+                        Sin direcciones registradas — agrega la primera
+                    </div>
+                ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                        {direcciones.map((dir, idx) => (
+                            <div key={dir.id || idx} style={{
+                                backgroundColor: dir.activo ? '#f9fafb' : '#fafafa',
+                                borderRadius: '10px', border: '1px solid #e5e7eb',
+                                padding: '12px 14px', opacity: dir.activo ? 1 : 0.6,
+                            }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                                    <div style={{ flex: 1 }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                                            <span style={{ fontSize: '14px', fontWeight: 600, color: '#1f2937' }}>{dir.nombre}</span>
+                                            {dir.es_principal && (
+                                                <span style={{ display: 'flex', alignItems: 'center', gap: '3px', fontSize: '11px', backgroundColor: '#fef9c3', color: '#854d0e', padding: '1px 7px', borderRadius: '20px', border: '1px solid #fde68a' }}>
+                                                    <Star size={10} /> Principal
+                                                </span>
                                             )}
                                         </div>
+                                        <p style={{ fontSize: '13px', color: '#374151', margin: '0 0 2px' }}>{dir.direccion}</p>
+                                        {(dir.ciudad || dir.estado_region) && (
+                                            <p style={{ fontSize: '12px', color: '#6b7280', margin: '0 0 2px' }}>
+                                                {[dir.ciudad, dir.estado_region].filter(Boolean).join(', ')}
+                                            </p>
+                                        )}
+                                    </div>
+                                    {/* Botones de edición solo si estamos editando un cliente existente */}
+                                    {editando && (
                                         <div style={{ display: 'flex', gap: '6px', marginLeft: '12px' }}>
                                             <button onClick={() => abrirEditarDir(dir)}
                                                 style={{ background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 8px', fontSize: '12px', color: '#374151', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}>
@@ -299,20 +337,21 @@ export default function Clientes() {
                                                 style={{ background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 8px', fontSize: '12px', color: dir.activo ? '#dc2626' : '#16a34a', cursor: 'pointer' }}>
                                                 {dir.activo ? 'Desactivar' : 'Activar'}
                                             </button>
+                                            {/* Opción para borrar dirección temporal */}
+                                            {!editando && (
+                                                <button onClick={() => setDirecciones(prev => prev.filter((_, i) => i !== idx))}
+                                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', padding: '4px' }}>
+                                                    <Trash2 size={12} />
+                                                </button>
+                                            )}
                                         </div>
-                                    </div>
+                                    )}
                                 </div>
-                            ))}
-                        </div>
-                    )}
-                </div>
-            )}
-
-            {editando === null && (
-                <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: '10px', padding: '12px 16px', marginBottom: '20px', fontSize: '13px', color: '#854d0e' }}>
-                    💡 Guarda el cliente primero y luego podrás agregar sus direcciones de entrega.
-                </div>
-            )}
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 {error && <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 14px', fontSize: '13px', color: '#dc2626' }}>{error}</div>}
@@ -325,7 +364,7 @@ export default function Clientes() {
                 </div>
             </div>
 
-            {/* Modal de dirección */}
+            {/* Modal de dirección (Sin cambios) */}
             {modalDir && (
                 <>
                     <div onClick={() => setModalDir(null)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', zIndex: 40 }} />
@@ -339,41 +378,30 @@ export default function Clientes() {
 
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
                             <CampoDir label="Nombre del punto *" span={2}>
-                                <input value={formDir.nombre} onChange={e => campoDir('nombre', e.target.value)}
-                                    placeholder="Ej: Sede Principal, Sucursal Norte" style={inputStyle} />
+                                <input value={formDir.nombre} onChange={e => campoDir('nombre', e.target.value)} placeholder="Ej: Sede Principal" style={inputStyle} />
                             </CampoDir>
                             <CampoDir label="Dirección *" span={2}>
-                                <textarea value={formDir.direccion} onChange={e => campoDir('direccion', e.target.value)}
-                                    placeholder="Dirección completa" rows={2}
-                                    style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }} />
+                                <textarea value={formDir.direccion} onChange={e => campoDir('direccion', e.target.value)} placeholder="Dirección completa" rows={2} style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }} />
                             </CampoDir>
-                            <CampoDir label="Ciudad">
-                                <input value={formDir.ciudad} onChange={e => campoDir('ciudad', e.target.value)}
-                                    placeholder="Caracas" style={inputStyle} />
+                            <CampoDir label="Ciudad ">
+                                <input value={formDir.ciudad} onChange={e => campoDir('ciudad', e.target.value)} placeholder="Caracas" style={inputStyle} />
                             </CampoDir>
-                            <CampoDir label="Estado">
-                                <input value={formDir.estado_region} onChange={e => campoDir('estado_region', e.target.value)}
-                                    placeholder="Miranda" style={inputStyle} />
+                            <CampoDir label="Estado ">
+                                <input value={formDir.estado_region} onChange={e => campoDir('estado_region', e.target.value)} placeholder="Miranda" style={inputStyle} />
                             </CampoDir>
-                            <CampoDir label="Persona de contacto">
-                                <input value={formDir.contacto} onChange={e => campoDir('contacto', e.target.value)}
-                                    placeholder="Nombre del receptor" style={inputStyle} />
+                            <CampoDir label="Persona de contacto ">
+                                <input value={formDir.contacto} onChange={e => campoDir('contacto', e.target.value)} placeholder="Nombre del receptor" style={inputStyle} />
                             </CampoDir>
-                            <CampoDir label="Teléfono de contacto">
-                                <input value={formDir.telefono} onChange={e => campoDir('telefono', e.target.value)}
-                                    placeholder="0414-000-0000" style={inputStyle} />
+                            <CampoDir label="Teléfono de contacto ">
+                                <input value={formDir.telefono} onChange={e => campoDir('telefono', e.target.value)} placeholder="0414-000-0000" style={inputStyle} />
                             </CampoDir>
                             <div style={{ gridColumn: 'span 2', display: 'flex', gap: '20px' }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                    <input type="checkbox" id="dir_principal" checked={formDir.es_principal}
-                                        onChange={e => campoDir('es_principal', e.target.checked)}
-                                        style={{ width: '16px', height: '16px', accentColor: '#16a34a' }} />
+                                    <input type="checkbox" id="dir_principal" checked={formDir.es_principal} onChange={e => campoDir('es_principal', e.target.checked)} style={{ width: '16px', height: '16px', accentColor: '#16a34a' }} />
                                     <label htmlFor="dir_principal" style={{ fontSize: '14px', color: '#374151', cursor: 'pointer' }}>Dirección principal</label>
                                 </div>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                    <input type="checkbox" id="dir_activa" checked={formDir.activo}
-                                        onChange={e => campoDir('activo', e.target.checked)}
-                                        style={{ width: '16px', height: '16px', accentColor: '#16a34a' }} />
+                                    <input type="checkbox" id="dir_activa" checked={formDir.activo} onChange={e => campoDir('activo', e.target.checked)} style={{ width: '16px', height: '16px', accentColor: '#16a34a' }} />
                                     <label htmlFor="dir_activa" style={{ fontSize: '14px', color: '#374151', cursor: 'pointer' }}>Activa</label>
                                 </div>
                             </div>
