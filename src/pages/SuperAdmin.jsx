@@ -167,7 +167,9 @@ export default function SuperAdmin() {
     async function resetearPassword() {
         if (!nuevaPass || nuevaPass.length < 6) { setErrorReset('La contraseña debe tener al menos 6 caracteres'); return }
         setGuardandoReset(true); setErrorReset('')
+        const { data: { user } } = await supabase.auth.getUser()
         const { data: { session } } = await supabase.auth.getSession()
+        console.log('ACCESS TOKEN:', session?.access_token ? 'EXISTS' : 'NULL')
         if (!session) { setErrorUsuario('No hay sesión activa. Cierra sesión y vuelve a entrar.'); setGuardandoUsuario(false); return }
         const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/resetear-password`, {
             method: 'POST',
@@ -210,7 +212,8 @@ export default function SuperAdmin() {
         if (!formUsuario.password || formUsuario.password.length < 6) { setErrorUsuario('La contraseña debe tener al menos 6 caracteres'); return }
         setGuardandoUsuario(true); setErrorUsuario('')
 
-        const { data: { session } } = await supabase.auth.getSession()
+        const session = (await supabase.auth.getSession()).data.session
+        console.log('TOKEN:', session?.access_token ? session.access_token.substring(0, 30) : 'NULL')
 
         const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/crear-usuario`, {
             method: 'POST',
