@@ -213,12 +213,12 @@ export default function SuperAdmin() {
         setGuardandoUsuario(true); setErrorUsuario('')
 
         const session = (await supabase.auth.getSession()).data.session
-        console.log('TOKEN:', session?.access_token ? session.access_token.substring(0, 30) : 'NULL')
 
         const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/crear-usuario`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
+                'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
                 'Authorization': `Bearer ${session.access_token}`,
             },
             body: JSON.stringify({
