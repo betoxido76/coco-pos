@@ -168,6 +168,7 @@ export default function SuperAdmin() {
         if (!nuevaPass || nuevaPass.length < 6) { setErrorReset('La contraseña debe tener al menos 6 caracteres'); return }
         setGuardandoReset(true); setErrorReset('')
         const { data: { session } } = await supabase.auth.getSession()
+        if (!session) { setErrorUsuario('No hay sesión activa. Cierra sesión y vuelve a entrar.'); setGuardandoUsuario(false); return }
         const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/resetear-password`, {
             method: 'POST',
             headers: {
