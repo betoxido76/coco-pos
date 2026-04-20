@@ -171,13 +171,20 @@ export default function SuperAdmin() {
         const { data: { session } } = await supabase.auth.getSession()
         console.log('ACCESS TOKEN:', session?.access_token ? 'EXISTS' : 'NULL')
         if (!session) { setErrorUsuario('No hay sesión activa. Cierra sesión y vuelve a entrar.'); setGuardandoUsuario(false); return }
-        const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/resetear-password`, {
+        const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/crear-usuario`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
+                'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
                 'Authorization': `Bearer ${session.access_token}`,
             },
-            body: JSON.stringify({ usuario_id: modalReset.id, nueva_password: nuevaPass }),
+            body: JSON.stringify({
+                nombre: formUsuario.nombre.trim(),
+                email: formUsuario.email.trim(),
+                password: formUsuario.password,
+                rol: formUsuario.rol,
+                empresa_id: empresaSel,
+            }),
         })
         const result = await res.json()
         if (!res.ok || result.error) {
