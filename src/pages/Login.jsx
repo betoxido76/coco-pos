@@ -110,8 +110,8 @@ export default function Login() {
             <div className="bg-white rounded-2xl shadow-sm border border-gray-200 w-full max-w-sm p-8">
 
                 <div className="text-center mb-8">
-                    <div className="text-4xl mb-3">🥥</div>
-                    <h1 className="text-xl font-semibold text-gray-800">Coco POS</h1>
+                    <div className="text-4xl mb-3"></div>
+                    <h1 className="text-xl font-semibold text-gray-800">MiPOS</h1>
                     <p className="text-sm text-gray-500 mt-1">Sistema de gestión</p>
                 </div>
 
