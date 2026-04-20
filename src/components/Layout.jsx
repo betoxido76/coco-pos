@@ -9,17 +9,19 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabaseClient'
 
 const NAV_ITEMS = [
-    { key: 'dashboard',      to: '/',                  icon: LayoutDashboard, label: 'Dashboard' },
-    { key: 'inventario',     to: '/inventario',         icon: Package,         label: 'Inventario' },
-    { key: 'ventas',         to: '/ventas',             icon: ShoppingCart,    label: 'Ventas' },
-    { key: 'pedidos',        to: '/pedidos',            icon: ClipboardList,   label: 'Pedidos' },
-    { key: 'compras',        to: '/compras',            icon: Truck,           label: 'Compras' },
-    { key: 'cxc',            to: '/cuentas-cobrar',     icon: DollarSign,      label: 'Cuentas x Cobrar' },
-    { key: 'cxp',            to: '/cuentas-pagar',      icon: CreditCard,      label: 'Cuentas x Pagar' },
-    { key: 'produccion',     to: '/produccion',         icon: FlaskConical,    label: 'Producción' },
-    { key: 'cambios',        to: '/cambios-mano-mano',  icon: ArrowLeftRight,  label: 'Cambios Mano a Mano' },
-    { key: 'mermas',         to: '/mermas',             icon: AlertTriangle,   label: 'Mermas' },
-    { key: 'administracion', to: '/administracion',     icon: FolderTree,      label: 'Administración' },
+    { key: 'dashboard', to: '/', icon: LayoutDashboard, label: 'Dashboard' },
+    { key: 'inventario', to: '/inventario', icon: Package, label: 'Inventario' },
+    { key: 'ventas', to: '/ventas', icon: ShoppingCart, label: 'Ventas' },
+    { key: 'pedidos_campo', to: '/nuevo-pedido', icon: ClipboardList, label: 'Pedidos en Campo' },
+    { key: 'pedidos', to: '/pedidos', icon: ClipboardList, label: 'Pedidos' },
+    { key: 'compras', to: '/compras', icon: Truck, label: 'Compras' },
+    { key: 'cxc', to: '/cuentas-cobrar', icon: DollarSign, label: 'Cuentas x Cobrar' },
+    { key: 'cxp', to: '/cuentas-pagar', icon: CreditCard, label: 'Cuentas x Pagar' },
+    { key: 'gastos', to: '/gastos', icon: DollarSign, label: 'Gastos' },
+    { key: 'produccion', to: '/produccion', icon: FlaskConical, label: 'Producción' },
+    { key: 'cambios', to: '/cambios-mano-mano', icon: ArrowLeftRight, label: 'Cambios Mano a Mano' },
+    { key: 'mermas', to: '/mermas', icon: AlertTriangle, label: 'Mermas' },
+    { key: 'administracion', to: '/administracion', icon: FolderTree, label: 'Administración' },
 ]
 
 export default function Layout() {
@@ -105,7 +107,7 @@ export default function Layout() {
                     justifyContent: 'space-between', padding: '0 16px',
                     borderBottom: '1px solid #f3f4f6'
                 }}>
-                    {open && <span style={{ fontWeight: 600, fontSize: '14px', color: '#1f2937' }}>🥥 Coco POS</span>}
+                    {open && <span style={{ fontWeight: 600, fontSize: '14px', color: '#1f2937' }}>MiPOS</span>}
                     <button onClick={() => setOpen(!open)}
                         style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', marginLeft: 'auto', padding: '4px' }}>
                         {open ? <X size={18} /> : <Menu size={18} />}
