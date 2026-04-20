@@ -3,7 +3,8 @@ import { useAuth } from '../contexts/AuthContext'
 import {
     LayoutDashboard, Package, ShoppingCart,
     TrendingDown, CreditCard, LogOut, Menu, X, Truck, FolderTree,
-    ClipboardList, DollarSign, FlaskConical, AlertTriangle, ArrowLeftRight
+    ClipboardList, DollarSign, FlaskConical, AlertTriangle, ArrowLeftRight,
+    User
 } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabaseClient'
@@ -25,7 +26,7 @@ const NAV_ITEMS = [
 ]
 
 export default function Layout() {
-    const { perfil, logout } = useAuth()
+    const { perfil, logout, user } = useAuth()
     const navigate = useNavigate()
     const [open, setOpen] = useState(true)
     const [modulosActivos, setModulosActivos] = useState(null) // null = cargando
@@ -75,7 +76,7 @@ export default function Layout() {
 
         // Verificar contraseña actual reautenticando
         const { error: errLogin } = await supabase.auth.signInWithPassword({
-            email: perfil.email,
+            email: user.email,
             password: passActual,
         })
         if (errLogin) { setErrorPass('La contraseña actual es incorrecta'); setGuardandoPass(false); return }
