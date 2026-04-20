@@ -9,19 +9,19 @@ const inputStyle = {
 }
 
 const ROLES = [
-    { key: 'admin',      label: 'Admin' },
-    { key: 'vendedor',   label: 'Vendedor' },
+    { key: 'admin', label: 'Admin' },
+    { key: 'vendedor', label: 'Vendedor' },
     { key: 'produccion', label: 'Producción' },
-    { key: 'almacen',    label: 'Almacén' },
-    { key: 'finanzas',   label: 'Finanzas' },
+    { key: 'almacen', label: 'Almacén' },
+    { key: 'finanzas', label: 'Finanzas' },
 ]
 
 const ROL_LABEL = {
-    admin:      { bg: '#f0fdf4', color: '#166534' },
-    vendedor:   { bg: '#dbeafe', color: '#1e40af' },
+    admin: { bg: '#f0fdf4', color: '#166534' },
+    vendedor: { bg: '#dbeafe', color: '#1e40af' },
     produccion: { bg: '#fae8ff', color: '#7e22ce' },
-    almacen:    { bg: '#fef9c3', color: '#854d0e' },
-    finanzas:   { bg: '#ffedd5', color: '#9a3412' },
+    almacen: { bg: '#fef9c3', color: '#854d0e' },
+    finanzas: { bg: '#ffedd5', color: '#9a3412' },
 }
 
 export default function SuperAdmin() {
@@ -380,7 +380,7 @@ export default function SuperAdmin() {
                         {tabPanel === 'usuarios' && (
                             <div>
                                 <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '16px' }}>
-                                    <button onClick={() => { setModalUsuario(true); setFormUsuario({ nombre: '', email: '', password: '', rol: 'admin' }); setErrorUsuario('') }}
+                                    <button onClick={() => { setModalUsuario(true); setFormUsuario({ nombre: '', email: '', password: '', rol: 'admin' }); setErrorUsuario(''); setGuardandoUsuario(false) }}
                                         style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '8px 16px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}>
                                         <Plus size={14} /> Nuevo usuario
                                     </button>
