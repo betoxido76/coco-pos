@@ -57,7 +57,6 @@ export default function Layout() {
         : NAV_ITEMS.filter(item => modulosActivos.includes(item.key))
 
     const [modalPass, setModalPass] = useState(false)
-    const [passActual, setPassActual] = useState('')
     const [passNueva, setPassNueva] = useState('')
     const [passConfirmar, setPassConfirmar] = useState('')
     const [guardandoPass, setGuardandoPass] = useState(false)
@@ -65,7 +64,7 @@ export default function Layout() {
     const [exitoPass, setExitoPass] = useState(false)
 
     function abrirModalPass() {
-        setPassActual(''); setPassNueva(''); setPassConfirmar('')
+        setPassNueva(''); setPassConfirmar('')
         setErrorPass(''); setExitoPass(false); setModalPass(true)
     }
 
@@ -73,13 +72,6 @@ export default function Layout() {
         if (!passNueva || passNueva.length < 6) { setErrorPass('La nueva contraseña debe tener al menos 6 caracteres'); return }
         if (passNueva !== passConfirmar) { setErrorPass('Las contraseñas no coinciden'); return }
         setGuardandoPass(true); setErrorPass('')
-
-        // Verificar contraseña actual reautenticando
-        const { error: errLogin } = await supabase.auth.signInWithPassword({
-            email: user.email,
-            password: passActual,
-        })
-        if (errLogin) { setErrorPass('La contraseña actual es incorrecta'); setGuardandoPass(false); return }
 
         const { error } = await supabase.auth.updateUser({ password: passNueva })
         if (error) { setErrorPass('Error: ' + error.message); setGuardandoPass(false); return }
@@ -179,7 +171,6 @@ export default function Layout() {
                         ) : (
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
                                 {[
-                                    { label: 'Contraseña actual', value: passActual, set: setPassActual, placeholder: '••••••••' },
                                     { label: 'Nueva contraseña', value: passNueva, set: setPassNueva, placeholder: 'Mínimo 6 caracteres' },
                                     { label: 'Confirmar nueva contraseña', value: passConfirmar, set: setPassConfirmar, placeholder: 'Repite la nueva contraseña' },
                                 ].map(f => (
