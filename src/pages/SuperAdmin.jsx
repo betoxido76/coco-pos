@@ -205,9 +205,6 @@ export default function SuperAdmin() {
 
     // ── Nuevo usuario ──
     async function guardarUsuario() {
-        const { data: { session } } = await supabase.auth.getSession()
-        console.log('Session:', session)
-        console.log('Token:', session?.access_token?.substring(0, 50))
         if (!formUsuario.nombre.trim()) { setErrorUsuario('El nombre es obligatorio'); return }
         if (!formUsuario.email.trim()) { setErrorUsuario('El email es obligatorio'); return }
         if (!formUsuario.password || formUsuario.password.length < 6) { setErrorUsuario('La contraseña debe tener al menos 6 caracteres'); return }
