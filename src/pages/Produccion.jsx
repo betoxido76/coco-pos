@@ -371,8 +371,10 @@ function NuevaOrden({ onCreada, onCancelar }) {
         setGuardando(true); setError('')
 
         // Generar número de orden
-        const { data: seqData } = await supabase.rpc('nextval', { seq: 'orden_produccion_seq' }).single()
-        const numero = `OP-${String(seqData || Date.now()).padStart(6, '0')}`
+        const { data: numeroConsecutivo } = await supabase.rpc('obtener_siguiente_op_numero', {
+            p_empresa_id: perfil.empresa_id
+        })
+        const numero = numeroConsecutivo || 'OP-000001' // Fallback por si falla
 
         // Buscar receta
         const { data: receta } = await supabase

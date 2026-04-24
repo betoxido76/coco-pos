@@ -205,7 +205,7 @@ export default function Mermas() {
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
                             <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                {['Fecha', 'Tipo', 'Ítem', 'Cantidad', 'Motivo', 'Pérdida est.', 'Factura vinculada', 'Usuario', ''].map((h, i) => (
+                                {['N° Merma', 'Fecha', 'Tipo', 'Ítem', 'Cantidad', 'Motivo', 'Pérdida est.', 'Factura vinculada', 'Usuario', ''].map((h, i) => (
                                     <th key={i} style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
                                 ))}
                             </tr>
@@ -220,6 +220,9 @@ export default function Mermas() {
                                     </td>
                                     <td style={{ padding: '12px 14px' }}>
                                         <BadgeTipo tipo={m.tipo_merma} />
+                                    </td>
+                                    <td style={{ padding: '12px 14px', fontSize: '13px', fontFamily: 'monospace', fontWeight: 600, color: '#374151' }}>
+                                        {m.numero_merma || '—'}
                                     </td>
                                     <td style={{ padding: '12px 14px' }}>
                                         <div style={{ fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>{m.item_nombre}</div>
@@ -291,13 +294,12 @@ function NuevaMerma({ onRegistrada, onCancelar }) {
     const [ventas, setVentas] = useState([])
     const [guardando, setGuardando] = useState(false)
     const [error, setError] = useState('')
+    const def = TIPOS_ITEM.find(t => t.key === tipoItem)
 
     // Almacenes — solo para mermas de inventario
     const [almacenes, setAlmacenes] = useState([])
     const [almacenId, setAlmacenId] = useState('')
-    const [stockEnAlmacen, setStockEnAlmacen] = useState(null) // null = no cargado
-
-    const def = TIPOS_ITEM.find(t => t.key === tipoItem)
+    const [stockEnAlmacen, setStockEnAlmacen] = useState(null)
 
     // Cargar ítems cuando cambia el tipo
     useEffect(() => {
@@ -386,6 +388,12 @@ function NuevaMerma({ onRegistrada, onCancelar }) {
 
         const { data: { user } } = await supabase.auth.getUser()
 
+        // 👉 OBTENER NUMERO CONSECUTIVO
+        const { data: nuevoNumero } = await supabase.rpc('obtener_siguiente_merma_numero', {
+            p_empresa_id: perfil.empresa_id
+        })
+        const numero = nuevoNumero || 'MER-000001'
+
         // 1. Registrar la merma
         const { error: errMerma } = await supabase.from('mermas').insert({
             empresa_id: perfil.empresa_id,
@@ -403,6 +411,7 @@ function NuevaMerma({ onRegistrada, onCancelar }) {
             usuario_id: user.id,
             fecha,
             almacen_id: tipoMerma === 'inventario' ? almacenId : null,
+            numero_merma: numero, // 👈 ASIGNAR NUMERO
         })
 
         if (errMerma) { setError('Error: ' + errMerma.message); setGuardando(false); return }

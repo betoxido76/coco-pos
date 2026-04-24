@@ -593,7 +593,12 @@ function NuevoCambio({ onRegistrado, onCancelar }) {
 
         setGuardando(true); setError('')
         const { data: { user } } = await supabase.auth.getUser()
-        const numero = `CMM-${Date.now().toString().slice(-6)}`
+
+        // Obtener consecutivo secuencial desde la BD (independiente por empresa)
+        const { data: numeroConsecutivo } = await supabase.rpc('obtener_siguiente_cambio_numero', {
+            p_empresa_id: perfil.empresa_id
+        })
+        const numero = numeroConsecutivo || 'CMM-000001' // Fallback por si falla
 
         // 1. Registrar el cambio
         const { data: cambio, error: errCambio } = await supabase.from('cambios_mano_mano').insert({
