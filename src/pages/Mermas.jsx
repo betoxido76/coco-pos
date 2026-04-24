@@ -215,24 +215,36 @@ export default function Mermas() {
                                 <tr key={m.id} style={{ borderBottom: '1px solid #f3f4f6' }}
                                     onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
                                     onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
-                                    <td style={{ padding: '12px 14px', fontSize: '13px', color: '#6b7280', whiteSpace: 'nowrap' }}>
-                                        {new Date(m.fecha + 'T00:00:00').toLocaleDateString('es-VE')}
-                                    </td>
-                                    <td style={{ padding: '12px 14px' }}>
-                                        <BadgeTipo tipo={m.tipo_merma} />
-                                    </td>
+
+                                    {/* 1. N° Merma (Coincide con el primer th) */}
                                     <td style={{ padding: '12px 14px', fontSize: '13px', fontFamily: 'monospace', fontWeight: 600, color: '#374151' }}>
                                         {m.numero_merma || '—'}
                                     </td>
+
+                                    {/* 2. Fecha (Coincide con el segundo th) */}
+                                    <td style={{ padding: '12px 14px', fontSize: '13px', color: '#6b7280', whiteSpace: 'nowrap' }}>
+                                        {new Date(m.fecha + 'T00:00:00').toLocaleDateString('es-VE')}
+                                    </td>
+
+                                    {/* 3. Tipo (Coincide con el tercer th) */}
+                                    <td style={{ padding: '12px 14px' }}>
+                                        <BadgeTipo tipo={m.tipo_merma} />
+                                    </td>
+
+                                    {/* 4. Ítem (Coincide con el cuarto th) */}
                                     <td style={{ padding: '12px 14px' }}>
                                         <div style={{ fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>{m.item_nombre}</div>
                                         {m.item_codigo && (
                                             <div style={{ fontSize: '11px', color: '#9ca3af', fontFamily: 'monospace' }}>{m.item_codigo}</div>
                                         )}
                                     </td>
+
+                                    {/* 5. Cantidad */}
                                     <td style={{ padding: '12px 14px', fontSize: '13px', fontWeight: 600, color: '#dc2626' }}>
                                         -{Number(m.cantidad).toLocaleString('es-VE')} {m.unidad_medida}
                                     </td>
+
+                                    {/* 6. Motivo */}
                                     <td style={{ padding: '12px 14px' }}>
                                         <div style={{ fontSize: '13px', color: '#374151' }}>{m.motivo}</div>
                                         {m.descripcion && (
@@ -241,17 +253,25 @@ export default function Mermas() {
                                             </div>
                                         )}
                                     </td>
+
+                                    {/* 7. Pérdida est. */}
                                     <td style={{ padding: '12px 14px', fontSize: '13px', color: '#854d0e', fontWeight: 500 }}>
                                         {m.costo_unitario ? fmt(Number(m.cantidad) * Number(m.costo_unitario)) : '—'}
                                     </td>
+
+                                    {/* 8. Factura vinculada */}
                                     <td style={{ padding: '12px 14px', fontSize: '12px', color: '#6b7280' }}>
                                         {m.ventas?.numero_factura
                                             ? <span style={{ fontFamily: 'monospace', color: '#1d4ed8' }}>{m.ventas.numero_factura}</span>
                                             : '—'}
                                     </td>
+
+                                    {/* 9. Usuario */}
                                     <td style={{ padding: '12px 14px', fontSize: '12px', color: '#6b7280' }}>
                                         {m.usuarios?.nombre || '—'}
                                     </td>
+
+                                    {/* 10. Botones de acción */}
                                     <td style={{ padding: '12px 14px' }}>
                                         <button onClick={() => setModalAnular(m)}
                                             style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #fecaca', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#dc2626', cursor: 'pointer' }}>
