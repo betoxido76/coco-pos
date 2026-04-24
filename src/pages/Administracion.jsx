@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Package, Beaker, Users, Settings, Truck, Filter, Tag, Warehouse } from 'lucide-react'
+import { Package, Beaker, Users, Settings, Truck, Filter, Tag, Warehouse, FlaskConical } from 'lucide-react'
 import Productos from './Productos'
 import MateriasPrimas from './MateriasPrimas'
 import Consumibles from './Consumibles'
@@ -10,6 +10,7 @@ import CargaDatos from './CargaDatos'
 import ListasPrecios from './ListasPrecios'
 import GestionAlmacenes from './GestionAlmacenes'
 import AccesosUsuarios from './AccesosUsuarios'
+import Recetas from './Recetas'
 import { Database } from 'lucide-react'
 
 const TABS = [
@@ -21,6 +22,7 @@ const TABS = [
     { key: 'tasas', label: 'Tasas de Cambio', icon: Settings },
     { key: 'listas_precio', label: 'Listas de Precio', icon: Tag },
     { key: 'almacenes', label: 'Almacenes', icon: Warehouse },
+    { key: 'recetas', label: 'Recetas', icon: FlaskConical },
     { key: 'carga', label: 'Carga de Datos', icon: Database },
     { key: 'accesos', label: 'Usuarios y accesos', icon: Users },
 ]
@@ -62,6 +64,7 @@ export default function Administracion() {
                 {tabActiva === 'tasas' && <Configuracion />}
                 {tabActiva === 'listas_precio' && <ListasPrecios />}
                 {tabActiva === 'almacenes' && <GestionAlmacenes />}
+                {tabActiva === 'recetas' && <Recetas />}
                 {tabActiva === 'carga' && <CargaDatos />}
                 {tabActiva === 'accesos' && <AccesosUsuarios />}
             </div>
