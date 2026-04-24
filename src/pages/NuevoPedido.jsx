@@ -244,7 +244,10 @@ export default function NuevoPedido({ onPedidoCreado, onCancelar }) {
     async function guardar() {
         setGuardando(true); setError('')
         const { data: { user } } = await supabase.auth.getUser()
-        const numero = `PED-${Date.now().toString().slice(-6)}`
+        const { data: numeroConsecutivo } = await supabase.rpc('obtener_siguiente_pedidos_numero', {
+            p_empresa_id: perfil.empresa_id
+        })
+        const numero = numeroConsecutivo || 'PED-000001'
 
         const { data: pedido, error: errPedido } = await supabase.from('pedidos').insert({
             empresa_id: perfil.empresa_id,

@@ -74,7 +74,7 @@ export default function Ventas() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
                 <div>
                     <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Ventas</h1>
-                    <p style={{ fontSize: '13px', color: '#6b7280', margin: '4px 0 0' }}>Historial de facturas y pedidos por facturar</p>
+                    <p style={{ fontSize: '13px', color: '#6b7280', margin: '4px 0 0' }}>Historial de notas y pedidos por registrar</p>
                 </div>
                 {tabActiva === 'ventas' && (
                     <button onClick={() => setVista('nueva')}
@@ -239,7 +239,10 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
 
     async function facturar() {
         setProcesando(true); setError('')
-        const numero = `NE-${Date.now().toString().slice(-6)}`
+        const { data: numeroConsecutivo } = await supabase.rpc('obtener_siguiente_ventas_numero', {
+            p_empresa_id: perfil.empresa_id
+        })
+        const numero = numeroConsecutivo || 'NE-000001'
         const { data: { user } } = await supabase.auth.getUser()
 
         const { data: venta, error: errVenta } = await supabase
@@ -512,7 +515,10 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
         setGuardando(true)
         setError('')
 
-        const numero = `NE-${Date.now().toString().slice(-6)}`
+        const { data: numeroConsecutivo } = await supabase.rpc('obtener_siguiente_ventas_numero', {
+            p_empresa_id: perfil.empresa_id
+        })
+        const numero = numeroConsecutivo || 'NE-000001' // Fallback por si falla
         const { data: { user } } = await supabase.auth.getUser()
 
         const { data: venta, error: errVenta } = await supabase

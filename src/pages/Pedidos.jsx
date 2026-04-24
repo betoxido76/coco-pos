@@ -6,10 +6,10 @@ import { Check, X, FileText, ChevronRight, Clock, Search } from 'lucide-react'
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 
 const ESTADOS = {
-    pendiente:  { bg: '#fef9c3', color: '#854d0e',  label: 'Pendiente' },
-    aprobado:   { bg: '#dbeafe', color: '#1e40af',  label: 'Aprobado' },
-    rechazado:  { bg: '#fee2e2', color: '#991b1b',  label: 'Rechazado' },
-    facturado:  { bg: '#dcfce7', color: '#166534',  label: 'Facturado' },
+    pendiente: { bg: '#fef9c3', color: '#854d0e', label: 'Pendiente' },
+    aprobado: { bg: '#dbeafe', color: '#1e40af', label: 'Aprobado' },
+    rechazado: { bg: '#fee2e2', color: '#991b1b', label: 'Rechazado' },
+    facturado: { bg: '#dcfce7', color: '#166534', label: 'Facturado' },
 }
 
 function BadgeEstado({ estado }) {
@@ -113,8 +113,8 @@ export default function Pedidos() {
             <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
                 {[
                     { key: 'pendientes', label: 'Pendientes' },
-                    { key: 'aprobados',  label: 'Aprobados' },
-                    { key: 'historial',  label: 'Historial' },
+                    { key: 'aprobados', label: 'Aprobados' },
+                    { key: 'historial', label: 'Historial' },
                 ].map(tab => (
                     <button key={tab.key} onClick={() => { setTabActiva(tab.key); setBusqueda(''); setFiltroVendedor('') }}
                         style={{
@@ -276,7 +276,10 @@ function DetallePedido({ pedido, onVolver }) {
     async function convertirEnFactura() {
         setProcesando(true); setError('')
 
-        const numero = `FAC-${Date.now().toString().slice(-6)}`
+        const { data: numeroConsecutivo } = await supabase.rpc('obtener_siguiente_ventas_numero', {
+            p_empresa_id: perfil.empresa_id
+        })
+        const numero = numeroConsecutivo || 'NE-000001'
         const { data: { user } } = await supabase.auth.getUser()
 
         const { data: venta, error: errVenta } = await supabase
