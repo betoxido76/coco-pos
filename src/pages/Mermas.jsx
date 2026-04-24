@@ -203,35 +203,37 @@ export default function Mermas() {
                     <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>No hay mermas registradas</div>
                 ) : (
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                        <thead>
-                            <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                        <thead >
+                            <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }} >
                                 {['N° Merma', 'Fecha', 'Tipo', 'Ítem', 'Cantidad', 'Motivo', 'Pérdida est.', 'Factura vinculada', 'Usuario', ''].map((h, i) => (
-                                    <th key={i} style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
+                                    <th key={i} style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left', whiteSpace: 'nowrap' }}>
+                                        {h}
+                                    </th>
                                 ))}
                             </tr>
                         </thead>
-                        <tbody>
+                        <tbody >
                             {filtradas.map(m => (
                                 <tr key={m.id} style={{ borderBottom: '1px solid #f3f4f6' }}
                                     onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
                                     onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
 
-                                    {/* 1. N° Merma (Coincide con el primer th) */}
+                                    {/* 1. N° Merma */}
                                     <td style={{ padding: '12px 14px', fontSize: '13px', fontFamily: 'monospace', fontWeight: 600, color: '#374151' }}>
                                         {m.numero_merma || '—'}
                                     </td>
 
-                                    {/* 2. Fecha (Coincide con el segundo th) */}
+                                    {/* 2. Fecha */}
                                     <td style={{ padding: '12px 14px', fontSize: '13px', color: '#6b7280', whiteSpace: 'nowrap' }}>
                                         {new Date(m.fecha + 'T00:00:00').toLocaleDateString('es-VE')}
                                     </td>
 
-                                    {/* 3. Tipo (Coincide con el tercer th) */}
+                                    {/* 3. Tipo */}
                                     <td style={{ padding: '12px 14px' }}>
                                         <BadgeTipo tipo={m.tipo_merma} />
                                     </td>
 
-                                    {/* 4. Ítem (Coincide con el cuarto th) */}
+                                    {/* 4. Ítem */}
                                     <td style={{ padding: '12px 14px' }}>
                                         <div style={{ fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>{m.item_nombre}</div>
                                         {m.item_codigo && (
@@ -254,7 +256,7 @@ export default function Mermas() {
                                         )}
                                     </td>
 
-                                    {/* 7. Pérdida est. */}
+                                    {/* 7. Pérdida estimada */}
                                     <td style={{ padding: '12px 14px', fontSize: '13px', color: '#854d0e', fontWeight: 500 }}>
                                         {m.costo_unitario ? fmt(Number(m.cantidad) * Number(m.costo_unitario)) : '—'}
                                     </td>
@@ -271,7 +273,7 @@ export default function Mermas() {
                                         {m.usuarios?.nombre || '—'}
                                     </td>
 
-                                    {/* 10. Botones de acción */}
+                                    {/* 10. Botón Anular */}
                                     <td style={{ padding: '12px 14px' }}>
                                         <button onClick={() => setModalAnular(m)}
                                             style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #fecaca', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#dc2626', cursor: 'pointer' }}>
