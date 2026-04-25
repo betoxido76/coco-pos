@@ -5,7 +5,7 @@ import { useAuth } from '../contexts/AuthContext'
 
 const VACIO = {
     nombre: '', rif: '', telefono: '', email: '',
-    condicion_pago: 'contado', dias_credito: 0, activo: true,
+    condicion_pago: 'contado', dias_credito: 0, limite_credito: 0, activo: true,
     contribuyente_especial: false, tipo_cliente_id: '',
     direccion_fiscal: '',
     cat1_id: '', cat2_id: '', cat3_id: '', cat4_id: '',
@@ -106,6 +106,7 @@ export default function Clientes() {
             email: c.email || '',
             condicion_pago: c.condicion_pago || 'contado',
             dias_credito: c.dias_credito ?? 0,
+            limite_credito: c.limite_credito ?? 0,
             activo: c.activo ?? true,
             contribuyente_especial: c.contribuyente_especial ?? false,
             tipo_cliente_id: c.tipo_cliente_id || '',
@@ -133,6 +134,7 @@ export default function Clientes() {
             email: form.email.trim() || null,
             condicion_pago: form.condicion_pago,
             dias_credito: form.condicion_pago === 'credito' ? Number(form.dias_credito) : 0,
+            limite_credito: Number(form.limite_credito) || 0,
             activo: form.activo,
             contribuyente_especial: form.contribuyente_especial,
             tipo_cliente_id: form.tipo_cliente_id || null,
@@ -296,6 +298,12 @@ export default function Clientes() {
                             disabled={form.condicion_pago === 'contado'}
                             placeholder="Ej: 30"
                             style={{ ...inputStyle, backgroundColor: form.condicion_pago === 'contado' ? '#f9fafb' : '#fff', color: form.condicion_pago === 'contado' ? '#9ca3af' : '#374151' }} />
+                    </Campo>
+                    <Campo label="Límite de crédito (USD) ">
+                        <input type="number" min="0" step="0.01" value={form.limite_credito}
+                            onChange={e => campo('limite_credito', e.target.value)}
+                            placeholder="Ej: 5000"
+                            style={inputStyle} />
                     </Campo>
                     <Campo label="Tipo de cliente" span={2}>
                         <select value={form.tipo_cliente_id} onChange={e => campo('tipo_cliente_id', e.target.value)} style={inputStyle}>

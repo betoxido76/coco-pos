@@ -94,8 +94,9 @@ const CATALOGOS = [
             { campo: 'email', header: 'Email', requerido: false },
             { campo: 'condicion_pago', header: 'Condicion Pago', requerido: false },
             { campo: 'dias_credito', header: 'Dias Credito', requerido: false },
+            { campo: 'limite_credito', header: 'Limite Credito', requerido: false },
         ],
-        defaults: { condicion_pago: 'contado', dias_credito: 0, activo: true }
+        defaults: { condicion_pago: 'contado', dias_credito: 0, limite_credito: 0, activo: true }
     },
     {
         key: 'proveedores',
@@ -138,7 +139,7 @@ function procesarFila(filaRaw, columnas, defaults) {
         if (val === undefined || val === null || val === '') return
         if (col.campo === 'aplica_iva') {
             fila[col.campo] = parsearBooleano(val)
-        } else if (['precio_venta', 'costo_promedio', 'costo_compra_promedio', 'stock_actual', 'stock_minimo', 'vida_util_dias', 'dias_credito'].includes(col.campo)) {
+        } else if (['precio_venta', 'costo_promedio', 'costo_compra_promedio', 'stock_actual', 'stock_minimo', 'vida_util_dias', 'dias_credito', 'limite_credito'].includes(col.campo)) {
             fila[col.campo] = Number(val) || 0
         } else {
             fila[col.campo] = String(val).trim()
@@ -167,7 +168,7 @@ export default function CargaDatos() {
             materias_primas: [['Agua de coco concentrada', 'MP-COC-001', 'Concentrado natural', 'litro', 0.80, 50, 10, 'Orgánicos', 'comprado', 'Si']],
             materiales_empaque: [['Botella PET 500ml', 'ME-BOT-001', 'Transparente', 'unidad', 0.15, 500, 100, 'Envases', 'Si']],
             consumibles: [['Guantes nitrilo M', 'CON-001', 'Caja x100', 'caja', 8.50, 10, 2, 'Seguridad', 'Si']],
-            clientes: [['Supermercado Central', 'J-12345678-9', '0212-555-0101', 'compras@central.com', 'credito', 30]],
+            clientes: [['Supermercado Central', 'J-12345678-9', '0212-555-0101', 'compras@central.com', 'credito', 30, 5000]],
             proveedores: [['Agroindustrial Los Llanos', 'J-98765432-1', '0414-555-0202', 'Juan Pérez', 'materia_prima']],
         }
         const ws = XLSX.utils.aoa_to_sheet([headers, ...(ejemplos[catalogoKey] || [])])
