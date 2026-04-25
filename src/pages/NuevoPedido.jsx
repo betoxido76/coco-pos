@@ -5,7 +5,7 @@ import {
     Search, Plus, Minus, Trash2, Check, ChevronRight, ChevronLeft,
     X, Clock, Package, ShoppingCart, DollarSign, Users, AlertCircle,
     TrendingUp, FileText, MapPin, Phone, Building2, CreditCard,
-    RotateCcw, ArrowRight, Calendar, ChevronDown, RefreshCw, WifiOff
+    RotateCcw, ArrowRight, Calendar, ChevronDown, RefreshCw, WifiOff, Eye
 } from 'lucide-react'
 
 // ── Cache localStorage ──────────────────────────────────────
@@ -563,6 +563,7 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
     const [modalVisita, setModalVisita] = useState(false)
     const [visitaForm, setVisitaForm] = useState({ tipo: 'presencial', resultado: 'sin_pedido', notas: '' })
     const [guardandoVisita, setGuardandoVisita] = useState(false)
+    const [pedidoDetalle, setPedidoDetalle] = useState(null)
 
     useEffect(() => { cargar() }, [])
 
@@ -941,10 +942,16 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
                                                         {est.label}
                                                     </span>
                                                 </div>
-                                                <button onClick={() => onNuevoPedido(p.pedido_items)}
-                                                    style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '6px 10px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#16a34a', fontWeight: 600, flexShrink: 0 }}>
-                                                    <RotateCcw size={12} /> Repetir
-                                                </button>
+                                                <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+                                                    <button onClick={() => setPedidoDetalle(p)}
+                                                        style={{ backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '8px', padding: '6px 10px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#2563eb', fontWeight: 600 }}>
+                                                        <Eye size={12} /> Ver
+                                                    </button>
+                                                    <button onClick={() => onNuevoPedido(p.pedido_items)}
+                                                        style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '6px 10px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#16a34a', fontWeight: 600 }}>
+                                                        <RotateCcw size={12} /> Repetir
+                                                    </button>
+                                                </div>
                                             </div>
                                         )
                                     })}
@@ -996,6 +1003,63 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
                     )}
                 </div>
             )}
+
+            {/* ── MODAL DETALLE PEDIDO ── */}
+            {pedidoDetalle && (() => {
+                const est = ESTADOS_PEDIDO[pedidoDetalle.estado] || ESTADOS_PEDIDO.pendiente
+                const items = pedidoDetalle.pedido_items || []
+                const total = items.reduce((s, i) => s + Number(i.subtotal || 0), 0)
+                return (
+                    <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 50, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
+                        onClick={e => { if (e.target === e.currentTarget) setPedidoDetalle(null) }}>
+                        <div style={{ backgroundColor: '#fff', borderRadius: '20px 20px 0 0', width: '100%', maxWidth: '480px', maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}>
+                            {/* Header */}
+                            <div style={{ padding: '20px 20px 16px', borderBottom: '1px solid #f3f4f6', flexShrink: 0 }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                                    <div>
+                                        <p style={{ fontSize: '18px', fontWeight: 700, color: '#1f2937', margin: '0 0 4px', fontFamily: 'monospace' }}>{pedidoDetalle.numero_pedido}</p>
+                                        <p style={{ fontSize: '13px', color: '#6b7280', margin: 0 }}>{fmtFecha(pedidoDetalle.fecha_pedido)}</p>
+                                    </div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                        <span style={{ backgroundColor: est.bg, color: est.color, padding: '4px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 600 }}>{est.label}</span>
+                                        <button onClick={() => setPedidoDetalle(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', padding: '4px' }}>
+                                            <X size={22} />
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                            {/* Items */}
+                            <div style={{ overflowY: 'auto', flex: 1, padding: '12px 20px' }}>
+                                {items.length === 0 ? (
+                                    <p style={{ textAlign: 'center', color: '#9ca3af', fontSize: '14px', padding: '24px 0' }}>Sin ítems</p>
+                                ) : items.map((item, idx) => (
+                                    <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', padding: '12px 0', borderBottom: '1px solid #f3f4f6' }}>
+                                        <div style={{ flex: 1, paddingRight: '12px' }}>
+                                            <p style={{ fontSize: '14px', fontWeight: 600, color: '#1f2937', margin: '0 0 2px' }}>{item.nombre_producto}</p>
+                                            <p style={{ fontSize: '12px', color: '#9ca3af', margin: 0 }}>
+                                                {item.cantidad} × {fmt(item.precio_unitario)}
+                                                {Number(item.descuento_item) > 0 && <span style={{ color: '#f59e0b', marginLeft: '6px' }}>−{item.descuento_item}%</span>}
+                                            </p>
+                                        </div>
+                                        <p style={{ fontSize: '14px', fontWeight: 700, color: '#1f2937', margin: 0, flexShrink: 0 }}>{fmt(item.subtotal)}</p>
+                                    </div>
+                                ))}
+                            </div>
+                            {/* Footer total */}
+                            <div style={{ padding: '16px 20px 32px', borderTop: '1px solid #e5e7eb', flexShrink: 0 }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                                    <span style={{ fontSize: '15px', fontWeight: 600, color: '#6b7280' }}>Total</span>
+                                    <span style={{ fontSize: '20px', fontWeight: 800, color: '#1f2937' }}>{fmt(total)}</span>
+                                </div>
+                                <button onClick={() => { setPedidoDetalle(null); onNuevoPedido(items) }}
+                                    style={{ ...s.btnPrimary }}>
+                                    <RotateCcw size={16} /> Repetir este pedido
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )
+            })()}
 
             {/* ── MODAL REGISTRAR VISITA ── */}
             {modalVisita && (
