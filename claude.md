@@ -48,7 +48,7 @@ src/
 │   ├── Dashboard.jsx
 │   ├── Inventario.jsx           # Stock por almacén, ajustes, transferencias
 │   ├── Ventas.jsx               # Facturación + pedidos por facturar
-│   ├── NuevoPedido.jsx          # App móvil para fuerza de ventas en campo
+│   ├── NuevoPedido.jsx          # App móvil fuerza de ventas — ver sección 16
 │   ├── Pedidos.jsx              # Gestión de pedidos (aprobar/rechazar/facturar)
 │   ├── Compras.jsx              # Recepciones libres y contra OC
 │   ├── CuentasCobrar.jsx        # Cobro multimoneda (USD/Bs/Euro/Binance)
@@ -166,7 +166,7 @@ Después de cada ajuste, transferencia o recepción se llama `sincronizarStockAc
 ```
 ventas                -- Facturas
 venta_items           -- Detalle de facturas
-pedidos               -- Pedidos de venta
+pedidos               -- Pedidos de venta (Realtime habilitado: supabase_realtime publication)
 pedido_items          -- Detalle de pedidos
 cobros                -- Cobros parciales/totales en multimoneda
 devoluciones          -- Notas de crédito
@@ -193,7 +193,7 @@ lotes_produccion      -- Lotes de PT producidos
 
 ### Otros
 ```
-clientes              -- Con cat1_id a cat4_id para clasificación
+clientes              -- Con cat1_id a cat4_id, limite_credito numeric(12,2)
 categorias_clientes   -- 4 niveles de categorías por empresa
 proveedores
 mermas                -- Con almacen_id para mermas de inventario
@@ -205,6 +205,12 @@ configuracion         -- Tasas: tasa_bcv, tasa_euro, tasa_binance
 listas_precio
 producto_precios
 direcciones_entrega   -- Direcciones de entrega por cliente
+visitas_comerciales   -- Visitas de campo registradas desde NuevoPedido
+                      --   id, empresa_id, vendedor_id (uuid→usuarios), cliente_id,
+                      --   tipo_visita (presencial|llamada|whatsapp|videollamada),
+                      --   resultado (pedido_tomado|sin_pedido|reagendar|no_contesto),
+                      --   notas text, created_at
+                      --   RLS: SELECT/INSERT propios con get_empresa_id() + auth.uid()
 ```
 
 ---
@@ -330,6 +336,8 @@ ON CONFLICT DO NOTHING;
 | Paginación en tablas con volumen alto | Baja | Ventas, CxC, CxP |
 | Índices en Supabase | Baja | Para columnas frecuentemente filtradas |
 | Módulo de reportes | Baja | No iniciado |
+| Historial de visitas en FichaCliente (paginado) | Baja | Actualmente carga últimas 20; considerar paginación cuando el volumen crezca |
+| Push notifications para pedidos nuevos (Pedidos.jsx) | Baja | Realtime ya está en `pedidos`; falta conectarlo al módulo Pedidos del backoffice |
 
 ---
 
@@ -344,3 +352,110 @@ ON CONFLICT DO NOTHING;
 - Estilos: inline styles con objetos JS (no clases Tailwind, excepto en Login/ResetPassword)
 - Formato de moneda USD: `fmt(n)` → `$X.XX`
 - Formato de moneda Bs: `fmtBs(n)` → `X.XX Bs.`
+- **localStorage cache keys** (prefijo `mipos_`):
+  - `mipos_clientes_${empresa_id}` — lista de clientes
+  - `mipos_listas_${empresa_id}` — listas de precio
+  - `mipos_productos_${empresa_id}_${listaId}` — productos con precio
+  - `mipos_offline_queue` — pedidos pendientes de sincronizar (array JSON)
+  - Cada entry de caché incluye `{ data, ts }` donde `ts` es `Date.now()`; TTL = 1 hora (`CACHE_TTL = 3600000`)
+
+---
+
+## 16. NuevoPedido — App móvil fuerza de ventas
+
+**Archivo:** `src/pages/NuevoPedido.jsx` (~1750 líneas, auto-contenido, sin imports de otros componentes del proyecto)
+
+### Sub-componentes (todos en el mismo archivo)
+```
+NuevoPedido          # Componente raíz — maneja vista activa, offline queue, toasts, Realtime
+  ├── HomeVendedor   # Dashboard del vendedor: stats del día (pedidos, monto, clientes, visitas)
+  ├── ListaClientes  # Búsqueda + lista de clientes con badge de deuda (punto rojo)
+  ├── FichaCliente   # 4 tabs: Resumen | Pedidos | Historial | Visitas
+  └── FlujoPedido    # Wizard 3 pasos: cliente → dirección → productos → confirmación
+```
+
+### Flujo de navegación
+```
+HomeVendedor
+  → [botón Clientes] → ListaClientes
+      → [seleccionar cliente] → FichaCliente
+          → [Tomar pedido] → FlujoPedido
+              → [éxito] → HomeVendedor (refreshKey++)
+```
+
+### Features implementadas (sesión 2026-04-25)
+
+| # | Feature | Descripción |
+|---|---|---|
+| 1 | Caché offline (stale-while-revalidate) | Clientes, listas y productos se sirven desde `localStorage` y se revalidan en background |
+| 2 | Cola offline | Pedidos tomados sin conexión se guardan en `mipos_offline_queue`; se sincronizan al reconectar |
+| 3 | Banner offline | `useOnline()` hook — banner rojo con icono `WifiOff` + contador de pedidos en cola |
+| 4 | Realtime (pedidos propios) | Suscripción `postgres_changes` filtrada por `vendedor_id=eq.{userId}`; toast de confirmación al cambiar estado |
+| 5 | Toast de confirmación | Overlay de toasts flotantes (top-right) para pedido creado, sincronizado y cambios de estado Realtime |
+| 6 | Límite de crédito | Barra de utilización en FichaCliente → Resumen; banner de advertencia en paso 3 de FlujoPedido |
+| 7 | CxC vencida | Banner rojo en paso 3 si el cliente tiene facturas vencidas sin pagar |
+| 8 | Semáforo de stock | En paso 3 (grilla productos): verde ≥ 10, amarillo 1–9, rojo 0 |
+| 9 | Visitas comerciales | Tab "Visitas" en FichaCliente — registrar tipo y resultado; contador en HomeVendedor |
+
+### Patrones técnicos clave
+
+**Cache helpers (top del archivo):**
+```js
+const CACHE_TTL = 3600000
+const cacheSet = (key, data) => localStorage.setItem(key, JSON.stringify({ data, ts: Date.now() }))
+const cacheGet = (key) => { ... }  // retorna null si expirado
+```
+
+**Offline queue helpers:**
+```js
+const getPendingQueue = () => JSON.parse(localStorage.getItem('mipos_offline_queue') || '[]')
+const savePendingQueue = (q) => localStorage.setItem('mipos_offline_queue', JSON.stringify(q))
+```
+
+**Hook `useOnline()`:**
+```js
+// Escucha window 'online'/'offline'; retorna boolean
+```
+
+**Realtime subscription** (en `NuevoPedido` principal):
+```js
+// Se crea tras resolver supabase.auth.getUser()
+// Canal: 'pedidos-vendedor', filtro: `vendedor_id=eq.${user.id}`
+// Eventos: UPDATE → toast con TOAST_ESTADOS[nuevo_estado]
+// Cleanup en return del useEffect
+```
+
+**`itemsPreloaded = useRef(false)`** en `FlujoPedido`:
+Evita doble pre-carga de ítems de la última compra cuando el stale-while-revalidate llama `aplicarProductos()` dos veces (cache + red).
+
+**`cargarDatosCliente(clienteId)`** en `FlujoPedido`:
+Función helper que extrae el fetch de `direcciones_entrega` + CxC vencido + última compra. Se llama tanto en el `useEffect([clienteInicial])` como en `seleccionarCliente()`.
+
+**Listas — evitar sobreescritura de `listaId`:**
+En el background fetch de listas, `setListaId` solo se llama cuando `!listaId` para no pisar el valor ya seteado desde caché.
+
+### Supabase — cambios requeridos para esta sección
+```sql
+-- 1. Límite de crédito en clientes
+ALTER TABLE clientes ADD COLUMN limite_credito numeric(12,2) DEFAULT 0;
+
+-- 2. Tabla visitas comerciales
+CREATE TABLE visitas_comerciales (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  empresa_id uuid REFERENCES empresas(id),
+  vendedor_id uuid REFERENCES usuarios(id),
+  cliente_id uuid REFERENCES clientes(id),
+  tipo_visita text CHECK (tipo_visita IN ('presencial','llamada','whatsapp','videollamada')),
+  resultado text CHECK (resultado IN ('pedido_tomado','sin_pedido','reagendar','no_contesto')),
+  notas text,
+  created_at timestamptz DEFAULT now()
+);
+ALTER TABLE visitas_comerciales ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "empresa propia" ON visitas_comerciales
+  USING (empresa_id = get_empresa_id());
+CREATE POLICY "insert propio" ON visitas_comerciales FOR INSERT
+  WITH CHECK (empresa_id = get_empresa_id() AND vendedor_id = auth.uid());
+
+-- 3. Habilitar Realtime en pedidos
+ALTER PUBLICATION supabase_realtime ADD TABLE pedidos;
+```
