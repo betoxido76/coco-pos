@@ -101,9 +101,11 @@ export default function NuevoPedido({ onCancelar }) {
     // vista: 'home' | 'clientes' | 'ficha' | 'pedido'
     const [vista, setVista] = useState('home')
     const [clienteSeleccionado, setClienteSeleccionado] = useState(null)
+    const [itemsARepetir, setItemsARepetir] = useState(null)
 
-    function irAPedido(cliente) {
+    function irAPedido(cliente, items = null) {
         setClienteSeleccionado(cliente)
+        setItemsARepetir(items)
         setVista('pedido')
     }
 
@@ -131,7 +133,7 @@ export default function NuevoPedido({ onCancelar }) {
     if (vista === 'ficha') return (
         <FichaCliente
             cliente={clienteSeleccionado}
-            onNuevoPedido={() => setVista('pedido')}
+            onNuevoPedido={(items) => irAPedido(clienteSeleccionado, items)}
             onVolver={() => setVista('clientes')}
         />
     )
@@ -139,8 +141,9 @@ export default function NuevoPedido({ onCancelar }) {
     if (vista === 'pedido') return (
         <FlujoPedido
             clienteInicial={clienteSeleccionado}
-            onPedidoCreado={() => setVista('home')}
-            onCancelar={() => setVista(clienteSeleccionado ? 'ficha' : 'home')}
+            itemsIniciales={itemsARepetir}
+            onPedidoCreado={() => { setItemsARepetir(null); setVista('home') }}
+            onCancelar={() => { setItemsARepetir(null); setVista(clienteSeleccionado ? 'ficha' : 'home') }}
         />
     )
 }
@@ -294,14 +297,22 @@ function ListaClientes({ onVerFicha, onNuevoPedido, onVolver }) {
     const [clientes, setClientes] = useState([])
     const [busq, setBusq] = useState('')
     const [loading, setLoading] = useState(true)
+    const [clientesConDeuda, setClientesConDeuda] = useState(new Set())
 
     useEffect(() => {
-        supabase.from('clientes')
-            .select('id, nombre, rif, condicion_pago, dias_credito, telefono')
-            .eq('activo', true)
-            .eq('empresa_id', perfil.empresa_id)
-            .order('nombre')
-            .then(({ data }) => { setClientes(data || []); setLoading(false) })
+        Promise.all([
+            supabase.from('clientes')
+                .select('id, nombre, rif, condicion_pago, dias_credito, telefono')
+                .eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre'),
+            supabase.from('ventas')
+                .select('cliente_id')
+                .eq('empresa_id', perfil.empresa_id)
+                .in('estado_cobro', ['pendiente', 'parcial'])
+        ]).then(([{ data: clientesData }, { data: ventasData }]) => {
+            setClientes(clientesData || [])
+            if (ventasData) setClientesConDeuda(new Set(ventasData.map(v => v.cliente_id)))
+            setLoading(false)
+        })
     }, [])
 
     const filtrados = clientes.filter(c =>
@@ -341,7 +352,12 @@ function ListaClientes({ onVerFicha, onNuevoPedido, onVolver }) {
                                 onTouchStart={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
                                 onTouchEnd={e => e.currentTarget.style.backgroundColor = 'transparent'}>
                                 <div style={{ flex: 1 }} onClick={() => onVerFicha(c)}>
-                                    <p style={{ fontSize: '15px', fontWeight: 600, color: '#1f2937', margin: '0 0 2px' }}>{c.nombre}</p>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '2px' }}>
+                                        <p style={{ fontSize: '15px', fontWeight: 600, color: '#1f2937', margin: 0 }}>{c.nombre}</p>
+                                        {clientesConDeuda.has(c.id) && (
+                                            <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#ef4444', display: 'inline-block', flexShrink: 0 }} />
+                                        )}
+                                    </div>
                                     <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                                         {c.rif && <span style={{ fontSize: '11px', color: '#9ca3af', fontFamily: 'monospace' }}>{c.rif}</span>}
                                         <span style={{
@@ -409,7 +425,7 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
 
             // Pedidos del cliente
             supabase.from('pedidos')
-                .select('id, numero_pedido, fecha_pedido, estado, pedido_items(subtotal)')
+                .select('id, numero_pedido, fecha_pedido, estado, pedido_items(producto_id, nombre_producto, cantidad, precio_unitario, descuento_item, subtotal)')
                 .eq('cliente_id', cliente.id)
                 .eq('empresa_id', perfil.empresa_id)
                 .order('fecha_pedido', { ascending: false })
@@ -463,7 +479,7 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
                         <h1 style={{ fontSize: '16px', fontWeight: 700, color: '#1f2937', margin: 0, lineHeight: 1.2 }}>{cliente.nombre}</h1>
                         {cliente.rif && <p style={{ fontSize: '12px', color: '#9ca3af', margin: '2px 0 0', fontFamily: 'monospace' }}>{cliente.rif}</p>}
                     </div>
-                    <button onClick={onNuevoPedido}
+                    <button onClick={() => onNuevoPedido()}
                         style={{ backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '10px', padding: '10px 14px', fontSize: '13px', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }}>
                         <Plus size={14} /> Pedido
                     </button>
@@ -564,7 +580,7 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
                                 </button>
                             )}
 
-                            <button onClick={onNuevoPedido} style={s.btnPrimary}>
+                            <button onClick={() => onNuevoPedido()} style={s.btnPrimary}>
                                 <Plus size={18} /> Tomar pedido
                             </button>
                         </>
@@ -684,8 +700,8 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
                                         const total = (p.pedido_items || []).reduce((s, i) => s + Number(i.subtotal || 0), 0)
                                         const est = ESTADOS_PEDIDO[p.estado] || ESTADOS_PEDIDO.pendiente
                                         return (
-                                            <div key={p.id} style={{ padding: '14px 16px', borderBottom: '1px solid #f3f4f6', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                                <div>
+                                            <div key={p.id} style={{ padding: '14px 16px', borderBottom: '1px solid #f3f4f6', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+                                                <div style={{ flex: 1 }}>
                                                     <p style={{ fontSize: '13px', fontWeight: 600, color: '#1f2937', margin: '0 0 2px', fontFamily: 'monospace' }}>{p.numero_pedido}</p>
                                                     <p style={{ fontSize: '12px', color: '#9ca3af', margin: 0 }}>{fmtFecha(p.fecha_pedido)}</p>
                                                 </div>
@@ -695,12 +711,16 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
                                                         {est.label}
                                                     </span>
                                                 </div>
+                                                <button onClick={() => onNuevoPedido(p.pedido_items)}
+                                                    style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '6px 10px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#16a34a', fontWeight: 600, flexShrink: 0 }}>
+                                                    <RotateCcw size={12} /> Repetir
+                                                </button>
                                             </div>
                                         )
                                     })}
                                 </div>
                             )}
-                            <button onClick={onNuevoPedido} style={s.btnPrimary}>
+                            <button onClick={() => onNuevoPedido()} style={s.btnPrimary}>
                                 <Plus size={18} /> Tomar nuevo pedido
                             </button>
                         </>
@@ -714,7 +734,7 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
 // ══════════════════════════════════════════════════════════════
 // PANTALLA 4: FLUJO DE PEDIDO (igual al original, refactorizado)
 // ══════════════════════════════════════════════════════════════
-function FlujoPedido({ clienteInicial, onPedidoCreado, onCancelar }) {
+function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancelar }) {
     const { perfil } = useAuth()
     const [paso, setPaso] = useState(clienteInicial ? 2 : 1)
 
@@ -724,6 +744,8 @@ function FlujoPedido({ clienteInicial, onPedidoCreado, onCancelar }) {
     const [clienteSel, setClienteSel] = useState(clienteInicial || null)
     const [direcciones, setDirecciones] = useState([])
     const [direccionId, setDireccionId] = useState('')
+    const [cxcVencido, setCxcVencido] = useState(0)
+    const [ultimaCompra, setUltimaCompra] = useState({})
 
     // Paso 2 — Productos
     const [listas, setListas] = useState([])
@@ -739,6 +761,46 @@ function FlujoPedido({ clienteInicial, onPedidoCreado, onCancelar }) {
     const [guardando, setGuardando] = useState(false)
     const [error, setError] = useState('')
     const [pedidoCreado, setPedidoCreado] = useState(null)
+
+    async function cargarDatosCliente(clienteId) {
+        const [{ data: dirs }, { data: ventas }, { data: ultimosPedidos }] = await Promise.all([
+            supabase.from('direcciones_entrega')
+                .select('*').eq('cliente_id', clienteId).eq('empresa_id', perfil.empresa_id)
+                .eq('activo', true).order('es_principal', { ascending: false }).order('nombre'),
+            supabase.from('ventas')
+                .select('total, pago_usd, pago_bs, tasa_cambio, fecha_vencimiento_pago')
+                .eq('cliente_id', clienteId).eq('empresa_id', perfil.empresa_id)
+                .in('estado_cobro', ['pendiente', 'parcial']),
+            supabase.from('pedidos')
+                .select('fecha_pedido, pedido_items(producto_id, cantidad)')
+                .eq('cliente_id', clienteId).eq('empresa_id', perfil.empresa_id)
+                .order('fecha_pedido', { ascending: false }).limit(1)
+        ])
+        if (dirs) {
+            setDirecciones(dirs)
+            const p = dirs.find(d => d.es_principal)
+            if (p) setDireccionId(p.id)
+            else if (dirs.length === 1) setDireccionId(dirs[0].id)
+        } else setDirecciones([])
+        if (ventas) {
+            const hoy = new Date()
+            const vencido = ventas
+                .filter(v => v.fecha_vencimiento_pago && new Date(v.fecha_vencimiento_pago) < hoy)
+                .reduce((sum, v) => {
+                    const pagadoUsd = Number(v.pago_usd || 0)
+                    const pagadoBsEnUsd = v.tasa_cambio ? Number(v.pago_bs || 0) / Number(v.tasa_cambio) : 0
+                    return sum + Math.max(0, Number(v.total) - pagadoUsd - pagadoBsEnUsd)
+                }, 0)
+            setCxcVencido(vencido)
+        }
+        if (ultimosPedidos?.[0]?.pedido_items) {
+            const map = {}
+            ultimosPedidos[0].pedido_items.forEach(i => {
+                map[i.producto_id] = { cantidad: i.cantidad, fecha: ultimosPedidos[0].fecha_pedido }
+            })
+            setUltimaCompra(map)
+        }
+    }
 
     useEffect(() => {
         supabase.from('clientes')
@@ -758,52 +820,43 @@ function FlujoPedido({ clienteInicial, onPedidoCreado, onCancelar }) {
                 }
             })
 
-        // Si hay cliente inicial, cargar sus direcciones
-        if (clienteInicial) {
-            supabase.from('direcciones_entrega')
-                .select('*').eq('cliente_id', clienteInicial.id)
-                .eq('empresa_id', perfil.empresa_id).eq('activo', true)
-                .order('es_principal', { ascending: false })
-                .then(({ data }) => {
-                    if (data) {
-                        setDirecciones(data)
-                        const p = data.find(d => d.es_principal)
-                        if (p) setDireccionId(p.id)
-                        else if (data.length === 1) setDireccionId(data[0].id)
-                    }
-                })
-        }
+        if (clienteInicial) cargarDatosCliente(clienteInicial.id)
     }, [])
 
     useEffect(() => {
         if (!listaId) return
         supabase.from('producto_precios')
-            .select('precio, productos_terminados(id, nombre, sku, unidad_medida)')
+            .select('precio, productos_terminados(id, nombre, sku, unidad_medida, stock_actual)')
             .eq('lista_id', listaId).eq('empresa_id', perfil.empresa_id)
             .then(({ data }) => {
                 if (data) {
-                    setProductos(data.filter(p => p.productos_terminados).map(p => ({
+                    const prods = data.filter(p => p.productos_terminados).map(p => ({
                         id: p.productos_terminados.id,
                         nombre: p.productos_terminados.nombre,
                         sku: p.productos_terminados.sku,
                         unidad_medida: p.productos_terminados.unidad_medida,
                         precio: Number(p.precio),
-                    })))
+                        stock: Number(p.productos_terminados.stock_actual || 0),
+                    }))
+                    setProductos(prods)
+                    if (itemsIniciales && items.length === 0) {
+                        const preloaded = itemsIniciales
+                            .map(ii => {
+                                const prod = prods.find(p => p.id === ii.producto_id)
+                                if (!prod) return null
+                                return { ...prod, cantidad: ii.cantidad, descuento_item: String(ii.descuento_item || '') }
+                            })
+                            .filter(Boolean)
+                        if (preloaded.length > 0) setItems(preloaded)
+                    }
                 }
             })
     }, [listaId])
 
     async function seleccionarCliente(c) {
         setClienteSel(c); setBusqCliente(''); setDireccionId('')
-        const { data } = await supabase.from('direcciones_entrega')
-            .select('*').eq('cliente_id', c.id).eq('empresa_id', perfil.empresa_id)
-            .eq('activo', true).order('es_principal', { ascending: false }).order('nombre')
-        if (data) {
-            setDirecciones(data)
-            const p = data.find(d => d.es_principal)
-            if (p) setDireccionId(p.id)
-            else if (data.length === 1) setDireccionId(data[0].id)
-        } else setDirecciones([])
+        setCxcVencido(0); setUltimaCompra({})
+        await cargarDatosCliente(c.id)
     }
 
     const clientesFiltrados = clientes.filter(c =>
@@ -814,6 +867,12 @@ function FlujoPedido({ clienteInicial, onPedidoCreado, onCancelar }) {
         p.nombre.toLowerCase().includes(busqProducto.toLowerCase()) ||
         p.sku?.toLowerCase().includes(busqProducto.toLowerCase())
     )
+
+    function semaforo(stock) {
+        if (stock <= 0) return { color: '#dc2626', bg: '#fee2e2', label: 'Sin stock' }
+        if (stock < 10) return { color: '#d97706', bg: '#fef3c7', label: 'Poco stock' }
+        return { color: '#16a34a', bg: '#dcfce7', label: 'Disponible' }
+    }
 
     function agregarProducto(prod) {
         setItems(prev => {
@@ -1031,23 +1090,31 @@ function FlujoPedido({ clienteInicial, onPedidoCreado, onCancelar }) {
                     <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden', marginBottom: '16px' }}>
                         {productosFiltrados.length === 0 ? (
                             <div style={{ padding: '20px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Sin resultados</div>
-                        ) : productosFiltrados.slice(0, 8).map(p => (
-                            <div key={p.id} onClick={() => agregarProducto(p)}
-                                style={{ padding: '12px 16px', borderBottom: '1px solid #f3f4f6', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
-                                onTouchStart={e => e.currentTarget.style.backgroundColor = '#f0fdf4'}
-                                onTouchEnd={e => e.currentTarget.style.backgroundColor = 'transparent'}
-                                onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f0fdf4'}
-                                onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
-                                <div>
-                                    <p style={{ fontSize: '14px', fontWeight: 500, color: '#1f2937', margin: '0 0 2px' }}>{p.nombre}</p>
-                                    {p.sku && <p style={{ fontSize: '11px', color: '#9ca3af', margin: 0, fontFamily: 'monospace' }}>{p.sku}</p>}
+                        ) : productosFiltrados.slice(0, 8).map(p => {
+                            const sem = semaforo(p.stock)
+                            const uc = ultimaCompra[p.id]
+                            return (
+                                <div key={p.id} onClick={() => agregarProducto(p)}
+                                    style={{ padding: '12px 16px', borderBottom: '1px solid #f3f4f6', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}
+                                    onTouchStart={e => e.currentTarget.style.backgroundColor = '#f0fdf4'}
+                                    onTouchEnd={e => e.currentTarget.style.backgroundColor = 'transparent'}
+                                    onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f0fdf4'}
+                                    onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                        <p style={{ fontSize: '14px', fontWeight: 500, color: '#1f2937', margin: '0 0 4px' }}>{p.nombre}</p>
+                                        <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+                                            {p.sku && <span style={{ fontSize: '11px', color: '#9ca3af', fontFamily: 'monospace' }}>{p.sku}</span>}
+                                            <span style={{ fontSize: '10px', fontWeight: 600, padding: '1px 6px', borderRadius: '8px', backgroundColor: sem.bg, color: sem.color }}>{sem.label}</span>
+                                            {uc && <span style={{ fontSize: '10px', color: '#9ca3af' }}>última: {uc.cantidad} u · {diasDesde(uc.fecha)}d</span>}
+                                        </div>
+                                    </div>
+                                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                                        <p style={{ fontSize: '15px', fontWeight: 700, color: '#16a34a', margin: 0 }}>{fmt(p.precio)}</p>
+                                        <p style={{ fontSize: '11px', color: '#9ca3af', margin: 0 }}>{p.unidad_medida}</p>
+                                    </div>
                                 </div>
-                                <div style={{ textAlign: 'right' }}>
-                                    <p style={{ fontSize: '15px', fontWeight: 700, color: '#16a34a', margin: 0 }}>{fmt(p.precio)}</p>
-                                    <p style={{ fontSize: '11px', color: '#9ca3af', margin: 0 }}>{p.unidad_medida}</p>
-                                </div>
-                            </div>
-                        ))}
+                            )
+                        })}
                     </div>
                 )}
 
@@ -1154,6 +1221,16 @@ function FlujoPedido({ clienteInicial, onPedidoCreado, onCancelar }) {
                         </div>
                     )}
                 </div>
+
+                {cxcVencido > 0 && (
+                    <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '12px', padding: '12px 16px', display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '12px' }}>
+                        <AlertCircle size={20} color="#dc2626" style={{ flexShrink: 0 }} />
+                        <div>
+                            <p style={{ fontSize: '13px', fontWeight: 700, color: '#dc2626', margin: '0 0 2px' }}>Cliente con deuda vencida</p>
+                            <p style={{ fontSize: '12px', color: '#ef4444', margin: 0 }}>{fmt(cxcVencido)} pendientes de cobro</p>
+                        </div>
+                    </div>
+                )}
 
                 <div style={s.card}>
                     <label style={s.label}>Productos ({items.length})</label>
