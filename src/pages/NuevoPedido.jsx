@@ -160,55 +160,34 @@ function HomeVendedor({ onNuevoPedido, onVerClientes, onCancelar }) {
 
     async function cargar() {
         setLoading(true)
-        const [
-            { data: ventas },
-            { data: cobrosData },
-            { data: pedidos },
-            { data: config },
-        ] = await Promise.all([
-            // ✅ Facturas pendientes o parciales del cliente
-            supabase.from('ventas')
-                .select('id, numero_factura, fecha_venta, total, pago_usd, pago_bs, tasa_cambio, estado_cobro, fecha_vencimiento_pago')
-                .eq('cliente_id', cliente.id)
-                .eq('empresa_id', perfil.empresa_id)
-                .in('estado_cobro', ['pendiente', 'parcial'])   // ✅ filtro correcto
-                .order('fecha_vencimiento_pago', { ascending: true }),
+        const { data: { user } } = await supabase.auth.getUser()
+        const hoy = new Date().toISOString().split('T')[0]
 
-            // ✅ Cobros a través de ventas del cliente (no hay cliente_id directo)
-            supabase.from('cobros')
-                .select('id, fecha_cobro, monto_usd, monto_bs, tasa_cambio, tipo_tasa, ventas!inner(cliente_id)')
-                .eq('ventas.cliente_id', cliente.id)
-                .eq('empresa_id', perfil.empresa_id)
-                .order('fecha_cobro', { ascending: false })
-                .limit(5),
+        const { data: pedidosHoy } = await supabase
+            .from('pedidos')
+            .select('id, cliente_id, numero_pedido, fecha_pedido, estado, pedido_items(subtotal, descuento_item, cantidad)')
+            .eq('empresa_id', perfil.empresa_id)
+            .eq('vendedor_id', user.id)
+            .gte('fecha_pedido', hoy + 'T00:00:00')
+            .order('fecha_pedido', { ascending: false })
 
-            supabase.from('pedidos')
-                .select('id, numero_pedido, fecha_pedido, estado, pedido_items(subtotal)')
-                .eq('cliente_id', cliente.id)
-                .eq('empresa_id', perfil.empresa_id)
-                .order('fecha_pedido', { ascending: false })
-                .limit(10),
+        const { data: recientes } = await supabase
+            .from('pedidos')
+            .select('id, numero_pedido, fecha_pedido, estado, clientes(nombre), pedido_items(subtotal, descuento_item, cantidad)')
+            .eq('empresa_id', perfil.empresa_id)
+            .eq('vendedor_id', user.id)
+            .order('fecha_pedido', { ascending: false })
+            .limit(5)
 
-            supabase.from('configuracion')
-                .select('tasa_bcv')
-                .eq('empresa_id', perfil.empresa_id)
-                .single(),
-        ])
-
-        // ✅ Calcular saldo pendiente por venta
-        const ventasConSaldo = (ventas || []).map(v => {
-            const pagadoUsd = Number(v.pago_usd || 0)
-            const pagadoBsEnUsd = v.tasa_cambio ? Number(v.pago_bs || 0) / Number(v.tasa_cambio) : 0
-            const saldo_pendiente = Number(v.total) - pagadoUsd - pagadoBsEnUsd
-            return { ...v, saldo_pendiente: Math.max(0, saldo_pendiente) }
-        })
-
-        setDatos({
-            cxc: ventasConSaldo,
-            cobros: cobrosData || [],
-            pedidos: pedidos || [],
-            tasa: config?.tasa_bcv || null,
-        })
+        if (pedidosHoy) {
+            const montoHoy = pedidosHoy.reduce((sum, p) => {
+                const totalPedido = (p.pedido_items || []).reduce((s, i) => s + Number(i.subtotal || 0), 0)
+                return sum + totalPedido
+            }, 0)
+            const clientesUnicos = new Set(pedidosHoy.map(p => p.cliente_id)).size
+            setStats({ pedidosHoy: pedidosHoy.length, montoHoy, clientesHoy: clientesUnicos })
+        }
+        if (recientes) setPedidosRecientes(recientes)
         setLoading(false)
     }
 
@@ -408,22 +387,22 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
         setLoading(true)
         const [
             { data: ventas },
-            { data: cobros },
+            { data: cobrosData },
             { data: pedidos },
             { data: config },
         ] = await Promise.all([
-            // Facturas del cliente
+            // Facturas pendientes o parciales del cliente
             supabase.from('ventas')
-                .select('id, numero_factura, fecha_venta, total, saldo_pendiente, condicion_pago, fecha_vencimiento')
+                .select('id, numero_factura, fecha_venta, total, pago_usd, pago_bs, tasa_cambio, estado_cobro, fecha_vencimiento_pago')
                 .eq('cliente_id', cliente.id)
                 .eq('empresa_id', perfil.empresa_id)
-                .gt('saldo_pendiente', 0)
-                .order('fecha_vencimiento', { ascending: true }),
+                .in('estado_cobro', ['pendiente', 'parcial'])
+                .order('fecha_vencimiento_pago', { ascending: true }),
 
-            // Cobros recientes
+            // Cobros a través de ventas del cliente (cobros no tiene cliente_id directo)
             supabase.from('cobros')
-                .select('id, fecha_cobro, monto_usd, monto_bs, tipo_tasa, tasa_cambio')
-                .eq('cliente_id', cliente.id)
+                .select('id, fecha_cobro, monto_usd, monto_bs, tasa_cambio, tipo_tasa, ventas!inner(cliente_id)')
+                .eq('ventas.cliente_id', cliente.id)
                 .eq('empresa_id', perfil.empresa_id)
                 .order('fecha_cobro', { ascending: false })
                 .limit(5),
@@ -436,16 +415,24 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
                 .order('fecha_pedido', { ascending: false })
                 .limit(10),
 
-            // Tasa de cambio
+            // Tasa de cambio actual
             supabase.from('configuracion')
                 .select('tasa_bcv')
                 .eq('empresa_id', perfil.empresa_id)
                 .single(),
         ])
 
+        // Calcular saldo pendiente por venta (total - pago_usd - pago_bs/tasa)
+        const ventasConSaldo = (ventas || []).map(v => {
+            const pagadoUsd = Number(v.pago_usd || 0)
+            const pagadoBsEnUsd = v.tasa_cambio ? Number(v.pago_bs || 0) / Number(v.tasa_cambio) : 0
+            const saldo_pendiente = Math.max(0, Number(v.total) - pagadoUsd - pagadoBsEnUsd)
+            return { ...v, saldo_pendiente }
+        })
+
         setDatos({
-            cxc: ventas || [],
-            cobros: cobros || [],
+            cxc: ventasConSaldo,
+            cobros: cobrosData || [],
             pedidos: pedidos || [],
             tasa: config?.tasa_bcv || null,
         })
@@ -454,7 +441,7 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
 
     const totalCxC = datos?.cxc?.reduce((s, v) => s + Number(v.saldo_pendiente || 0), 0) || 0
     const hoy = new Date()
-    const facturasVencidas = datos?.cxc?.filter(v => v.fecha_vencimiento && new Date(v.fecha_vencimiento) < hoy) || []
+    const facturasVencidas = datos?.cxc?.filter(v => v.fecha_vencimiento_pago && new Date(v.fecha_vencimiento_pago) < hoy) || []
     const montoVencido = facturasVencidas.reduce((s, v) => s + Number(v.saldo_pendiente || 0), 0)
     const ultimoPedido = datos?.pedidos?.[0]
 
@@ -497,8 +484,7 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
                 <div style={{ display: 'flex', gap: '4px', backgroundColor: '#f3f4f6', borderRadius: '10px', padding: '3px' }}>
                     {TABS.map(t => (
                         <button key={t.key} onClick={() => setTabActiva(t.key)}
-                            style={{
-                                flex: 1, padding: '8px 4px', fontSize: '13px', fontWeight: 500, border: 'none', cursor: 'pointer', borderRadius: '8px', transition: 'all 0.15s',
+                            style={{ flex: 1, padding: '8px 4px', fontSize: '13px', fontWeight: 500, border: 'none', cursor: 'pointer', borderRadius: '8px', transition: 'all 0.15s',
                                 backgroundColor: tabActiva === t.key ? '#fff' : 'transparent',
                                 color: tabActiva === t.key ? '#1f2937' : '#6b7280',
                                 boxShadow: tabActiva === t.key ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
@@ -621,31 +607,28 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
                                         </p>
                                     </div>
                                     {datos.cxc.map(v => {
-                                        const vencida = v.fecha_vencimiento_pago && new Date(v.fecha_vencimiento_pago) < hoy
-                                        const diasRestantes = !vencida && v.fecha_vencimiento_pago
+                                        const vencidaV = v.fecha_vencimiento_pago && new Date(v.fecha_vencimiento_pago) < hoy
+                                        const diasVencidaV = vencidaV ? diasDesde(v.fecha_vencimiento_pago) : null
+                                        const diasRestantesV = !vencidaV && v.fecha_vencimiento_pago
                                             ? Math.ceil((new Date(v.fecha_vencimiento_pago) - hoy) / 86400000)
                                             : null
-                                        const diasVencida = vencida ? diasDesde(v.fecha_vencimiento) : null
-                                        const diasRestantes = !vencida && v.fecha_vencimiento
-                                            ? Math.ceil((new Date(v.fecha_vencimiento) - hoy) / 86400000)
-                                            : null
                                         return (
-                                            <div key={v.id} style={{ padding: '14px 16px', borderBottom: '1px solid #f3f4f6', borderLeft: `4px solid ${vencida ? '#ef4444' : '#16a34a'}` }}>
+                                            <div key={v.id} style={{ padding: '14px 16px', borderBottom: '1px solid #f3f4f6', borderLeft: `4px solid ${vencidaV ? '#ef4444' : '#16a34a'}` }}>
                                                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
                                                     <p style={{ fontSize: '14px', fontWeight: 600, color: '#1f2937', margin: 0, fontFamily: 'monospace' }}>{v.numero_factura}</p>
-                                                    <p style={{ fontSize: '15px', fontWeight: 700, color: vencida ? '#dc2626' : '#1f2937', margin: 0 }}>{fmt(v.saldo_pendiente)}</p>
+                                                    <p style={{ fontSize: '15px', fontWeight: 700, color: vencidaV ? '#dc2626' : '#1f2937', margin: 0 }}>{fmt(v.saldo_pendiente)}</p>
                                                 </div>
                                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                                     <p style={{ fontSize: '12px', color: '#9ca3af', margin: 0 }}>
                                                         Emitida: {fmtFecha(v.fecha_venta)}
                                                     </p>
-                                                    {vencida ? (
+                                                    {vencidaV ? (
                                                         <span style={{ backgroundColor: '#fee2e2', color: '#dc2626', padding: '2px 8px', borderRadius: '8px', fontSize: '11px', fontWeight: 600 }}>
-                                                            Vencida hace {diasVencida} días
+                                                            Vencida hace {diasVencidaV} días
                                                         </span>
-                                                    ) : diasRestantes !== null ? (
-                                                        <span style={{ backgroundColor: diasRestantes <= 7 ? '#fef9c3' : '#f0fdf4', color: diasRestantes <= 7 ? '#854d0e' : '#166534', padding: '2px 8px', borderRadius: '8px', fontSize: '11px', fontWeight: 600 }}>
-                                                            Vence en {diasRestantes} días
+                                                    ) : diasRestantesV !== null ? (
+                                                        <span style={{ backgroundColor: diasRestantesV <= 7 ? '#fef9c3' : '#f0fdf4', color: diasRestantesV <= 7 ? '#854d0e' : '#166534', padding: '2px 8px', borderRadius: '8px', fontSize: '11px', fontWeight: 600 }}>
+                                                            Vence en {diasRestantesV} días
                                                         </span>
                                                     ) : (
                                                         <span style={{ backgroundColor: '#f3f4f6', color: '#6b7280', padding: '2px 8px', borderRadius: '8px', fontSize: '11px' }}>
