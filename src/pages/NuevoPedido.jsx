@@ -153,7 +153,7 @@ export default function NuevoPedido({ onCancelar }) {
 // ══════════════════════════════════════════════════════════════
 function HomeVendedor({ onNuevoPedido, onVerClientes, onCancelar }) {
     const { perfil } = useAuth()
-    const [stats, setStats] = useState({ pedidosHoy: 0, montoHoy: 0, clientesHoy: 0 })
+    const [stats, setStats] = useState({ pedidosHoy: 0, montoHoy: 0, clientesHoy: 0, visitasHoy: 0 })
     const [pedidosRecientes, setPedidosRecientes] = useState([])
     const [loading, setLoading] = useState(true)
 
@@ -182,13 +182,20 @@ function HomeVendedor({ onNuevoPedido, onVerClientes, onCancelar }) {
             .order('fecha_pedido', { ascending: false })
             .limit(5)
 
+        const { data: visitasHoyData } = await supabase
+            .from('visitas_comerciales')
+            .select('id')
+            .eq('empresa_id', perfil.empresa_id)
+            .eq('vendedor_id', user.id)
+            .gte('fecha_visita', hoy + 'T00:00:00')
+
         if (pedidosHoy) {
             const montoHoy = pedidosHoy.reduce((sum, p) => {
                 const totalPedido = (p.pedido_items || []).reduce((s, i) => s + Number(i.subtotal || 0), 0)
                 return sum + totalPedido
             }, 0)
             const clientesUnicos = new Set(pedidosHoy.map(p => p.cliente_id)).size
-            setStats({ pedidosHoy: pedidosHoy.length, montoHoy, clientesHoy: clientesUnicos })
+            setStats({ pedidosHoy: pedidosHoy.length, montoHoy, clientesHoy: clientesUnicos, visitasHoy: visitasHoyData?.length || 0 })
         }
         if (recientes) setPedidosRecientes(recientes)
         setLoading(false)
@@ -216,11 +223,12 @@ function HomeVendedor({ onNuevoPedido, onVerClientes, onCancelar }) {
                 </div>
 
                 {/* Stats del día */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px', marginTop: '20px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '20px' }}>
                     {[
                         { label: 'Pedidos hoy', value: stats.pedidosHoy, icon: ShoppingCart },
                         { label: 'Monto hoy', value: fmt(stats.montoHoy), icon: DollarSign, small: true },
                         { label: 'Clientes', value: stats.clientesHoy, icon: Users },
+                        { label: 'Visitas hoy', value: stats.visitasHoy, icon: MapPin },
                     ].map(({ label, value, icon: Icon, small }) => (
                         <div key={label} style={{ backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: '12px', padding: '12px', textAlign: 'center' }}>
                             <Icon size={18} color="rgba(255,255,255,0.8)" style={{ marginBottom: '6px' }} />
@@ -388,14 +396,29 @@ function ListaClientes({ onVerFicha, onNuevoPedido, onVolver }) {
     )
 }
 
+const TIPOS_VISITA = {
+    presencial: 'Presencial',
+    llamada: 'Llamada',
+    whatsapp: 'WhatsApp',
+}
+const RESULTADOS_VISITA = {
+    pedido_tomado: { label: 'Pedido tomado', bg: '#dcfce7', color: '#166534' },
+    sin_pedido: { label: 'Sin pedido', bg: '#f3f4f6', color: '#6b7280' },
+    cliente_ausente: { label: 'Ausente', bg: '#fef9c3', color: '#854d0e' },
+    cerrado: { label: 'Cerrado', bg: '#fee2e2', color: '#991b1b' },
+}
+
 // ══════════════════════════════════════════════════════════════
 // PANTALLA 3: FICHA DEL CLIENTE
 // ══════════════════════════════════════════════════════════════
 function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
     const { perfil } = useAuth()
     const [tabActiva, setTabActiva] = useState('resumen')
-    const [datos, setDatos] = useState(null) // datos cargados: { cxc, pedidos, tasa }
+    const [datos, setDatos] = useState(null)
     const [loading, setLoading] = useState(true)
+    const [modalVisita, setModalVisita] = useState(false)
+    const [visitaForm, setVisitaForm] = useState({ tipo: 'presencial', resultado: 'sin_pedido', notas: '' })
+    const [guardandoVisita, setGuardandoVisita] = useState(false)
 
     useEffect(() => { cargar() }, [])
 
@@ -406,8 +429,8 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
             { data: cobrosData },
             { data: pedidos },
             { data: config },
+            { data: visitasData },
         ] = await Promise.all([
-            // Facturas pendientes o parciales del cliente
             supabase.from('ventas')
                 .select('id, numero_factura, fecha_venta, total, pago_usd, pago_bs, tasa_cambio, estado_cobro, fecha_vencimiento_pago')
                 .eq('cliente_id', cliente.id)
@@ -415,7 +438,6 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
                 .in('estado_cobro', ['pendiente', 'parcial'])
                 .order('fecha_vencimiento_pago', { ascending: true }),
 
-            // Cobros a través de ventas del cliente (cobros no tiene cliente_id directo)
             supabase.from('cobros')
                 .select('id, fecha_cobro, monto_usd, monto_bs, tasa_cambio, tipo_tasa, ventas!inner(cliente_id)')
                 .eq('ventas.cliente_id', cliente.id)
@@ -423,7 +445,6 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
                 .order('fecha_cobro', { ascending: false })
                 .limit(5),
 
-            // Pedidos del cliente
             supabase.from('pedidos')
                 .select('id, numero_pedido, fecha_pedido, estado, pedido_items(producto_id, nombre_producto, cantidad, precio_unitario, descuento_item, subtotal)')
                 .eq('cliente_id', cliente.id)
@@ -431,14 +452,19 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
                 .order('fecha_pedido', { ascending: false })
                 .limit(10),
 
-            // Tasa de cambio actual
             supabase.from('configuracion')
                 .select('tasa_bcv')
                 .eq('empresa_id', perfil.empresa_id)
                 .single(),
+
+            supabase.from('visitas_comerciales')
+                .select('id, fecha_visita, tipo, resultado, notas')
+                .eq('cliente_id', cliente.id)
+                .eq('empresa_id', perfil.empresa_id)
+                .order('fecha_visita', { ascending: false })
+                .limit(20),
         ])
 
-        // Calcular saldo pendiente por venta (total - pago_usd - pago_bs/tasa)
         const ventasConSaldo = (ventas || []).map(v => {
             const pagadoUsd = Number(v.pago_usd || 0)
             const pagadoBsEnUsd = v.tasa_cambio ? Number(v.pago_bs || 0) / Number(v.tasa_cambio) : 0
@@ -451,8 +477,29 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
             cobros: cobrosData || [],
             pedidos: pedidos || [],
             tasa: config?.tasa_bcv || null,
+            visitas: visitasData || [],
         })
         setLoading(false)
+    }
+
+    async function guardarVisita() {
+        setGuardandoVisita(true)
+        const { data: { user } } = await supabase.auth.getUser()
+        const { error } = await supabase.from('visitas_comerciales').insert({
+            empresa_id: perfil.empresa_id,
+            vendedor_id: user.id,
+            cliente_id: cliente.id,
+            fecha_visita: new Date().toISOString(),
+            tipo: visitaForm.tipo,
+            resultado: visitaForm.resultado,
+            notas: visitaForm.notas.trim() || null,
+        })
+        setGuardandoVisita(false)
+        if (!error) {
+            setModalVisita(false)
+            setVisitaForm({ tipo: 'presencial', resultado: 'sin_pedido', notas: '' })
+            cargar()
+        }
     }
 
     const totalCxC = datos?.cxc?.reduce((s, v) => s + Number(v.saldo_pendiente || 0), 0) || 0
@@ -465,6 +512,7 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
         { key: 'resumen', label: 'Resumen' },
         { key: 'cxc', label: `CxC${datos?.cxc?.length ? ` (${datos.cxc.length})` : ''}` },
         { key: 'pedidos', label: 'Pedidos' },
+        { key: 'visitas', label: `Visitas${datos?.visitas?.length ? ` (${datos.visitas.length})` : ''}` },
     ]
 
     return (
@@ -500,7 +548,7 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
                 <div style={{ display: 'flex', gap: '4px', backgroundColor: '#f3f4f6', borderRadius: '10px', padding: '3px' }}>
                     {TABS.map(t => (
                         <button key={t.key} onClick={() => setTabActiva(t.key)}
-                            style={{ flex: 1, padding: '8px 4px', fontSize: '13px', fontWeight: 500, border: 'none', cursor: 'pointer', borderRadius: '8px', transition: 'all 0.15s',
+                            style={{ flex: 1, padding: '8px 2px', fontSize: '11px', fontWeight: 500, border: 'none', cursor: 'pointer', borderRadius: '8px', transition: 'all 0.15s',
                                 backgroundColor: tabActiva === t.key ? '#fff' : 'transparent',
                                 color: tabActiva === t.key ? '#1f2937' : '#6b7280',
                                 boxShadow: tabActiva === t.key ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
@@ -763,6 +811,90 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
                             </button>
                         </>
                     )}
+
+                    {/* ── TAB VISITAS ── */}
+                    {tabActiva === 'visitas' && (
+                        <>
+                            <button onClick={() => setModalVisita(true)} style={{ ...s.btnPrimary, marginBottom: '12px' }}>
+                                <MapPin size={18} /> Registrar visita
+                            </button>
+                            {datos.visitas.length === 0 ? (
+                                <div style={{ ...s.card, textAlign: 'center', padding: '40px' }}>
+                                    <MapPin size={36} color="#d1d5db" style={{ marginBottom: '10px' }} />
+                                    <p style={{ fontSize: '14px', color: '#9ca3af', margin: 0 }}>Sin visitas registradas</p>
+                                </div>
+                            ) : (
+                                <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                                    {datos.visitas.map(v => {
+                                        const res = RESULTADOS_VISITA[v.resultado] || RESULTADOS_VISITA.sin_pedido
+                                        return (
+                                            <div key={v.id} style={{ padding: '14px 16px', borderBottom: '1px solid #f3f4f6' }}>
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: v.notas ? '6px' : 0 }}>
+                                                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                                                        <span style={{ fontSize: '13px', fontWeight: 600, color: '#1f2937' }}>
+                                                            {TIPOS_VISITA[v.tipo] || v.tipo}
+                                                        </span>
+                                                        <span style={{ fontSize: '10px', fontWeight: 600, padding: '2px 8px', borderRadius: '20px', backgroundColor: res.bg, color: res.color }}>
+                                                            {res.label}
+                                                        </span>
+                                                    </div>
+                                                    <p style={{ fontSize: '11px', color: '#9ca3af', margin: 0 }}>{fmtFecha(v.fecha_visita)}</p>
+                                                </div>
+                                                {v.notas && (
+                                                    <p style={{ fontSize: '12px', color: '#6b7280', margin: 0, fontStyle: 'italic' }}>"{v.notas}"</p>
+                                                )}
+                                            </div>
+                                        )
+                                    })}
+                                </div>
+                            )}
+                        </>
+                    )}
+                </div>
+            )}
+
+            {/* ── MODAL REGISTRAR VISITA ── */}
+            {modalVisita && (
+                <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 50, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
+                    onClick={e => { if (e.target === e.currentTarget) setModalVisita(false) }}>
+                    <div style={{ backgroundColor: '#fff', borderRadius: '20px 20px 0 0', padding: '24px 20px 36px', width: '100%', maxWidth: '480px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                            <h2 style={{ fontSize: '18px', fontWeight: 700, color: '#1f2937', margin: 0 }}>Registrar visita</h2>
+                            <button onClick={() => setModalVisita(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', padding: '4px' }}>
+                                <X size={22} />
+                            </button>
+                        </div>
+
+                        <label style={s.label}>Tipo de contacto</label>
+                        <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
+                            {Object.entries(TIPOS_VISITA).map(([key, label]) => (
+                                <button key={key} onClick={() => setVisitaForm(f => ({ ...f, tipo: key }))}
+                                    style={{ flex: 1, padding: '10px 6px', borderRadius: '10px', border: `2px solid ${visitaForm.tipo === key ? '#16a34a' : '#e5e7eb'}`, backgroundColor: visitaForm.tipo === key ? '#f0fdf4' : '#fff', color: visitaForm.tipo === key ? '#16a34a' : '#6b7280', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}>
+                                    {label}
+                                </button>
+                            ))}
+                        </div>
+
+                        <label style={s.label}>Resultado</label>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '20px' }}>
+                            {Object.entries(RESULTADOS_VISITA).map(([key, { label }]) => (
+                                <button key={key} onClick={() => setVisitaForm(f => ({ ...f, resultado: key }))}
+                                    style={{ padding: '10px', borderRadius: '10px', border: `2px solid ${visitaForm.resultado === key ? '#16a34a' : '#e5e7eb'}`, backgroundColor: visitaForm.resultado === key ? '#f0fdf4' : '#fff', color: visitaForm.resultado === key ? '#16a34a' : '#6b7280', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}>
+                                    {label}
+                                </button>
+                            ))}
+                        </div>
+
+                        <label style={s.label}>Notas <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>(opcional)</span></label>
+                        <textarea value={visitaForm.notas} onChange={e => setVisitaForm(f => ({ ...f, notas: e.target.value }))}
+                            rows={3} placeholder="Observaciones de la visita..."
+                            style={{ ...s.input, resize: 'none', fontFamily: 'inherit', marginBottom: '20px' }} />
+
+                        <button onClick={guardarVisita} disabled={guardandoVisita}
+                            style={{ ...s.btnPrimary, opacity: guardandoVisita ? 0.7 : 1 }}>
+                            <Check size={18} /> {guardandoVisita ? 'Guardando...' : 'Guardar visita'}
+                        </button>
+                    </div>
                 </div>
             )}
         </div>
