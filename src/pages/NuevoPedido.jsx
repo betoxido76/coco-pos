@@ -1,10 +1,17 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
-import { Search, Plus, Minus, Trash2, Check, ChevronRight, ChevronLeft, X, Clock, Package } from 'lucide-react'
+import {
+    Search, Plus, Minus, Trash2, Check, ChevronRight, ChevronLeft,
+    X, Clock, Package, ShoppingCart, DollarSign, Users, AlertCircle,
+    TrendingUp, FileText, MapPin, Phone, Building2, CreditCard,
+    RotateCcw, ArrowRight, Calendar, ChevronDown, RefreshCw
+} from 'lucide-react'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
-
+const fmtBs = (n, tasa) => tasa ? `${(Number(n || 0) * tasa).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Bs.` : '—'
+const fmtFecha = (f) => f ? new Date(f).toLocaleDateString('es-VE', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'
+const diasDesde = (f) => f ? Math.floor((Date.now() - new Date(f)) / 86400000) : null
 
 // ══════════════════════════════════════════════════════════════
 // ESTILOS BASE MÓVIL
@@ -80,17 +87,658 @@ const s = {
     },
 }
 
+const ESTADOS_PEDIDO = {
+    pendiente: { bg: '#fef9c3', color: '#854d0e', label: 'Pendiente' },
+    aprobado: { bg: '#dbeafe', color: '#1e40af', label: 'Aprobado' },
+    rechazado: { bg: '#fee2e2', color: '#991b1b', label: 'Rechazado' },
+    facturado: { bg: '#dcfce7', color: '#166534', label: 'Facturado' },
+}
+
 // ══════════════════════════════════════════════════════════════
-// COMPONENTE PRINCIPAL
+// COMPONENTE PRINCIPAL — controla la vista activa
 // ══════════════════════════════════════════════════════════════
-export default function NuevoPedido({ onPedidoCreado, onCancelar }) {
+export default function NuevoPedido({ onCancelar }) {
+    // vista: 'home' | 'clientes' | 'ficha' | 'pedido'
+    const [vista, setVista] = useState('home')
+    const [clienteSeleccionado, setClienteSeleccionado] = useState(null)
+
+    function irAPedido(cliente) {
+        setClienteSeleccionado(cliente)
+        setVista('pedido')
+    }
+
+    function irAFicha(cliente) {
+        setClienteSeleccionado(cliente)
+        setVista('ficha')
+    }
+
+    if (vista === 'home') return (
+        <HomeVendedor
+            onNuevoPedido={() => setVista('clientes')}
+            onVerClientes={() => setVista('clientes')}
+            onCancelar={onCancelar}
+        />
+    )
+
+    if (vista === 'clientes') return (
+        <ListaClientes
+            onVerFicha={irAFicha}
+            onNuevoPedido={irAPedido}
+            onVolver={() => setVista('home')}
+        />
+    )
+
+    if (vista === 'ficha') return (
+        <FichaCliente
+            cliente={clienteSeleccionado}
+            onNuevoPedido={() => setVista('pedido')}
+            onVolver={() => setVista('clientes')}
+        />
+    )
+
+    if (vista === 'pedido') return (
+        <FlujoPedido
+            clienteInicial={clienteSeleccionado}
+            onPedidoCreado={() => setVista('home')}
+            onCancelar={() => setVista(clienteSeleccionado ? 'ficha' : 'home')}
+        />
+    )
+}
+
+// ══════════════════════════════════════════════════════════════
+// PANTALLA 1: HOME DEL VENDEDOR
+// ══════════════════════════════════════════════════════════════
+function HomeVendedor({ onNuevoPedido, onVerClientes, onCancelar }) {
     const { perfil } = useAuth()
-    const [paso, setPaso] = useState(1)
+    const [stats, setStats] = useState({ pedidosHoy: 0, montoHoy: 0, clientesHoy: 0 })
+    const [pedidosRecientes, setPedidosRecientes] = useState([])
+    const [loading, setLoading] = useState(true)
+
+    useEffect(() => {
+        cargar()
+    }, [])
+
+    async function cargar() {
+        setLoading(true)
+        const [
+            { data: ventas },
+            { data: cobrosData },
+            { data: pedidos },
+            { data: config },
+        ] = await Promise.all([
+            // ✅ Facturas pendientes o parciales del cliente
+            supabase.from('ventas')
+                .select('id, numero_factura, fecha_venta, total, pago_usd, pago_bs, tasa_cambio, estado_cobro, fecha_vencimiento_pago')
+                .eq('cliente_id', cliente.id)
+                .eq('empresa_id', perfil.empresa_id)
+                .in('estado_cobro', ['pendiente', 'parcial'])   // ✅ filtro correcto
+                .order('fecha_vencimiento_pago', { ascending: true }),
+
+            // ✅ Cobros a través de ventas del cliente (no hay cliente_id directo)
+            supabase.from('cobros')
+                .select('id, fecha_cobro, monto_usd, monto_bs, tasa_cambio, tipo_tasa, ventas!inner(cliente_id)')
+                .eq('ventas.cliente_id', cliente.id)
+                .eq('empresa_id', perfil.empresa_id)
+                .order('fecha_cobro', { ascending: false })
+                .limit(5),
+
+            supabase.from('pedidos')
+                .select('id, numero_pedido, fecha_pedido, estado, pedido_items(subtotal)')
+                .eq('cliente_id', cliente.id)
+                .eq('empresa_id', perfil.empresa_id)
+                .order('fecha_pedido', { ascending: false })
+                .limit(10),
+
+            supabase.from('configuracion')
+                .select('tasa_bcv')
+                .eq('empresa_id', perfil.empresa_id)
+                .single(),
+        ])
+
+        // ✅ Calcular saldo pendiente por venta
+        const ventasConSaldo = (ventas || []).map(v => {
+            const pagadoUsd = Number(v.pago_usd || 0)
+            const pagadoBsEnUsd = v.tasa_cambio ? Number(v.pago_bs || 0) / Number(v.tasa_cambio) : 0
+            const saldo_pendiente = Number(v.total) - pagadoUsd - pagadoBsEnUsd
+            return { ...v, saldo_pendiente: Math.max(0, saldo_pendiente) }
+        })
+
+        setDatos({
+            cxc: ventasConSaldo,
+            cobros: cobrosData || [],
+            pedidos: pedidos || [],
+            tasa: config?.tasa_bcv || null,
+        })
+        setLoading(false)
+    }
+
+    const hora = new Date().getHours()
+    const saludo = hora < 12 ? 'Buenos días' : hora < 18 ? 'Buenas tardes' : 'Buenas noches'
+    const nombreVendedor = perfil?.nombre?.split(' ')[0] || 'Vendedor'
+
+    return (
+        <div style={s.container}>
+            {/* Header */}
+            <div style={{ background: 'linear-gradient(135deg, #16a34a 0%, #15803d 100%)', padding: '24px 20px 20px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <div>
+                        <p style={{ fontSize: '13px', color: 'rgba(255,255,255,0.75)', margin: '0 0 2px' }}>{saludo},</p>
+                        <h1 style={{ fontSize: '22px', fontWeight: 700, color: '#fff', margin: '0 0 2px' }}>{nombreVendedor}</h1>
+                        <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.6)', margin: 0 }}>
+                            {new Date().toLocaleDateString('es-VE', { weekday: 'long', day: 'numeric', month: 'long' })}
+                        </p>
+                    </div>
+                    <button onClick={cargar} style={{ background: 'rgba(255,255,255,0.15)', border: 'none', borderRadius: '50%', width: '38px', height: '38px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <RefreshCw size={16} color="#fff" />
+                    </button>
+                </div>
+
+                {/* Stats del día */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px', marginTop: '20px' }}>
+                    {[
+                        { label: 'Pedidos hoy', value: stats.pedidosHoy, icon: ShoppingCart },
+                        { label: 'Monto hoy', value: fmt(stats.montoHoy), icon: DollarSign, small: true },
+                        { label: 'Clientes', value: stats.clientesHoy, icon: Users },
+                    ].map(({ label, value, icon: Icon, small }) => (
+                        <div key={label} style={{ backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: '12px', padding: '12px', textAlign: 'center' }}>
+                            <Icon size={18} color="rgba(255,255,255,0.8)" style={{ marginBottom: '6px' }} />
+                            <p style={{ fontSize: small ? '14px' : '20px', fontWeight: 700, color: '#fff', margin: '0 0 2px' }}>{loading ? '—' : value}</p>
+                            <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.65)', margin: 0 }}>{label}</p>
+                        </div>
+                    ))}
+                </div>
+            </div>
+
+            <div style={{ padding: '16px' }}>
+                {/* Acciones rápidas */}
+                <p style={s.label}>Acciones rápidas</p>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '20px' }}>
+                    <button onClick={onNuevoPedido}
+                        style={{ backgroundColor: '#fff', border: '2px solid #16a34a', borderRadius: '14px', padding: '18px 14px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', color: '#16a34a' }}>
+                        <div style={{ width: '44px', height: '44px', backgroundColor: '#f0fdf4', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <Plus size={22} color="#16a34a" />
+                        </div>
+                        <span style={{ fontSize: '14px', fontWeight: 700, color: '#1f2937' }}>Nuevo pedido</span>
+                        <span style={{ fontSize: '11px', color: '#9ca3af', textAlign: 'center' }}>Tomar pedido a un cliente</span>
+                    </button>
+
+                    <button onClick={onVerClientes}
+                        style={{ backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '14px', padding: '18px 14px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+                        <div style={{ width: '44px', height: '44px', backgroundColor: '#eff6ff', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <Users size={22} color="#3b82f6" />
+                        </div>
+                        <span style={{ fontSize: '14px', fontWeight: 700, color: '#1f2937' }}>Mis clientes</span>
+                        <span style={{ fontSize: '11px', color: '#9ca3af', textAlign: 'center' }}>Ver ficha y estado de cuenta</span>
+                    </button>
+                </div>
+
+                {/* Pedidos recientes */}
+                <p style={s.label}>Mis pedidos recientes</p>
+                <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                    {loading ? (
+                        <div style={{ padding: '28px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
+                    ) : pedidosRecientes.length === 0 ? (
+                        <div style={{ padding: '32px', textAlign: 'center' }}>
+                            <ShoppingCart size={32} color="#d1d5db" style={{ marginBottom: '8px' }} />
+                            <p style={{ color: '#9ca3af', fontSize: '14px', margin: 0 }}>Aún no has tomado pedidos</p>
+                        </div>
+                    ) : pedidosRecientes.map(p => {
+                        const total = (p.pedido_items || []).reduce((s, i) => s + Number(i.subtotal || 0), 0)
+                        const est = ESTADOS_PEDIDO[p.estado] || ESTADOS_PEDIDO.pendiente
+                        return (
+                            <div key={p.id} style={{ padding: '14px 16px', borderBottom: '1px solid #f3f4f6', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <div>
+                                    <p style={{ fontSize: '14px', fontWeight: 600, color: '#1f2937', margin: '0 0 2px' }}>{p.clientes?.nombre}</p>
+                                    <p style={{ fontSize: '12px', color: '#9ca3af', margin: '0 0 4px', fontFamily: 'monospace' }}>{p.numero_pedido}</p>
+                                    <p style={{ fontSize: '11px', color: '#9ca3af', margin: 0 }}>{fmtFecha(p.fecha_pedido)}</p>
+                                </div>
+                                <div style={{ textAlign: 'right' }}>
+                                    <p style={{ fontSize: '15px', fontWeight: 700, color: '#1f2937', margin: '0 0 4px' }}>{fmt(total)}</p>
+                                    <span style={{ backgroundColor: est.bg, color: est.color, padding: '2px 8px', borderRadius: '20px', fontSize: '11px', fontWeight: 500 }}>
+                                        {est.label}
+                                    </span>
+                                </div>
+                            </div>
+                        )
+                    })}
+                </div>
+            </div>
+        </div>
+    )
+}
+
+// ══════════════════════════════════════════════════════════════
+// PANTALLA 2: LISTA DE CLIENTES
+// ══════════════════════════════════════════════════════════════
+function ListaClientes({ onVerFicha, onNuevoPedido, onVolver }) {
+    const { perfil } = useAuth()
+    const [clientes, setClientes] = useState([])
+    const [busq, setBusq] = useState('')
+    const [loading, setLoading] = useState(true)
+
+    useEffect(() => {
+        supabase.from('clientes')
+            .select('id, nombre, rif, condicion_pago, dias_credito, telefono')
+            .eq('activo', true)
+            .eq('empresa_id', perfil.empresa_id)
+            .order('nombre')
+            .then(({ data }) => { setClientes(data || []); setLoading(false) })
+    }, [])
+
+    const filtrados = clientes.filter(c =>
+        c.nombre.toLowerCase().includes(busq.toLowerCase()) ||
+        c.rif?.toLowerCase().includes(busq.toLowerCase())
+    )
+
+    return (
+        <div style={s.container}>
+            <div style={s.header}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
+                    <button onClick={onVolver} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', padding: '4px' }}>
+                        <ChevronLeft size={22} />
+                    </button>
+                    <h1 style={{ fontSize: '18px', fontWeight: 700, color: '#1f2937', margin: 0 }}>Clientes</h1>
+                </div>
+                <div style={{ position: 'relative' }}>
+                    <Search size={18} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
+                    <input autoFocus type="text" placeholder="Buscar por nombre o RIF..."
+                        value={busq} onChange={e => setBusq(e.target.value)}
+                        style={{ ...s.input, paddingLeft: '42px', fontSize: '15px' }} />
+                </div>
+            </div>
+
+            <div style={{ padding: '12px 16px' }}>
+                {loading ? (
+                    <p style={{ textAlign: 'center', color: '#9ca3af', padding: '40px 0', fontSize: '14px' }}>Cargando clientes...</p>
+                ) : (
+                    <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                        {filtrados.length === 0 ? (
+                            <div style={{ padding: '40px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>
+                                {busq ? 'Sin resultados' : 'Escribe para buscar'}
+                            </div>
+                        ) : filtrados.map(c => (
+                            <div key={c.id}
+                                style={{ padding: '14px 16px', borderBottom: '1px solid #f3f4f6', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                                onTouchStart={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
+                                onTouchEnd={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                                <div style={{ flex: 1 }} onClick={() => onVerFicha(c)}>
+                                    <p style={{ fontSize: '15px', fontWeight: 600, color: '#1f2937', margin: '0 0 2px' }}>{c.nombre}</p>
+                                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                        {c.rif && <span style={{ fontSize: '11px', color: '#9ca3af', fontFamily: 'monospace' }}>{c.rif}</span>}
+                                        <span style={{
+                                            fontSize: '10px', fontWeight: 500, padding: '1px 6px', borderRadius: '8px',
+                                            backgroundColor: c.condicion_pago === 'credito' ? '#dbeafe' : '#f0fdf4',
+                                            color: c.condicion_pago === 'credito' ? '#1e40af' : '#166534'
+                                        }}>
+                                            {c.condicion_pago === 'credito' ? `Crédito ${c.dias_credito}d` : 'Contado'}
+                                        </span>
+                                    </div>
+                                </div>
+                                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                    <button onClick={() => onNuevoPedido(c)}
+                                        style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '7px 10px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: '#16a34a', fontWeight: 600 }}>
+                                        <Plus size={13} /> Pedido
+                                    </button>
+                                    <button onClick={() => onVerFicha(c)}
+                                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#d1d5db', padding: '4px' }}>
+                                        <ChevronRight size={20} />
+                                    </button>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
+        </div>
+    )
+}
+
+// ══════════════════════════════════════════════════════════════
+// PANTALLA 3: FICHA DEL CLIENTE
+// ══════════════════════════════════════════════════════════════
+function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
+    const { perfil } = useAuth()
+    const [tabActiva, setTabActiva] = useState('resumen')
+    const [datos, setDatos] = useState(null) // datos cargados: { cxc, pedidos, tasa }
+    const [loading, setLoading] = useState(true)
+
+    useEffect(() => { cargar() }, [])
+
+    async function cargar() {
+        setLoading(true)
+        const [
+            { data: ventas },
+            { data: cobros },
+            { data: pedidos },
+            { data: config },
+        ] = await Promise.all([
+            // Facturas del cliente
+            supabase.from('ventas')
+                .select('id, numero_factura, fecha_venta, total, saldo_pendiente, condicion_pago, fecha_vencimiento')
+                .eq('cliente_id', cliente.id)
+                .eq('empresa_id', perfil.empresa_id)
+                .gt('saldo_pendiente', 0)
+                .order('fecha_vencimiento', { ascending: true }),
+
+            // Cobros recientes
+            supabase.from('cobros')
+                .select('id, fecha_cobro, monto_usd, monto_bs, tipo_tasa, tasa_cambio')
+                .eq('cliente_id', cliente.id)
+                .eq('empresa_id', perfil.empresa_id)
+                .order('fecha_cobro', { ascending: false })
+                .limit(5),
+
+            // Pedidos del cliente
+            supabase.from('pedidos')
+                .select('id, numero_pedido, fecha_pedido, estado, pedido_items(subtotal)')
+                .eq('cliente_id', cliente.id)
+                .eq('empresa_id', perfil.empresa_id)
+                .order('fecha_pedido', { ascending: false })
+                .limit(10),
+
+            // Tasa de cambio
+            supabase.from('configuracion')
+                .select('tasa_bcv')
+                .eq('empresa_id', perfil.empresa_id)
+                .single(),
+        ])
+
+        setDatos({
+            cxc: ventas || [],
+            cobros: cobros || [],
+            pedidos: pedidos || [],
+            tasa: config?.tasa_bcv || null,
+        })
+        setLoading(false)
+    }
+
+    const totalCxC = datos?.cxc?.reduce((s, v) => s + Number(v.saldo_pendiente || 0), 0) || 0
+    const hoy = new Date()
+    const facturasVencidas = datos?.cxc?.filter(v => v.fecha_vencimiento && new Date(v.fecha_vencimiento) < hoy) || []
+    const montoVencido = facturasVencidas.reduce((s, v) => s + Number(v.saldo_pendiente || 0), 0)
+    const ultimoPedido = datos?.pedidos?.[0]
+
+    const TABS = [
+        { key: 'resumen', label: 'Resumen' },
+        { key: 'cxc', label: `CxC${datos?.cxc?.length ? ` (${datos.cxc.length})` : ''}` },
+        { key: 'pedidos', label: 'Pedidos' },
+    ]
+
+    return (
+        <div style={s.container}>
+            {/* Header */}
+            <div style={{ backgroundColor: '#fff', borderBottom: '1px solid #e5e7eb', padding: '16px', position: 'sticky', top: 0, zIndex: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+                    <button onClick={onVolver} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', padding: '4px' }}>
+                        <ChevronLeft size={22} />
+                    </button>
+                    <div style={{ flex: 1 }}>
+                        <h1 style={{ fontSize: '16px', fontWeight: 700, color: '#1f2937', margin: 0, lineHeight: 1.2 }}>{cliente.nombre}</h1>
+                        {cliente.rif && <p style={{ fontSize: '12px', color: '#9ca3af', margin: '2px 0 0', fontFamily: 'monospace' }}>{cliente.rif}</p>}
+                    </div>
+                    <button onClick={onNuevoPedido}
+                        style={{ backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '10px', padding: '10px 14px', fontSize: '13px', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }}>
+                        <Plus size={14} /> Pedido
+                    </button>
+                </div>
+
+                {/* Alerta saldo vencido */}
+                {!loading && montoVencido > 0 && (
+                    <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '10px', padding: '10px 12px', display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '12px' }}>
+                        <AlertCircle size={18} color="#dc2626" style={{ flexShrink: 0 }} />
+                        <div>
+                            <p style={{ fontSize: '13px', fontWeight: 600, color: '#dc2626', margin: 0 }}>Tiene {facturasVencidas.length} factura(s) vencida(s)</p>
+                            <p style={{ fontSize: '12px', color: '#ef4444', margin: 0 }}>Monto vencido: {fmt(montoVencido)}</p>
+                        </div>
+                    </div>
+                )}
+
+                {/* Tabs */}
+                <div style={{ display: 'flex', gap: '4px', backgroundColor: '#f3f4f6', borderRadius: '10px', padding: '3px' }}>
+                    {TABS.map(t => (
+                        <button key={t.key} onClick={() => setTabActiva(t.key)}
+                            style={{
+                                flex: 1, padding: '8px 4px', fontSize: '13px', fontWeight: 500, border: 'none', cursor: 'pointer', borderRadius: '8px', transition: 'all 0.15s',
+                                backgroundColor: tabActiva === t.key ? '#fff' : 'transparent',
+                                color: tabActiva === t.key ? '#1f2937' : '#6b7280',
+                                boxShadow: tabActiva === t.key ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                            }}>
+                            {t.label}
+                        </button>
+                    ))}
+                </div>
+            </div>
+
+            {loading ? (
+                <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando ficha...</div>
+            ) : (
+                <div style={{ padding: '16px' }}>
+                    {/* ── TAB RESUMEN ── */}
+                    {tabActiva === 'resumen' && (
+                        <>
+                            {/* Semáforo financiero */}
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '16px' }}>
+                                <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: `2px solid ${montoVencido > 0 ? '#fecaca' : '#e5e7eb'}`, padding: '14px' }}>
+                                    <p style={{ fontSize: '11px', fontWeight: 600, color: '#9ca3af', textTransform: 'uppercase', margin: '0 0 6px' }}>Saldo total CxC</p>
+                                    <p style={{ fontSize: '20px', fontWeight: 800, color: totalCxC > 0 ? '#dc2626' : '#16a34a', margin: '0 0 2px' }}>{fmt(totalCxC)}</p>
+                                    <p style={{ fontSize: '11px', color: '#9ca3af', margin: 0 }}>{datos.cxc.length} factura(s) pendiente(s)</p>
+                                </div>
+                                <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: `2px solid ${montoVencido > 0 ? '#fecaca' : '#e5e7eb'}`, padding: '14px' }}>
+                                    <p style={{ fontSize: '11px', fontWeight: 600, color: '#9ca3af', textTransform: 'uppercase', margin: '0 0 6px' }}>Monto vencido</p>
+                                    <p style={{ fontSize: '20px', fontWeight: 800, color: montoVencido > 0 ? '#dc2626' : '#16a34a', margin: '0 0 2px' }}>{fmt(montoVencido)}</p>
+                                    <p style={{ fontSize: '11px', color: '#9ca3af', margin: 0 }}>{facturasVencidas.length} factura(s) vencida(s)</p>
+                                </div>
+                            </div>
+
+                            {/* Info del cliente */}
+                            <div style={{ ...s.card }}>
+                                <p style={s.label}>Datos del cliente</p>
+                                {[
+                                    { icon: Building2, label: 'Condición de pago', value: cliente.condicion_pago === 'credito' ? `Crédito a ${cliente.dias_credito} días` : 'Contado' },
+                                    { icon: Phone, label: 'Teléfono', value: cliente.telefono || 'No registrado' },
+                                ].map(({ icon: Icon, label, value }) => (
+                                    <div key={label} style={{ display: 'flex', gap: '12px', alignItems: 'center', paddingBottom: '12px', marginBottom: '12px', borderBottom: '1px solid #f3f4f6' }}>
+                                        <div style={{ width: '36px', height: '36px', backgroundColor: '#f3f4f6', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                            <Icon size={16} color="#6b7280" />
+                                        </div>
+                                        <div>
+                                            <p style={{ fontSize: '11px', color: '#9ca3af', margin: '0 0 1px' }}>{label}</p>
+                                            <p style={{ fontSize: '14px', fontWeight: 500, color: '#1f2937', margin: 0 }}>{value}</p>
+                                        </div>
+                                    </div>
+                                ))}
+
+                                {/* Último pedido */}
+                                {ultimoPedido && (
+                                    <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                                        <div style={{ width: '36px', height: '36px', backgroundColor: '#f3f4f6', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                            <ShoppingCart size={16} color="#6b7280" />
+                                        </div>
+                                        <div>
+                                            <p style={{ fontSize: '11px', color: '#9ca3af', margin: '0 0 1px' }}>Último pedido</p>
+                                            <p style={{ fontSize: '14px', fontWeight: 500, color: '#1f2937', margin: 0 }}>
+                                                {fmtFecha(ultimoPedido.fecha_pedido)}
+                                                <span style={{ marginLeft: '6px', fontSize: '11px', fontWeight: 400, color: '#9ca3af' }}>
+                                                    hace {diasDesde(ultimoPedido.fecha_pedido)} días
+                                                </span>
+                                            </p>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Acceso rápido a las otras tabs */}
+                            {totalCxC > 0 && (
+                                <button onClick={() => setTabActiva('cxc')}
+                                    style={{ ...s.btnSecondary, display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+                                    <span style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#374151' }}>
+                                        <CreditCard size={16} color="#dc2626" /> Ver estado de cuenta detallado
+                                    </span>
+                                    <ArrowRight size={16} color="#9ca3af" />
+                                </button>
+                            )}
+
+                            <button onClick={onNuevoPedido} style={s.btnPrimary}>
+                                <Plus size={18} /> Tomar pedido
+                            </button>
+                        </>
+                    )}
+
+                    {/* ── TAB CxC ── */}
+                    {tabActiva === 'cxc' && (
+                        <>
+                            {/* Resumen totales */}
+                            <div style={{ ...s.card, backgroundColor: totalCxC > 0 ? '#fef2f2' : '#f0fdf4', border: `1px solid ${totalCxC > 0 ? '#fecaca' : '#bbf7d0'}` }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <div>
+                                        <p style={{ fontSize: '12px', fontWeight: 600, color: totalCxC > 0 ? '#dc2626' : '#16a34a', margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                            Saldo pendiente total
+                                        </p>
+                                        <p style={{ fontSize: '26px', fontWeight: 800, color: totalCxC > 0 ? '#dc2626' : '#16a34a', margin: 0 }}>{fmt(totalCxC)}</p>
+                                        {datos.tasa && <p style={{ fontSize: '12px', color: '#9ca3af', margin: '2px 0 0' }}>{fmtBs(totalCxC, datos.tasa)} @ BCV</p>}
+                                    </div>
+                                    {montoVencido > 0 && (
+                                        <div style={{ textAlign: 'right' }}>
+                                            <p style={{ fontSize: '11px', color: '#dc2626', margin: '0 0 2px', fontWeight: 600 }}>Vencido</p>
+                                            <p style={{ fontSize: '18px', fontWeight: 700, color: '#dc2626', margin: 0 }}>{fmt(montoVencido)}</p>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Lista de facturas */}
+                            {datos.cxc.length === 0 ? (
+                                <div style={{ ...s.card, textAlign: 'center', padding: '40px' }}>
+                                    <Check size={36} color="#16a34a" style={{ marginBottom: '10px' }} />
+                                    <p style={{ fontSize: '15px', fontWeight: 600, color: '#166534', margin: '0 0 4px' }}>Al día</p>
+                                    <p style={{ fontSize: '13px', color: '#9ca3af', margin: 0 }}>No tiene facturas pendientes</p>
+                                </div>
+                            ) : (
+                                <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden', marginBottom: '12px' }}>
+                                    <div style={{ padding: '10px 14px', backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                                        <p style={{ fontSize: '12px', fontWeight: 600, color: '#6b7280', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                            {datos.cxc.length} factura(s) con saldo pendiente
+                                        </p>
+                                    </div>
+                                    {datos.cxc.map(v => {
+                                        const vencida = v.fecha_vencimiento_pago && new Date(v.fecha_vencimiento_pago) < hoy
+                                        const diasRestantes = !vencida && v.fecha_vencimiento_pago
+                                            ? Math.ceil((new Date(v.fecha_vencimiento_pago) - hoy) / 86400000)
+                                            : null
+                                        const diasVencida = vencida ? diasDesde(v.fecha_vencimiento) : null
+                                        const diasRestantes = !vencida && v.fecha_vencimiento
+                                            ? Math.ceil((new Date(v.fecha_vencimiento) - hoy) / 86400000)
+                                            : null
+                                        return (
+                                            <div key={v.id} style={{ padding: '14px 16px', borderBottom: '1px solid #f3f4f6', borderLeft: `4px solid ${vencida ? '#ef4444' : '#16a34a'}` }}>
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                                                    <p style={{ fontSize: '14px', fontWeight: 600, color: '#1f2937', margin: 0, fontFamily: 'monospace' }}>{v.numero_factura}</p>
+                                                    <p style={{ fontSize: '15px', fontWeight: 700, color: vencida ? '#dc2626' : '#1f2937', margin: 0 }}>{fmt(v.saldo_pendiente)}</p>
+                                                </div>
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                    <p style={{ fontSize: '12px', color: '#9ca3af', margin: 0 }}>
+                                                        Emitida: {fmtFecha(v.fecha_venta)}
+                                                    </p>
+                                                    {vencida ? (
+                                                        <span style={{ backgroundColor: '#fee2e2', color: '#dc2626', padding: '2px 8px', borderRadius: '8px', fontSize: '11px', fontWeight: 600 }}>
+                                                            Vencida hace {diasVencida} días
+                                                        </span>
+                                                    ) : diasRestantes !== null ? (
+                                                        <span style={{ backgroundColor: diasRestantes <= 7 ? '#fef9c3' : '#f0fdf4', color: diasRestantes <= 7 ? '#854d0e' : '#166534', padding: '2px 8px', borderRadius: '8px', fontSize: '11px', fontWeight: 600 }}>
+                                                            Vence en {diasRestantes} días
+                                                        </span>
+                                                    ) : (
+                                                        <span style={{ backgroundColor: '#f3f4f6', color: '#6b7280', padding: '2px 8px', borderRadius: '8px', fontSize: '11px' }}>
+                                                            Contado
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                {datos.tasa && (
+                                                    <p style={{ fontSize: '11px', color: '#9ca3af', margin: '4px 0 0' }}>
+                                                        ≈ {fmtBs(v.saldo_pendiente, datos.tasa)} @ BCV
+                                                    </p>
+                                                )}
+                                            </div>
+                                        )
+                                    })}
+                                </div>
+                            )}
+
+                            {/* Cobros recientes */}
+                            {datos.cobros.length > 0 && (
+                                <>
+                                    <p style={{ ...s.label, marginTop: '4px' }}>Últimos cobros registrados</p>
+                                    <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                                        {datos.cobros.map(c => {
+                                            const montoTotal = Number(c.monto_usd || 0) + (c.monto_bs && c.tasa_cambio ? Number(c.monto_bs) / Number(c.tasa_cambio) : 0)
+                                            return (
+                                                <div key={c.id} style={{ padding: '12px 16px', borderBottom: '1px solid #f3f4f6', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                    <div>
+                                                        <p style={{ fontSize: '13px', fontWeight: 500, color: '#1f2937', margin: '0 0 2px' }}>Cobro recibido</p>
+                                                        <p style={{ fontSize: '12px', color: '#9ca3af', margin: 0 }}>{fmtFecha(c.fecha_cobro)}</p>
+                                                    </div>
+                                                    <p style={{ fontSize: '15px', fontWeight: 700, color: '#16a34a', margin: 0 }}>{fmt(montoTotal)}</p>
+                                                </div>
+                                            )
+                                        })}
+                                    </div>
+                                </>
+                            )}
+                        </>
+                    )}
+
+                    {/* ── TAB PEDIDOS ── */}
+                    {tabActiva === 'pedidos' && (
+                        <>
+                            {datos.pedidos.length === 0 ? (
+                                <div style={{ ...s.card, textAlign: 'center', padding: '40px' }}>
+                                    <ShoppingCart size={36} color="#d1d5db" style={{ marginBottom: '10px' }} />
+                                    <p style={{ fontSize: '14px', color: '#9ca3af', margin: 0 }}>Sin pedidos registrados</p>
+                                </div>
+                            ) : (
+                                <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden', marginBottom: '12px' }}>
+                                    {datos.pedidos.map(p => {
+                                        const total = (p.pedido_items || []).reduce((s, i) => s + Number(i.subtotal || 0), 0)
+                                        const est = ESTADOS_PEDIDO[p.estado] || ESTADOS_PEDIDO.pendiente
+                                        return (
+                                            <div key={p.id} style={{ padding: '14px 16px', borderBottom: '1px solid #f3f4f6', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                <div>
+                                                    <p style={{ fontSize: '13px', fontWeight: 600, color: '#1f2937', margin: '0 0 2px', fontFamily: 'monospace' }}>{p.numero_pedido}</p>
+                                                    <p style={{ fontSize: '12px', color: '#9ca3af', margin: 0 }}>{fmtFecha(p.fecha_pedido)}</p>
+                                                </div>
+                                                <div style={{ textAlign: 'right' }}>
+                                                    <p style={{ fontSize: '14px', fontWeight: 700, color: '#1f2937', margin: '0 0 4px' }}>{fmt(total)}</p>
+                                                    <span style={{ backgroundColor: est.bg, color: est.color, padding: '2px 8px', borderRadius: '20px', fontSize: '11px', fontWeight: 500 }}>
+                                                        {est.label}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        )
+                                    })}
+                                </div>
+                            )}
+                            <button onClick={onNuevoPedido} style={s.btnPrimary}>
+                                <Plus size={18} /> Tomar nuevo pedido
+                            </button>
+                        </>
+                    )}
+                </div>
+            )}
+        </div>
+    )
+}
+
+// ══════════════════════════════════════════════════════════════
+// PANTALLA 4: FLUJO DE PEDIDO (igual al original, refactorizado)
+// ══════════════════════════════════════════════════════════════
+function FlujoPedido({ clienteInicial, onPedidoCreado, onCancelar }) {
+    const { perfil } = useAuth()
+    const [paso, setPaso] = useState(clienteInicial ? 2 : 1)
 
     // Paso 1 — Cliente
     const [clientes, setClientes] = useState([])
     const [busqCliente, setBusqCliente] = useState('')
-    const [clienteSel, setClienteSel] = useState(null)
+    const [clienteSel, setClienteSel] = useState(clienteInicial || null)
     const [direcciones, setDirecciones] = useState([])
     const [direccionId, setDireccionId] = useState('')
 
@@ -109,23 +757,15 @@ export default function NuevoPedido({ onPedidoCreado, onCancelar }) {
     const [error, setError] = useState('')
     const [pedidoCreado, setPedidoCreado] = useState(null)
 
-    // Historial cliente
-    const [verHistorial, setVerHistorial] = useState(false)
-    const [historial, setHistorial] = useState([])
-
     useEffect(() => {
         supabase.from('clientes')
             .select('id, nombre, rif, condicion_pago, dias_credito')
-            .eq('activo', true)
-            .eq('empresa_id', perfil.empresa_id)
-            .order('nombre')
+            .eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
             .then(({ data }) => setClientes(data || []))
 
         supabase.from('listas_precio')
             .select('id, nombre, es_default')
-            .eq('activo', true)
-            .eq('empresa_id', perfil.empresa_id)
-            .order('nombre')
+            .eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
             .then(({ data }) => {
                 if (data) {
                     setListas(data)
@@ -134,71 +774,59 @@ export default function NuevoPedido({ onPedidoCreado, onCancelar }) {
                     else if (data.length > 0) setListaId(data[0].id)
                 }
             })
+
+        // Si hay cliente inicial, cargar sus direcciones
+        if (clienteInicial) {
+            supabase.from('direcciones_entrega')
+                .select('*').eq('cliente_id', clienteInicial.id)
+                .eq('empresa_id', perfil.empresa_id).eq('activo', true)
+                .order('es_principal', { ascending: false })
+                .then(({ data }) => {
+                    if (data) {
+                        setDirecciones(data)
+                        const p = data.find(d => d.es_principal)
+                        if (p) setDireccionId(p.id)
+                        else if (data.length === 1) setDireccionId(data[0].id)
+                    }
+                })
+        }
     }, [])
 
-    // Cargar productos cuando cambia la lista
     useEffect(() => {
         if (!listaId) return
         supabase.from('producto_precios')
             .select('precio, productos_terminados(id, nombre, sku, unidad_medida)')
-            .eq('lista_id', listaId)
-            .eq('empresa_id', perfil.empresa_id)
+            .eq('lista_id', listaId).eq('empresa_id', perfil.empresa_id)
             .then(({ data }) => {
                 if (data) {
-                    const prods = data
-                        .filter(p => p.productos_terminados)
-                        .map(p => ({
-                            id: p.productos_terminados.id,
-                            nombre: p.productos_terminados.nombre,
-                            sku: p.productos_terminados.sku,
-                            unidad_medida: p.productos_terminados.unidad_medida,
-                            precio: Number(p.precio),
-                        }))
-                    setProductos(prods)
+                    setProductos(data.filter(p => p.productos_terminados).map(p => ({
+                        id: p.productos_terminados.id,
+                        nombre: p.productos_terminados.nombre,
+                        sku: p.productos_terminados.sku,
+                        unidad_medida: p.productos_terminados.unidad_medida,
+                        precio: Number(p.precio),
+                    })))
                 }
             })
     }, [listaId])
 
-    // Cargar historial del cliente
-    async function cargarHistorial(clienteId) {
-        const { data } = await supabase.from('pedidos')
-            .select('numero_pedido, fecha_pedido, estado')
-            .eq('cliente_id', clienteId)
-            .eq('empresa_id', perfil.empresa_id)
-            .order('fecha_pedido', { ascending: false })
-            .limit(10)
-        if (data) setHistorial(data)
-        setVerHistorial(true)
-    }
-
     async function seleccionarCliente(c) {
-        setClienteSel(c)
-        setBusqCliente('')
-        setDireccionId('')
-        // Cargar direcciones del cliente
+        setClienteSel(c); setBusqCliente(''); setDireccionId('')
         const { data } = await supabase.from('direcciones_entrega')
-            .select('*')
-            .eq('cliente_id', c.id)
-            .eq('empresa_id', perfil.empresa_id)
-            .eq('activo', true)
-            .order('es_principal', { ascending: false })
-            .order('nombre')
+            .select('*').eq('cliente_id', c.id).eq('empresa_id', perfil.empresa_id)
+            .eq('activo', true).order('es_principal', { ascending: false }).order('nombre')
         if (data) {
             setDirecciones(data)
-            // Auto-seleccionar la principal si existe
-            const principal = data.find(d => d.es_principal)
-            if (principal) setDireccionId(principal.id)
+            const p = data.find(d => d.es_principal)
+            if (p) setDireccionId(p.id)
             else if (data.length === 1) setDireccionId(data[0].id)
-        } else {
-            setDirecciones([])
-        }
+        } else setDirecciones([])
     }
 
     const clientesFiltrados = clientes.filter(c =>
         c.nombre.toLowerCase().includes(busqCliente.toLowerCase()) ||
         c.rif?.toLowerCase().includes(busqCliente.toLowerCase())
     )
-
     const productosFiltrados = productos.filter(p =>
         p.nombre.toLowerCase().includes(busqProducto.toLowerCase()) ||
         p.sku?.toLowerCase().includes(busqProducto.toLowerCase())
@@ -214,10 +842,7 @@ export default function NuevoPedido({ onPedidoCreado, onCancelar }) {
     }
 
     function cambiarCantidad(id, delta) {
-        setItems(prev => prev.map(i => i.id === id
-            ? { ...i, cantidad: Math.max(1, i.cantidad + delta) }
-            : i
-        ))
+        setItems(prev => prev.map(i => i.id === id ? { ...i, cantidad: Math.max(1, i.cantidad + delta) } : i))
     }
 
     function setCantidadDirecta(id, valor) {
@@ -230,11 +855,8 @@ export default function NuevoPedido({ onPedidoCreado, onCancelar }) {
         setItems(prev => prev.map(i => i.id === id ? { ...i, descuento_item: desc } : i))
     }
 
-    function eliminarItem(id) {
-        setItems(prev => prev.filter(i => i.id !== id))
-    }
+    function eliminarItem(id) { setItems(prev => prev.filter(i => i.id !== id)) }
 
-    // Cálculos
     const totalConDescItems = items.reduce((s, i) => s + i.cantidad * i.precio * (1 - Number(i.descuento_item || 0) / 100), 0)
     const totalConIVA = totalConDescItems * (1 - Number(descuentoGlobal || 0) / 100)
     const subtotal = totalConIVA / 1.16
@@ -244,9 +866,7 @@ export default function NuevoPedido({ onPedidoCreado, onCancelar }) {
     async function guardar() {
         setGuardando(true); setError('')
         const { data: { user } } = await supabase.auth.getUser()
-        const { data: numeroConsecutivo } = await supabase.rpc('obtener_siguiente_pedidos_numero', {
-            p_empresa_id: perfil.empresa_id
-        })
+        const { data: numeroConsecutivo } = await supabase.rpc('obtener_siguiente_pedidos_numero', { p_empresa_id: perfil.empresa_id })
         const numero = numeroConsecutivo || 'PED-000001'
 
         const { data: pedido, error: errPedido } = await supabase.from('pedidos').insert({
@@ -261,55 +881,38 @@ export default function NuevoPedido({ onPedidoCreado, onCancelar }) {
             notas: notas.trim() || null,
             numero_pedido: numero,
             direccion_entrega_id: direccionId || null,
-            direccion_entrega_texto: direccionId
-                ? direcciones.find(d => d.id === direccionId)?.direccion || null
-                : null,
+            direccion_entrega_texto: direccionId ? direcciones.find(d => d.id === direccionId)?.direccion || null : null,
         }).select().single()
 
         if (errPedido) { setError('Error: ' + errPedido.message); setGuardando(false); return }
 
         await supabase.from('pedido_items').insert(
             items.map(i => ({
-                pedido_id: pedido.id,
-                empresa_id: perfil.empresa_id,
-                producto_id: i.id,
-                nombre_producto: i.nombre,
-                cantidad: i.cantidad,
-                precio_unitario: i.precio / 1.16,
+                pedido_id: pedido.id, empresa_id: perfil.empresa_id,
+                producto_id: i.id, nombre_producto: i.nombre,
+                cantidad: i.cantidad, precio_unitario: i.precio / 1.16,
                 descuento_item: Number(i.descuento_item) || 0,
                 subtotal: i.cantidad * i.precio * (1 - Number(i.descuento_item || 0) / 100),
             }))
         )
-
-        setGuardando(false)
-        setPedidoCreado(pedido)
+        setGuardando(false); setPedidoCreado(pedido)
     }
 
-    // ── PANTALLA DE ÉXITO ──
+    const pasoTotal = clienteInicial ? 2 : 3
+    const pasoActual = clienteInicial ? paso - 1 : paso
+
+    // ── ÉXITO ──
     if (pedidoCreado) return (
-        <div style={{ ...s.container, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 24px' }}>
+        <div style={{ ...s.container, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 24px', minHeight: '100vh' }}>
             <div style={{ width: '72px', height: '72px', backgroundColor: '#dcfce7', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '20px' }}>
-                <Check size={36} style={{ color: '#16a34a' }} />
+                <Check size={36} color="#16a34a" />
             </div>
             <h2 style={{ fontSize: '22px', fontWeight: 700, color: '#1f2937', margin: '0 0 8px', textAlign: 'center' }}>¡Pedido enviado!</h2>
-            <p style={{ fontSize: '15px', color: '#6b7280', margin: '0 0 6px', textAlign: 'center' }}>
-                {pedidoCreado.numero_pedido}
-            </p>
-            <p style={{ fontSize: '13px', color: '#9ca3af', margin: '0 0 32px', textAlign: 'center' }}>
-                El pedido está pendiente de aprobación en la oficina
-            </p>
-            <button onClick={() => {
-                setPedidoCreado(null); setPaso(1); setClienteSel(null)
-                setBusqCliente(''); setItems([]); setNotas(''); setFechaEntrega('')
-                setDescuentoGlobal(''); setDirecciones([]); setDireccionId('')
-            }} style={s.btnPrimary}>
-                <Plus size={18} /> Nuevo pedido
+            <p style={{ fontSize: '15px', color: '#6b7280', margin: '0 0 6px', textAlign: 'center' }}>{pedidoCreado.numero_pedido}</p>
+            <p style={{ fontSize: '13px', color: '#9ca3af', margin: '0 0 32px', textAlign: 'center' }}>El pedido está pendiente de aprobación en la oficina</p>
+            <button onClick={onPedidoCreado} style={{ ...s.btnPrimary, maxWidth: '280px' }}>
+                <Check size={18} /> Volver al inicio
             </button>
-            {onCancelar && (
-                <button onClick={onCancelar} style={{ ...s.btnSecondary, marginTop: '10px' }}>
-                    Volver al inicio
-                </button>
-            )}
         </div>
     )
 
@@ -318,26 +921,22 @@ export default function NuevoPedido({ onPedidoCreado, onCancelar }) {
         <div style={s.container}>
             <div style={s.header}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
-                    {onCancelar && (
-                        <button onClick={onCancelar} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', padding: '4px' }}>
-                            <X size={20} />
-                        </button>
-                    )}
+                    <button onClick={onCancelar} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', padding: '4px' }}>
+                        <X size={20} />
+                    </button>
                     <div>
-                        <p style={{ fontSize: '12px', color: '#9ca3af', margin: 0 }}>Paso 1 de 3</p>
+                        <p style={{ fontSize: '12px', color: '#9ca3af', margin: 0 }}>Paso 1 de {pasoTotal}</p>
                         <h1 style={{ fontSize: '18px', fontWeight: 700, color: '#1f2937', margin: 0 }}>Seleccionar cliente</h1>
                     </div>
                 </div>
-                {/* Barra de progreso */}
                 <div style={{ display: 'flex', gap: '4px' }}>
-                    {[1, 2, 3].map(n => (
-                        <div key={n} style={{ flex: 1, height: '4px', borderRadius: '2px', backgroundColor: n <= paso ? '#16a34a' : '#e5e7eb' }} />
+                    {Array.from({ length: pasoTotal }, (_, i) => (
+                        <div key={i} style={{ flex: 1, height: '4px', borderRadius: '2px', backgroundColor: (i + 1) <= pasoActual ? '#16a34a' : '#e5e7eb' }} />
                     ))}
                 </div>
             </div>
 
             <div style={{ padding: '16px' }}>
-                {/* Buscador */}
                 <div style={{ position: 'relative', marginBottom: '16px' }}>
                     <Search size={18} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
                     <input type="text" placeholder="Buscar cliente por nombre o RIF..."
@@ -345,10 +944,9 @@ export default function NuevoPedido({ onPedidoCreado, onCancelar }) {
                         style={{ ...s.input, paddingLeft: '42px' }} autoFocus />
                 </div>
 
-                {/* Cliente seleccionado */}
                 {clienteSel && (
                     <div style={{ backgroundColor: '#f0fdf4', border: '2px solid #16a34a', borderRadius: '12px', padding: '14px 16px', marginBottom: '16px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: direcciones.length > 0 ? '12px' : 0 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: direcciones.length > 0 ? '12px' : 0 }}>
                             <div>
                                 <p style={{ fontSize: '16px', fontWeight: 700, color: '#166534', margin: '0 0 2px' }}>{clienteSel.nombre}</p>
                                 {clienteSel.rif && <p style={{ fontSize: '12px', color: '#16a34a', margin: '0 0 4px', fontFamily: 'monospace' }}>{clienteSel.rif}</p>}
@@ -356,29 +954,18 @@ export default function NuevoPedido({ onPedidoCreado, onCancelar }) {
                                     {clienteSel.condicion_pago === 'credito' ? `Crédito ${clienteSel.dias_credito} días` : 'Contado'}
                                 </p>
                             </div>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                                <button onClick={() => cargarHistorial(clienteSel.id)}
-                                    style={{ background: 'none', border: '1px solid #16a34a', borderRadius: '8px', padding: '6px 10px', fontSize: '12px', color: '#16a34a', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                    <Clock size={12} /> Historial
-                                </button>
-                                <button onClick={() => { setClienteSel(null); setDirecciones([]); setDireccionId('') }}
-                                    style={{ background: 'none', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '6px 10px', fontSize: '12px', color: '#6b7280', cursor: 'pointer' }}>
-                                    Cambiar
-                                </button>
-                            </div>
+                            <button onClick={() => { setClienteSel(null); setDirecciones([]); setDireccionId('') }}
+                                style={{ background: 'none', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '6px 10px', fontSize: '12px', color: '#6b7280', cursor: 'pointer' }}>
+                                Cambiar
+                            </button>
                         </div>
-                        {/* Selector de dirección */}
                         {direcciones.length > 1 && (
                             <div>
                                 <p style={{ fontSize: '12px', fontWeight: 600, color: '#166534', margin: '0 0 6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Dirección de entrega</p>
                                 <select value={direccionId} onChange={e => setDireccionId(e.target.value)}
                                     style={{ width: '100%', padding: '8px 12px', border: '1px solid #bbf7d0', borderRadius: '8px', fontSize: '14px', backgroundColor: '#fff', color: '#374151' }}>
                                     <option value="">— Sin dirección específica —</option>
-                                    {direcciones.map(d => (
-                                        <option key={d.id} value={d.id}>
-                                            {d.nombre}{d.es_principal ? ' ★' : ''} — {d.direccion}
-                                        </option>
-                                    ))}
+                                    {direcciones.map(d => <option key={d.id} value={d.id}>{d.nombre}{d.es_principal ? ' ★' : ''} — {d.direccion}</option>)}
                                 </select>
                             </div>
                         )}
@@ -390,7 +977,6 @@ export default function NuevoPedido({ onPedidoCreado, onCancelar }) {
                     </div>
                 )}
 
-                {/* Lista de clientes */}
                 {!clienteSel && (
                     <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
                         {clientesFiltrados.length === 0 ? (
@@ -408,40 +994,13 @@ export default function NuevoPedido({ onPedidoCreado, onCancelar }) {
                                     <p style={{ fontSize: '15px', fontWeight: 500, color: '#1f2937', margin: '0 0 2px' }}>{c.nombre}</p>
                                     {c.rif && <p style={{ fontSize: '12px', color: '#9ca3af', margin: 0, fontFamily: 'monospace' }}>{c.rif}</p>}
                                 </div>
-                                <ChevronRight size={16} style={{ color: '#d1d5db' }} />
+                                <ChevronRight size={16} color="#d1d5db" />
                             </div>
                         ))}
                     </div>
                 )}
-
-                {/* Historial modal */}
-                {verHistorial && (
-                    <>
-                        <div onClick={() => setVerHistorial(false)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 40 }} />
-                        <div style={{ position: 'fixed', bottom: 0, left: '50%', transform: 'translateX(-50%)', width: '100%', maxWidth: '480px', backgroundColor: '#fff', borderRadius: '20px 20px 0 0', padding: '24px', zIndex: 50, maxHeight: '60vh', overflowY: 'auto' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                                <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#1f2937', margin: 0 }}>Historial de pedidos</h3>
-                                <button onClick={() => setVerHistorial(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af' }}><X size={20} /></button>
-                            </div>
-                            {historial.length === 0 ? (
-                                <p style={{ fontSize: '14px', color: '#9ca3af', textAlign: 'center', padding: '20px 0' }}>Sin pedidos anteriores</p>
-                            ) : historial.map(h => (
-                                <div key={h.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid #f3f4f6' }}>
-                                    <div>
-                                        <p style={{ fontSize: '14px', fontWeight: 500, color: '#1f2937', margin: '0 0 2px', fontFamily: 'monospace' }}>{h.numero_pedido}</p>
-                                        <p style={{ fontSize: '12px', color: '#9ca3af', margin: 0 }}>{new Date(h.fecha_pedido).toLocaleDateString('es-VE')}</p>
-                                    </div>
-                                    <span style={{ backgroundColor: ESTADOS[h.estado]?.bg, color: ESTADOS[h.estado]?.color, padding: '2px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 500 }}>
-                                        {ESTADOS[h.estado]?.label}
-                                    </span>
-                                </div>
-                            ))}
-                        </div>
-                    </>
-                )}
             </div>
 
-            {/* Footer con botón siguiente */}
             <div style={{ position: 'fixed', bottom: 0, left: '50%', transform: 'translateX(-50%)', width: '100%', maxWidth: '480px', backgroundColor: '#fff', borderTop: '1px solid #e5e7eb', padding: '16px' }}>
                 <button onClick={() => setPaso(2)} disabled={!clienteSel}
                     style={{ ...s.btnPrimary, opacity: clienteSel ? 1 : 0.4 }}>
@@ -457,20 +1016,20 @@ export default function NuevoPedido({ onPedidoCreado, onCancelar }) {
         <div style={s.container}>
             <div style={s.header}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
-                    <button onClick={() => setPaso(1)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', padding: '4px' }}>
+                    <button onClick={() => clienteInicial ? onCancelar() : setPaso(1)}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', padding: '4px' }}>
                         <ChevronLeft size={20} />
                     </button>
                     <div style={{ flex: 1 }}>
-                        <p style={{ fontSize: '12px', color: '#9ca3af', margin: 0 }}>Paso 2 de 3 · {clienteSel.nombre}</p>
+                        <p style={{ fontSize: '12px', color: '#9ca3af', margin: 0 }}>Paso {pasoActual} de {pasoTotal} · {clienteSel.nombre}</p>
                         <h1 style={{ fontSize: '18px', fontWeight: 700, color: '#1f2937', margin: 0 }}>Agregar productos</h1>
                     </div>
                 </div>
                 <div style={{ display: 'flex', gap: '4px', marginBottom: '12px' }}>
-                    {[1, 2, 3].map(n => (
-                        <div key={n} style={{ flex: 1, height: '4px', borderRadius: '2px', backgroundColor: n <= paso ? '#16a34a' : '#e5e7eb' }} />
+                    {Array.from({ length: pasoTotal }, (_, i) => (
+                        <div key={i} style={{ flex: 1, height: '4px', borderRadius: '2px', backgroundColor: (i + 1) <= pasoActual ? '#16a34a' : '#e5e7eb' }} />
                     ))}
                 </div>
-                {/* Selector de lista */}
                 <select value={listaId} onChange={e => setListaId(e.target.value)}
                     style={{ ...s.input, fontSize: '14px', padding: '10px 12px' }}>
                     {listas.map(l => <option key={l.id} value={l.id}>{l.nombre}{l.es_default ? ' (default)' : ''}</option>)}
@@ -478,7 +1037,6 @@ export default function NuevoPedido({ onPedidoCreado, onCancelar }) {
             </div>
 
             <div style={{ padding: '16px' }}>
-                {/* Buscador de productos */}
                 <div style={{ position: 'relative', marginBottom: '12px' }}>
                     <Search size={18} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
                     <input type="text" placeholder="Buscar producto por nombre o código..."
@@ -486,7 +1044,6 @@ export default function NuevoPedido({ onPedidoCreado, onCancelar }) {
                         style={{ ...s.input, paddingLeft: '42px' }} />
                 </div>
 
-                {/* Resultados búsqueda */}
                 {busqProducto && (
                     <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden', marginBottom: '16px' }}>
                         {productosFiltrados.length === 0 ? (
@@ -494,6 +1051,8 @@ export default function NuevoPedido({ onPedidoCreado, onCancelar }) {
                         ) : productosFiltrados.slice(0, 8).map(p => (
                             <div key={p.id} onClick={() => agregarProducto(p)}
                                 style={{ padding: '12px 16px', borderBottom: '1px solid #f3f4f6', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                                onTouchStart={e => e.currentTarget.style.backgroundColor = '#f0fdf4'}
+                                onTouchEnd={e => e.currentTarget.style.backgroundColor = 'transparent'}
                                 onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f0fdf4'}
                                 onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
                                 <div>
@@ -509,75 +1068,62 @@ export default function NuevoPedido({ onPedidoCreado, onCancelar }) {
                     </div>
                 )}
 
-                {/* Items agregados */}
                 {items.length === 0 ? (
                     <div style={{ textAlign: 'center', padding: '40px 20px', color: '#9ca3af' }}>
                         <Package size={40} style={{ marginBottom: '12px', opacity: 0.4 }} />
                         <p style={{ fontSize: '14px', margin: 0 }}>Busca y agrega productos al pedido</p>
                     </div>
-                ) : (
-                    <>
-                        {items.map(item => (
-                            <div key={item.id} style={s.card}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
-                                    <div style={{ flex: 1 }}>
-                                        <p style={{ fontSize: '15px', fontWeight: 600, color: '#1f2937', margin: '0 0 2px' }}>{item.nombre}</p>
-                                        <p style={{ fontSize: '13px', color: '#16a34a', margin: 0, fontWeight: 500 }}>{fmt(item.precio)} / {item.unidad_medida}</p>
-                                    </div>
-                                    <button onClick={() => eliminarItem(item.id)}
-                                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', padding: '4px', marginLeft: '8px' }}>
-                                        <Trash2 size={18} />
-                                    </button>
-                                </div>
-
-                                {/* Cantidad */}
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
-                                    <button onClick={() => cambiarCantidad(item.id, -1)}
-                                        style={{ width: '40px', height: '40px', borderRadius: '10px', border: '1px solid #e5e7eb', backgroundColor: '#f9fafb', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#374151' }}>
-                                        <Minus size={16} />
-                                    </button>
-                                    <input type="number" min="1" value={item.cantidad}
-                                        onChange={e => setCantidadDirecta(item.id, e.target.value)}
-                                        style={{ flex: 1, textAlign: 'center', padding: '8px', border: '1px solid #d1d5db', borderRadius: '10px', fontSize: '18px', fontWeight: 700, color: '#1f2937' }} />
-                                    <button onClick={() => cambiarCantidad(item.id, 1)}
-                                        style={{ width: '40px', height: '40px', borderRadius: '10px', border: '1px solid #16a34a', backgroundColor: '#f0fdf4', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#16a34a' }}>
-                                        <Plus size={16} />
-                                    </button>
-                                </div>
-
-                                {/* Descuento por item */}
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                    <span style={{ fontSize: '12px', color: '#6b7280', whiteSpace: 'nowrap' }}>Desc. item %:</span>
-                                    <input type="number" min="0" max="100" step="0.1"
-                                        value={item.descuento_item}
-                                        onChange={e => setDescItem(item.id, e.target.value)}
-                                        placeholder="0"
-                                        style={{ width: '80px', padding: '6px 8px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', textAlign: 'center' }} />
-                                </div>
-
-                                {/* Subtotal del item */}
-                                <div style={{ marginTop: '10px', textAlign: 'right' }}>
-                                    <span style={{ fontSize: '15px', fontWeight: 700, color: '#1f2937' }}>
-                                        {fmt(item.cantidad * item.precio * (1 - item.descuento_item / 100))}
-                                    </span>
-                                </div>
+                ) : items.map(item => (
+                    <div key={item.id} style={s.card}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
+                            <div style={{ flex: 1 }}>
+                                <p style={{ fontSize: '15px', fontWeight: 600, color: '#1f2937', margin: '0 0 2px' }}>{item.nombre}</p>
+                                <p style={{ fontSize: '13px', color: '#16a34a', margin: 0, fontWeight: 500 }}>{fmt(item.precio)} / {item.unidad_medida}</p>
                             </div>
-                        ))}
-
-                        {/* Descuento global */}
-                        <div style={{ ...s.card, backgroundColor: '#f9fafb' }}>
-                            <label style={s.label}>Descuento global al pedido %</label>
-                            <input type="number" min="0" max="100" step="0.1"
-                                value={descuentoGlobal}
-                                onChange={e => setDescuentoGlobal(e.target.value)}
-                                placeholder="0"
-                                style={{ width: '120px', padding: '10px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '16px', fontWeight: 600, textAlign: 'center' }} />
+                            <button onClick={() => eliminarItem(item.id)}
+                                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', padding: '4px', marginLeft: '8px' }}>
+                                <Trash2 size={18} />
+                            </button>
                         </div>
-                    </>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
+                            <button onClick={() => cambiarCantidad(item.id, -1)}
+                                style={{ width: '40px', height: '40px', borderRadius: '10px', border: '1px solid #e5e7eb', backgroundColor: '#f9fafb', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#374151' }}>
+                                <Minus size={16} />
+                            </button>
+                            <input type="number" min="1" value={item.cantidad}
+                                onChange={e => setCantidadDirecta(item.id, e.target.value)}
+                                style={{ flex: 1, textAlign: 'center', padding: '8px', border: '1px solid #d1d5db', borderRadius: '10px', fontSize: '18px', fontWeight: 700, color: '#1f2937' }} />
+                            <button onClick={() => cambiarCantidad(item.id, 1)}
+                                style={{ width: '40px', height: '40px', borderRadius: '10px', border: '1px solid #16a34a', backgroundColor: '#f0fdf4', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#16a34a' }}>
+                                <Plus size={16} />
+                            </button>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span style={{ fontSize: '12px', color: '#6b7280', whiteSpace: 'nowrap' }}>Desc. item %:</span>
+                            <input type="number" min="0" max="100" step="0.1"
+                                value={item.descuento_item} onChange={e => setDescItem(item.id, e.target.value)}
+                                placeholder="0"
+                                style={{ width: '80px', padding: '6px 8px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', textAlign: 'center' }} />
+                        </div>
+                        <div style={{ marginTop: '10px', textAlign: 'right' }}>
+                            <span style={{ fontSize: '15px', fontWeight: 700, color: '#1f2937' }}>
+                                {fmt(item.cantidad * item.precio * (1 - Number(item.descuento_item || 0) / 100))}
+                            </span>
+                        </div>
+                    </div>
+                ))}
+
+                {items.length > 0 && (
+                    <div style={{ ...s.card, backgroundColor: '#f9fafb' }}>
+                        <label style={s.label}>Descuento global al pedido %</label>
+                        <input type="number" min="0" max="100" step="0.1"
+                            value={descuentoGlobal} onChange={e => setDescuentoGlobal(e.target.value)}
+                            placeholder="0"
+                            style={{ width: '120px', padding: '10px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '16px', fontWeight: 600, textAlign: 'center' }} />
+                    </div>
                 )}
             </div>
 
-            {/* Footer con resumen y botón */}
             <div style={{ position: 'fixed', bottom: 0, left: '50%', transform: 'translateX(-50%)', width: '100%', maxWidth: '480px', backgroundColor: '#fff', borderTop: '1px solid #e5e7eb', padding: '12px 16px' }}>
                 {items.length > 0 && (
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
@@ -603,19 +1149,18 @@ export default function NuevoPedido({ onPedidoCreado, onCancelar }) {
                         <ChevronLeft size={20} />
                     </button>
                     <div>
-                        <p style={{ fontSize: '12px', color: '#9ca3af', margin: 0 }}>Paso 3 de 3</p>
+                        <p style={{ fontSize: '12px', color: '#9ca3af', margin: 0 }}>Paso {pasoTotal} de {pasoTotal}</p>
                         <h1 style={{ fontSize: '18px', fontWeight: 700, color: '#1f2937', margin: 0 }}>Confirmar pedido</h1>
                     </div>
                 </div>
                 <div style={{ display: 'flex', gap: '4px' }}>
-                    {[1, 2, 3].map(n => (
-                        <div key={n} style={{ flex: 1, height: '4px', borderRadius: '2px', backgroundColor: n <= paso ? '#16a34a' : '#e5e7eb' }} />
+                    {Array.from({ length: pasoTotal }, (_, i) => (
+                        <div key={i} style={{ flex: 1, height: '4px', borderRadius: '2px', backgroundColor: '#16a34a' }} />
                     ))}
                 </div>
             </div>
 
             <div style={{ padding: '16px' }}>
-                {/* Resumen cliente */}
                 <div style={s.card}>
                     <label style={s.label}>Cliente</label>
                     <p style={{ fontSize: '16px', fontWeight: 600, color: '#1f2937', margin: '0 0 2px' }}>{clienteSel.nombre}</p>
@@ -627,7 +1172,6 @@ export default function NuevoPedido({ onPedidoCreado, onCancelar }) {
                     )}
                 </div>
 
-                {/* Resumen items */}
                 <div style={s.card}>
                     <label style={s.label}>Productos ({items.length})</label>
                     {items.map(item => (
@@ -640,42 +1184,35 @@ export default function NuevoPedido({ onPedidoCreado, onCancelar }) {
                                 </p>
                             </div>
                             <span style={{ fontSize: '14px', fontWeight: 600, color: '#1f2937' }}>
-                                {fmt(item.cantidad * item.precio * (1 - item.descuento_item / 100))}
+                                {fmt(item.cantidad * item.precio * (1 - Number(item.descuento_item || 0) / 100))}
                             </span>
                         </div>
                     ))}
-
-                    {/* Totales */}
                     <div style={{ marginTop: '8px' }}>
                         {descuentoGlobal > 0 && (
                             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#16a34a', marginBottom: '4px' }}>
                                 <span>Descuento global ({descuentoGlobal}%)</span>
-                                <span>-{fmt(totalConDescItems - totalConIVA)}</span>  {/* 👈 Usar nuevas variables */}
+                                <span>-{fmt(totalConDescItems - totalConIVA)}</span>
                             </div>
                         )}
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#6b7280', marginBottom: '4px' }}>
-                            <span>Subtotal</span>
-                            <span>{fmt(subtotal)}</span>  {/* 👈 Base imponible (sin IVA) */}
+                            <span>Subtotal (sin IVA)</span><span>{fmt(subtotal)}</span>
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#6b7280', marginBottom: '4px' }}>
-                            <span>IVA (16%)</span>
-                            <span>{fmt(iva)}</span>
+                            <span>IVA (16%)</span><span>{fmt(iva)}</span>
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '18px', fontWeight: 700, color: '#1f2937', paddingTop: '8px', borderTop: '2px solid #e5e7eb' }}>
-                            <span>Total</span>
-                            <span style={{ color: '#16a34a' }}>{fmt(total)}</span>
+                            <span>Total</span><span style={{ color: '#16a34a' }}>{fmt(total)}</span>
                         </div>
                     </div>
                 </div>
 
-                {/* Fecha entrega */}
                 <div style={s.card}>
                     <label style={s.label}>Fecha de entrega prometida</label>
                     <input type="date" value={fechaEntrega} onChange={e => setFechaEntrega(e.target.value)}
                         style={s.input} min={new Date().toISOString().split('T')[0]} />
                 </div>
 
-                {/* Notas */}
                 <div style={s.card}>
                     <label style={s.label}>Notas <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>(opcional)</span></label>
                     <textarea value={notas} onChange={e => setNotas(e.target.value)} rows={3}
@@ -690,7 +1227,6 @@ export default function NuevoPedido({ onPedidoCreado, onCancelar }) {
                 )}
             </div>
 
-            {/* Footer */}
             <div style={{ position: 'fixed', bottom: 0, left: '50%', transform: 'translateX(-50%)', width: '100%', maxWidth: '480px', backgroundColor: '#fff', borderTop: '1px solid #e5e7eb', padding: '16px' }}>
                 <button onClick={guardar} disabled={guardando}
                     style={{ ...s.btnPrimary, opacity: guardando ? 0.7 : 1 }}>
@@ -700,11 +1236,4 @@ export default function NuevoPedido({ onPedidoCreado, onCancelar }) {
             <div style={{ height: '80px' }} />
         </div>
     )
-}
-
-const ESTADOS = {
-    pendiente: { bg: '#fef9c3', color: '#854d0e', label: 'Pendiente' },
-    aprobado: { bg: '#dbeafe', color: '#1e40af', label: 'Aprobado' },
-    rechazado: { bg: '#fee2e2', color: '#991b1b', label: 'Rechazado' },
-    facturado: { bg: '#dcfce7', color: '#166534', label: 'Facturado' },
 }
