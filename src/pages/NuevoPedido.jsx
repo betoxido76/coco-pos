@@ -130,6 +130,12 @@ const ESTADOS_PEDIDO = {
     facturado: { bg: '#dcfce7', color: '#166534', label: 'Facturado' },
 }
 
+const TOAST_ESTADOS = {
+    aprobado:  { bg: '#dcfce7', border: '#86efac', color: '#166534', titulo: '¡Pedido aprobado!', icon: Check },
+    rechazado: { bg: '#fee2e2', border: '#fca5a5', color: '#991b1b', titulo: 'Pedido rechazado',  icon: X },
+    facturado: { bg: '#dbeafe', border: '#93c5fd', color: '#1e40af', titulo: 'Pedido facturado',  icon: Package },
+}
+
 // ══════════════════════════════════════════════════════════════
 // COMPONENTE PRINCIPAL — controla la vista activa
 // ══════════════════════════════════════════════════════════════
@@ -141,10 +147,37 @@ export default function NuevoPedido({ onCancelar }) {
     const online = useOnline()
     const [pendingCount, setPendingCount] = useState(() => getPendingQueue().length)
     const [syncing, setSyncing] = useState(false)
+    const [toasts, setToasts] = useState([])
+    const [homeRefreshKey, setHomeRefreshKey] = useState(0)
 
     useEffect(() => {
         if (online) sincronizar()
     }, [online])
+
+    // Suscripción Realtime — escucha cambios de estado en los pedidos del vendedor
+    useEffect(() => {
+        if (!perfil) return
+        let channel
+        supabase.auth.getUser().then(({ data: { user } }) => {
+            if (!user) return
+            channel = supabase.channel(`pedidos_vendedor_${user.id}`)
+                .on('postgres_changes', {
+                    event: 'UPDATE',
+                    schema: 'public',
+                    table: 'pedidos',
+                    filter: `vendedor_id=eq.${user.id}`,
+                }, ({ new: nuevo, old: viejo }) => {
+                    if (nuevo.estado !== viejo.estado && TOAST_ESTADOS[nuevo.estado]) {
+                        const id = Date.now()
+                        setToasts(prev => [...prev, { id, pedido: nuevo }])
+                        setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 5000)
+                        setHomeRefreshKey(k => k + 1)
+                    }
+                })
+                .subscribe()
+        })
+        return () => { if (channel) supabase.removeChannel(channel) }
+    }, [perfil])
 
     async function sincronizar() {
         if (!perfil || getPendingQueue().length === 0) return
@@ -191,7 +224,7 @@ export default function NuevoPedido({ onCancelar }) {
 
     let content
     if (vista === 'home') content = (
-        <HomeVendedor onNuevoPedido={() => setVista('clientes')} onVerClientes={() => setVista('clientes')} onCancelar={onCancelar} />
+        <HomeVendedor onNuevoPedido={() => setVista('clientes')} onVerClientes={() => setVista('clientes')} onCancelar={onCancelar} refreshKey={homeRefreshKey} />
     )
     else if (vista === 'clientes') content = (
         <ListaClientes onVerFicha={irAFicha} onNuevoPedido={irAPedido} onVolver={() => setVista('home')} />
@@ -220,6 +253,38 @@ export default function NuevoPedido({ onCancelar }) {
                 </div>
             )}
             {content}
+
+            {/* Toasts de cambio de estado */}
+            {toasts.map((toast, idx) => {
+                const cfg = TOAST_ESTADOS[toast.pedido.estado]
+                if (!cfg) return null
+                const Icon = cfg.icon
+                return (
+                    <div key={toast.id} style={{
+                        position: 'fixed', bottom: `${20 + idx * 88}px`,
+                        left: '50%', transform: 'translateX(-50%)',
+                        width: 'calc(100% - 32px)', maxWidth: '448px', zIndex: 200,
+                        backgroundColor: cfg.bg, border: `1px solid ${cfg.border}`,
+                        borderRadius: '14px', padding: '14px 16px',
+                        display: 'flex', alignItems: 'center', gap: '12px',
+                        boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
+                    }}>
+                        <div style={{ width: '38px', height: '38px', backgroundColor: 'rgba(255,255,255,0.7)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                            <Icon size={18} color={cfg.color} />
+                        </div>
+                        <div style={{ flex: 1 }}>
+                            <p style={{ fontSize: '14px', fontWeight: 700, color: cfg.color, margin: '0 0 2px' }}>{cfg.titulo}</p>
+                            <p style={{ fontSize: '12px', color: cfg.color, margin: 0, opacity: 0.75 }}>
+                                Pedido {toast.pedido.numero_pedido}
+                            </p>
+                        </div>
+                        <button onClick={() => setToasts(prev => prev.filter(t => t.id !== toast.id))}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: cfg.color, opacity: 0.5, padding: '4px', flexShrink: 0 }}>
+                            <X size={16} />
+                        </button>
+                    </div>
+                )
+            })}
         </>
     )
 }
@@ -227,15 +292,14 @@ export default function NuevoPedido({ onCancelar }) {
 // ══════════════════════════════════════════════════════════════
 // PANTALLA 1: HOME DEL VENDEDOR
 // ══════════════════════════════════════════════════════════════
-function HomeVendedor({ onNuevoPedido, onVerClientes, onCancelar }) {
+function HomeVendedor({ onNuevoPedido, onVerClientes, onCancelar, refreshKey }) {
     const { perfil } = useAuth()
     const [stats, setStats] = useState({ pedidosHoy: 0, montoHoy: 0, clientesHoy: 0, visitasHoy: 0 })
     const [pedidosRecientes, setPedidosRecientes] = useState([])
     const [loading, setLoading] = useState(true)
 
-    useEffect(() => {
-        cargar()
-    }, [])
+    useEffect(() => { cargar() }, [])
+    useEffect(() => { if (refreshKey) cargar() }, [refreshKey])
 
     async function cargar() {
         setLoading(true)
