@@ -1,12 +1,48 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import {
     Search, Plus, Minus, Trash2, Check, ChevronRight, ChevronLeft,
     X, Clock, Package, ShoppingCart, DollarSign, Users, AlertCircle,
     TrendingUp, FileText, MapPin, Phone, Building2, CreditCard,
-    RotateCcw, ArrowRight, Calendar, ChevronDown, RefreshCw
+    RotateCcw, ArrowRight, Calendar, ChevronDown, RefreshCw, WifiOff
 } from 'lucide-react'
+
+// ── Cache localStorage ──────────────────────────────────────
+const CACHE_TTL = 60 * 60 * 1000 // 1 hora
+
+function cacheSet(key, data) {
+    try { localStorage.setItem(key, JSON.stringify({ data, ts: Date.now() })) } catch {}
+}
+function cacheGet(key) {
+    try {
+        const raw = localStorage.getItem(key)
+        if (!raw) return null
+        const { data, ts } = JSON.parse(raw)
+        return Date.now() - ts < CACHE_TTL ? data : null
+    } catch { return null }
+}
+
+// ── Cola de pedidos offline ──────────────────────────────────
+function getPendingQueue() {
+    try { return JSON.parse(localStorage.getItem('mipos_offline_queue') || '[]') } catch { return [] }
+}
+function savePendingQueue(q) {
+    try { localStorage.setItem('mipos_offline_queue', JSON.stringify(q)) } catch {}
+}
+
+// ── Hook conectividad ────────────────────────────────────────
+function useOnline() {
+    const [online, setOnline] = useState(navigator.onLine)
+    useEffect(() => {
+        const up = () => setOnline(true)
+        const dn = () => setOnline(false)
+        window.addEventListener('online', up)
+        window.addEventListener('offline', dn)
+        return () => { window.removeEventListener('online', up); window.removeEventListener('offline', dn) }
+    }, [])
+    return online
+}
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 const fmtBs = (n, tasa) => tasa ? `${(Number(n || 0) * tasa).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Bs.` : '—'
@@ -98,10 +134,47 @@ const ESTADOS_PEDIDO = {
 // COMPONENTE PRINCIPAL — controla la vista activa
 // ══════════════════════════════════════════════════════════════
 export default function NuevoPedido({ onCancelar }) {
-    // vista: 'home' | 'clientes' | 'ficha' | 'pedido'
+    const { perfil } = useAuth()
     const [vista, setVista] = useState('home')
     const [clienteSeleccionado, setClienteSeleccionado] = useState(null)
     const [itemsARepetir, setItemsARepetir] = useState(null)
+    const online = useOnline()
+    const [pendingCount, setPendingCount] = useState(() => getPendingQueue().length)
+    const [syncing, setSyncing] = useState(false)
+
+    useEffect(() => {
+        if (online) sincronizar()
+    }, [online])
+
+    async function sincronizar() {
+        if (!perfil || getPendingQueue().length === 0) return
+        setSyncing(true)
+        try {
+            const { data: { user } } = await supabase.auth.getUser()
+            const queue = getPendingQueue()
+            let updated = [...queue]
+            for (const p of queue) {
+                try {
+                    const { data: num } = await supabase.rpc('obtener_siguiente_pedidos_numero', { p_empresa_id: p.empresa_id })
+                    const { data: pedido, error } = await supabase.from('pedidos').insert({
+                        empresa_id: p.empresa_id, cliente_id: p.cliente_id, vendedor_id: user.id,
+                        lista_precio_id: p.lista_precio_id, descuento_global: p.descuento_global,
+                        estado: 'pendiente', fecha_pedido: p.fecha_pedido, fecha_entrega: p.fecha_entrega,
+                        notas: p.notas, numero_pedido: num || p.tempId,
+                        direccion_entrega_id: p.direccion_entrega_id, direccion_entrega_texto: p.direccion_entrega_texto,
+                    }).select().single()
+                    if (!error && pedido) {
+                        await supabase.from('pedido_items').insert(
+                            p.items.map(i => ({ ...i, pedido_id: pedido.id, empresa_id: p.empresa_id }))
+                        )
+                        updated = updated.filter(x => x.tempId !== p.tempId)
+                    }
+                } catch {}
+            }
+            savePendingQueue(updated)
+            setPendingCount(updated.length)
+        } finally { setSyncing(false) }
+    }
 
     function irAPedido(cliente, items = null) {
         setClienteSeleccionado(cliente)
@@ -114,37 +187,40 @@ export default function NuevoPedido({ onCancelar }) {
         setVista('ficha')
     }
 
-    if (vista === 'home') return (
-        <HomeVendedor
-            onNuevoPedido={() => setVista('clientes')}
-            onVerClientes={() => setVista('clientes')}
-            onCancelar={onCancelar}
-        />
-    )
+    const bannerStyle = { position: 'fixed', top: 0, left: '50%', transform: 'translateX(-50%)', width: '100%', maxWidth: '480px', zIndex: 100, padding: '7px 16px', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', fontWeight: 600, justifyContent: 'center' }
 
-    if (vista === 'clientes') return (
-        <ListaClientes
-            onVerFicha={irAFicha}
-            onNuevoPedido={irAPedido}
-            onVolver={() => setVista('home')}
-        />
+    let content
+    if (vista === 'home') content = (
+        <HomeVendedor onNuevoPedido={() => setVista('clientes')} onVerClientes={() => setVista('clientes')} onCancelar={onCancelar} />
     )
-
-    if (vista === 'ficha') return (
-        <FichaCliente
-            cliente={clienteSeleccionado}
-            onNuevoPedido={(items) => irAPedido(clienteSeleccionado, items)}
-            onVolver={() => setVista('clientes')}
-        />
+    else if (vista === 'clientes') content = (
+        <ListaClientes onVerFicha={irAFicha} onNuevoPedido={irAPedido} onVolver={() => setVista('home')} />
     )
-
-    if (vista === 'pedido') return (
-        <FlujoPedido
-            clienteInicial={clienteSeleccionado}
-            itemsIniciales={itemsARepetir}
-            onPedidoCreado={() => { setItemsARepetir(null); setVista('home') }}
+    else if (vista === 'ficha') content = (
+        <FichaCliente cliente={clienteSeleccionado} onNuevoPedido={(items) => irAPedido(clienteSeleccionado, items)} onVolver={() => setVista('clientes')} />
+    )
+    else content = (
+        <FlujoPedido clienteInicial={clienteSeleccionado} itemsIniciales={itemsARepetir}
+            onPedidoCreado={() => { setItemsARepetir(null); setPendingCount(getPendingQueue().length); setVista('home') }}
             onCancelar={() => { setItemsARepetir(null); setVista(clienteSeleccionado ? 'ficha' : 'home') }}
         />
+    )
+
+    return (
+        <>
+            {!online && (
+                <div style={{ ...bannerStyle, backgroundColor: '#fef3c7', borderBottom: '1px solid #fde68a', color: '#92400e' }}>
+                    <WifiOff size={13} />
+                    {pendingCount > 0 ? `Sin conexión · ${pendingCount} pedido(s) pendientes de envío` : 'Sin conexión · usando datos guardados'}
+                </div>
+            )}
+            {online && syncing && (
+                <div style={{ ...bannerStyle, backgroundColor: '#dbeafe', borderBottom: '1px solid #93c5fd', color: '#1e40af' }}>
+                    <RefreshCw size={13} /> Sincronizando {pendingCount} pedido(s) offline...
+                </div>
+            )}
+            {content}
+        </>
     )
 }
 
@@ -308,6 +384,10 @@ function ListaClientes({ onVerFicha, onNuevoPedido, onVolver }) {
     const [clientesConDeuda, setClientesConDeuda] = useState(new Set())
 
     useEffect(() => {
+        const cacheKey = `mipos_clientes_${perfil.empresa_id}`
+        const cached = cacheGet(cacheKey)
+        if (cached) { setClientes(cached); setLoading(false) }
+
         Promise.all([
             supabase.from('clientes')
                 .select('id, nombre, rif, condicion_pago, dias_credito, telefono, limite_credito')
@@ -317,10 +397,10 @@ function ListaClientes({ onVerFicha, onNuevoPedido, onVolver }) {
                 .eq('empresa_id', perfil.empresa_id)
                 .in('estado_cobro', ['pendiente', 'parcial'])
         ]).then(([{ data: clientesData }, { data: ventasData }]) => {
-            setClientes(clientesData || [])
+            if (clientesData) { setClientes(clientesData); cacheSet(cacheKey, clientesData) }
             if (ventasData) setClientesConDeuda(new Set(ventasData.map(v => v.cliente_id)))
             setLoading(false)
-        })
+        }).catch(() => setLoading(false))
     }, [])
 
     const filtrados = clientes.filter(c =>
@@ -973,10 +1053,23 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
     }
 
     useEffect(() => {
+        const cacheClientes = `mipos_clientes_${perfil.empresa_id}`
+        const cachedClientes = cacheGet(cacheClientes)
+        if (cachedClientes) setClientes(cachedClientes)
+
         supabase.from('clientes')
             .select('id, nombre, rif, condicion_pago, dias_credito, limite_credito')
             .eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
-            .then(({ data }) => setClientes(data || []))
+            .then(({ data }) => { if (data) { setClientes(data); cacheSet(cacheClientes, data) } })
+
+        const cacheListas = `mipos_listas_${perfil.empresa_id}`
+        const cachedListas = cacheGet(cacheListas)
+        if (cachedListas) {
+            setListas(cachedListas)
+            const def = cachedListas.find(l => l.es_default)
+            if (def) setListaId(def.id)
+            else if (cachedListas.length > 0) setListaId(cachedListas[0].id)
+        }
 
         supabase.from('listas_precio')
             .select('id, nombre, es_default')
@@ -984,17 +1077,37 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
             .then(({ data }) => {
                 if (data) {
                     setListas(data)
-                    const def = data.find(l => l.es_default)
-                    if (def) setListaId(def.id)
-                    else if (data.length > 0) setListaId(data[0].id)
+                    cacheSet(cacheListas, data)
+                    if (!listaId) {
+                        const def = data.find(l => l.es_default)
+                        if (def) setListaId(def.id)
+                        else if (data.length > 0) setListaId(data[0].id)
+                    }
                 }
             })
 
         if (clienteInicial) cargarDatosCliente(clienteInicial.id)
     }, [])
 
+    const itemsPreloaded = useRef(false)
+
     useEffect(() => {
         if (!listaId) return
+        const cacheKey = `mipos_productos_${perfil.empresa_id}_${listaId}`
+
+        function aplicarProductos(prods) {
+            setProductos(prods)
+            if (itemsIniciales && !itemsPreloaded.current) {
+                const preloaded = itemsIniciales
+                    .map(ii => { const prod = prods.find(p => p.id === ii.producto_id); if (!prod) return null; return { ...prod, cantidad: ii.cantidad, descuento_item: String(ii.descuento_item || '') } })
+                    .filter(Boolean)
+                if (preloaded.length > 0) { setItems(preloaded); itemsPreloaded.current = true }
+            }
+        }
+
+        const cached = cacheGet(cacheKey)
+        if (cached) aplicarProductos(cached)
+
         supabase.from('producto_precios')
             .select('precio, productos_terminados(id, nombre, sku, unidad_medida, stock_actual)')
             .eq('lista_id', listaId).eq('empresa_id', perfil.empresa_id)
@@ -1008,17 +1121,8 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
                         precio: Number(p.precio),
                         stock: Number(p.productos_terminados.stock_actual || 0),
                     }))
-                    setProductos(prods)
-                    if (itemsIniciales && items.length === 0) {
-                        const preloaded = itemsIniciales
-                            .map(ii => {
-                                const prod = prods.find(p => p.id === ii.producto_id)
-                                if (!prod) return null
-                                return { ...prod, cantidad: ii.cantidad, descuento_item: String(ii.descuento_item || '') }
-                            })
-                            .filter(Boolean)
-                        if (preloaded.length > 0) setItems(preloaded)
-                    }
+                    cacheSet(cacheKey, prods)
+                    aplicarProductos(prods)
                 }
             })
     }, [listaId])
@@ -1077,6 +1181,32 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
 
     async function guardar() {
         setGuardando(true); setError('')
+
+        if (!navigator.onLine) {
+            const tempId = `TEMP-${Date.now()}`
+            const pedidoOffline = {
+                tempId,
+                empresa_id: perfil.empresa_id,
+                cliente_id: clienteSel.id,
+                lista_precio_id: listaId || null,
+                descuento_global: Number(descuentoGlobal) || 0,
+                fecha_pedido: new Date().toISOString(),
+                fecha_entrega: fechaEntrega || null,
+                notas: notas.trim() || null,
+                direccion_entrega_id: direccionId || null,
+                direccion_entrega_texto: direccionId ? direcciones.find(d => d.id === direccionId)?.direccion || null : null,
+                items: items.map(i => ({
+                    producto_id: i.id, nombre_producto: i.nombre, cantidad: i.cantidad,
+                    precio_unitario: i.precio / 1.16, descuento_item: Number(i.descuento_item) || 0,
+                    subtotal: i.cantidad * i.precio * (1 - Number(i.descuento_item || 0) / 100),
+                })),
+            }
+            savePendingQueue([...getPendingQueue(), pedidoOffline])
+            setGuardando(false)
+            setPedidoCreado({ numero_pedido: tempId, offline: true })
+            return
+        }
+
         const { data: { user } } = await supabase.auth.getUser()
         const { data: numeroConsecutivo } = await supabase.rpc('obtener_siguiente_pedidos_numero', { p_empresa_id: perfil.empresa_id })
         const numero = numeroConsecutivo || 'PED-000001'
@@ -1116,12 +1246,20 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
     // ── ÉXITO ──
     if (pedidoCreado) return (
         <div style={{ ...s.container, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 24px', minHeight: '100vh' }}>
-            <div style={{ width: '72px', height: '72px', backgroundColor: '#dcfce7', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '20px' }}>
-                <Check size={36} color="#16a34a" />
+            <div style={{ width: '72px', height: '72px', backgroundColor: pedidoCreado.offline ? '#fef3c7' : '#dcfce7', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '20px' }}>
+                {pedidoCreado.offline ? <Clock size={36} color="#d97706" /> : <Check size={36} color="#16a34a" />}
             </div>
-            <h2 style={{ fontSize: '22px', fontWeight: 700, color: '#1f2937', margin: '0 0 8px', textAlign: 'center' }}>¡Pedido enviado!</h2>
-            <p style={{ fontSize: '15px', color: '#6b7280', margin: '0 0 6px', textAlign: 'center' }}>{pedidoCreado.numero_pedido}</p>
-            <p style={{ fontSize: '13px', color: '#9ca3af', margin: '0 0 32px', textAlign: 'center' }}>El pedido está pendiente de aprobación en la oficina</p>
+            <h2 style={{ fontSize: '22px', fontWeight: 700, color: '#1f2937', margin: '0 0 8px', textAlign: 'center' }}>
+                {pedidoCreado.offline ? '¡Pedido guardado!' : '¡Pedido enviado!'}
+            </h2>
+            <p style={{ fontSize: '15px', color: '#6b7280', margin: '0 0 6px', textAlign: 'center' }}>
+                {pedidoCreado.offline ? 'Guardado localmente' : pedidoCreado.numero_pedido}
+            </p>
+            <p style={{ fontSize: '13px', color: '#9ca3af', margin: '0 0 32px', textAlign: 'center' }}>
+                {pedidoCreado.offline
+                    ? 'Se enviará automáticamente cuando recuperes la conexión'
+                    : 'El pedido está pendiente de aprobación en la oficina'}
+            </p>
             <button onClick={onPedidoCreado} style={{ ...s.btnPrimary, maxWidth: '280px' }}>
                 <Check size={18} /> Volver al inicio
             </button>
