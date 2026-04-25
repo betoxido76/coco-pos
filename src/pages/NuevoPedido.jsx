@@ -302,7 +302,7 @@ function ListaClientes({ onVerFicha, onNuevoPedido, onVolver }) {
     useEffect(() => {
         Promise.all([
             supabase.from('clientes')
-                .select('id, nombre, rif, condicion_pago, dias_credito, telefono')
+                .select('id, nombre, rif, condicion_pago, dias_credito, telefono, limite_credito')
                 .eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre'),
             supabase.from('ventas')
                 .select('cliente_id')
@@ -531,6 +531,44 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
                                     <p style={{ fontSize: '11px', color: '#9ca3af', margin: 0 }}>{facturasVencidas.length} factura(s) vencida(s)</p>
                                 </div>
                             </div>
+
+                            {/* Uso de crédito — solo si es cliente a crédito con límite definido */}
+                            {cliente.condicion_pago === 'credito' && cliente.limite_credito > 0 && (() => {
+                                const limite = Number(cliente.limite_credito)
+                                const usado = totalCxC
+                                const disponible = Math.max(0, limite - usado)
+                                const pct = Math.min(100, (usado / limite) * 100)
+                                const barColor = pct >= 90 ? '#dc2626' : pct >= 70 ? '#d97706' : '#16a34a'
+                                const agotado = disponible <= 0
+                                return (
+                                    <div style={{ ...s.card, marginBottom: '12px' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                                            <p style={s.label}>Límite de crédito</p>
+                                            <span style={{ fontSize: '12px', fontWeight: 600, color: barColor }}>{pct.toFixed(0)}% usado</span>
+                                        </div>
+                                        <div style={{ height: '8px', backgroundColor: '#f3f4f6', borderRadius: '4px', marginBottom: '10px', overflow: 'hidden' }}>
+                                            <div style={{ height: '100%', width: `${pct}%`, backgroundColor: barColor, borderRadius: '4px', transition: 'width 0.3s' }} />
+                                        </div>
+                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
+                                            {[
+                                                { label: 'Límite total', value: fmt(limite), color: '#1f2937' },
+                                                { label: 'Usado', value: fmt(usado), color: usado > 0 ? '#dc2626' : '#6b7280' },
+                                                { label: 'Disponible', value: fmt(disponible), color: agotado ? '#dc2626' : '#16a34a' },
+                                            ].map(({ label, value, color }) => (
+                                                <div key={label} style={{ textAlign: 'center' }}>
+                                                    <p style={{ fontSize: '11px', color: '#9ca3af', margin: '0 0 2px' }}>{label}</p>
+                                                    <p style={{ fontSize: '13px', fontWeight: 700, color, margin: 0 }}>{value}</p>
+                                                </div>
+                                            ))}
+                                        </div>
+                                        {agotado && (
+                                            <div style={{ marginTop: '10px', backgroundColor: '#fef2f2', borderRadius: '8px', padding: '8px 10px', fontSize: '12px', color: '#dc2626', fontWeight: 600, textAlign: 'center' }}>
+                                                Crédito agotado — solo contado
+                                            </div>
+                                        )}
+                                    </div>
+                                )
+                            })()}
 
                             {/* Info del cliente */}
                             <div style={{ ...s.card }}>
@@ -804,7 +842,7 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
 
     useEffect(() => {
         supabase.from('clientes')
-            .select('id, nombre, rif, condicion_pago, dias_credito')
+            .select('id, nombre, rif, condicion_pago, dias_credito, limite_credito')
             .eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
             .then(({ data }) => setClientes(data || []))
 
@@ -1231,6 +1269,20 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
                         </div>
                     </div>
                 )}
+                {clienteSel?.condicion_pago === 'credito' && clienteSel?.limite_credito > 0 && (() => {
+                    const disponible = Math.max(0, Number(clienteSel.limite_credito) - cxcVencido)
+                    const excede = total > disponible
+                    if (!excede) return null
+                    return (
+                        <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '12px', padding: '12px 16px', display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '12px' }}>
+                            <AlertCircle size={20} color="#dc2626" style={{ flexShrink: 0 }} />
+                            <div>
+                                <p style={{ fontSize: '13px', fontWeight: 700, color: '#dc2626', margin: '0 0 2px' }}>Este pedido excede el crédito disponible</p>
+                                <p style={{ fontSize: '12px', color: '#ef4444', margin: 0 }}>Disponible: {fmt(disponible)} · Pedido: {fmt(total)}</p>
+                            </div>
+                        </div>
+                    )
+                })()}
 
                 <div style={s.card}>
                     <label style={s.label}>Productos ({items.length})</label>
