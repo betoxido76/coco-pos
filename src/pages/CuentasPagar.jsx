@@ -31,10 +31,14 @@ function BadgeVencimiento({ fecha }) {
     return <span style={{ color: '#16a34a', fontSize: '12px' }}>● {dias}d restantes</span>
 }
 
+const PAGE_SIZE = 50
+
 export default function CuentasPagar() {
     const { perfil } = useAuth()
     const [compras, setCompras] = useState([])
+    const [kpiData, setKpiData] = useState([])
     const [pagos, setPagos] = useState({})
+    const [pagosKpi, setPagosKpi] = useState({})
     const [loading, setLoading] = useState(true)
     const [filtro, setFiltro] = useState('pendiente')
     const [compraSeleccionada, setCompraSeleccionada] = useState(null)
@@ -42,8 +46,11 @@ export default function CuentasPagar() {
     const [tasas, setTasas] = useState({})
     const [proveedores, setProveedores] = useState([])
     const [filtroProveedor, setFiltroProveedor] = useState('')
+    const [pagina, setPagina] = useState(0)
+    const [totalRegistros, setTotalRegistros] = useState(0)
 
-    useEffect(() => { cargarDatos() }, [filtro, filtroProveedor])
+    useEffect(() => { setPagina(0) }, [filtro, filtroProveedor])
+    useEffect(() => { cargarDatos() }, [filtro, filtroProveedor, pagina])
 
     useEffect(() => {
         supabase.from('proveedores').select('id, nombre')
@@ -54,29 +61,56 @@ export default function CuentasPagar() {
     async function cargarDatos() {
         setLoading(true)
 
-        const { data: cfgData } = await supabase.from('configuracion').select('clave, valor')
+        let kpiQ = supabase
+            .from('compras')
+            .select('id, total, estado_cobro, fecha_vencimiento_pago')
+            .eq('empresa_id', perfil.empresa_id)
+            .eq('condicion_pago', 'credito')
+        if (filtro !== 'todos') kpiQ = kpiQ.eq('estado_cobro', filtro)
+        if (filtroProveedor) kpiQ = kpiQ.eq('proveedor_id', filtroProveedor)
+
+        let tablaQ = supabase
+            .from('compras')
+            .select('*, proveedores(nombre)', { count: 'exact' })
+            .eq('empresa_id', perfil.empresa_id)
+            .eq('condicion_pago', 'credito')
+            .order('fecha_vencimiento_pago', { ascending: true })
+            .range(pagina * PAGE_SIZE, (pagina + 1) * PAGE_SIZE - 1)
+        if (filtro !== 'todos') tablaQ = tablaQ.eq('estado_cobro', filtro)
+        if (filtroProveedor) tablaQ = tablaQ.eq('proveedor_id', filtroProveedor)
+
+        const [{ data: cfgData }, { data: kpi }, { data, count }] = await Promise.all([
+            supabase.from('configuracion').select('clave, valor'),
+            kpiQ,
+            tablaQ,
+        ])
+
         const t = {}
         cfgData?.forEach(r => { t[r.clave] = r.valor })
         setTasas(t)
 
-        let query = supabase
-            .from('compras')
-            .select(`*, proveedores(nombre)`)
-            .eq('empresa_id', perfil.empresa_id)
-            .eq('condicion_pago', 'credito')
-            .order('fecha_vencimiento_pago', { ascending: true })
+        if (kpi) {
+            setKpiData(kpi)
+            const kpiIds = kpi.map(c => c.id)
+            if (kpiIds.length > 0) {
+                const { data: kpiPagos } = await supabase
+                    .from('pagos_proveedor').select('compra_id, monto_usd').in('compra_id', kpiIds)
+                const kpiPagosMap = {}
+                kpiPagos?.forEach(p => {
+                    if (!kpiPagosMap[p.compra_id]) kpiPagosMap[p.compra_id] = []
+                    kpiPagosMap[p.compra_id].push(p)
+                })
+                setPagosKpi(kpiPagosMap)
+            }
+        }
 
-        if (filtro !== 'todos') query = query.eq('estado_cobro', filtro)
-        if (filtroProveedor) query = query.eq('proveedor_id', filtroProveedor)
-
-        const { data } = await query
         if (!data) { setLoading(false); return }
+        if (count !== null) setTotalRegistros(count)
 
         const ids = data.map(c => c.id)
-        const { data: pagosData } = await supabase
-            .from('pagos_proveedor')
-            .select('*')
-            .in('compra_id', ids)
+        const { data: pagosData } = ids.length > 0
+            ? await supabase.from('pagos_proveedor').select('*').in('compra_id', ids)
+            : { data: [] }
 
         const pagosMap = {}
         pagosData?.forEach(p => {
@@ -100,9 +134,12 @@ export default function CuentasPagar() {
         return pagosCompra.reduce((s, p) => s + Number(p.monto_usd || 0), 0)
     }
 
-    const totalPendiente = compras.reduce((s, c) => s + calcularSaldo(c), 0)
-    const vencidas = compras.filter(c => c.fecha_vencimiento_pago && new Date(c.fecha_vencimiento_pago) < new Date()).length
-    const alDia = compras.filter(c => c.fecha_vencimiento_pago && new Date(c.fecha_vencimiento_pago) >= new Date()).length
+    const totalPendiente = kpiData.reduce((s, c) => {
+        const pag = (pagosKpi[c.id] || []).reduce((a, p) => a + Number(p.monto_usd || 0), 0)
+        return s + Math.max(0, Number(c.total || 0) - pag)
+    }, 0)
+    const vencidas = kpiData.filter(c => c.fecha_vencimiento_pago && new Date(c.fecha_vencimiento_pago) < new Date()).length
+    const alDia = kpiData.filter(c => c.fecha_vencimiento_pago && new Date(c.fecha_vencimiento_pago) >= new Date()).length
 
     function abrirModal(compra) {
         setCompraSeleccionada(compra)
@@ -195,6 +232,24 @@ export default function CuentasPagar() {
                     </table>
                 )}
             </div>
+
+            {totalRegistros > PAGE_SIZE && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', marginTop: '8px' }}>
+                    <span style={{ fontSize: '13px', color: '#6b7280' }}>
+                        Mostrando {pagina * PAGE_SIZE + 1}–{Math.min((pagina + 1) * PAGE_SIZE, totalRegistros)} de {totalRegistros}
+                    </span>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                        <button onClick={() => setPagina(p => p - 1)} disabled={pagina === 0}
+                            style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: pagina === 0 ? '#d1d5db' : '#374151', cursor: pagina === 0 ? 'default' : 'pointer' }}>
+                            ← Anterior
+                        </button>
+                        <button onClick={() => setPagina(p => p + 1)} disabled={(pagina + 1) * PAGE_SIZE >= totalRegistros}
+                            style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: (pagina + 1) * PAGE_SIZE >= totalRegistros ? '#d1d5db' : '#374151', cursor: (pagina + 1) * PAGE_SIZE >= totalRegistros ? 'default' : 'pointer' }}>
+                            Siguiente →
+                        </button>
+                    </div>
+                </div>
+            )}
 
             {mostrarModal && compraSeleccionada && (
                 <ModalPago

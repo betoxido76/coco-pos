@@ -16,9 +16,12 @@ function semaforo(fechaVenc) {
     return { color: '#16a34a', bg: '#f0fdf4', label: `Vence en ${dias}d`, dot: '🟢' }
 }
 
+const PAGE_SIZE = 50
+
 export default function CuentasCobrar() {
     const { perfil } = useAuth()
     const [ventas, setVentas] = useState([])
+    const [kpiData, setKpiData] = useState([])
     const [loading, setLoading] = useState(true)
     const [filtro, setFiltro] = useState('pendiente')
     const [modalVenta, setModalVenta] = useState(null)       // cobro individual
@@ -27,8 +30,11 @@ export default function CuentasCobrar() {
     const [clientes, setClientes] = useState([])
     const [filtroCliente, setFiltroCliente] = useState('')
     const [seleccionadas, setSeleccionadas] = useState([]) // ids seleccionados
+    const [pagina, setPagina] = useState(0)
+    const [totalRegistros, setTotalRegistros] = useState(0)
 
-    useEffect(() => { cargar() }, [filtro, filtroCliente])
+    useEffect(() => { setPagina(0) }, [filtro, filtroCliente])
+    useEffect(() => { cargar() }, [filtro, filtroCliente, pagina])
     // Limpiar selección al cambiar filtro
     useEffect(() => { setSeleccionadas([]) }, [filtro, filtroCliente])
 
@@ -40,17 +46,33 @@ export default function CuentasCobrar() {
 
     async function cargar() {
         setLoading(true)
-        let q = supabase
-            .from('ventas')
-            .select('*, clientes(nombre, condicion_pago, dias_credito)')
-            .eq('empresa_id', perfil.empresa_id)
-            .in('estado_cobro', filtro === 'todos' ? ['pendiente', 'parcial', 'pagado'] : [filtro])
-            .order('fecha_vencimiento_pago', { ascending: true })
-        if (filtroCliente) q = q.eq('cliente_id', filtroCliente)
-        const { data } = await q
-        if (data) setVentas(data)
+        const estados = filtro === 'todos' ? ['pendiente', 'parcial', 'pagado'] : [filtro]
 
-        const { data: cfg } = await supabase.from('configuracion').select('clave, valor')
+        let kpiQ = supabase
+            .from('ventas')
+            .select('total, estado_cobro, fecha_vencimiento_pago, cliente_id')
+            .eq('empresa_id', perfil.empresa_id)
+            .in('estado_cobro', estados)
+        if (filtroCliente) kpiQ = kpiQ.eq('cliente_id', filtroCliente)
+
+        let tablaQ = supabase
+            .from('ventas')
+            .select('*, clientes(nombre, condicion_pago, dias_credito)', { count: 'exact' })
+            .eq('empresa_id', perfil.empresa_id)
+            .in('estado_cobro', estados)
+            .order('fecha_vencimiento_pago', { ascending: true })
+            .range(pagina * PAGE_SIZE, (pagina + 1) * PAGE_SIZE - 1)
+        if (filtroCliente) tablaQ = tablaQ.eq('cliente_id', filtroCliente)
+
+        const [{ data: kpi }, { data, count }, { data: cfg }] = await Promise.all([
+            kpiQ,
+            tablaQ,
+            supabase.from('configuracion').select('clave, valor'),
+        ])
+
+        if (kpi) setKpiData(kpi)
+        if (data) setVentas(data)
+        if (count !== null) setTotalRegistros(count)
         if (cfg) {
             const m = {}; cfg.forEach(r => { m[r.clave] = Number(r.valor) })
             setTasas({ tasa_bcv: m.tasa_bcv || 1, tasa_euro: m.tasa_euro || 1, tasa_binance: m.tasa_binance || 1 })
@@ -76,7 +98,7 @@ export default function CuentasCobrar() {
         })
     }
 
-    const totalPendiente = ventas
+    const totalPendiente = kpiData
         .filter(v => v.estado_cobro !== 'pagado')
         .reduce((s, v) => s + (v.total || 0), 0)
 
@@ -93,8 +115,8 @@ export default function CuentasCobrar() {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '24px' }}>
                 {[
                     { label: 'Total pendiente', valor: fmt(totalPendiente), sub: fmtBs(totalPendiente * tasas.tasa_bcv), color: '#1f2937' },
-                    { label: 'Facturas vencidas', valor: ventas.filter(v => v.fecha_vencimiento_pago && new Date(v.fecha_vencimiento_pago) < new Date() && v.estado_cobro !== 'pagado').length, sub: 'requieren atención', color: '#ef4444' },
-                    { label: 'Facturas al día', valor: ventas.filter(v => v.estado_cobro !== 'pagado' && (!v.fecha_vencimiento_pago || new Date(v.fecha_vencimiento_pago) >= new Date())).length, sub: 'dentro del plazo', color: '#16a34a' },
+                    { label: 'Facturas vencidas', valor: kpiData.filter(v => v.fecha_vencimiento_pago && new Date(v.fecha_vencimiento_pago) < new Date() && v.estado_cobro !== 'pagado').length, sub: 'requieren atención', color: '#ef4444' },
+                    { label: 'Facturas al día', valor: kpiData.filter(v => v.estado_cobro !== 'pagado' && (!v.fecha_vencimiento_pago || new Date(v.fecha_vencimiento_pago) >= new Date())).length, sub: 'dentro del plazo', color: '#16a34a' },
                 ].map(k => (
                     <div key={k.label} style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px 20px' }}>
                         <p style={{ fontSize: '12px', color: '#6b7280', margin: '0 0 4px' }}>{k.label}</p>
@@ -218,6 +240,24 @@ export default function CuentasCobrar() {
                             </table>
                         )}
             </div>
+
+            {totalRegistros > PAGE_SIZE && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', marginTop: '8px' }}>
+                    <span style={{ fontSize: '13px', color: '#6b7280' }}>
+                        Mostrando {pagina * PAGE_SIZE + 1}–{Math.min((pagina + 1) * PAGE_SIZE, totalRegistros)} de {totalRegistros}
+                    </span>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                        <button onClick={() => setPagina(p => p - 1)} disabled={pagina === 0}
+                            style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: pagina === 0 ? '#d1d5db' : '#374151', cursor: pagina === 0 ? 'default' : 'pointer' }}>
+                            ← Anterior
+                        </button>
+                        <button onClick={() => setPagina(p => p + 1)} disabled={(pagina + 1) * PAGE_SIZE >= totalRegistros}
+                            style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: (pagina + 1) * PAGE_SIZE >= totalRegistros ? '#d1d5db' : '#374151', cursor: (pagina + 1) * PAGE_SIZE >= totalRegistros ? 'default' : 'pointer' }}>
+                            Siguiente →
+                        </button>
+                    </div>
+                </div>
+            )}
 
             {/* Modal cobro individual */}
             {modalVenta && (

@@ -14,6 +14,8 @@ const OPCIONES_TASA = [
 ]
 
 // ─── Componente principal ──────────────────────────────────────
+const PAGE_SIZE = 50
+
 export default function Ventas() {
     const { perfil } = useAuth()
     const [tabActiva, setTabActiva] = useState('ventas')
@@ -24,19 +26,22 @@ export default function Ventas() {
     const [pedidosAprobados, setPedidosAprobados] = useState([])
     const [loadingPedidos, setLoadingPedidos] = useState(false)
     const [pedidoActual, setPedidoActual] = useState(null)
+    const [pagina, setPagina] = useState(0)
+    const [totalVentas, setTotalVentas] = useState(0)
 
-    useEffect(() => { cargarVentas() }, [])
+    useEffect(() => { cargarVentas() }, [pagina])
     useEffect(() => { if (tabActiva === 'pedidos') cargarPedidosAprobados() }, [tabActiva])
 
     async function cargarVentas() {
         setLoading(true)
-        const { data } = await supabase
+        const { data, count } = await supabase
             .from('ventas')
-            .select(`*, clientes(nombre), devoluciones(id)`)
+            .select(`*, clientes(nombre), devoluciones(id)`, { count: 'exact' })
             .eq('empresa_id', perfil.empresa_id)
             .order('created_at', { ascending: false })
-            .limit(50)
+            .range(pagina * PAGE_SIZE, (pagina + 1) * PAGE_SIZE - 1)
         if (data) setVentas(data)
+        if (count !== null) setTotalVentas(count)
         setLoading(false)
     }
 
@@ -171,6 +176,23 @@ export default function Ventas() {
                                 ))}
                             </tbody>
                         </table>
+                    )}
+                    {totalVentas > PAGE_SIZE && (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderTop: '1px solid #e5e7eb', backgroundColor: '#f9fafb' }}>
+                            <span style={{ fontSize: '13px', color: '#6b7280' }}>
+                                Mostrando {pagina * PAGE_SIZE + 1}–{Math.min((pagina + 1) * PAGE_SIZE, totalVentas)} de {totalVentas}
+                            </span>
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                                <button onClick={() => setPagina(p => p - 1)} disabled={pagina === 0}
+                                    style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: pagina === 0 ? '#d1d5db' : '#374151', cursor: pagina === 0 ? 'default' : 'pointer' }}>
+                                    ← Anterior
+                                </button>
+                                <button onClick={() => setPagina(p => p + 1)} disabled={(pagina + 1) * PAGE_SIZE >= totalVentas}
+                                    style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: (pagina + 1) * PAGE_SIZE >= totalVentas ? '#d1d5db' : '#374151', cursor: (pagina + 1) * PAGE_SIZE >= totalVentas ? 'default' : 'pointer' }}>
+                                    Siguiente →
+                                </button>
+                            </div>
+                        </div>
                     )}
                 </div>
             )}
