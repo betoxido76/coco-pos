@@ -324,14 +324,31 @@ ON CONFLICT DO NOTHING;
 
 ## 14. Pendientes / Decisiones futuras
 
+### Backlog operacional (mejoras al producto existente)
+
 | Item | Prioridad | Notas |
 |---|---|---|
 | Módulo de gastos — mejoras | Media | Filtro por rango de fechas (inicio/fin); gastos programados con fecha vencimiento (ver sección 17) |
-| Paginación en tablas con volumen alto | Baja | Ventas, CxC, CxP |
-| Índices en Supabase | Baja | Para columnas frecuentemente filtradas |
-| Módulo de reportes | Baja | No iniciado |
-| Historial de visitas en FichaCliente (paginado) | Baja | Actualmente carga últimas 20; considerar paginación cuando el volumen crezca |
-| Push notifications para pedidos nuevos (Pedidos.jsx) | Baja | Realtime ya está en `pedidos`; falta conectarlo al módulo Pedidos del backoffice |
+
+### Completados (sesiones 2026-04-25 / 2026-04-26)
+
+| Item | Notas |
+|---|---|
+| Paginación en todos los módulos | Ventas, CxC, CxP, Compras, Inventario (VistaMovimientos), Gastos, Mermas, CambiosManoMano — PAGE_SIZE=50, KPIs separados del paginado |
+| Índices en Supabase | Creados sobre empresa_id, fecha, estado, cliente_id, vendedor_id en las tablas de mayor volumen |
+| Historial de visitas en FichaCliente (paginado) | VISITAS_PAGE=10, cargarVisitas(pag), paginación con ← → en tab Visitas |
+| Realtime en Pedidos.jsx | Suscripción INSERT en tabla pedidos filtrada por empresa_id; toast "Nuevo pedido recibido" + recarga automática de lista |
+| Módulo Finanzas | Vista consolidada de CxC + CxP + Cobros del día para rol finanzas |
+
+### Backlog estratégico (capacidades de plataforma SaaS)
+
+Estos ítems no son mejoras funcionales al producto sino capacidades de la plataforma que se necesitan para escalar comercialmente.
+
+| Item | Prioridad | Descripción |
+|---|---|---|
+| Panel de métricas del operador | Media | En SuperAdmin: pedidos por empresa/mes, módulos más usados, usuarios activos, última actividad. Necesario para soporte, detección de churn y decisiones de producto. Sin esto el operador va ciego. |
+| Autoregistro (self-service onboarding) | Media | Un cliente prospecto va a una URL, ingresa nombre/RIF/email y queda activo con plan trial. Hoy el operador es el cuello de botella del onboarding. Bloqueante para escalar sin esfuerzo. |
+| Billing integrado | Baja | Cobro recurrente automático, corte de acceso por falta de pago, portal de cliente para ver su suscripción. Para los primeros 10–20 clientes es manejable manualmente; necesario para escalar. Opciones: Stripe + webhooks, o MercadoPago para mercado latinoamericano. |
 
 ---
 
