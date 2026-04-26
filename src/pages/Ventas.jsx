@@ -238,14 +238,20 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
     const [pagoBs, setPagoBs] = useState('')
     const [metodoBs, setMetodoBs] = useState('Pago Móvil')
     const [notaCobro, setNotaCobro] = useState('')
+    const [diasCredito, setDiasCredito] = useState(0)
 
     useEffect(() => {
         supabase.from('pedido_items')
             .select('*, productos_terminados(nombre, sku, stock_actual)')
             .eq('pedido_id', pedido.id)
             .then(({ data }) => { if (data) setItems(data); setLoading(false) })
-        supabase.from('clientes').select('condicion_pago').eq('id', pedido.cliente_id).single()
-            .then(({ data }) => { if (data) setCondicion(data.condicion_pago || 'credito') })
+        supabase.from('clientes').select('condicion_pago, dias_credito').eq('id', pedido.cliente_id).single()
+            .then(({ data }) => {
+                if (data) {
+                    setCondicion(data.condicion_pago || 'credito')
+                    setDiasCredito(Number(data.dias_credito) || 0)
+                }
+            })
         supabase.from('configuracion').select('clave, valor').eq('empresa_id', perfil.empresa_id)
             .then(({ data }) => { if (data) { const t = {}; data.forEach(r => { t[r.clave] = Number(r.valor) }); setTasas(t) } })
     }, [pedido.id])
@@ -265,6 +271,13 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
         const numero = numeroConsecutivo || 'NE-000001'
         const { data: { user } } = await supabase.auth.getUser()
 
+        let fechaVencimiento = null
+        if (condicion === 'credito' && diasCredito > 0) {
+            const d = new Date()
+            d.setDate(d.getDate() + diasCredito)
+            fechaVencimiento = d.toISOString().split('T')[0]
+        }
+
         const { data: venta, error: errVenta } = await supabase
             .from('ventas')
             .insert({
@@ -276,6 +289,7 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
                 estado_cobro: condicion === 'contado' ? 'pagado' : 'pendiente',
                 empresa_id: perfil.empresa_id,
                 nro_referencia: nroReferencia.trim() || null,
+                fecha_vencimiento_pago: fechaVencimiento,
             })
             .select().single()
 
@@ -561,7 +575,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
     const [notaCobro, setNotaCobro] = useState('')
 
     useEffect(() => {
-        supabase.from('clientes').select('id, nombre, condicion_pago').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
+        supabase.from('clientes').select('id, nombre, condicion_pago, dias_credito').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
             .then(({ data }) => setClientes(data || []))
         supabase.from('productos_terminados').select('id, nombre, sku, precio_venta, stock_actual, unidad_medida').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
             .then(({ data }) => setProductos(data || []))
@@ -632,6 +646,14 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
         const numero = numeroConsecutivo || 'NE-000001' // Fallback por si falla
         const { data: { user } } = await supabase.auth.getUser()
 
+        const clienteObj = clientes.find(c => c.id === clienteId)
+        let fechaVencimiento = null
+        if (condicion === 'credito' && clienteObj?.dias_credito > 0) {
+            const d = new Date()
+            d.setDate(d.getDate() + Number(clienteObj.dias_credito))
+            fechaVencimiento = d.toISOString().split('T')[0]
+        }
+
         const { data: venta, error: errVenta } = await supabase
             .from('ventas')
             .insert({
@@ -640,6 +662,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                 estado_cobro: condicion === 'contado' ? 'pagado' : 'pendiente',
                 empresa_id: perfil.empresa_id,
                 nro_referencia: nroReferencia.trim() || null,
+                fecha_vencimiento_pago: fechaVencimiento,
                 direccion_entrega_id: direccionId || null,
                 direccion_entrega_texto: direccionId
                     ? direcciones.find(d => d.id === direccionId)?.direccion || null
