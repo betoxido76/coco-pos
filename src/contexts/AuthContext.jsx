@@ -3,6 +3,8 @@ import { supabase } from '../lib/supabaseClient'
 
 const AuthContext = createContext({})
 
+const SESSION_KEY = 'mipos_session_token'
+
 const TODOS_LOS_MODULOS = [
     'dashboard', 'inventario', 'ventas', 'pedidos', 'pedidos_campo',
     'compras', 'cxc', 'cxp', 'gastos', 'produccion', 'cambios', 'mermas', 'administracion',
@@ -14,6 +16,7 @@ export function AuthProvider({ children }) {
     const [modulosActivos, setModulosActivos] = useState(null) // null = cargando
     const [loading, setLoading] = useState(true)
 
+    // Suscripción a cambios de auth
     useEffect(() => {
         supabase.auth.getSession().then(({ data: { session } }) => {
             setUser(session?.user ?? null)
@@ -30,6 +33,43 @@ export function AuthProvider({ children }) {
         )
         return () => subscription.unsubscribe()
     }, [])
+
+    // Verificación periódica de sesión única (cada 5 min + al recuperar foco)
+    useEffect(() => {
+        if (!user || loading) return
+
+        const userId = user.id
+        const check = () => verificarSesion(userId)
+
+        // Verificar inmediatamente al cargar (session restore tras refresh)
+        // verificarSesion retorna early si no hay token local → sin riesgo en login fresco
+        check()
+
+        const interval = setInterval(check, 5 * 60 * 1000)
+        const onVisible = () => { if (document.visibilityState === 'visible') check() }
+        document.addEventListener('visibilitychange', onVisible)
+
+        return () => {
+            clearInterval(interval)
+            document.removeEventListener('visibilitychange', onVisible)
+        }
+    }, [user, loading])
+
+    async function verificarSesion(userId) {
+        const localToken = localStorage.getItem(SESSION_KEY)
+        if (!localToken) return // login reciente aún no tiene token, o ya hizo logout
+
+        const { data } = await supabase
+            .from('usuarios')
+            .select('session_token')
+            .eq('id', userId)
+            .single()
+
+        // Solo expulsar si la BD tiene un token distinto (no si es null — columna nueva sin valor)
+        if (data?.session_token && data.session_token !== localToken) {
+            await logout()
+        }
+    }
 
     async function cargarPerfil(userId) {
         const { data } = await supabase
@@ -57,11 +97,19 @@ export function AuthProvider({ children }) {
     }
 
     async function login(email, password) {
-        const { error } = await supabase.auth.signInWithPassword({ email, password })
-        return { error }
+        const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+        if (error) return { error }
+
+        // Generar token de sesión único — invalida cualquier sesión anterior
+        const token = crypto.randomUUID()
+        await supabase.from('usuarios').update({ session_token: token }).eq('id', data.user.id)
+        localStorage.setItem(SESSION_KEY, token)
+
+        return { error: null }
     }
 
     async function logout() {
+        localStorage.removeItem(SESSION_KEY)
         await supabase.auth.signOut()
     }
 
