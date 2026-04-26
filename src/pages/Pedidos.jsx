@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
-import { Check, X, FileText, ChevronRight, Clock, Search } from 'lucide-react'
+import { Check, X, FileText, ChevronRight, Clock, Search, Bell } from 'lucide-react'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 
@@ -39,8 +39,30 @@ export default function Pedidos() {
     const [busqueda, setBusqueda] = useState('')
     const [filtroVendedor, setFiltroVendedor] = useState('')
     const [vendedores, setVendedores] = useState([])
+    const [toasts, setToasts] = useState([])
+    const [reloadKey, setReloadKey] = useState(0)
 
-    useEffect(() => { cargar() }, [tabActiva])
+    useEffect(() => { cargar() }, [tabActiva, reloadKey])
+
+    useEffect(() => {
+        if (!perfil?.empresa_id) return
+        const channel = supabase
+            .channel(`pedidos_backoffice_${perfil.empresa_id}`)
+            .on('postgres_changes', {
+                event: 'INSERT',
+                schema: 'public',
+                table: 'pedidos',
+                filter: `empresa_id=eq.${perfil.empresa_id}`
+            }, (payload) => {
+                const nuevo = payload.new
+                const id = Date.now()
+                setToasts(prev => [...prev, { id, pedido: nuevo }])
+                setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 5000)
+                setReloadKey(k => k + 1)
+            })
+            .subscribe()
+        return () => supabase.removeChannel(channel)
+    }, [perfil?.empresa_id])
 
     useEffect(() => {
         supabase.from('usuarios')
@@ -195,6 +217,32 @@ export default function Pedidos() {
                         </tbody>
                     </table>
                 )}
+            </div>
+
+            {/* Toasts de nuevo pedido */}
+            <div style={{ position: 'fixed', top: '20px', right: '20px', zIndex: 9999, display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {toasts.map((toast, idx) => (
+                    <div key={toast.id} style={{
+                        backgroundColor: '#fff', border: '1px solid #bbf7d0', borderRadius: '12px',
+                        padding: '14px 16px', boxShadow: '0 4px 20px rgba(0,0,0,0.12)',
+                        display: 'flex', alignItems: 'center', gap: '12px', minWidth: '280px',
+                        animation: 'slideIn 0.2s ease',
+                    }}>
+                        <div style={{ backgroundColor: '#f0fdf4', borderRadius: '8px', padding: '8px', flexShrink: 0 }}>
+                            <Bell size={18} color="#16a34a" />
+                        </div>
+                        <div style={{ flex: 1 }}>
+                            <p style={{ fontSize: '13px', fontWeight: 600, color: '#1f2937', margin: '0 0 2px' }}>Nuevo pedido recibido</p>
+                            <p style={{ fontSize: '12px', color: '#6b7280', margin: 0, fontFamily: 'monospace' }}>
+                                {toast.pedido.numero_pedido || 'Sin número'}
+                            </p>
+                        </div>
+                        <button onClick={() => setToasts(prev => prev.filter(t => t.id !== toast.id))}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', padding: '2px', lineHeight: 1 }}>
+                            ✕
+                        </button>
+                    </div>
+                ))}
             </div>
         </div>
     )
