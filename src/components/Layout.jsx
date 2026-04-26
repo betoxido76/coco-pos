@@ -6,8 +6,7 @@ import {
     ClipboardList, DollarSign, FlaskConical, AlertTriangle, ArrowLeftRight,
     User
 } from 'lucide-react'
-import { useState, useEffect } from 'react'
-import { supabase } from '../lib/supabaseClient'
+import { useState } from 'react'
 
 const NAV_ITEMS = [
     { key: 'dashboard', to: '/', icon: LayoutDashboard, label: 'Dashboard' },
@@ -26,31 +25,9 @@ const NAV_ITEMS = [
 ]
 
 export default function Layout() {
-    const { perfil, logout, user } = useAuth()
+    const { perfil, logout, modulosActivos } = useAuth()
     const navigate = useNavigate()
     const [open, setOpen] = useState(true)
-    const [modulosActivos, setModulosActivos] = useState(null) // null = cargando
-
-    useEffect(() => {
-        if (!perfil) return
-
-        // Superadmin ve todo sin restricciones
-        if (perfil.rol === 'superadmin') {
-            setModulosActivos(NAV_ITEMS.map(i => i.key))
-            return
-        }
-
-        supabase
-            .from('usuario_modulos')
-            .select('modulo_id')
-            .eq('usuario_id', perfil.id)
-            .eq('empresa_id', perfil.empresa_id)
-            .eq('activo', true)
-            .then(({ data }) => {
-                if (data) setModulosActivos(data.map(m => m.modulo_id))
-                else setModulosActivos([])
-            })
-    }, [perfil])
 
     const navFiltrado = modulosActivos === null
         ? []

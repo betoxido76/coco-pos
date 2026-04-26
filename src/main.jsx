@@ -32,6 +32,14 @@ function RutaProtegida({ children }) {
   return children
 }
 
+function ModuloProtegido({ modulo, children }) {
+  const { perfil, modulosActivos } = useAuth()
+  if (modulosActivos === null) return null // aún cargando
+  if (perfil?.rol === 'superadmin') return children
+  if (modulosActivos.includes(modulo)) return children
+  return <Navigate to="/" replace />
+}
+
 function App() {
   const { user, perfil, loading } = useAuth()
   if (loading) return null
@@ -55,21 +63,21 @@ function App() {
     <Routes>
       <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
       <Route path="/" element={<RutaProtegida><Layout /></RutaProtegida>}>
-        <Route index element={<Dashboard />} />
-        <Route path="inventario" element={<Inventario />} />
-        <Route path="ventas" element={<Ventas />} />
-        <Route path="compras" element={<Compras />} />
-        <Route path="administracion" element={<Administracion />} />
-        <Route path="cuentas-cobrar" element={<CuentasCobrar />} />
-        <Route path="cuentas-pagar" element={<CuentasPagar />} />
-        <Route path="produccion" element={<Produccion />} />
-        <Route path="mermas" element={<Mermas />} />
-        <Route path="pedidos" element={<Pedidos />} />
-        <Route path="nuevo-pedido" element={<NuevoPedido onPedidoCreado={() => { }} />} />
-        <Route path="cambios-mano-mano" element={<CambiosManoMano />} />
-        <Route path="/superadmin" element={<SuperAdmin />} />
-        <Route path="/gastos" element={<Gastos />} />
-        <Route path="/reset-password" element={<ResetPassword />} />
+        <Route index element={<ModuloProtegido modulo="dashboard"><Dashboard /></ModuloProtegido>} />
+        <Route path="inventario" element={<ModuloProtegido modulo="inventario"><Inventario /></ModuloProtegido>} />
+        <Route path="ventas" element={<ModuloProtegido modulo="ventas"><Ventas /></ModuloProtegido>} />
+        <Route path="compras" element={<ModuloProtegido modulo="compras"><Compras /></ModuloProtegido>} />
+        <Route path="administracion" element={<ModuloProtegido modulo="administracion"><Administracion /></ModuloProtegido>} />
+        <Route path="cuentas-cobrar" element={<ModuloProtegido modulo="cxc"><CuentasCobrar /></ModuloProtegido>} />
+        <Route path="cuentas-pagar" element={<ModuloProtegido modulo="cxp"><CuentasPagar /></ModuloProtegido>} />
+        <Route path="produccion" element={<ModuloProtegido modulo="produccion"><Produccion /></ModuloProtegido>} />
+        <Route path="mermas" element={<ModuloProtegido modulo="mermas"><Mermas /></ModuloProtegido>} />
+        <Route path="pedidos" element={<ModuloProtegido modulo="pedidos"><Pedidos /></ModuloProtegido>} />
+        <Route path="nuevo-pedido" element={<ModuloProtegido modulo="pedidos_campo"><NuevoPedido onPedidoCreado={() => { }} /></ModuloProtegido>} />
+        <Route path="cambios-mano-mano" element={<ModuloProtegido modulo="cambios"><CambiosManoMano /></ModuloProtegido>} />
+        <Route path="gastos" element={<ModuloProtegido modulo="gastos"><Gastos /></ModuloProtegido>} />
+        <Route path="superadmin" element={<SuperAdmin />} />
+        <Route path="reset-password" element={<ResetPassword />} />
       </Route>
     </Routes>
   )
