@@ -41,7 +41,7 @@ export default function SuperAdmin() {
 
     // Modal nueva empresa
     const [modalEmpresa, setModalEmpresa] = useState(false)
-    const [formEmpresa, setFormEmpresa] = useState({ nombre: '', rif: '' })
+    const [formEmpresa, setFormEmpresa] = useState({ nombre: '', rif: '', perfil_negocio: 'manufactura' })
     const [guardandoEmpresa, setGuardandoEmpresa] = useState(false)
     const [errorEmpresa, setErrorEmpresa] = useState('')
 
@@ -196,7 +196,7 @@ export default function SuperAdmin() {
         if (!formEmpresa.nombre.trim()) { setErrorEmpresa('El nombre es obligatorio'); return }
         setGuardandoEmpresa(true); setErrorEmpresa('')
         const { data, error } = await supabase.from('empresas')
-            .insert({ nombre: formEmpresa.nombre.trim(), rif: formEmpresa.rif.trim() || null })
+            .insert({ nombre: formEmpresa.nombre.trim(), rif: formEmpresa.rif.trim() || null, perfil_negocio: formEmpresa.perfil_negocio })
             .select().single()
         if (error) { setErrorEmpresa('Error: ' + error.message); setGuardandoEmpresa(false); return }
         setEmpresaModulos(prev => ({ ...prev, [data.id]: new Set() }))
@@ -273,7 +273,7 @@ export default function SuperAdmin() {
                     <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>🛠️ Super Admin</h1>
                     <p style={{ fontSize: '13px', color: '#6b7280', margin: '4px 0 0' }}>Gestiona empresas, módulos y usuarios</p>
                 </div>
-                <button onClick={() => { setModalEmpresa(true); setFormEmpresa({ nombre: '', rif: '' }); setErrorEmpresa('') }}
+                <button onClick={() => { setModalEmpresa(true); setFormEmpresa({ nombre: '', rif: '', perfil_negocio: 'manufactura' }); setErrorEmpresa('') }}
                     style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#1d4ed8', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px 16px', fontSize: '14px', fontWeight: 500, cursor: 'pointer' }}>
                     <Plus size={16} /> Nueva empresa
                 </button>
@@ -526,6 +526,13 @@ export default function SuperAdmin() {
                                 <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>RIF <span style={{ fontWeight: 400, color: '#9ca3af' }}>(opcional)</span></label>
                                 <input value={formEmpresa.rif} onChange={e => setFormEmpresa(p => ({ ...p, rif: e.target.value }))}
                                     placeholder="J-12345678-9" style={inputStyle} />
+                            </div>
+                            <div>
+                                <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Perfil de negocio</label>
+                                <select value={formEmpresa.perfil_negocio} onChange={e => setFormEmpresa(p => ({ ...p, perfil_negocio: e.target.value }))} style={inputStyle}>
+                                    <option value="manufactura">Manufactura</option>
+                                    <option value="autopartes">Autopartes / Repuestos</option>
+                                </select>
                             </div>
                         </div>
                         {errorEmpresa && <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px', fontSize: '13px', color: '#dc2626', marginTop: '14px' }}>{errorEmpresa}</div>}

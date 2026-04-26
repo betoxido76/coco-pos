@@ -1,10 +1,11 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
+import { supabase } from '../lib/supabaseClient'
 import {
     LayoutDashboard, Package, ShoppingCart,
     TrendingDown, CreditCard, LogOut, Menu, X, Truck, FolderTree,
     ClipboardList, DollarSign, FlaskConical, AlertTriangle, ArrowLeftRight,
-    User
+    User, Tag
 } from 'lucide-react'
 import { useState } from 'react'
 
@@ -21,6 +22,7 @@ const NAV_ITEMS = [
     { key: 'produccion', to: '/produccion', icon: FlaskConical, label: 'Producción' },
     { key: 'cambios', to: '/cambios-mano-mano', icon: ArrowLeftRight, label: 'Cambios Mano a Mano' },
     { key: 'mermas', to: '/mermas', icon: AlertTriangle, label: 'Mermas' },
+    { key: 'cotizador', to: '/cotizador', icon: Tag, label: 'Cotizador' },
     { key: 'administracion', to: '/administracion', icon: FolderTree, label: 'Administración' },
 ]
 

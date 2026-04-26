@@ -16,6 +16,7 @@ import Mermas from './pages/Mermas'
 import Pedidos from './pages/Pedidos'
 import NuevoPedido from './pages/NuevoPedido'
 import CambiosManoMano from './pages/CambiosManoMano'
+import Cotizador from './pages/Cotizador'
 import SuperAdmin from './pages/SuperAdmin'
 import Gastos from './pages/Gastos'
 import ResetPassword from './pages/ResetPassword'
@@ -75,6 +76,7 @@ function App() {
         <Route path="pedidos" element={<ModuloProtegido modulo="pedidos"><Pedidos /></ModuloProtegido>} />
         <Route path="nuevo-pedido" element={<ModuloProtegido modulo="pedidos_campo"><NuevoPedido onPedidoCreado={() => { }} /></ModuloProtegido>} />
         <Route path="cambios-mano-mano" element={<ModuloProtegido modulo="cambios"><CambiosManoMano /></ModuloProtegido>} />
+        <Route path="cotizador" element={<ModuloProtegido modulo="cotizador"><Cotizador /></ModuloProtegido>} />
         <Route path="gastos" element={<ModuloProtegido modulo="gastos"><Gastos /></ModuloProtegido>} />
         <Route path="superadmin" element={<SuperAdmin />} />
         <Route path="reset-password" element={<ResetPassword />} />

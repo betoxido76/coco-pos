@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
-import { Plus, Search, Pencil, X, Check, AlertTriangle } from 'lucide-react'
+import { Plus, Search, Pencil, X, Check, AlertTriangle, Trash2 } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 
 const CATEGORIAS = ['Bebidas', 'Alimentos', 'Helados', 'Aceites', 'Otros']
@@ -16,8 +16,13 @@ const VACIO = {
     aplica_iva: true,
 }
 
+const VACIO_AUTOPARTES = { marca: '', nro_parte: '', barras_2: '', barras_3: '' }
+const VACIO_COMPAT = { marca_vehiculo: '', modelo: '', anio_desde: '', anio_hasta: '' }
+
 export default function Productos() {
     const { perfil } = useAuth()
+    const esAutopartes = perfil?.empresas?.perfil_negocio === 'autopartes'
+
     const [productos, setProductos] = useState([])
     const [proveedores, setProveedores] = useState([])
     const [loading, setLoading] = useState(true)
@@ -26,6 +31,9 @@ export default function Productos() {
     const [vista, setVista] = useState('lista')   // 'lista' | 'form'
     const [editando, setEditando] = useState(null)      // null = nuevo
     const [form, setForm] = useState(VACIO)
+    const [formAuto, setFormAuto] = useState(VACIO_AUTOPARTES)
+    const [compats, setCompats] = useState([])       // lista de compatibilidades
+    const [nuevoCompat, setNuevoCompat] = useState(VACIO_COMPAT)
     const [guardando, setGuardando] = useState(false)
     const [error, setError] = useState('')
     const [exito, setExito] = useState('')
@@ -51,11 +59,14 @@ export default function Productos() {
     function abrirNuevo() {
         setEditando(null)
         setForm(VACIO)
+        setFormAuto(VACIO_AUTOPARTES)
+        setCompats([])
+        setNuevoCompat(VACIO_COMPAT)
         setError('')
         setVista('form')
     }
 
-    function abrirEditar(p) {
+    async function abrirEditar(p) {
         setEditando(p.id)
         setForm({
             nombre: p.nombre || '',
@@ -76,6 +87,18 @@ export default function Productos() {
             activo: p.activo ?? true,
             aplica_iva: p.aplica_iva ?? true,
         })
+        if (esAutopartes) {
+            const [{ data: ap }, { data: cv }] = await Promise.all([
+                supabase.from('productos_autopartes').select('*').eq('producto_id', p.id).single(),
+                supabase.from('compatibilidades_vehiculo').select('*').eq('producto_id', p.id).order('marca_vehiculo'),
+            ])
+            setFormAuto(ap ? { marca: ap.marca || '', nro_parte: ap.nro_parte || '', barras_2: ap.barras_2 || '', barras_3: ap.barras_3 || '' } : VACIO_AUTOPARTES)
+            setCompats(cv || [])
+        } else {
+            setFormAuto(VACIO_AUTOPARTES)
+            setCompats([])
+        }
+        setNuevoCompat(VACIO_COMPAT)
         setError('')
         setVista('form')
     }
@@ -110,16 +133,43 @@ export default function Productos() {
             aplica_iva: form.aplica_iva,
         }
 
-        let err
+        let err, productoId = editando
         if (editando) {
             ; ({ error: err } = await supabase.from('productos_terminados').update(payload).eq('id', editando))
         } else {
-            ; ({ error: err } = await supabase.from('productos_terminados').insert({ ...payload, empresa_id: perfil.empresa_id }))
+            const { data: nuevo, error: insErr } = await supabase.from('productos_terminados').insert({ ...payload, empresa_id: perfil.empresa_id }).select('id').single()
+            err = insErr
+            productoId = nuevo?.id
+        }
+
+        if (err) { setGuardando(false); setError('Error al guardar: ' + err.message); return }
+
+        if (esAutopartes && productoId) {
+            await supabase.from('productos_autopartes').upsert({
+                producto_id: productoId,
+                empresa_id: perfil.empresa_id,
+                marca: formAuto.marca.trim() || null,
+                nro_parte: formAuto.nro_parte.trim() || null,
+                barras_2: formAuto.barras_2.trim() || null,
+                barras_3: formAuto.barras_3.trim() || null,
+            }, { onConflict: 'producto_id' })
+
+            await supabase.from('compatibilidades_vehiculo').delete().eq('producto_id', productoId)
+            if (compats.length > 0) {
+                await supabase.from('compatibilidades_vehiculo').insert(
+                    compats.map(c => ({
+                        producto_id: productoId,
+                        empresa_id: perfil.empresa_id,
+                        marca_vehiculo: c.marca_vehiculo,
+                        modelo: c.modelo,
+                        anio_desde: c.anio_desde || null,
+                        anio_hasta: c.anio_hasta || null,
+                    }))
+                )
+            }
         }
 
         setGuardando(false)
-        if (err) { setError('Error al guardar: ' + err.message); return }
-
         setExito(editando ? 'Producto actualizado' : 'Producto creado')
         setTimeout(() => setExito(''), 3000)
         await cargar()
@@ -273,6 +323,74 @@ export default function Productos() {
                         onChange={e => campo('aplica_iva', e.target.checked)}
                         style={{ width: '18px', height: '18px', accentColor: '#16a34a', cursor: 'pointer' }} />
                 </div>
+
+                {/* ── SECCIÓN AUTOPARTES ── */}
+                {esAutopartes && (
+                    <div style={{ gridColumn: 'span 2', marginTop: '8px' }}>
+                        <div style={{ padding: '14px 16px', backgroundColor: '#eff6ff', borderRadius: '10px', border: '1px solid #bfdbfe', marginBottom: '16px' }}>
+                            <p style={{ fontSize: '13px', fontWeight: 600, color: '#1e40af', margin: '0 0 12px' }}>Datos de autopartes</p>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                                {[
+                                    { key: 'marca', label: 'Marca', placeholder: 'Ej: Bosch' },
+                                    { key: 'nro_parte', label: 'Número de parte', placeholder: 'Ej: 0001-234-567' },
+                                    { key: 'barras_2', label: 'Código de barras 2', placeholder: 'Opcional' },
+                                    { key: 'barras_3', label: 'Código de barras 3', placeholder: 'Opcional' },
+                                ].map(f => (
+                                    <div key={f.key}>
+                                        <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>{f.label}</label>
+                                        <input value={formAuto[f.key]} onChange={e => setFormAuto(p => ({ ...p, [f.key]: e.target.value }))}
+                                            placeholder={f.placeholder} style={inputStyle} />
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* Compatibilidades de vehículos */}
+                        <div style={{ padding: '14px 16px', backgroundColor: '#f9fafb', borderRadius: '10px', border: '1px solid #e5e7eb' }}>
+                            <p style={{ fontSize: '13px', fontWeight: 600, color: '#374151', margin: '0 0 12px' }}>Compatibilidades de vehículos</p>
+
+                            {compats.length > 0 && (
+                                <div style={{ marginBottom: '12px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                    {compats.map((c, i) => (
+                                        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 10px', backgroundColor: '#fff', borderRadius: '8px', border: '1px solid #e5e7eb' }}>
+                                            <span style={{ flex: 1, fontSize: '13px', color: '#374151' }}>
+                                                {c.marca_vehiculo} {c.modelo}
+                                                {(c.anio_desde || c.anio_hasta) && ` (${c.anio_desde || ''}${c.anio_hasta ? ' – ' + c.anio_hasta : ''})`}
+                                            </span>
+                                            <button onClick={() => setCompats(prev => prev.filter((_, j) => j !== i))}
+                                                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', padding: '2px' }}>
+                                                <Trash2 size={14} />
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 80px 80px auto', gap: '8px', alignItems: 'end' }}>
+                                {[
+                                    { key: 'marca_vehiculo', label: 'Marca', placeholder: 'Toyota' },
+                                    { key: 'modelo', label: 'Modelo', placeholder: 'Corolla' },
+                                    { key: 'anio_desde', label: 'Desde', placeholder: '2010', type: 'number' },
+                                    { key: 'anio_hasta', label: 'Hasta', placeholder: '2020', type: 'number' },
+                                ].map(f => (
+                                    <div key={f.key}>
+                                        <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '4px' }}>{f.label}</label>
+                                        <input type={f.type || 'text'} value={nuevoCompat[f.key]}
+                                            onChange={e => setNuevoCompat(p => ({ ...p, [f.key]: e.target.value }))}
+                                            placeholder={f.placeholder} style={{ ...inputStyle, fontSize: '13px', padding: '6px 8px' }} />
+                                    </div>
+                                ))}
+                                <button onClick={() => {
+                                    if (!nuevoCompat.marca_vehiculo.trim() || !nuevoCompat.modelo.trim()) return
+                                    setCompats(prev => [...prev, { ...nuevoCompat }])
+                                    setNuevoCompat(VACIO_COMPAT)
+                                }} style={{ backgroundColor: '#1d4ed8', color: '#fff', border: 'none', borderRadius: '8px', padding: '6px 12px', fontSize: '13px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                    + Agregar
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
 
             </div>
 
