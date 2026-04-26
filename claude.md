@@ -298,8 +298,6 @@ ON CONFLICT DO NOTHING;
 ```
 6. Comunicar credenciales al cliente
 
-**Nota:** La creación de usuarios desde el frontend (SuperAdmin) aún tiene problemas de autenticación con la Edge Function (401). Se está investigando.
-
 ---
 
 ## 12. Recuperación de contraseña
@@ -328,11 +326,7 @@ ON CONFLICT DO NOTHING;
 
 | Item | Prioridad | Notas |
 |---|---|---|
-| Creación de usuarios desde SuperAdmin (Edge Function 401) | Alta | El `apikey` header es requerido pero el problema persiste |
-| Route guards por rol en frontend | Media | Actualmente solo el sidebar filtra, las rutas son accesibles directamente |
-| Desactivar empresa → logout usuarios | Media | Solo cambia `activo` en BD, no bloquea sesiones activas |
-| Perfil `autopartes` | Media | SQL y JSX condicional pendiente |
-| Módulo de gastos en sistema autopartes | Baja | Ya existe el módulo, solo falta el perfil |
+| Módulo de gastos — mejoras | Media | Filtro por rango de fechas (inicio/fin); gastos programados con fecha vencimiento (ver sección 17) |
 | Paginación en tablas con volumen alto | Baja | Ventas, CxC, CxP |
 | Índices en Supabase | Baja | Para columnas frecuentemente filtradas |
 | Módulo de reportes | Baja | No iniciado |
@@ -458,4 +452,35 @@ CREATE POLICY "insert propio" ON visitas_comerciales FOR INSERT
 
 -- 3. Habilitar Realtime en pedidos
 ALTER PUBLICATION supabase_realtime ADD TABLE pedidos;
+```
+
+---
+
+## 17. Módulo de Gastos — diseño de gastos programados
+
+Los gastos son erogaciones operativas (nómina, impuestos, servicios, etc.) distintas a compras de inventario.
+
+### Mejoras pendientes de implementar
+
+**Filtro por rango de fechas:** Reemplazar el filtro actual por selectores `fecha_inicio` / `fecha_fin` (igual que otros módulos).
+
+**Gastos programados:** Un gasto puede registrarse como pagado (flujo actual) o programado para una fecha futura. Los gastos programados:
+- Se registran igual que un gasto normal pero con `estado = 'pendiente'` y `fecha_vencimiento`
+- Viven en el módulo Gastos (no en CXP — CXP es exclusivo de proveedores de inventario)
+- Tienen semáforo de vencimiento igual al de CXC: verde > 3d, amarillo ≤ 3d, rojo vencido
+- Al pagar un gasto programado se marca `estado = 'pagado'` y se registra el método de pago
+
+### Cambios de BD requeridos
+```sql
+ALTER TABLE gastos ADD COLUMN estado text DEFAULT 'pagado' CHECK (estado IN ('pagado', 'pendiente'));
+ALTER TABLE gastos ADD COLUMN fecha_vencimiento date;
+ALTER TABLE gastos ADD COLUMN metodo_pago text; -- 'Efectivo', 'Transferencia', 'Pago Móvil', etc.
+```
+
+### Estados y flujo
+```
+Nuevo gasto
+  ├── Pagado hoy     → estado='pagado', fecha=hoy, monto registrado
+  └── Programado     → estado='pendiente', fecha_vencimiento ingresada por usuario
+        └── [al pagar] → estado='pagado', actualizar monto y método
 ```

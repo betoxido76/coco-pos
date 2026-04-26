@@ -5,7 +5,7 @@ import {
     LayoutDashboard, Package, ShoppingCart,
     TrendingDown, CreditCard, LogOut, Menu, X, Truck, FolderTree,
     ClipboardList, DollarSign, FlaskConical, AlertTriangle, ArrowLeftRight,
-    User, Tag
+    User, Tag, BarChart2
 } from 'lucide-react'
 import { useState } from 'react'
 
@@ -23,6 +23,7 @@ const NAV_ITEMS = [
     { key: 'cambios', to: '/cambios-mano-mano', icon: ArrowLeftRight, label: 'Cambios Mano a Mano' },
     { key: 'mermas', to: '/mermas', icon: AlertTriangle, label: 'Mermas' },
     { key: 'cotizador', to: '/cotizador', icon: Tag, label: 'Cotizador' },
+    { key: 'finanzas', to: '/finanzas', icon: BarChart2, label: 'Finanzas' },
     { key: 'administracion', to: '/administracion', icon: FolderTree, label: 'Administración' },
 ]
 
