@@ -18,21 +18,38 @@ const inputStyle = {
     width: '100%',
 }
 
+// Convierte un registro de productos_terminados (con productos_autopartes opcional) al
+// formato uniforme que usa la tarjeta de resultado.
+function normalizar(pt) {
+    const ap = Array.isArray(pt.productos_autopartes)
+        ? pt.productos_autopartes[0]     // join de tabla hija → array
+        : pt.productos_autopartes        // puede ser objeto o null
+    return {
+        producto_id: pt.id,
+        nro_parte: ap?.nro_parte ?? null,
+        marca: ap?.marca ?? null,
+        productos_terminados: {
+            id: pt.id,
+            nombre: pt.nombre,
+            sku: pt.sku,
+            descripcion: pt.descripcion,
+            stock_actual: pt.stock_actual,
+            precio_venta: pt.precio_venta,
+            categoria_1: pt.categoria_1,
+        },
+    }
+}
+
 export default function Cotizador() {
     const { perfil } = useAuth()
     const navigate = useNavigate()
-    const [modo, setModo] = useState('parte')   // 'parte' | 'vehiculo'
+    const [modo, setModo] = useState('parte')
 
-    // Búsqueda por parte
     const [queryParte, setQueryParte] = useState('')
-
-    // Búsqueda por vehículo
     const [marcaV, setMarcaV] = useState('')
     const [modeloV, setModeloV] = useState('')
     const [anioV, setAnioV] = useState('')
-
-    // Filtros comunes
-    const [queryExtra, setQueryExtra] = useState('')    // descripción / SKU
+    const [queryExtra, setQueryExtra] = useState('')
     const [categoriaFiltro, setCategoriaFiltro] = useState('')
     const [categorias, setCategorias] = useState([])
 
@@ -52,59 +69,78 @@ export default function Cotizador() {
             })
     }, [])
 
-    // Devuelve los producto_ids que cumplen con queryExtra y/o categoriaFiltro.
-    // Retorna null si ninguno de los dos tiene valor (sin restricción por esa vía).
-    async function resolverIdsPorProducto() {
-        if (!queryExtra.trim() && !categoriaFiltro) return null
-
-        let q = supabase.from('productos_terminados')
-            .select('id')
-            .eq('empresa_id', perfil.empresa_id)
-            .eq('activo', true)
-
-        if (categoriaFiltro) q = q.eq('categoria_1', categoriaFiltro)
-        if (queryExtra.trim()) {
-            q = q.or(`nombre.ilike.%${queryExtra.trim()}%,sku.ilike.%${queryExtra.trim()}%,descripcion.ilike.%${queryExtra.trim()}%`)
-        }
-
-        const { data } = await q
-        return (data || []).map(p => p.id)
-    }
-
+    // ── Búsqueda por parte / descripción ──────────────────────────
     async function buscarPorParte() {
-        if (!queryParte.trim() && !queryExtra.trim() && !categoriaFiltro) return
+        const tieneParte = queryParte.trim()
+        const tieneExtra = queryExtra.trim()
+        if (!tieneParte && !tieneExtra && !categoriaFiltro) return
+
         setBuscando(true); setError(''); setResultados(null)
 
-        const ids = await resolverIdsPorProducto()
-        if (ids !== null && ids.length === 0) { setResultados([]); setBuscando(false); return }
+        if (tieneParte) {
+            // Búsqueda desde productos_autopartes (nro_parte / marca)
+            // Luego intersecta con filtros de producto si los hay.
+            let ptIds = null
+            if (tieneExtra || categoriaFiltro) {
+                let ptQ = supabase.from('productos_terminados')
+                    .select('id')
+                    .eq('empresa_id', perfil.empresa_id)
+                    .eq('activo', true)
+                if (categoriaFiltro) ptQ = ptQ.eq('categoria_1', categoriaFiltro)
+                if (tieneExtra) ptQ = ptQ.or(`nombre.ilike.%${tieneExtra}%,sku.ilike.%${tieneExtra}%,descripcion.ilike.%${tieneExtra}%`)
+                const { data: ptData } = await ptQ
+                ptIds = (ptData || []).map(p => p.id)
+                if (ptIds.length === 0) { setResultados([]); setBuscando(false); return }
+            }
 
-        let q = supabase.from('productos_autopartes')
-            .select('*, productos_terminados!inner(id, nombre, sku, descripcion, stock_actual, precio_venta, activo, categoria_1)')
-            .eq('empresa_id', perfil.empresa_id)
-            .eq('productos_terminados.activo', true)
+            let apQ = supabase.from('productos_autopartes')
+                .select('nro_parte, marca, producto_id, productos_terminados!inner(id, nombre, sku, descripcion, stock_actual, precio_venta, activo, categoria_1)')
+                .eq('empresa_id', perfil.empresa_id)
+                .eq('productos_terminados.activo', true)
+                .or(`nro_parte.ilike.%${tieneParte}%,marca.ilike.%${tieneParte}%`)
+            if (ptIds !== null) apQ = apQ.in('producto_id', ptIds)
 
-        if (queryParte.trim()) {
-            q = q.or(`nro_parte.ilike.%${queryParte.trim()}%,marca.ilike.%${queryParte.trim()}%`)
+            const { data, error: err } = await apQ
+            if (err) { setError('Error en búsqueda: ' + err.message); setBuscando(false); return }
+
+            // Aplanar al formato uniforme
+            const res = (data || []).filter(r => r.productos_terminados?.activo !== false).map(r => ({
+                producto_id: r.producto_id,
+                nro_parte: r.nro_parte,
+                marca: r.marca,
+                productos_terminados: r.productos_terminados,
+            }))
+            setResultados(res)
+        } else {
+            // Sin nro_parte: busca directo desde productos_terminados (muestra todos los
+            // que hacen match, tenga o no datos en productos_autopartes).
+            let ptQ = supabase.from('productos_terminados')
+                .select('id, nombre, sku, descripcion, stock_actual, precio_venta, activo, categoria_1, productos_autopartes(nro_parte, marca)')
+                .eq('empresa_id', perfil.empresa_id)
+                .eq('activo', true)
+            if (categoriaFiltro) ptQ = ptQ.eq('categoria_1', categoriaFiltro)
+            if (tieneExtra) ptQ = ptQ.or(`nombre.ilike.%${tieneExtra}%,sku.ilike.%${tieneExtra}%,descripcion.ilike.%${tieneExtra}%`)
+
+            const { data, error: err } = await ptQ
+            if (err) { setError('Error en búsqueda: ' + err.message); setBuscando(false); return }
+            setResultados((data || []).map(normalizar))
         }
-        if (ids !== null) q = q.in('producto_id', ids)
 
-        const { data, error: err } = await q
-        if (err) { setError('Error en búsqueda: ' + err.message); setBuscando(false); return }
-        setResultados(data || [])
         setBuscando(false)
     }
 
+    // ── Búsqueda por vehículo ──────────────────────────────────────
     async function buscarPorVehiculo() {
         if (!marcaV.trim() && !modeloV.trim()) return
         setBuscando(true); setError(''); setResultados(null)
 
-        let q = supabase.from('compatibilidades_vehiculo')
-            .select('producto_id, marca_vehiculo, modelo, anio_desde, anio_hasta')
+        let cvQ = supabase.from('compatibilidades_vehiculo')
+            .select('producto_id, anio_desde, anio_hasta')
             .eq('empresa_id', perfil.empresa_id)
-        if (marcaV.trim()) q = q.ilike('marca_vehiculo', `%${marcaV.trim()}%`)
-        if (modeloV.trim()) q = q.ilike('modelo', `%${modeloV.trim()}%`)
+        if (marcaV.trim()) cvQ = cvQ.ilike('marca_vehiculo', `%${marcaV.trim()}%`)
+        if (modeloV.trim()) cvQ = cvQ.ilike('modelo', `%${modeloV.trim()}%`)
 
-        const { data: cvData, error: cvErr } = await q
+        const { data: cvData, error: cvErr } = await cvQ
         if (cvErr) { setError('Error en búsqueda: ' + cvErr.message); setBuscando(false); return }
 
         let cvFiltrado = cvData || []
@@ -120,22 +156,29 @@ export default function Cotizador() {
         let ids = [...new Set(cvFiltrado.map(c => c.producto_id))]
         if (ids.length === 0) { setResultados([]); setBuscando(false); return }
 
-        // Intersectar con filtros por producto si los hay
-        const idsProducto = await resolverIdsPorProducto()
-        if (idsProducto !== null) {
-            const setProducto = new Set(idsProducto)
-            ids = ids.filter(id => setProducto.has(id))
+        // Filtros adicionales sobre productos_terminados
+        if (queryExtra.trim() || categoriaFiltro) {
+            let ptQ = supabase.from('productos_terminados')
+                .select('id')
+                .eq('empresa_id', perfil.empresa_id)
+                .eq('activo', true)
+                .in('id', ids)
+            if (categoriaFiltro) ptQ = ptQ.eq('categoria_1', categoriaFiltro)
+            if (queryExtra.trim()) ptQ = ptQ.or(`nombre.ilike.%${queryExtra.trim()}%,sku.ilike.%${queryExtra.trim()}%,descripcion.ilike.%${queryExtra.trim()}%`)
+            const { data: ptData } = await ptQ
+            ids = (ptData || []).map(p => p.id)
             if (ids.length === 0) { setResultados([]); setBuscando(false); return }
         }
 
-        const { data: apData, error: apErr } = await supabase
-            .from('productos_autopartes')
-            .select('*, productos_terminados!inner(id, nombre, sku, descripcion, stock_actual, precio_venta, activo, categoria_1)')
-            .in('producto_id', ids)
-            .eq('productos_terminados.activo', true)
-        if (apErr) { setError('Error en búsqueda: ' + apErr.message); setBuscando(false); return }
+        // Obtener datos completos desde productos_terminados con join a productos_autopartes
+        const { data: ptData, error: ptErr } = await supabase
+            .from('productos_terminados')
+            .select('id, nombre, sku, descripcion, stock_actual, precio_venta, activo, categoria_1, productos_autopartes(nro_parte, marca)')
+            .eq('activo', true)
+            .in('id', ids)
+        if (ptErr) { setError('Error en búsqueda: ' + ptErr.message); setBuscando(false); return }
 
-        setResultados(apData || [])
+        setResultados((ptData || []).map(normalizar))
         setBuscando(false)
     }
 
@@ -203,11 +246,10 @@ export default function Cotizador() {
             <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '20px', marginBottom: '20px' }}>
                 {modo === 'parte' ? (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                        {/* Fila 1: parte/marca + descripción/SKU */}
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                             <div>
                                 <label style={{ fontSize: '12px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '5px' }}>
-                                    N° de parte / Marca
+                                    N° de parte / Marca <span style={{ fontWeight: 400 }}>(opcional)</span>
                                 </label>
                                 <div style={{ position: 'relative' }}>
                                     <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
@@ -219,26 +261,23 @@ export default function Cotizador() {
                             </div>
                             <div>
                                 <label style={{ fontSize: '12px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '5px' }}>
-                                    Descripción / Código SKU
+                                    Descripción / Código SKU <span style={{ fontWeight: 400 }}>(opcional)</span>
                                 </label>
                                 <input value={queryExtra} onChange={e => setQueryExtra(e.target.value)}
                                     onKeyDown={e => e.key === 'Enter' && handleBuscar()}
-                                    placeholder="Ej: filtro aceite, ACE-001..."
+                                    placeholder="Ej: pastilla, filtro, ACE-001..."
                                     style={inputStyle} />
                             </div>
                         </div>
-                        {/* Fila 2: categoría + botones */}
-                        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end' }}>
                             <div style={{ flex: 1 }}>
-                                <label style={{ fontSize: '12px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '5px' }}>
-                                    Categoría
-                                </label>
+                                <label style={{ fontSize: '12px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '5px' }}>Categoría</label>
                                 <select value={categoriaFiltro} onChange={e => setCategoriaFiltro(e.target.value)} style={inputStyle}>
                                     <option value="">— Todas las categorías —</option>
                                     {categorias.map(c => <option key={c} value={c}>{c}</option>)}
                                 </select>
                             </div>
-                            <div style={{ display: 'flex', gap: '8px', alignSelf: 'flex-end' }}>
+                            <div style={{ display: 'flex', gap: '8px' }}>
                                 {hayFiltros && (
                                     <button onClick={limpiarFiltros}
                                         style={{ padding: '10px 14px', borderRadius: '8px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: '#6b7280', fontSize: '13px', cursor: 'pointer' }}>
@@ -254,7 +293,6 @@ export default function Cotizador() {
                     </div>
                 ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                        {/* Fila 1: datos del vehículo */}
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 120px', gap: '10px' }}>
                             {[
                                 { val: marcaV, set: setMarcaV, label: 'Marca del vehículo', placeholder: 'Toyota, Ford...' },
@@ -269,7 +307,6 @@ export default function Cotizador() {
                                 </div>
                             ))}
                         </div>
-                        {/* Fila 2: filtros adicionales + botones */}
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                             <div>
                                 <label style={{ fontSize: '12px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '5px' }}>
@@ -316,7 +353,7 @@ export default function Cotizador() {
             {resultados !== null && (
                 resultados.length === 0 ? (
                     <div style={{ backgroundColor: '#f9fafb', borderRadius: '12px', border: '1px dashed #d1d5db', padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>
-                        No se encontraron repuestos para esa búsqueda
+                        No se encontraron productos para esa búsqueda
                     </div>
                 ) : (
                     <div>
