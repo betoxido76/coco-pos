@@ -886,6 +886,8 @@ function VistaPorAlmacen() {
         </>
     )
 }
+const MOV_PAGE_SIZE = 100
+
 function VistaMovimientos() {
     const { perfil } = useAuth()
     const [movimientos, setMovimientos] = useState([])
@@ -896,18 +898,22 @@ function VistaMovimientos() {
         const d = new Date(); d.setDate(d.getDate() - 7); return d.toISOString().split('T')[0]
     })
     const [fechaHasta, setFechaHasta] = useState(() => new Date().toISOString().split('T')[0])
+    const [pagina, setPagina] = useState(0)
+    const [totalMov, setTotalMov] = useState(0)
 
-    useEffect(() => { cargarMovimientos() }, [tipoFiltro, busqueda, fechaDesde, fechaHasta])
+    useEffect(() => { setPagina(0) }, [tipoFiltro, busqueda, fechaDesde, fechaHasta])
+    useEffect(() => { cargarMovimientos() }, [tipoFiltro, busqueda, fechaDesde, fechaHasta, pagina])
 
     async function cargarMovimientos() {
         setLoading(true)
         let query = supabase
             .from('movimientos_inventario')
-            .select('*, almacenes(nombre)')
+            .select('*, almacenes(nombre)', { count: 'exact' })
             .eq('empresa_id', perfil.empresa_id)
             .gte('fecha', `${fechaDesde}T00:00:00`)
             .lte('fecha', `${fechaHasta}T23:59:59`)
             .order('fecha', { ascending: false })
+            .range(pagina * MOV_PAGE_SIZE, (pagina + 1) * MOV_PAGE_SIZE - 1)
 
         if (tipoFiltro !== 'todos') {
             const mapa = { pt: 'producto_terminado', mp: 'materia_prima', emp: 'material_empaque', con: 'consumible' }
@@ -915,8 +921,9 @@ function VistaMovimientos() {
         }
         if (busqueda) query = query.or(`item_nombre.ilike.%${busqueda}%,item_codigo.ilike.%${busqueda}%`)
 
-        const { data } = await query.limit(200)
+        const { data, count } = await query
         if (data) setMovimientos(data)
+        if (count !== null) setTotalMov(count)
         setLoading(false)
     }
 
@@ -1007,6 +1014,23 @@ function VistaMovimientos() {
                     </table>
                 )}
             </div>
+            {totalMov > MOV_PAGE_SIZE && (
+                <div className="flex items-center justify-between px-4 py-3 bg-white rounded-xl border border-gray-200">
+                    <span className="text-sm text-gray-500">
+                        Mostrando {pagina * MOV_PAGE_SIZE + 1}–{Math.min((pagina + 1) * MOV_PAGE_SIZE, totalMov)} de {totalMov}
+                    </span>
+                    <div className="flex gap-2">
+                        <button onClick={() => setPagina(p => p - 1)} disabled={pagina === 0}
+                            className={`px-4 py-1.5 rounded-lg text-sm border border-gray-200 bg-white ${pagina === 0 ? 'text-gray-300 cursor-default' : 'text-gray-600 hover:bg-gray-50 cursor-pointer'}`}>
+                            ← Anterior
+                        </button>
+                        <button onClick={() => setPagina(p => p + 1)} disabled={(pagina + 1) * MOV_PAGE_SIZE >= totalMov}
+                            className={`px-4 py-1.5 rounded-lg text-sm border border-gray-200 bg-white ${(pagina + 1) * MOV_PAGE_SIZE >= totalMov ? 'text-gray-300 cursor-default' : 'text-gray-600 hover:bg-gray-50 cursor-pointer'}`}>
+                            Siguiente →
+                        </button>
+                    </div>
+                </div>
+            )}
         </>
     )
 }

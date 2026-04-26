@@ -33,15 +33,20 @@ function semaforo(fechaVenc) {
 // ══════════════════════════════════════════════════════════════
 // COMPONENTE PRINCIPAL
 // ══════════════════════════════════════════════════════════════
+const PAGE_SIZE = 50
+
 export default function Gastos() {
     const { perfil } = useAuth()
     const [tab, setTab] = useState('gastos')
     const [gastos, setGastos] = useState([])
+    const [kpiData, setKpiData] = useState([])
     const [loading, setLoading] = useState(true)
     const [vista, setVista] = useState('lista')
     const [tasas, setTasas] = useState({ tasa_bcv: 1, tasa_euro: 1, tasa_binance: 1 })
     const [tipos, setTipos] = useState([])
     const [gastoPagando, setGastoPagando] = useState(null)
+    const [pagina, setPagina] = useState(0)
+    const [totalRegistros, setTotalRegistros] = useState(0)
 
     // Filtros
     const [filtroTipo, setFiltroTipo] = useState('')
@@ -50,7 +55,8 @@ export default function Gastos() {
     const [filtroEstado, setFiltroEstado] = useState('todos')
 
     useEffect(() => { cargarTasas(); cargarTipos() }, [])
-    useEffect(() => { cargarGastos() }, [filtroTipo, filtroDesde, filtroHasta, filtroEstado])
+    useEffect(() => { setPagina(0) }, [filtroTipo, filtroDesde, filtroHasta, filtroEstado])
+    useEffect(() => { cargarGastos() }, [filtroTipo, filtroDesde, filtroHasta, filtroEstado, pagina])
 
     async function cargarTasas() {
         const { data } = await supabase.from('configuracion')
@@ -72,27 +78,38 @@ export default function Gastos() {
 
     async function cargarGastos() {
         setLoading(true)
-        let q = supabase.from('gastos')
-            .select('*, tipos_gastos(nombre), usuarios(nombre)')
+
+        let kpiQ = supabase.from('gastos')
+            .select('estado, monto_usd, monto_bs, tipo_tasa, fecha_vencimiento')
+            .eq('empresa_id', perfil.empresa_id)
+        if (filtroTipo) kpiQ = kpiQ.eq('tipo_gasto_id', filtroTipo)
+        if (filtroDesde) kpiQ = kpiQ.gte('fecha', filtroDesde)
+        if (filtroHasta) kpiQ = kpiQ.lte('fecha', filtroHasta)
+        if (filtroEstado !== 'todos') kpiQ = kpiQ.eq('estado', filtroEstado)
+
+        let tablaQ = supabase.from('gastos')
+            .select('*, tipos_gastos(nombre), usuarios(nombre)', { count: 'exact' })
             .eq('empresa_id', perfil.empresa_id)
             .order('fecha', { ascending: false })
             .order('created_at', { ascending: false })
+            .range(pagina * PAGE_SIZE, (pagina + 1) * PAGE_SIZE - 1)
+        if (filtroTipo) tablaQ = tablaQ.eq('tipo_gasto_id', filtroTipo)
+        if (filtroDesde) tablaQ = tablaQ.gte('fecha', filtroDesde)
+        if (filtroHasta) tablaQ = tablaQ.lte('fecha', filtroHasta)
+        if (filtroEstado !== 'todos') tablaQ = tablaQ.eq('estado', filtroEstado)
 
-        if (filtroTipo) q = q.eq('tipo_gasto_id', filtroTipo)
-        if (filtroDesde) q = q.gte('fecha', filtroDesde)
-        if (filtroHasta) q = q.lte('fecha', filtroHasta)
-        if (filtroEstado !== 'todos') q = q.eq('estado', filtroEstado)
-
-        const { data } = await q
+        const [{ data: kpi }, { data, count }] = await Promise.all([kpiQ, tablaQ])
+        if (kpi) setKpiData(kpi)
         if (data) setGastos(data)
+        if (count !== null) setTotalRegistros(count)
         setLoading(false)
     }
 
     const hayFiltros = filtroTipo || filtroDesde || filtroHasta || filtroEstado !== 'todos'
 
-    // KPIs — calculados sobre la lista cargada
-    const pagados = gastos.filter(g => (g.estado || 'pagado') === 'pagado')
-    const pendientes = gastos.filter(g => (g.estado || 'pagado') === 'pendiente')
+    // KPIs — calculados sobre la query completa (kpiData), no la página visible
+    const pagados = kpiData.filter(g => (g.estado || 'pagado') === 'pagado')
+    const pendientes = kpiData.filter(g => (g.estado || 'pagado') === 'pendiente')
     const vencidos = pendientes.filter(g => g.fecha_vencimiento && new Date(g.fecha_vencimiento + 'T00:00:00') < new Date())
 
     const totalPagadoUsd = pagados.reduce((s, g) => {
@@ -298,6 +315,23 @@ export default function Gastos() {
                             </table>
                         )}
                     </div>
+                    {totalRegistros > PAGE_SIZE && (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', marginTop: '8px' }}>
+                            <span style={{ fontSize: '13px', color: '#6b7280' }}>
+                                Mostrando {pagina * PAGE_SIZE + 1}–{Math.min((pagina + 1) * PAGE_SIZE, totalRegistros)} de {totalRegistros}
+                            </span>
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                                <button onClick={() => setPagina(p => p - 1)} disabled={pagina === 0}
+                                    style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: pagina === 0 ? '#d1d5db' : '#374151', cursor: pagina === 0 ? 'default' : 'pointer' }}>
+                                    ← Anterior
+                                </button>
+                                <button onClick={() => setPagina(p => p + 1)} disabled={(pagina + 1) * PAGE_SIZE >= totalRegistros}
+                                    style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: (pagina + 1) * PAGE_SIZE >= totalRegistros ? '#d1d5db' : '#374151', cursor: (pagina + 1) * PAGE_SIZE >= totalRegistros ? 'default' : 'pointer' }}>
+                                    Siguiente →
+                                </button>
+                            </div>
+                        </div>
+                    )}
                 </>
             )}
 

@@ -34,39 +34,57 @@ function BadgeTipo({ tipo }) {
 // ══════════════════════════════════════════════════════════════
 // COMPONENTE PRINCIPAL
 // ══════════════════════════════════════════════════════════════
+const PAGE_SIZE = 50
+
 export default function Mermas() {
     const { perfil } = useAuth()
     const [mermas, setMermas] = useState([])
+    const [kpiData, setKpiData] = useState([])
     const [loading, setLoading] = useState(true)
     const [vista, setVista] = useState('lista')
     const [filtroTipo, setFiltroTipo] = useState('todos')
     const [filtroMes, setFiltroMes] = useState('')
     const [busqueda, setBusqueda] = useState('')
     const [modalAnular, setModalAnular] = useState(null)
+    const [pagina, setPagina] = useState(0)
+    const [totalRegistros, setTotalRegistros] = useState(0)
 
-    useEffect(() => { cargar() }, [filtroTipo, filtroMes])
+    useEffect(() => { setPagina(0) }, [filtroTipo, filtroMes, busqueda])
+    useEffect(() => { cargar() }, [filtroTipo, filtroMes, busqueda, pagina])
 
     async function cargar() {
         setLoading(true)
-        let q = supabase
-            .from('mermas')
-            .select('*, ventas(numero_factura), ubicaciones(nombre), usuarios(nombre)')
+
+        const buildFiltroMes = (q) => {
+            if (!filtroMes) return q
+            const [anio, mes] = filtroMes.split('-')
+            const desde = `${anio}-${mes}-01`
+            const hasta = new Date(Number(anio), Number(mes), 0).toISOString().split('T')[0]
+            return q.gte('fecha', desde).lte('fecha', hasta)
+        }
+
+        let kpiQ = supabase.from('mermas')
+            .select('fecha, tipo_merma, cantidad, costo_unitario')
+            .eq('empresa_id', perfil.empresa_id)
+            .eq('anulada', false)
+        if (filtroTipo !== 'todos') kpiQ = kpiQ.eq('tipo_merma', filtroTipo)
+        kpiQ = buildFiltroMes(kpiQ)
+
+        let q = supabase.from('mermas')
+            .select('*, ventas(numero_factura), ubicaciones(nombre), usuarios(nombre)', { count: 'exact' })
             .eq('empresa_id', perfil.empresa_id)
             .eq('anulada', false)
             .order('fecha', { ascending: false })
             .order('created_at', { ascending: false })
-
+            .range(pagina * PAGE_SIZE, (pagina + 1) * PAGE_SIZE - 1)
         if (filtroTipo !== 'todos') q = q.eq('tipo_merma', filtroTipo)
+        q = buildFiltroMes(q)
+        if (busqueda) q = q.or(`item_nombre.ilike.%${busqueda}%,item_codigo.ilike.%${busqueda}%,motivo.ilike.%${busqueda}%`)
 
-        if (filtroMes) {
-            const [anio, mes] = filtroMes.split('-')
-            const desde = `${anio}-${mes}-01`
-            const hasta = new Date(Number(anio), Number(mes), 0).toISOString().split('T')[0]
-            q = q.gte('fecha', desde).lte('fecha', hasta)
-        }
-
-        const { data } = await q
+        const [{ data: kpi }, { data, count }] = await Promise.all([kpiQ, q])
+        if (kpi) setKpiData(kpi)
         if (data) setMermas(data)
+        if (count !== null) setTotalRegistros(count)
         setLoading(false)
     }
 
@@ -104,17 +122,11 @@ export default function Mermas() {
         cargar()
     }
 
-    // KPIs
-    const mermasHoy = mermas.filter(m => m.fecha === new Date().toISOString().split('T')[0]).length
-    const perdidaTotal = mermas.reduce((s, m) => s + (Number(m.cantidad) * Number(m.costo_unitario || 0)), 0)
-    const porInventario = mermas.filter(m => m.tipo_merma === 'inventario').length
-    const porDespacho = mermas.filter(m => m.tipo_merma === 'despacho').length
-
-    const filtradas = mermas.filter(m =>
-        m.item_nombre?.toLowerCase().includes(busqueda.toLowerCase()) ||
-        m.item_codigo?.toLowerCase().includes(busqueda.toLowerCase()) ||
-        m.motivo?.toLowerCase().includes(busqueda.toLowerCase())
-    )
+    // KPIs — calculados desde la query completa (kpiData), no la página visible
+    const mermasHoy = kpiData.filter(m => m.fecha === new Date().toISOString().split('T')[0]).length
+    const perdidaTotal = kpiData.reduce((s, m) => s + (Number(m.cantidad) * Number(m.costo_unitario || 0)), 0)
+    const porInventario = kpiData.filter(m => m.tipo_merma === 'inventario').length
+    const porDespacho = kpiData.filter(m => m.tipo_merma === 'despacho').length
 
     if (vista === 'nueva')
         return <NuevaMerma
@@ -199,7 +211,7 @@ export default function Mermas() {
             <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
                 {loading ? (
                     <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
-                ) : filtradas.length === 0 ? (
+                ) : mermas.length === 0 ? (
                     <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>No hay mermas registradas</div>
                 ) : (
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -213,7 +225,7 @@ export default function Mermas() {
                             </tr>
                         </thead>
                         <tbody >
-                            {filtradas.map(m => (
+                            {mermas.map(m => (
                                 <tr key={m.id} style={{ borderBottom: '1px solid #f3f4f6' }}
                                     onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
                                     onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
@@ -286,6 +298,24 @@ export default function Mermas() {
                     </table>
                 )}
             </div>
+
+            {totalRegistros > PAGE_SIZE && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', marginTop: '8px' }}>
+                    <span style={{ fontSize: '13px', color: '#6b7280' }}>
+                        Mostrando {pagina * PAGE_SIZE + 1}–{Math.min((pagina + 1) * PAGE_SIZE, totalRegistros)} de {totalRegistros}
+                    </span>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                        <button onClick={() => setPagina(p => p - 1)} disabled={pagina === 0}
+                            style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: pagina === 0 ? '#d1d5db' : '#374151', cursor: pagina === 0 ? 'default' : 'pointer' }}>
+                            ← Anterior
+                        </button>
+                        <button onClick={() => setPagina(p => p + 1)} disabled={(pagina + 1) * PAGE_SIZE >= totalRegistros}
+                            style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: (pagina + 1) * PAGE_SIZE >= totalRegistros ? '#d1d5db' : '#374151', cursor: (pagina + 1) * PAGE_SIZE >= totalRegistros ? 'default' : 'pointer' }}>
+                            Siguiente →
+                        </button>
+                    </div>
+                </div>
+            )}
 
             {modalAnular && (
                 <ModalAnular

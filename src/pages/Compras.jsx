@@ -6,6 +6,8 @@ import { useAuth } from '../contexts/AuthContext'
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 
 // ─── Componente principal ──────────────────────────────────────
+const PAGE_SIZE = 50
+
 export default function Compras() {
     const { perfil } = useAuth()
     const [tabActiva, setTabActiva] = useState('ordenes')
@@ -17,30 +19,37 @@ export default function Compras() {
     const [recepciones, setRecepciones] = useState([])
     const [recepcionActual, setRecepcionActual] = useState(null)
 
+    const [paginaOrdenes, setPaginaOrdenes] = useState(0)
+    const [totalOrdenes, setTotalOrdenes] = useState(0)
+    const [paginaRecepciones, setPaginaRecepciones] = useState(0)
+    const [totalRecepciones, setTotalRecepciones] = useState(0)
+
     useEffect(() => {
         if (tabActiva === 'ordenes') cargarOrdenes()
         else cargarRecepciones()
-    }, [tabActiva])
+    }, [tabActiva, paginaOrdenes, paginaRecepciones])
 
     async function cargarOrdenes() {
         setLoading(true)
-        const { data } = await supabase
+        const { data, count } = await supabase
             .from('ordenes_compra')
-            .select(`*, proveedores(nombre)`)
+            .select(`*, proveedores(nombre)`, { count: 'exact' })
             .order('created_at', { ascending: false })
-            .limit(50)
+            .range(paginaOrdenes * PAGE_SIZE, (paginaOrdenes + 1) * PAGE_SIZE - 1)
         if (data) setOrdenes(data)
+        if (count !== null) setTotalOrdenes(count)
         setLoading(false)
     }
 
     async function cargarRecepciones() {
         setLoading(true)
-        const { data } = await supabase
+        const { data, count } = await supabase
             .from('compras')
-            .select(`*, proveedores(nombre), ordenes_compra(numero_oc)`)
+            .select(`*, proveedores(nombre), ordenes_compra(numero_oc)`, { count: 'exact' })
             .order('created_at', { ascending: false })
-            .limit(50)
+            .range(paginaRecepciones * PAGE_SIZE, (paginaRecepciones + 1) * PAGE_SIZE - 1)
         if (data) setRecepciones(data)
+        if (count !== null) setTotalRecepciones(count)
         setLoading(false)
     }
 
@@ -97,8 +106,50 @@ export default function Compras() {
                 </button>
             </div>
 
-            {tabActiva === 'ordenes' && <TablaOrdenes ordenes={ordenes} loading={loading} onVer={abrirDetalleOC} />}
-            {tabActiva === 'recepciones' && <TablaRecepciones recepciones={recepciones} loading={loading} onVer={abrirDetalleRecepcion} />}
+            {tabActiva === 'ordenes' && (
+                <>
+                    <TablaOrdenes ordenes={ordenes} loading={loading} onVer={abrirDetalleOC} />
+                    {totalOrdenes > PAGE_SIZE && (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', marginTop: '8px' }}>
+                            <span style={{ fontSize: '13px', color: '#6b7280' }}>
+                                Mostrando {paginaOrdenes * PAGE_SIZE + 1}–{Math.min((paginaOrdenes + 1) * PAGE_SIZE, totalOrdenes)} de {totalOrdenes}
+                            </span>
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                                <button onClick={() => setPaginaOrdenes(p => p - 1)} disabled={paginaOrdenes === 0}
+                                    style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: paginaOrdenes === 0 ? '#d1d5db' : '#374151', cursor: paginaOrdenes === 0 ? 'default' : 'pointer' }}>
+                                    ← Anterior
+                                </button>
+                                <button onClick={() => setPaginaOrdenes(p => p + 1)} disabled={(paginaOrdenes + 1) * PAGE_SIZE >= totalOrdenes}
+                                    style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: (paginaOrdenes + 1) * PAGE_SIZE >= totalOrdenes ? '#d1d5db' : '#374151', cursor: (paginaOrdenes + 1) * PAGE_SIZE >= totalOrdenes ? 'default' : 'pointer' }}>
+                                    Siguiente →
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </>
+            )}
+            {tabActiva === 'recepciones' && (
+                <>
+                    <TablaRecepciones recepciones={recepciones} loading={loading} onVer={abrirDetalleRecepcion} />
+                    {totalRecepciones > PAGE_SIZE && (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', marginTop: '8px' }}>
+                            <span style={{ fontSize: '13px', color: '#6b7280' }}>
+                                Mostrando {paginaRecepciones * PAGE_SIZE + 1}–{Math.min((paginaRecepciones + 1) * PAGE_SIZE, totalRecepciones)} de {totalRecepciones}
+                            </span>
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                                <button onClick={() => setPaginaRecepciones(p => p - 1)} disabled={paginaRecepciones === 0}
+                                    style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: paginaRecepciones === 0 ? '#d1d5db' : '#374151', cursor: paginaRecepciones === 0 ? 'default' : 'pointer' }}>
+                                    ← Anterior
+                                </button>
+                                <button onClick={() => setPaginaRecepciones(p => p + 1)} disabled={(paginaRecepciones + 1) * PAGE_SIZE >= totalRecepciones}
+                                    style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: (paginaRecepciones + 1) * PAGE_SIZE >= totalRecepciones ? '#d1d5db' : '#374151', cursor: (paginaRecepciones + 1) * PAGE_SIZE >= totalRecepciones ? 'default' : 'pointer' }}>
+                                    Siguiente →
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </>
+            )}
         </div>
     )
 }

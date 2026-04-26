@@ -21,6 +21,8 @@ const inputStyle = {
 // ══════════════════════════════════════════════════════════════
 // COMPONENTE PRINCIPAL
 // ══════════════════════════════════════════════════════════════
+const PAGE_SIZE = 50
+
 export default function CambiosManoMano() {
     const { perfil } = useAuth()
     const [tabActiva, setTabActiva] = useState('cambios')
@@ -28,29 +30,36 @@ export default function CambiosManoMano() {
 
     // Cambios
     const [cambios, setCambios] = useState([])
+    const [kpiCambios, setKpiCambios] = useState([])
     const [loadingCambios, setLoadingCambios] = useState(true)
+    const [paginaCambios, setPaginaCambios] = useState(0)
+    const [totalCambiosCount, setTotalCambiosCount] = useState(0)
 
     // Stock reproceso
     const [stockReproceso, setStockReproceso] = useState([])
     const [loadingStock, setLoadingStock] = useState(true)
 
-    useEffect(() => { cargarCambios() }, [])
+    useEffect(() => { cargarCambios() }, [paginaCambios])
     useEffect(() => { if (tabActiva === 'reproceso') cargarStock() }, [tabActiva])
 
     async function cargarCambios() {
         setLoadingCambios(true)
-        const { data } = await supabase
-            .from('cambios_mano_mano')
-            .select(`
-                *,
-                clientes(nombre),
-                productos_terminados(nombre, sku, unidad_medida),
-                usuarios!cambios_mano_mano_despachador_id_fkey(nombre)
-            `)
-            .eq('empresa_id', perfil.empresa_id)
-            .order('fecha', { ascending: false })
-            .order('created_at', { ascending: false })
+
+        const [{ data: kpi }, { data, count }] = await Promise.all([
+            supabase.from('cambios_mano_mano')
+                .select('cantidad')
+                .eq('empresa_id', perfil.empresa_id),
+            supabase.from('cambios_mano_mano')
+                .select(`*, clientes(nombre), productos_terminados(nombre, sku, unidad_medida), usuarios!cambios_mano_mano_despachador_id_fkey(nombre)`, { count: 'exact' })
+                .eq('empresa_id', perfil.empresa_id)
+                .order('fecha', { ascending: false })
+                .order('created_at', { ascending: false })
+                .range(paginaCambios * PAGE_SIZE, (paginaCambios + 1) * PAGE_SIZE - 1),
+        ])
+
+        if (kpi) setKpiCambios(kpi)
         if (data) setCambios(data)
+        if (count !== null) setTotalCambiosCount(count)
         setLoadingCambios(false)
     }
 
@@ -70,9 +79,9 @@ export default function CambiosManoMano() {
         setLoadingStock(false)
     }
 
-    // KPIs
-    const totalCambios = cambios.length
-    const unidadesEntregadas = cambios.reduce((s, c) => s + Number(c.cantidad), 0)
+    // KPIs — totalCambios y unidades calculados desde query completa (kpiCambios)
+    const totalCambios = kpiCambios.length
+    const unidadesEntregadas = kpiCambios.reduce((s, c) => s + Number(c.cantidad), 0)
     const enReproceso = stockReproceso.length
 
     if (vista === 'nuevo')
@@ -190,6 +199,24 @@ export default function CambiosManoMano() {
                             </tbody>
                         </table>
                     )}
+                </div>
+            )}
+
+            {tabActiva === 'cambios' && totalCambiosCount > PAGE_SIZE && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', marginTop: '8px' }}>
+                    <span style={{ fontSize: '13px', color: '#6b7280' }}>
+                        Mostrando {paginaCambios * PAGE_SIZE + 1}–{Math.min((paginaCambios + 1) * PAGE_SIZE, totalCambiosCount)} de {totalCambiosCount}
+                    </span>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                        <button onClick={() => setPaginaCambios(p => p - 1)} disabled={paginaCambios === 0}
+                            style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: paginaCambios === 0 ? '#d1d5db' : '#374151', cursor: paginaCambios === 0 ? 'default' : 'pointer' }}>
+                            ← Anterior
+                        </button>
+                        <button onClick={() => setPaginaCambios(p => p + 1)} disabled={(paginaCambios + 1) * PAGE_SIZE >= totalCambiosCount}
+                            style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: (paginaCambios + 1) * PAGE_SIZE >= totalCambiosCount ? '#d1d5db' : '#374151', cursor: (paginaCambios + 1) * PAGE_SIZE >= totalCambiosCount ? 'default' : 'pointer' }}>
+                            Siguiente →
+                        </button>
+                    </div>
                 </div>
             )}
 
