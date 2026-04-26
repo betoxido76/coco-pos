@@ -167,24 +167,18 @@ export default function SuperAdmin() {
     async function resetearPassword() {
         if (!nuevaPass || nuevaPass.length < 6) { setErrorReset('La contraseña debe tener al menos 6 caracteres'); return }
         setGuardandoReset(true); setErrorReset('')
-        const { data: { user } } = await supabase.auth.getUser()
-        const { data: { session } } = await supabase.auth.getSession()
-        console.log('ACCESS TOKEN:', session?.access_token ? 'EXISTS' : 'NULL')
-        if (!session) { setErrorUsuario('No hay sesión activa. Cierra sesión y vuelve a entrar.'); setGuardandoUsuario(false); return }
-        const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/crear-usuario`, {
+
+        const session = (await supabase.auth.getSession()).data.session
+        if (!session) { setErrorReset('No hay sesión activa. Cierra sesión y vuelve a entrar.'); setGuardandoReset(false); return }
+
+        const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/resetear-password`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
                 'Authorization': `Bearer ${session.access_token}`,
             },
-            body: JSON.stringify({
-                nombre: formUsuario.nombre.trim(),
-                email: formUsuario.email.trim(),
-                password: formUsuario.password,
-                rol: formUsuario.rol,
-                empresa_id: empresaSel,
-            }),
+            body: JSON.stringify({ user_id: modalReset.id, password: nuevaPass }),
         })
         const result = await res.json()
         if (!res.ok || result.error) {
