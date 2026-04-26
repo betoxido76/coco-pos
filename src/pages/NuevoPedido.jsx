@@ -555,6 +555,8 @@ const RESULTADOS_VISITA = {
 // ══════════════════════════════════════════════════════════════
 // PANTALLA 3: FICHA DEL CLIENTE
 // ══════════════════════════════════════════════════════════════
+const VISITAS_PAGE = 10
+
 function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
     const { perfil } = useAuth()
     const [tabActiva, setTabActiva] = useState('resumen')
@@ -564,6 +566,8 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
     const [visitaForm, setVisitaForm] = useState({ tipo: 'presencial', resultado: 'sin_pedido', notas: '' })
     const [guardandoVisita, setGuardandoVisita] = useState(false)
     const [pedidoDetalle, setPedidoDetalle] = useState(null)
+    const [paginaVisitas, setPaginaVisitas] = useState(0)
+    const [totalVisitas, setTotalVisitas] = useState(0)
 
     useEffect(() => { cargar() }, [])
 
@@ -575,6 +579,7 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
             { data: pedidos },
             { data: config },
             { data: visitasData },
+            { count: visitasTotal },
         ] = await Promise.all([
             supabase.from('ventas')
                 .select('id, numero_factura, fecha_venta, total, pago_usd, pago_bs, tasa_cambio, estado_cobro, fecha_vencimiento_pago')
@@ -607,8 +612,16 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
                 .eq('cliente_id', cliente.id)
                 .eq('empresa_id', perfil.empresa_id)
                 .order('fecha_visita', { ascending: false })
-                .limit(20),
+                .range(0, VISITAS_PAGE - 1),
+
+            supabase.from('visitas_comerciales')
+                .select('*', { count: 'exact', head: true })
+                .eq('cliente_id', cliente.id)
+                .eq('empresa_id', perfil.empresa_id),
         ])
+
+        setPaginaVisitas(0)
+        setTotalVisitas(visitasTotal || 0)
 
         const ventasConSaldo = (ventas || []).map(v => {
             const pagadoUsd = Number(v.pago_usd || 0)
@@ -627,6 +640,16 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
         setLoading(false)
     }
 
+    async function cargarVisitas(pag) {
+        const { data } = await supabase.from('visitas_comerciales')
+            .select('id, fecha_visita, tipo, resultado, notas')
+            .eq('cliente_id', cliente.id)
+            .eq('empresa_id', perfil.empresa_id)
+            .order('fecha_visita', { ascending: false })
+            .range(pag * VISITAS_PAGE, (pag + 1) * VISITAS_PAGE - 1)
+        if (data) setDatos(prev => ({ ...prev, visitas: data }))
+    }
+
     async function guardarVisita() {
         setGuardandoVisita(true)
         const { data: { user } } = await supabase.auth.getUser()
@@ -643,7 +666,9 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
         if (!error) {
             setModalVisita(false)
             setVisitaForm({ tipo: 'presencial', resultado: 'sin_pedido', notas: '' })
-            cargar()
+            setTotalVisitas(t => t + 1)
+            setPaginaVisitas(0)
+            cargarVisitas(0)
         }
     }
 
@@ -657,7 +682,7 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
         { key: 'resumen', label: 'Resumen' },
         { key: 'cxc', label: `CxC${datos?.cxc?.length ? ` (${datos.cxc.length})` : ''}` },
         { key: 'pedidos', label: 'Pedidos' },
-        { key: 'visitas', label: `Visitas${datos?.visitas?.length ? ` (${datos.visitas.length})` : ''}` },
+        { key: 'visitas', label: `Visitas${totalVisitas > 0 ? ` (${totalVisitas})` : ''}` },
     ]
 
     return (
@@ -997,6 +1022,27 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
                                             </div>
                                         )
                                     })}
+                                </div>
+                            )}
+                            {totalVisitas > VISITAS_PAGE && (
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', marginTop: '8px' }}>
+                                    <span style={{ fontSize: '12px', color: '#9ca3af' }}>
+                                        {paginaVisitas * VISITAS_PAGE + 1}–{Math.min((paginaVisitas + 1) * VISITAS_PAGE, totalVisitas)} de {totalVisitas}
+                                    </span>
+                                    <div style={{ display: 'flex', gap: '6px' }}>
+                                        <button
+                                            onClick={() => { const p = paginaVisitas - 1; setPaginaVisitas(p); cargarVisitas(p) }}
+                                            disabled={paginaVisitas === 0}
+                                            style={{ padding: '5px 12px', borderRadius: '8px', fontSize: '12px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: paginaVisitas === 0 ? '#d1d5db' : '#374151' }}>
+                                            ←
+                                        </button>
+                                        <button
+                                            onClick={() => { const p = paginaVisitas + 1; setPaginaVisitas(p); cargarVisitas(p) }}
+                                            disabled={(paginaVisitas + 1) * VISITAS_PAGE >= totalVisitas}
+                                            style={{ padding: '5px 12px', borderRadius: '8px', fontSize: '12px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: (paginaVisitas + 1) * VISITAS_PAGE >= totalVisitas ? '#d1d5db' : '#374151' }}>
+                                            →
+                                        </button>
+                                    </div>
                                 </div>
                             )}
                         </>
