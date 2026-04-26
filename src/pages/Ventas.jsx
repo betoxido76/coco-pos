@@ -5,6 +5,14 @@ import { Plus, Search, Trash2, CheckCircle, FileText, RotateCcw, AlertTriangle, 
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 
+const METODOS_USD = ['Efectivo', 'Zelle', 'Transferencia USD', 'Otros']
+const METODOS_BS = ['Pago Móvil', 'Transferencia', 'Punto de Venta', 'Efectivo Bs.']
+const OPCIONES_TASA = [
+    { key: 'tasa_bcv', label: 'USD · BCV' },
+    { key: 'tasa_euro', label: 'EUR · BCV' },
+    { key: 'tasa_binance', label: 'USD · Binance' },
+]
+
 // ─── Componente principal ──────────────────────────────────────
 export default function Ventas() {
     const { perfil } = useAuth()
@@ -222,12 +230,24 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
     const [procesando, setProcesando] = useState(false)
     const [error, setError] = useState('')
     const [nroReferencia, setNroReferencia] = useState('')
+    const [condicion, setCondicion] = useState('credito')
+    const [tasas, setTasas] = useState({})
+    const [tipoTasa, setTipoTasa] = useState('tasa_bcv')
+    const [pagoUsd, setPagoUsd] = useState('')
+    const [metodoUsd, setMetodoUsd] = useState('Efectivo')
+    const [pagoBs, setPagoBs] = useState('')
+    const [metodoBs, setMetodoBs] = useState('Pago Móvil')
+    const [notaCobro, setNotaCobro] = useState('')
 
     useEffect(() => {
         supabase.from('pedido_items')
             .select('*, productos_terminados(nombre, sku, stock_actual)')
             .eq('pedido_id', pedido.id)
             .then(({ data }) => { if (data) setItems(data); setLoading(false) })
+        supabase.from('clientes').select('condicion_pago').eq('id', pedido.cliente_id).single()
+            .then(({ data }) => { if (data) setCondicion(data.condicion_pago || 'credito') })
+        supabase.from('configuracion').select('clave, valor').eq('empresa_id', perfil.empresa_id)
+            .then(({ data }) => { if (data) { const t = {}; data.forEach(r => { t[r.clave] = Number(r.valor) }); setTasas(t) } })
     }, [pedido.id])
 
     const descGlobal = Number(pedido.descuento_global || 0)
@@ -251,9 +271,9 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
                 cliente_id: pedido.cliente_id,
                 usuario_id: user.id,
                 numero_factura: numero,
-                subtotal: subtotal,  // 👈 CAMBIAR: era subtotalFinal
+                subtotal,
                 total,
-                estado_cobro: 'pendiente',
+                estado_cobro: condicion === 'contado' ? 'pagado' : 'pendiente',
                 empresa_id: perfil.empresa_id,
                 nro_referencia: nroReferencia.trim() || null,
             })
@@ -266,12 +286,27 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
                 venta_id: venta.id,
                 producto_id: i.producto_id,
                 cantidad: i.cantidad,
-                precio_unitario: Number(i.precio_unitario) * (1 - Number(i.descuento_item || 0) / 100) * (1 - descGlobal / 100),  // 👈 CAMBIAR: quitar / 1.16
+                precio_unitario: Number(i.precio_unitario) * (1 - Number(i.descuento_item || 0) / 100) * (1 - descGlobal / 100),
                 empresa_id: perfil.empresa_id,
             }))
         )
 
-        // Descontar stock
+        if (condicion === 'contado') {
+            const tasa = tasas[tipoTasa] || 1
+            await supabase.from('cobros').insert({
+                venta_id: venta.id,
+                monto_usd: Number(pagoUsd) || 0,
+                monto_bs: Number(pagoBs) || 0,
+                tasa_cambio: tasa,
+                tipo_tasa: tipoTasa,
+                metodo_usd: Number(pagoUsd) > 0 ? metodoUsd : null,
+                metodo_bs: Number(pagoBs) > 0 ? metodoBs : null,
+                nota: notaCobro || null,
+                usuario_id: user.id,
+                empresa_id: perfil.empresa_id,
+            })
+        }
+
         for (const item of items) {
             const prod = item.productos_terminados
             if (prod) {
@@ -280,7 +315,6 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
                     .update({ stock_actual: nuevoStock })
                     .eq('id', item.producto_id)
 
-                // REGISTRAR MOVIMIENTO ✅
                 await supabase.from('movimientos_inventario').insert({
                     empresa_id: perfil.empresa_id,
                     tipo_item: 'producto_terminado',
@@ -409,6 +443,71 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
                 />
             </div>
 
+            {/* Condición de pago */}
+            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px', marginBottom: '20px' }}>
+                <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '10px' }}>Condición de pago</label>
+                <div style={{ display: 'flex', gap: '8px', marginBottom: condicion === 'contado' ? '14px' : '0' }}>
+                    {['contado', 'credito'].map(c => (
+                        <button key={c} onClick={() => setCondicion(c)}
+                            style={{
+                                flex: 1, padding: '8px', borderRadius: '8px', fontSize: '13px', fontWeight: 500,
+                                border: '1px solid', cursor: 'pointer',
+                                borderColor: condicion === c ? '#16a34a' : '#e5e7eb',
+                                backgroundColor: condicion === c ? '#f0fdf4' : '#fff',
+                                color: condicion === c ? '#166534' : '#6b7280',
+                            }}>
+                            {c === 'contado' ? 'Contado' : 'Crédito'}
+                        </button>
+                    ))}
+                </div>
+                {condicion === 'contado' && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                        <div>
+                            <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Tasa de cambio</label>
+                            <select value={tipoTasa} onChange={e => setTipoTasa(e.target.value)}
+                                style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', color: '#374151', backgroundColor: '#fff' }}>
+                                {OPCIONES_TASA.map(o => (
+                                    <option key={o.key} value={o.key}>{o.label}{tasas[o.key] ? ` (${tasas[o.key]})` : ''}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                            <div>
+                                <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Monto USD</label>
+                                <input type="number" min="0" step="0.01" value={pagoUsd} onChange={e => setPagoUsd(e.target.value)} placeholder="0.00"
+                                    style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', boxSizing: 'border-box' }} />
+                            </div>
+                            <div>
+                                <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Método USD</label>
+                                <select value={metodoUsd} onChange={e => setMetodoUsd(e.target.value)}
+                                    style={{ width: '100%', padding: '8px 10px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '12px', color: '#374151', backgroundColor: '#fff' }}>
+                                    {METODOS_USD.map(m => <option key={m} value={m}>{m}</option>)}
+                                </select>
+                            </div>
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                            <div>
+                                <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Monto Bs.</label>
+                                <input type="number" min="0" step="0.01" value={pagoBs} onChange={e => setPagoBs(e.target.value)} placeholder="0.00"
+                                    style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', boxSizing: 'border-box' }} />
+                            </div>
+                            <div>
+                                <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Método Bs.</label>
+                                <select value={metodoBs} onChange={e => setMetodoBs(e.target.value)}
+                                    style={{ width: '100%', padding: '8px 10px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '12px', color: '#374151', backgroundColor: '#fff' }}>
+                                    {METODOS_BS.map(m => <option key={m} value={m}>{m}</option>)}
+                                </select>
+                            </div>
+                        </div>
+                        <div>
+                            <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Nota <span style={{ color: '#9ca3af', fontWeight: 400 }}>(opcional)</span></label>
+                            <input type="text" value={notaCobro} onChange={e => setNotaCobro(e.target.value)} placeholder="Ej: Efectivo recibido en caja..."
+                                style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', boxSizing: 'border-box' }} />
+                        </div>
+                    </div>
+                )}
+            </div>
+
             <div style={{ display: 'flex', gap: '10px' }}>
                 <button onClick={facturar} disabled={procesando || loading}
                     style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '12px 24px', fontSize: '14px', fontWeight: 600, cursor: 'pointer', opacity: procesando ? 0.6 : 1 }}>
@@ -452,19 +551,31 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
     const [guardando, setGuardando] = useState(false)
     const [error, setError] = useState('')
     const [nroReferencia, setNroReferencia] = useState('')
+    const [condicion, setCondicion] = useState('credito')
+    const [tasas, setTasas] = useState({})
+    const [tipoTasa, setTipoTasa] = useState('tasa_bcv')
+    const [pagoUsd, setPagoUsd] = useState('')
+    const [metodoUsd, setMetodoUsd] = useState('Efectivo')
+    const [pagoBs, setPagoBs] = useState('')
+    const [metodoBs, setMetodoBs] = useState('Pago Móvil')
+    const [notaCobro, setNotaCobro] = useState('')
 
     useEffect(() => {
-        supabase.from('clientes').select('id, nombre').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
+        supabase.from('clientes').select('id, nombre, condicion_pago').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
             .then(({ data }) => setClientes(data || []))
         supabase.from('productos_terminados').select('id, nombre, sku, precio_venta, stock_actual, unidad_medida').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
             .then(({ data }) => setProductos(data || []))
+        supabase.from('configuracion').select('clave, valor').eq('empresa_id', perfil.empresa_id)
+            .then(({ data }) => { if (data) { const t = {}; data.forEach(r => { t[r.clave] = Number(r.valor) }); setTasas(t) } })
     }, [])
 
     async function seleccionarCliente(id) {
         setClienteId(id)
         setDireccionId('')
         setDirecciones([])
-        if (!id) return
+        if (!id) { setCondicion('credito'); return }
+        const cliente = clientes.find(c => c.id === id)
+        setCondicion(cliente?.condicion_pago || 'credito')
         const { data } = await supabase.from('direcciones_entrega')
             .select('*')
             .eq('cliente_id', id)
@@ -525,7 +636,9 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
             .from('ventas')
             .insert({
                 cliente_id: clienteId, usuario_id: user.id, numero_factura: numero,
-                subtotal, total, estado_cobro: 'pendiente', empresa_id: perfil.empresa_id,
+                subtotal, total,
+                estado_cobro: condicion === 'contado' ? 'pagado' : 'pendiente',
+                empresa_id: perfil.empresa_id,
                 nro_referencia: nroReferencia.trim() || null,
                 direccion_entrega_id: direccionId || null,
                 direccion_entrega_texto: direccionId
@@ -541,6 +654,22 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
             items.map(i => ({ venta_id: venta.id, producto_id: i.producto_id, cantidad: i.cantidad, precio_unitario: i.precio_unitario, empresa_id: perfil.empresa_id }))
         )
 
+        if (condicion === 'contado') {
+            const tasa = tasas[tipoTasa] || 1
+            await supabase.from('cobros').insert({
+                venta_id: venta.id,
+                monto_usd: Number(pagoUsd) || 0,
+                monto_bs: Number(pagoBs) || 0,
+                tasa_cambio: tasa,
+                tipo_tasa: tipoTasa,
+                metodo_usd: Number(pagoUsd) > 0 ? metodoUsd : null,
+                metodo_bs: Number(pagoBs) > 0 ? metodoBs : null,
+                nota: notaCobro || null,
+                usuario_id: user.id,
+                empresa_id: perfil.empresa_id,
+            })
+        }
+
         for (const item of items) {
             const prod = productos.find(p => p.id === item.producto_id)
             const nuevoStock = prod.stock_actual - item.cantidad
@@ -548,7 +677,6 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                 .update({ stock_actual: prod.stock_actual - item.cantidad })
                 .eq('id', item.producto_id)
 
-            // REGISTRAR MOVIMIENTO ✅
             await supabase.from('movimientos_inventario').insert({
                 empresa_id: perfil.empresa_id,
                 tipo_item: 'producto_terminado',
@@ -704,6 +832,72 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                     <div style={{ fontSize: '12px', color: '#9ca3af', marginBottom: '16px' }}>
                         {items.length} producto(s) · {items.reduce((s, i) => s + i.cantidad, 0)} unidades
                     </div>
+
+                    {/* Condición de pago */}
+                    <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: '14px', marginBottom: '14px' }}>
+                        <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '8px' }}>Condición de pago</label>
+                        <div style={{ display: 'flex', gap: '6px', marginBottom: condicion === 'contado' ? '12px' : '0' }}>
+                            {['contado', 'credito'].map(c => (
+                                <button key={c} onClick={() => setCondicion(c)}
+                                    style={{
+                                        flex: 1, padding: '7px', borderRadius: '7px', fontSize: '12px', fontWeight: 500,
+                                        border: '1px solid', cursor: 'pointer',
+                                        borderColor: condicion === c ? '#16a34a' : '#e5e7eb',
+                                        backgroundColor: condicion === c ? '#f0fdf4' : '#fff',
+                                        color: condicion === c ? '#166534' : '#6b7280',
+                                    }}>
+                                    {c === 'contado' ? 'Contado' : 'Crédito'}
+                                </button>
+                            ))}
+                        </div>
+                        {condicion === 'contado' && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                                <div>
+                                    <label style={{ fontSize: '11px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Tasa de cambio</label>
+                                    <select value={tipoTasa} onChange={e => setTipoTasa(e.target.value)}
+                                        style={{ width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '12px', color: '#374151', backgroundColor: '#fff' }}>
+                                        {OPCIONES_TASA.map(o => (
+                                            <option key={o.key} value={o.key}>{o.label}{tasas[o.key] ? ` (${tasas[o.key]})` : ''}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
+                                    <div>
+                                        <label style={{ fontSize: '11px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Monto USD</label>
+                                        <input type="number" min="0" step="0.01" value={pagoUsd} onChange={e => setPagoUsd(e.target.value)} placeholder="0.00"
+                                            style={{ width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '12px', boxSizing: 'border-box' }} />
+                                    </div>
+                                    <div>
+                                        <label style={{ fontSize: '11px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Método</label>
+                                        <select value={metodoUsd} onChange={e => setMetodoUsd(e.target.value)}
+                                            style={{ width: '100%', padding: '7px 6px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '11px', color: '#374151', backgroundColor: '#fff' }}>
+                                            {METODOS_USD.map(m => <option key={m} value={m}>{m}</option>)}
+                                        </select>
+                                    </div>
+                                </div>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
+                                    <div>
+                                        <label style={{ fontSize: '11px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Monto Bs.</label>
+                                        <input type="number" min="0" step="0.01" value={pagoBs} onChange={e => setPagoBs(e.target.value)} placeholder="0.00"
+                                            style={{ width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '12px', boxSizing: 'border-box' }} />
+                                    </div>
+                                    <div>
+                                        <label style={{ fontSize: '11px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Método</label>
+                                        <select value={metodoBs} onChange={e => setMetodoBs(e.target.value)}
+                                            style={{ width: '100%', padding: '7px 6px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '11px', color: '#374151', backgroundColor: '#fff' }}>
+                                            {METODOS_BS.map(m => <option key={m} value={m}>{m}</option>)}
+                                        </select>
+                                    </div>
+                                </div>
+                                <div>
+                                    <label style={{ fontSize: '11px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Nota <span style={{ color: '#9ca3af', fontWeight: 400 }}>(opcional)</span></label>
+                                    <input type="text" value={notaCobro} onChange={e => setNotaCobro(e.target.value)} placeholder="Ej: Efectivo recibido en caja..."
+                                        style={{ width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '12px', boxSizing: 'border-box' }} />
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
                     <div style={{ marginBottom: '16px' }}>
                         <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>
                             N° de referencia <span style={{ color: '#9ca3af', fontWeight: 400 }}>(opcional)</span>
