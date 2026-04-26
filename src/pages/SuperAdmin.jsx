@@ -246,6 +246,14 @@ export default function SuperAdmin() {
 
     async function toggleEmpresaActiva(empresa) {
         await supabase.from('empresas').update({ activo: !empresa.activo }).eq('id', empresa.id)
+
+        // Al desactivar: invalidar todas las sesiones activas de la empresa
+        if (empresa.activo) {
+            await supabase.from('usuarios')
+                .update({ session_token: crypto.randomUUID() })
+                .eq('empresa_id', empresa.id)
+        }
+
         await cargar()
     }
 

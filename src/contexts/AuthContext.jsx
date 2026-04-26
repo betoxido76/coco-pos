@@ -74,9 +74,16 @@ export function AuthProvider({ children }) {
     async function cargarPerfil(userId) {
         const { data } = await supabase
             .from('usuarios')
-            .select('*, empresas(nombre, rif, logo_url)')
+            .select('*, empresas(nombre, rif, logo_url, activo)')
             .eq('id', userId)
             .single()
+
+        // Empresa desactivada → bloquear acceso inmediatamente
+        if (data && data.rol !== 'superadmin' && data.empresas?.activo === false) {
+            await logout()
+            return
+        }
+
         setPerfil(data)
 
         if (data?.rol === 'superadmin') {
