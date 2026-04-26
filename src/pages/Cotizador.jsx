@@ -18,26 +18,24 @@ const inputStyle = {
     width: '100%',
 }
 
-// Convierte un registro de productos_terminados (con productos_autopartes opcional) al
-// formato uniforme que usa la tarjeta de resultado.
-function normalizar(pt) {
-    const ap = Array.isArray(pt.productos_autopartes)
-        ? pt.productos_autopartes[0]     // join de tabla hija → array
-        : pt.productos_autopartes        // puede ser objeto o null
-    return {
+// Enriquece una lista de productos_terminados con datos de autopartes (opcional).
+// Si la tabla productos_autopartes no tiene data o la query falla, los productos
+// se muestran igual sin nro_parte / marca.
+async function enriquecerConAutopartes(productos) {
+    if (!productos || productos.length === 0) return []
+    const ids = productos.map(p => p.id)
+    const { data: apData } = await supabase
+        .from('productos_autopartes')
+        .select('producto_id, nro_parte, marca')
+        .in('producto_id', ids)
+    const apMap = {}
+    ;(apData || []).forEach(ap => { apMap[ap.producto_id] = ap })
+    return productos.map(pt => ({
         producto_id: pt.id,
-        nro_parte: ap?.nro_parte ?? null,
-        marca: ap?.marca ?? null,
-        productos_terminados: {
-            id: pt.id,
-            nombre: pt.nombre,
-            sku: pt.sku,
-            descripcion: pt.descripcion,
-            stock_actual: pt.stock_actual,
-            precio_venta: pt.precio_venta,
-            categoria_1: pt.categoria_1,
-        },
-    }
+        nro_parte: apMap[pt.id]?.nro_parte ?? null,
+        marca: apMap[pt.id]?.marca ?? null,
+        productos_terminados: pt,
+    }))
 }
 
 export default function Cotizador() {
@@ -112,10 +110,11 @@ export default function Cotizador() {
             }))
             setResultados(res)
         } else {
-            // Sin nro_parte: busca directo desde productos_terminados (muestra todos los
-            // que hacen match, tenga o no datos en productos_autopartes).
+            // Sin nro_parte: busca directo desde productos_terminados.
+            // No incluye join a productos_autopartes aquí para evitar que un problema
+            // de RLS o datos faltantes en esa tabla bloquee toda la búsqueda.
             let ptQ = supabase.from('productos_terminados')
-                .select('id, nombre, sku, descripcion, stock_actual, precio_venta, activo, categoria_1, productos_autopartes(nro_parte, marca)')
+                .select('id, nombre, sku, descripcion, stock_actual, precio_venta, activo, categoria_1')
                 .eq('empresa_id', perfil.empresa_id)
                 .eq('activo', true)
             if (categoriaFiltro) ptQ = ptQ.eq('categoria_1', categoriaFiltro)
@@ -123,7 +122,7 @@ export default function Cotizador() {
 
             const { data, error: err } = await ptQ
             if (err) { setError('Error en búsqueda: ' + err.message); setBuscando(false); return }
-            setResultados((data || []).map(normalizar))
+            setResultados(await enriquecerConAutopartes(data || []))
         }
 
         setBuscando(false)
@@ -170,15 +169,15 @@ export default function Cotizador() {
             if (ids.length === 0) { setResultados([]); setBuscando(false); return }
         }
 
-        // Obtener datos completos desde productos_terminados con join a productos_autopartes
+        // Obtener datos completos desde productos_terminados (sin join a autopartes)
         const { data: ptData, error: ptErr } = await supabase
             .from('productos_terminados')
-            .select('id, nombre, sku, descripcion, stock_actual, precio_venta, activo, categoria_1, productos_autopartes(nro_parte, marca)')
+            .select('id, nombre, sku, descripcion, stock_actual, precio_venta, activo, categoria_1')
             .eq('activo', true)
             .in('id', ids)
         if (ptErr) { setError('Error en búsqueda: ' + ptErr.message); setBuscando(false); return }
 
-        setResultados((ptData || []).map(normalizar))
+        setResultados(await enriquecerConAutopartes(ptData || []))
         setBuscando(false)
     }
 
