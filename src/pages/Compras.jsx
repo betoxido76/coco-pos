@@ -261,6 +261,7 @@ function NuevaOrden({ onCreada, onCancelar }) {
     const [guardando, setGuardando] = useState(false)
     const [error, setError] = useState('')
     const [fechaEntrega, setFechaEntrega] = useState('')
+    const [ocPendiente, setOcPendiente] = useState(null)
 
     useEffect(() => {
         supabase.from('proveedores').select('id, nombre').eq('activo', true).order('nombre')
@@ -288,7 +289,7 @@ function NuevaOrden({ onCreada, onCancelar }) {
         setItems(prev => {
             const existe = prev.find(i => i.id === ins.id && i.tipo === ins.tipo)
             if (existe) return prev.map(i => (i.id === ins.id && i.tipo === ins.tipo) ? { ...i, cantidad: i.cantidad + 1 } : i)
-            return [...prev, { id: ins.id, tipo: ins.tipo, nombre: ins.nombre, codigo: ins.codigo, cantidad: 1, precio_unitario: ins.costo || 0 }]
+            return [...prev, { id: ins.id, tipo: ins.tipo, nombre: ins.nombre, codigo: ins.codigo, cantidad: 1, precio_unitario: ins.costo || 0, precio_original: ins.costo || 0 }]
         })
         setBusqueda('')
     }
@@ -360,12 +361,42 @@ function NuevaOrden({ onCreada, onCancelar }) {
 
             if (errItems) { setError('Error al guardar los items: ' + errItems.message); setGuardando(false); return }
 
+            const cambiados = items.filter(i => Number(i.precio_unitario) !== Number(i.precio_original))
+            if (cambiados.length > 0) {
+                setOcPendiente({ ocObj: { ...oc, proveedores: { nombre: proveedores.find(p => p.id === proveedorId)?.nombre } }, cambiados })
+                setGuardando(false)
+                return
+            }
             setGuardando(false)
             onCreada({ ...oc, proveedores: { nombre: proveedores.find(p => p.id === proveedorId)?.nombre } })
         } catch (e) {
             setError('Error inesperado: ' + e.message)
             setGuardando(false)
         }
+    }
+
+    const TABLA_COSTO = {
+        materias_primas:    { tabla: 'materias_primas',    campo: 'costo_compra_promedio' },
+        materiales_empaque: { tabla: 'materiales_empaque', campo: 'costo_compra_promedio' },
+        productos_terminados: { tabla: 'productos_terminados', campo: 'costo_promedio' },
+        consumibles:        { tabla: 'consumibles',        campo: 'costo_compra_promedio' },
+    }
+
+    async function aplicarActualizacionCostos(actualizar) {
+        if (actualizar) {
+            for (const item of ocPendiente.cambiados) {
+                const map = TABLA_COSTO[item.tipo]
+                if (map) {
+                    await supabase.from(map.tabla)
+                        .update({ [map.campo]: item.precio_unitario })
+                        .eq('id', item.id)
+                        .eq('empresa_id', perfil.empresa_id)
+                }
+            }
+        }
+        const datos = ocPendiente.ocObj
+        setOcPendiente(null)
+        onCreada(datos)
     }
 
     return (
@@ -464,6 +495,41 @@ function NuevaOrden({ onCreada, onCancelar }) {
                     </button>
                 </div>
             </div>
+
+            {ocPendiente && (
+                <>
+                    <div onClick={() => aplicarActualizacionCostos(false)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', zIndex: 40 }} />
+                    <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', backgroundColor: '#fff', borderRadius: '16px', padding: '28px', width: '480px', zIndex: 50, boxShadow: '0 20px 60px rgba(0,0,0,0.2)', maxHeight: '80vh', overflowY: 'auto' }}>
+                        <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#1f2937', margin: '0 0 6px' }}>Actualizar costos en catálogo</h3>
+                        <p style={{ fontSize: '13px', color: '#6b7280', margin: '0 0 18px' }}>Se modificaron los siguientes costos de compra. ¿Deseas actualizar el catálogo?</p>
+                        <div style={{ backgroundColor: '#f9fafb', borderRadius: '10px', border: '1px solid #e5e7eb', overflow: 'hidden', marginBottom: '20px' }}>
+                            {ocPendiente.cambiados.map(item => (
+                                <div key={`${item.tipo}-${item.id}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 16px', borderBottom: '1px solid #f3f4f6' }}>
+                                    <div>
+                                        <div style={{ fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>{item.nombre}</div>
+                                        {item.codigo && <div style={{ fontSize: '11px', color: '#9ca3af', fontFamily: 'monospace' }}>{item.codigo}</div>}
+                                    </div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px' }}>
+                                        <span style={{ color: '#9ca3af', textDecoration: 'line-through' }}>{fmt(item.precio_original)}</span>
+                                        <span style={{ color: '#6b7280' }}>→</span>
+                                        <span style={{ fontWeight: 700, color: '#16a34a' }}>{fmt(item.precio_unitario)}</span>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                        <div style={{ display: 'flex', gap: '10px' }}>
+                            <button onClick={() => aplicarActualizacionCostos(true)}
+                                style={{ flex: 2, padding: '11px', borderRadius: '8px', border: 'none', backgroundColor: '#16a34a', color: '#fff', fontSize: '14px', fontWeight: 600, cursor: 'pointer' }}>
+                                Sí, actualizar catálogo
+                            </button>
+                            <button onClick={() => aplicarActualizacionCostos(false)}
+                                style={{ flex: 1, padding: '11px', borderRadius: '8px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: '#374151', fontSize: '14px', cursor: 'pointer' }}>
+                                No, continuar
+                            </button>
+                        </div>
+                    </div>
+                </>
+            )}
         </div>
     )
 }

@@ -595,6 +595,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
     const [pagoBs, setPagoBs] = useState('')
     const [metodoBs, setMetodoBs] = useState('Pago Móvil')
     const [notaCobro, setNotaCobro] = useState('')
+    const [ventaPendiente, setVentaPendiente] = useState(null)
 
     useEffect(() => {
         supabase.from('clientes').select('id, nombre, condicion_pago, dias_credito').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
@@ -636,7 +637,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
         setItems(prev => {
             const existe = prev.find(i => i.producto_id === producto.id)
             if (existe) return prev.map(i => i.producto_id === producto.id ? { ...i, cantidad: i.cantidad + 1 } : i)
-            return [...prev, { producto_id: producto.id, nombre: producto.nombre, sku: producto.sku, cantidad: 1, precio_unitario: producto.precio_venta, stock: producto.stock_actual }]
+            return [...prev, { producto_id: producto.id, nombre: producto.nombre, sku: producto.sku, cantidad: 1, precio_unitario: producto.precio_venta, precio_original: producto.precio_venta, stock: producto.stock_actual }]
         })
         setBusqueda('')
     }
@@ -649,6 +650,10 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
 
     function eliminarItem(id) {
         setItems(prev => prev.filter(i => i.producto_id !== id))
+    }
+
+    function cambiarPrecio(id, valor) {
+        setItems(prev => prev.map(i => i.producto_id === id ? { ...i, precio_unitario: parseFloat(valor) || 0 } : i))
     }
 
     const totalConIVA = items.reduce((s, i) => s + i.cantidad * i.precio_unitario, 0)
@@ -736,7 +741,27 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
             })
         }
 
+        const cambiados = items.filter(i => Number(i.precio_unitario) !== Number(i.precio_original))
+        if (cambiados.length > 0) {
+            setVentaPendiente({ ventaObj: { ...venta, clientes: { nombre: clientes.find(c => c.id === clienteId)?.nombre }, items }, cambiados })
+            setGuardando(false)
+            return
+        }
         onVentaCreada({ ...venta, clientes: { nombre: clientes.find(c => c.id === clienteId)?.nombre }, items })
+    }
+
+    async function aplicarActualizacionPrecios(actualizar) {
+        if (actualizar) {
+            for (const item of ventaPendiente.cambiados) {
+                await supabase.from('productos_terminados')
+                    .update({ precio_venta: item.precio_unitario })
+                    .eq('id', item.producto_id)
+                    .eq('empresa_id', perfil.empresa_id)
+            }
+        }
+        const datos = ventaPendiente.ventaObj
+        setVentaPendiente(null)
+        onVentaCreada(datos)
     }
 
     return (
@@ -967,6 +992,41 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                     </button>
                 </div>
             </div>
+
+            {ventaPendiente && (
+                <>
+                    <div onClick={() => aplicarActualizacionPrecios(false)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', zIndex: 40 }} />
+                    <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', backgroundColor: '#fff', borderRadius: '16px', padding: '28px', width: '480px', zIndex: 50, boxShadow: '0 20px 60px rgba(0,0,0,0.2)', maxHeight: '80vh', overflowY: 'auto' }}>
+                        <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#1f2937', margin: '0 0 6px' }}>Actualizar precios en catálogo</h3>
+                        <p style={{ fontSize: '13px', color: '#6b7280', margin: '0 0 18px' }}>Se modificaron los siguientes precios de venta. ¿Deseas actualizar el catálogo?</p>
+                        <div style={{ backgroundColor: '#f9fafb', borderRadius: '10px', border: '1px solid #e5e7eb', overflow: 'hidden', marginBottom: '20px' }}>
+                            {ventaPendiente.cambiados.map(item => (
+                                <div key={item.producto_id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 16px', borderBottom: '1px solid #f3f4f6' }}>
+                                    <div>
+                                        <div style={{ fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>{item.nombre}</div>
+                                        {item.sku && <div style={{ fontSize: '11px', color: '#9ca3af', fontFamily: 'monospace' }}>{item.sku}</div>}
+                                    </div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px' }}>
+                                        <span style={{ color: '#9ca3af', textDecoration: 'line-through' }}>{fmt(item.precio_original)}</span>
+                                        <span style={{ color: '#6b7280' }}>→</span>
+                                        <span style={{ fontWeight: 700, color: '#16a34a' }}>{fmt(item.precio_unitario)}</span>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                        <div style={{ display: 'flex', gap: '10px' }}>
+                            <button onClick={() => aplicarActualizacionPrecios(true)}
+                                style={{ flex: 2, padding: '11px', borderRadius: '8px', border: 'none', backgroundColor: '#16a34a', color: '#fff', fontSize: '14px', fontWeight: 600, cursor: 'pointer' }}>
+                                Sí, actualizar catálogo
+                            </button>
+                            <button onClick={() => aplicarActualizacionPrecios(false)}
+                                style={{ flex: 1, padding: '11px', borderRadius: '8px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: '#374151', fontSize: '14px', cursor: 'pointer' }}>
+                                No, continuar
+                            </button>
+                        </div>
+                    </div>
+                </>
+            )}
         </div>
     )
 }
