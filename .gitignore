@@ -24,3 +24,9 @@ dist-ssr
 *.sw?
 .aider*
 .env
+Tokens*.txt
+tokens*.txt
+*token*.txt
+*clave*.txt
+*password*.txt
+*secret*.txt
