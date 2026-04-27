@@ -96,7 +96,7 @@ export default function Consumibles() {
         }
 
         setGuardando(false)
-        if (err) { setError('Error al guardar: ' + err.message); return }
+        if (err) { setError(err.code === '23505' ? `El código "${payload.codigo}" ya existe en el catálogo. Por favor elige otro código.` : 'Error al guardar: ' + err.message); return }
 
         setExito(editando ? 'Consumible actualizado' : 'Consumible creado')
         setTimeout(() => setExito(''), 3000)

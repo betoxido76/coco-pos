@@ -142,7 +142,7 @@ export default function Productos() {
             productoId = nuevo?.id
         }
 
-        if (err) { setGuardando(false); setError('Error al guardar: ' + err.message); return }
+        if (err) { setGuardando(false); setError(err.code === '23505' ? `El SKU "${payload.sku}" ya existe en el catálogo. Por favor elige otro código.` : 'Error al guardar: ' + err.message); return }
 
         if (esAutopartes && productoId) {
             await supabase.from('productos_autopartes').upsert({

@@ -116,7 +116,7 @@ export default function MateriasPrimas({ tabInicial = 'materias_primas' }) {
         }
 
         setGuardando(false)
-        if (err) { setError('Error al guardar: ' + err.message); return }
+        if (err) { setError(err.code === '23505' ? `El código "${payload.codigo}" ya existe en el catálogo. Por favor elige otro código.` : 'Error al guardar: ' + err.message); return }
 
         setExito(editando ? 'Registro actualizado' : 'Registro creado')
         setTimeout(() => setExito(''), 3000)
