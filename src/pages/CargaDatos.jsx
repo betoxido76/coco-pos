@@ -8,7 +8,7 @@ import { Download, Upload, CheckCircle, AlertTriangle, X, FileSpreadsheet } from
 const CATALOGOS = [
     {
         key: 'productos_terminados',
-        conflicto: 'sku',
+        conflicto: 'empresa_id,sku',
         label: 'Productos Terminados',
         tabla: 'productos_terminados',
         columnas: [
@@ -30,7 +30,7 @@ const CATALOGOS = [
     },
     {
         key: 'materias_primas',
-        conflicto: 'codigo',
+        conflicto: 'empresa_id,codigo',
         label: 'Materias Primas',
         tabla: 'materias_primas',
         columnas: [
@@ -49,7 +49,7 @@ const CATALOGOS = [
     },
     {
         key: 'materiales_empaque',
-        conflicto: 'codigo',
+        conflicto: 'empresa_id,codigo',
         label: 'Materiales de Empaque',
         tabla: 'materiales_empaque',
         columnas: [
@@ -67,7 +67,7 @@ const CATALOGOS = [
     },
     {
         key: 'consumibles',
-        conflicto: 'codigo',
+        conflicto: 'empresa_id,codigo',
         label: 'Consumibles',
         tabla: 'consumibles',
         columnas: [
@@ -85,7 +85,7 @@ const CATALOGOS = [
     },
     {
         key: 'clientes',
-        conflicto: 'rif',
+        conflicto: 'empresa_id,rif',
         label: 'Clientes',
         tabla: 'clientes',
         columnas: [
@@ -101,7 +101,7 @@ const CATALOGOS = [
     },
     {
         key: 'proveedores',
-        conflicto: 'rif',
+        conflicto: 'empresa_id,rif',
         label: 'Proveedores',
         tabla: 'proveedores',
         columnas: [
