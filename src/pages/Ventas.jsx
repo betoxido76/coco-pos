@@ -942,8 +942,9 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                                         const t = e.target.value
                                         setTipoTasa(t)
                                         const tasa = tasas[t] || 1
-                                        if (pagoUsd) setPagoBs((parseFloat(pagoUsd) * tasa).toFixed(2))
-                                        else if (pagoBs) setPagoUsd((parseFloat(pagoBs) / tasa).toFixed(2))
+                                        const usd = parseFloat(pagoUsd) || 0
+                                        const restBs = Math.max(0, (total - usd) * tasa)
+                                        setPagoBs(restBs > 0 ? restBs.toFixed(2) : '')
                                     }}
                                         style={{ width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '12px', color: '#374151', backgroundColor: '#fff' }}>
                                         {OPCIONES_TASA.map(o => (
@@ -956,8 +957,11 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                                         <label style={{ fontSize: '11px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Monto USD</label>
                                         <input type="number" min="0" step="0.01" value={pagoUsd} onChange={e => {
                                             const v = e.target.value
+                                            const usd = parseFloat(v) || 0
                                             setPagoUsd(v)
-                                            setPagoBs(v ? (parseFloat(v) * (tasas[tipoTasa] || 1)).toFixed(2) : '')
+                                            const tasa = tasas[tipoTasa] || 1
+                                            const restBs = Math.max(0, (total - usd) * tasa)
+                                            setPagoBs(restBs > 0 ? restBs.toFixed(2) : '')
                                         }} placeholder="0.00"
                                             style={{ width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '12px', boxSizing: 'border-box' }} />
                                     </div>
@@ -974,8 +978,11 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                                         <label style={{ fontSize: '11px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Monto Bs.</label>
                                         <input type="number" min="0" step="0.01" value={pagoBs} onChange={e => {
                                             const v = e.target.value
+                                            const bs = parseFloat(v) || 0
                                             setPagoBs(v)
-                                            setPagoUsd(v ? (parseFloat(v) / (tasas[tipoTasa] || 1)).toFixed(2) : '')
+                                            const tasa = tasas[tipoTasa] || 1
+                                            const restUsd = Math.max(0, total - bs / tasa)
+                                            setPagoUsd(restUsd > 0 ? restUsd.toFixed(2) : '')
                                         }} placeholder="0.00"
                                             style={{ width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '12px', boxSizing: 'border-box' }} />
                                     </div>
