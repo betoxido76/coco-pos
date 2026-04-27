@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import { useAuth } from '../contexts/AuthContext'
 import * as XLSX from 'xlsx'
 import { Download, Upload, CheckCircle, AlertTriangle, X, FileSpreadsheet } from 'lucide-react'
 
@@ -150,6 +151,7 @@ function procesarFila(filaRaw, columnas, defaults) {
 
 // ─── Componente principal ──────────────────────────────────────
 export default function CargaDatos() {
+    const { perfil } = useAuth()
     const [catalogoKey, setCatalogoKey] = useState('productos_terminados')
     const [paso, setPaso] = useState('inicio') // inicio | preview | resultado
     const [filas, setFilas] = useState([])
@@ -213,7 +215,10 @@ export default function CargaDatos() {
         if (filasValidas.length === 0) return
         setCargando(true)
 
-        const payload = filasValidas.map(({ _idx, ...rest }) => rest)
+        const payload = filasValidas.map(({ _idx, ...rest }) => ({
+            ...rest,
+            empresa_id: perfil.empresa_id,
+        }))
         let insertados = 0, errores = []
 
         const BATCH = 50

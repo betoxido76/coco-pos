@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc *)",
+      "Bash(npm run *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(supabase *)",
+      "Bash(npm install *)",
+      "PowerShell(winget install *)",
+      "Bash(npx supabase *)"
+    ]
+  }
+}
