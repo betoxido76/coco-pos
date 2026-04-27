@@ -324,7 +324,7 @@ ON CONFLICT DO NOTHING;
 
 ## 14. Pendientes / Decisiones futuras
 
-### Completados (sesiones 2026-04-25 / 2026-04-26)
+### Completados (sesiones 2026-04-25 / 2026-04-27)
 
 | Item | Notas |
 |---|---|
@@ -332,8 +332,12 @@ ON CONFLICT DO NOTHING;
 | Paginación en todos los módulos | Ventas, CxC, CxP, Compras, Inventario (VistaMovimientos), Gastos, Mermas, CambiosManoMano — PAGE_SIZE=50, KPIs separados del paginado |
 | Índices en Supabase | Creados sobre empresa_id, fecha, estado, cliente_id, vendedor_id en las tablas de mayor volumen |
 | Historial de visitas en FichaCliente (paginado) | VISITAS_PAGE=10, cargarVisitas(pag), paginación con ← → en tab Visitas |
-| Realtime en Pedidos.jsx | Suscripción INSERT en tabla pedidos filtrada por empresa_id; toast "Nuevo pedido recibido" + recarga automática de lista |
+| Realtime en Pedidos.jsx | Suscripción INSERT filtrada por empresa_id; toast "Nuevo pedido recibido" + recarga automática; usa reloadKey para evitar stale closure |
 | Módulo Finanzas | Vista consolidada de CxC + CxP + Cobros del día para rol finanzas |
+| Actualizar precio/costo al confirmar venta u OC | Modal post-confirmación si hay precios modificados; Ventas actualiza `productos_terminados.precio_venta`; Compras OC actualiza `costo_compra_promedio` (MP/ME/consumibles) o `costo_promedio` (PT); también corregido bug de `cambiarPrecio` que no estaba definida en NuevaVenta |
+| Error amigable por código duplicado | Productos/MP/ME/Consumibles: captura error Postgres `23505` y muestra `"El SKU/código X ya existe. Por favor elige otro código."` |
+| NuevaVenta — días de crédito editables | Campo `diasCredito` pre-cargado desde catálogo del cliente, editable para casos excepcionales; muestra fecha de vencimiento en tiempo real; `confirmarVenta` usa este valor (no el del catálogo) para `fecha_vencimiento_pago` |
+| NuevaVenta — pago contado USD/Bs complementario | USD + (Bs/tasa) = Total; escribir en USD calcula el resto en Bs y viceversa; cambiar tasa recomputa Bs desde USD actual |
 
 ### Backlog estratégico (capacidades de plataforma SaaS)
 
