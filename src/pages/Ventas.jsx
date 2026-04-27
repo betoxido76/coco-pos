@@ -596,6 +596,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
     const [metodoBs, setMetodoBs] = useState('Pago Móvil')
     const [notaCobro, setNotaCobro] = useState('')
     const [ventaPendiente, setVentaPendiente] = useState(null)
+    const [diasCredito, setDiasCredito] = useState(0)
 
     useEffect(() => {
         supabase.from('clientes').select('id, nombre, condicion_pago, dias_credito').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
@@ -613,6 +614,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
         if (!id) { setCondicion('credito'); return }
         const cliente = clientes.find(c => c.id === id)
         setCondicion(cliente?.condicion_pago || 'credito')
+        setDiasCredito(Number(cliente?.dias_credito) || 0)
         const { data } = await supabase.from('direcciones_entrega')
             .select('*')
             .eq('cliente_id', id)
@@ -675,9 +677,9 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
 
         const clienteObj = clientes.find(c => c.id === clienteId)
         let fechaVencimiento = null
-        if (condicion === 'credito' && clienteObj?.dias_credito > 0) {
+        if (condicion === 'credito' && diasCredito > 0) {
             const d = new Date()
-            d.setDate(d.getDate() + Number(clienteObj.dias_credito))
+            d.setDate(d.getDate() + Number(diasCredito))
             fechaVencimiento = d.toISOString().split('T')[0]
         }
 
@@ -906,7 +908,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                     {/* Condición de pago */}
                     <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: '14px', marginBottom: '14px' }}>
                         <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '8px' }}>Condición de pago</label>
-                        <div style={{ display: 'flex', gap: '6px', marginBottom: condicion === 'contado' ? '12px' : '0' }}>
+                        <div style={{ display: 'flex', gap: '6px', marginBottom: '10px' }}>
                             {['contado', 'credito'].map(c => (
                                 <button key={c} onClick={() => setCondicion(c)}
                                     style={{
@@ -920,11 +922,29 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                                 </button>
                             ))}
                         </div>
+                        {condicion === 'credito' && (
+                            <div style={{ marginBottom: '10px' }}>
+                                <label style={{ fontSize: '11px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Días de crédito</label>
+                                <input type="number" min="0" value={diasCredito}
+                                    onChange={e => setDiasCredito(Number(e.target.value) || 0)}
+                                    style={{ width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '12px', boxSizing: 'border-box' }} />
+                                {diasCredito > 0 && (() => {
+                                    const d = new Date(); d.setDate(d.getDate() + diasCredito)
+                                    return <p style={{ fontSize: '11px', color: '#6b7280', margin: '4px 0 0' }}>Vence: {d.toLocaleDateString('es-VE')}</p>
+                                })()}
+                            </div>
+                        )}
                         {condicion === 'contado' && (
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                                 <div>
                                     <label style={{ fontSize: '11px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Tasa de cambio</label>
-                                    <select value={tipoTasa} onChange={e => setTipoTasa(e.target.value)}
+                                    <select value={tipoTasa} onChange={e => {
+                                        const t = e.target.value
+                                        setTipoTasa(t)
+                                        const tasa = tasas[t] || 1
+                                        if (pagoUsd) setPagoBs((parseFloat(pagoUsd) * tasa).toFixed(2))
+                                        else if (pagoBs) setPagoUsd((parseFloat(pagoBs) / tasa).toFixed(2))
+                                    }}
                                         style={{ width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '12px', color: '#374151', backgroundColor: '#fff' }}>
                                         {OPCIONES_TASA.map(o => (
                                             <option key={o.key} value={o.key}>{o.label}{tasas[o.key] ? ` (${tasas[o.key]})` : ''}</option>
@@ -934,7 +954,11 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
                                     <div>
                                         <label style={{ fontSize: '11px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Monto USD</label>
-                                        <input type="number" min="0" step="0.01" value={pagoUsd} onChange={e => setPagoUsd(e.target.value)} placeholder="0.00"
+                                        <input type="number" min="0" step="0.01" value={pagoUsd} onChange={e => {
+                                            const v = e.target.value
+                                            setPagoUsd(v)
+                                            setPagoBs(v ? (parseFloat(v) * (tasas[tipoTasa] || 1)).toFixed(2) : '')
+                                        }} placeholder="0.00"
                                             style={{ width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '12px', boxSizing: 'border-box' }} />
                                     </div>
                                     <div>
@@ -948,7 +972,11 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
                                     <div>
                                         <label style={{ fontSize: '11px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Monto Bs.</label>
-                                        <input type="number" min="0" step="0.01" value={pagoBs} onChange={e => setPagoBs(e.target.value)} placeholder="0.00"
+                                        <input type="number" min="0" step="0.01" value={pagoBs} onChange={e => {
+                                            const v = e.target.value
+                                            setPagoBs(v)
+                                            setPagoUsd(v ? (parseFloat(v) / (tasas[tipoTasa] || 1)).toFixed(2) : '')
+                                        }} placeholder="0.00"
                                             style={{ width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '12px', boxSizing: 'border-box' }} />
                                     </div>
                                     <div>
