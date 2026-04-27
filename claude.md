@@ -324,16 +324,11 @@ ON CONFLICT DO NOTHING;
 
 ## 14. Pendientes / Decisiones futuras
 
-### Backlog operacional (mejoras al producto existente)
-
-| Item | Prioridad | Notas |
-|---|---|---|
-| Módulo de gastos — mejoras | Media | Filtro por rango de fechas (inicio/fin); gastos programados con fecha vencimiento (ver sección 17) |
-
 ### Completados (sesiones 2026-04-25 / 2026-04-26)
 
 | Item | Notas |
 |---|---|
+| Módulo de gastos — mejoras | Filtro Desde/Hasta, gastos programados (estado+fecha_vencimiento+semáforo), modal de pago, KPIs pagados/pendientes/vencidos |
 | Paginación en todos los módulos | Ventas, CxC, CxP, Compras, Inventario (VistaMovimientos), Gastos, Mermas, CambiosManoMano — PAGE_SIZE=50, KPIs separados del paginado |
 | Índices en Supabase | Creados sobre empresa_id, fecha, estado, cliente_id, vendedor_id en las tablas de mayor volumen |
 | Historial de visitas en FichaCliente (paginado) | VISITAS_PAGE=10, cargarVisitas(pag), paginación con ← → en tab Visitas |
