@@ -321,10 +321,10 @@ function NuevaOrden({ onCreada, onCancelar }) {
 
         try {
             const { data: { user } } = await supabase.auth.getUser()
-            const { numeroConsecutivo } = await supabase.rpc('obtener_siguiente_oc_numero', {
+            const { data: numeroConsecutivo } = await supabase.rpc('obtener_siguiente_oc_numero', {
                 p_empresa_id: perfil.empresa_id
             })
-            const numero = numeroConsecutivo || 'OC-000001' // Fallback por si falla
+            const numero = numeroConsecutivo || 'OC-000001'
 
             const payload = {
                 proveedor_id: proveedorId, usuario_id: user.id, numero_oc: numero,
@@ -651,10 +651,10 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
     async function confirmarRecepcion(datosPago) {
         setGuardando(true); setError('')
         const { data: { user } } = await supabase.auth.getUser()
-        const { numeroConsecutivo } = await supabase.rpc('obtener_siguiente_recepcion_numero', {
+        const { data: numeroConsecutivo } = await supabase.rpc('obtener_siguiente_recepcion_numero', {
             p_empresa_id: perfil.empresa_id
         })
-        const numero = numeroConsecutivo || 'REC-000001' // Fallback por si falla
+        const numero = numeroConsecutivo || 'REC-000001'
         const proveedorId = modo === 'contra_oc'
             ? ocsPendientes.find(o => o.id === ocSeleccionada)?.proveedor_id
             : proveedorLibreId || null
