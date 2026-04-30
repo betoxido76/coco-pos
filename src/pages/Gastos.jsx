@@ -509,6 +509,7 @@ function NuevoGasto({ tasas, tipos, onGuardado, onCancelar }) {
             nombre: nombre.trim(),
             descripcion: descripcion.trim() || null,
             tipo_gasto_id: tipoGastoId,
+            categoria: tipos.find(t => t.id === tipoGastoId)?.nombre || '',
             fecha,
             estado: estadoGasto,
             fecha_vencimiento: estadoGasto === 'pendiente' ? fechaVencimiento : null,
