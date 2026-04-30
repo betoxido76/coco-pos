@@ -20,6 +20,7 @@ import Cotizador from './pages/Cotizador'
 import Finanzas from './pages/Finanzas'
 import SuperAdmin from './pages/SuperAdmin'
 import Gastos from './pages/Gastos'
+import Bancos from './pages/Bancos'
 import ResetPassword from './pages/ResetPassword'
 import './index.css'
 
@@ -80,6 +81,7 @@ function App() {
         <Route path="cotizador" element={<ModuloProtegido modulo="cotizador"><Cotizador /></ModuloProtegido>} />
         <Route path="finanzas" element={<ModuloProtegido modulo="finanzas"><Finanzas /></ModuloProtegido>} />
         <Route path="gastos" element={<ModuloProtegido modulo="gastos"><Gastos /></ModuloProtegido>} />
+        <Route path="bancos" element={<ModuloProtegido modulo="bancos"><Bancos /></ModuloProtegido>} />
         <Route path="superadmin" element={<SuperAdmin />} />
         <Route path="reset-password" element={<ResetPassword />} />
       </Route>

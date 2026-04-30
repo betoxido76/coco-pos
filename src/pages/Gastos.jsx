@@ -365,6 +365,15 @@ function ModalPagarGasto({ gasto, tasas, onPagado, onCerrar }) {
     const [metodoPago, setMetodoPago] = useState(gasto.metodo_pago || 'Efectivo USD')
     const [guardando, setGuardando] = useState(false)
     const [error, setError] = useState('')
+    const [cuentasBancarias, setCuentasBancarias] = useState([])
+    const [cuentaBancariaId, setCuentaBancariaId] = useState(gasto.cuenta_bancaria_id || '')
+
+    useEffect(() => {
+        if (perfil?.empresa_id) {
+            supabase.from('cuentas_bancarias').select('id, nombre, banco, moneda').eq('empresa_id', perfil.empresa_id).eq('activa', true)
+                .then(({ data }) => setCuentasBancarias(data || []))
+        }
+    }, [perfil?.empresa_id])
 
     const tasa = tasas[tipoTasa] || 1
     const totalEnUsd = Number(montoUsd || 0) + (Number(montoBs || 0) / tasa)
@@ -381,6 +390,7 @@ function ModalPagarGasto({ gasto, tasas, onPagado, onCerrar }) {
             tasa_cambio: tasa,
             tipo_tasa: tipoTasa,
             metodo_pago: metodoPago,
+            cuenta_bancaria_id: cuentaBancariaId || null,
             monto: totalEnUsd,
         }).eq('id', gasto.id)
 
@@ -448,6 +458,16 @@ function ModalPagarGasto({ gasto, tasas, onPagado, onCerrar }) {
                         </div>
                     )}
 
+                    {cuentasBancarias.length > 0 && (
+                        <div>
+                            <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Cuenta bancaria (opcional)</label>
+                            <select value={cuentaBancariaId} onChange={e => setCuentaBancariaId(e.target.value)} style={inputStyle}>
+                                <option value="">— Efectivo / sin cuenta —</option>
+                                {cuentasBancarias.map(c => <option key={c.id} value={c.id}>{c.nombre} ({c.banco} · {c.moneda})</option>)}
+                            </select>
+                        </div>
+                    )}
+
                     {error && (
                         <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 14px', fontSize: '13px', color: '#dc2626' }}>
                             {error}
@@ -487,6 +507,15 @@ function NuevoGasto({ tasas, tipos, onGuardado, onCancelar }) {
     const [metodoPago, setMetodoPago] = useState('Efectivo USD')
     const [guardando, setGuardando] = useState(false)
     const [error, setError] = useState('')
+    const [cuentasBancarias, setCuentasBancarias] = useState([])
+    const [cuentaBancariaId, setCuentaBancariaId] = useState('')
+
+    useEffect(() => {
+        if (perfil?.empresa_id) {
+            supabase.from('cuentas_bancarias').select('id, nombre, banco, moneda').eq('empresa_id', perfil.empresa_id).eq('activa', true)
+                .then(({ data }) => setCuentasBancarias(data || []))
+        }
+    }, [perfil?.empresa_id])
 
     const tasa = tasas[tipoTasa] || 1
     const totalEnUsd = Number(montoUsd || 0) + (Number(montoBs || 0) / tasa)
@@ -510,6 +539,7 @@ function NuevoGasto({ tasas, tipos, onGuardado, onCancelar }) {
             descripcion: descripcion.trim() || null,
             tipo_gasto_id: tipoGastoId,
             categoria: tipos.find(t => t.id === tipoGastoId)?.nombre || '',
+            cuenta_bancaria_id: estadoGasto === 'pagado' ? (cuentaBancariaId || null) : null,
             fecha,
             estado: estadoGasto,
             fecha_vencimiento: estadoGasto === 'pendiente' ? fechaVencimiento : null,
@@ -655,6 +685,17 @@ function NuevoGasto({ tasas, tipos, onGuardado, onCancelar }) {
                         <p style={{ fontSize: '11px', color: '#16a34a', margin: '2px 0 0' }}>
                             {fmt(montoUsd || 0)} USD + {fmtBs(montoBs || 0)} ÷ {tasa.toLocaleString('es-VE')}
                         </p>
+                    </div>
+                )}
+
+                {/* Cuenta bancaria (solo para gastos pagados) */}
+                {estadoGasto === 'pagado' && cuentasBancarias.length > 0 && (
+                    <div>
+                        <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Cuenta bancaria <span style={{ color: '#9ca3af', fontWeight: 400 }}>(opcional)</span></label>
+                        <select value={cuentaBancariaId} onChange={e => setCuentaBancariaId(e.target.value)} style={inputStyle}>
+                            <option value="">— Efectivo / sin cuenta —</option>
+                            {cuentasBancarias.map(c => <option key={c.id} value={c.id}>{c.nombre} ({c.banco} · {c.moneda})</option>)}
+                        </select>
                     </div>
                 )}
 

@@ -275,6 +275,15 @@ function ModalPago({ compra, saldo, tasas, onCerrar, onPagado }) {
     const [nota, setNota] = useState('')
     const [guardando, setGuardando] = useState(false)
     const [error, setError] = useState('')
+    const [cuentasBancarias, setCuentasBancarias] = useState([])
+    const [cuentaBancariaId, setCuentaBancariaId] = useState('')
+
+    useEffect(() => {
+        if (perfil?.empresa_id) {
+            supabase.from('cuentas_bancarias').select('id, nombre, banco, moneda').eq('empresa_id', perfil.empresa_id).eq('activa', true)
+                .then(({ data }) => setCuentasBancarias(data || []))
+        }
+    }, [perfil?.empresa_id])
 
     const tasa = Number(tasas[tipoTasa] || 1)
     const totalEnBs = Number(montoUsd || 0) * tasa
@@ -292,6 +301,7 @@ function ModalPago({ compra, saldo, tasas, onCerrar, onPagado }) {
             tasa_cambio: tasa, tipo_tasa: tipoTasa,
             metodo_usd: metodoUsd, metodo_bs: metodoBs || null,
             nota: nota || null,
+            cuenta_bancaria_id: cuentaBancariaId || null,
             empresa_id: perfil.empresa_id,
         })
 
@@ -371,6 +381,17 @@ function ModalPago({ compra, saldo, tasas, onCerrar, onPagado }) {
                             </select>
                         </div>
                     </div>
+
+                    {cuentasBancarias.length > 0 && (
+                        <div>
+                            <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Cuenta bancaria (opcional)</label>
+                            <select value={cuentaBancariaId} onChange={e => setCuentaBancariaId(e.target.value)}
+                                style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', backgroundColor: '#fff' }}>
+                                <option value="">— Efectivo / sin cuenta —</option>
+                                {cuentasBancarias.map(c => <option key={c.id} value={c.id}>{c.nombre} ({c.banco} · {c.moneda})</option>)}
+                            </select>
+                        </div>
+                    )}
 
                     <div>
                         <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Nota (opcional)</label>
