@@ -79,11 +79,7 @@ export default function Bancos() {
         cargar()
     }
 
-    const tasaBcv = Number(tasas.tasa_bcv || 1)
-    const totalUsd = cuentas.reduce((s, c) => {
-        const saldo = saldos[c.id] || 0
-        return s + (c.moneda === 'Bs' ? saldo / tasaBcv : saldo)
-    }, 0)
+    const totalUsd = cuentas.filter(c => c.moneda !== 'Bs').reduce((s, c) => s + (saldos[c.id] || 0), 0)
     const totalBs = cuentas.filter(c => c.moneda === 'Bs').reduce((s, c) => s + (saldos[c.id] || 0), 0)
     const cuentasActivas = cuentas.filter(c => c.activa).length
 
