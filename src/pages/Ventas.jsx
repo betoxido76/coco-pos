@@ -261,6 +261,8 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
     const [metodoBs, setMetodoBs] = useState('Pago Móvil')
     const [notaCobro, setNotaCobro] = useState('')
     const [diasCredito, setDiasCredito] = useState(0)
+    const [cuentasBancarias, setCuentasBancarias] = useState([])
+    const [cuentaBancariaId, setCuentaBancariaId] = useState('')
 
     useEffect(() => {
         supabase.from('pedido_items')
@@ -276,6 +278,8 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
             })
         supabase.from('configuracion').select('clave, valor').eq('empresa_id', perfil.empresa_id)
             .then(({ data }) => { if (data) { const t = {}; data.forEach(r => { t[r.clave] = Number(r.valor) }); setTasas(t) } })
+        supabase.from('cuentas_bancarias').select('id, nombre, banco, moneda').eq('empresa_id', perfil.empresa_id).eq('activa', true)
+            .then(({ data }) => setCuentasBancarias(data || []))
     }, [pedido.id])
 
     const descGlobal = Number(pedido.descuento_global || 0)
@@ -338,6 +342,7 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
                 metodo_usd: Number(pagoUsd) > 0 ? metodoUsd : null,
                 metodo_bs: Number(pagoBs) > 0 ? metodoBs : null,
                 nota: notaCobro || null,
+                cuenta_bancaria_id: cuentaBancariaId || null,
                 usuario_id: user.id,
                 empresa_id: perfil.empresa_id,
             })
@@ -540,6 +545,18 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
                             <input type="text" value={notaCobro} onChange={e => setNotaCobro(e.target.value)} placeholder="Ej: Efectivo recibido en caja..."
                                 style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', boxSizing: 'border-box' }} />
                         </div>
+                        {cuentasBancarias.length > 0 && (
+                            <div>
+                                <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Cuenta bancaria <span style={{ color: '#9ca3af', fontWeight: 400 }}>(opcional)</span></label>
+                                <select value={cuentaBancariaId} onChange={e => setCuentaBancariaId(e.target.value)}
+                                    style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', color: '#374151', backgroundColor: '#fff' }}>
+                                    <option value="">— Efectivo / sin cuenta —</option>
+                                    {cuentasBancarias
+                                        .filter(c => Number(pagoUsd) > 0 && Number(pagoBs) > 0 ? true : Number(pagoUsd) > 0 ? c.moneda !== 'Bs' : c.moneda === 'Bs')
+                                        .map(c => <option key={c.id} value={c.id}>{c.nombre} ({c.banco} · {c.moneda})</option>)}
+                                </select>
+                            </div>
+                        )}
                     </div>
                 )}
             </div>
@@ -597,6 +614,8 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
     const [notaCobro, setNotaCobro] = useState('')
     const [ventaPendiente, setVentaPendiente] = useState(null)
     const [diasCredito, setDiasCredito] = useState(0)
+    const [cuentasBancarias, setCuentasBancarias] = useState([])
+    const [cuentaBancariaId, setCuentaBancariaId] = useState('')
 
     useEffect(() => {
         supabase.from('clientes').select('id, nombre, condicion_pago, dias_credito').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
@@ -605,6 +624,8 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
             .then(({ data }) => setProductos(data || []))
         supabase.from('configuracion').select('clave, valor').eq('empresa_id', perfil.empresa_id)
             .then(({ data }) => { if (data) { const t = {}; data.forEach(r => { t[r.clave] = Number(r.valor) }); setTasas(t) } })
+        supabase.from('cuentas_bancarias').select('id, nombre, banco, moneda').eq('empresa_id', perfil.empresa_id).eq('activa', true)
+            .then(({ data }) => setCuentasBancarias(data || []))
     }, [])
 
     async function seleccionarCliente(id) {
@@ -717,6 +738,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                 metodo_usd: Number(pagoUsd) > 0 ? metodoUsd : null,
                 metodo_bs: Number(pagoBs) > 0 ? metodoBs : null,
                 nota: notaCobro || null,
+                cuenta_bancaria_id: cuentaBancariaId || null,
                 usuario_id: user.id,
                 empresa_id: perfil.empresa_id,
             })
@@ -999,6 +1021,18 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                                     <input type="text" value={notaCobro} onChange={e => setNotaCobro(e.target.value)} placeholder="Ej: Efectivo recibido en caja..."
                                         style={{ width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '12px', boxSizing: 'border-box' }} />
                                 </div>
+                                {cuentasBancarias.length > 0 && (
+                                    <div>
+                                        <label style={{ fontSize: '11px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Cuenta bancaria <span style={{ color: '#9ca3af', fontWeight: 400 }}>(opcional)</span></label>
+                                        <select value={cuentaBancariaId} onChange={e => setCuentaBancariaId(e.target.value)}
+                                            style={{ width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '12px', color: '#374151', backgroundColor: '#fff' }}>
+                                            <option value="">— Efectivo / sin cuenta —</option>
+                                            {cuentasBancarias
+                                                .filter(c => Number(pagoUsd) > 0 && Number(pagoBs) > 0 ? true : Number(pagoUsd) > 0 ? c.moneda !== 'Bs' : c.moneda === 'Bs')
+                                                .map(c => <option key={c.id} value={c.id}>{c.nombre} ({c.banco} · {c.moneda})</option>)}
+                                        </select>
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>
