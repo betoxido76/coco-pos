@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext'
 
 const VACIO = {
     nombre: '', rif: '', telefono: '', contacto: '', tipo: '', codigo: '', activo: true, direccion_fiscal: '',
+    condicion_pago: 'contado', dias_credito: 0,
 }
 
 const inputStyle = {
@@ -46,10 +47,12 @@ export default function Proveedores() {
             rif: p.rif || '',
             telefono: p.telefono || '',
             contacto: p.contacto || '',
-            direccion_fiscal: p.direccion_fiscal || '',  // 👈 NUEVO CAMPO
+            direccion_fiscal: p.direccion_fiscal || '',
             tipo: p.tipo || '',
             codigo: p.codigo || '',
             activo: p.activo ?? true,
+            condicion_pago: p.condicion_pago || 'contado',
+            dias_credito: p.dias_credito || 0,
         })
         setError(''); setVista('form')
     }
@@ -67,6 +70,8 @@ export default function Proveedores() {
             direccion_fiscal: form.direccion_fiscal.trim() || null,
             tipo: form.tipo || null,
             activo: form.activo,
+            condicion_pago: form.condicion_pago,
+            dias_credito: form.condicion_pago === 'credito' ? (form.dias_credito || 0) : 0,
         }
         const { error: err } = editando
             ? await supabase.from('proveedores').update(payload).eq('id', editando)
@@ -115,6 +120,22 @@ export default function Proveedores() {
                         <option value="servicios">Servicios</option>
                     </select>
                 </Campo>
+
+                <Campo label="Condición de pago" span={2}>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                        {['contado', 'credito'].map(c => (
+                            <button key={c} type="button" onClick={() => campo('condicion_pago', c)}
+                                style={{ flex: 1, padding: '8px', borderRadius: '8px', fontSize: '13px', fontWeight: 500, border: '1px solid', cursor: 'pointer', borderColor: form.condicion_pago === c ? '#16a34a' : '#e5e7eb', backgroundColor: form.condicion_pago === c ? '#f0fdf4' : '#fff', color: form.condicion_pago === c ? '#16a34a' : '#6b7280' }}>
+                                {c.charAt(0).toUpperCase() + c.slice(1)}
+                            </button>
+                        ))}
+                    </div>
+                </Campo>
+                {form.condicion_pago === 'credito' && (
+                    <Campo label="Días de crédito" span={2}>
+                        <input type="number" min="1" value={form.dias_credito} onChange={e => campo('dias_credito', Number(e.target.value))} style={inputStyle} />
+                    </Campo>
+                )}
 
                 <Campo label="Código" span={2}>
                     <input value={form.codigo || 'Se genera automáticamente'} disabled
@@ -169,7 +190,7 @@ export default function Proveedores() {
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
                             <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                {['Código', 'Nombre', 'RIF', 'Tipo', 'Teléfono', 'Contacto', 'Estado', ''].map(h => (
+                                {['Código', 'Nombre', 'RIF', 'Tipo', 'Condición', 'Teléfono', 'Contacto', 'Estado', ''].map(h => (
                                     <th key={h} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left' }}>{h}</th>
                                 ))}
                             </tr>
@@ -184,6 +205,11 @@ export default function Proveedores() {
                                     <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280', fontFamily: 'monospace' }}>{p.rif || '—'}</td>
                                     <td style={{ padding: '12px 16px', fontSize: '12px', color: '#6b7280' }}>
                                         {p.tipo ? p.tipo.replace(/_/g, ' ') : '—'}
+                                    </td>
+                                    <td style={{ padding: '12px 16px' }}>
+                                        <span style={{ padding: '2px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 500, backgroundColor: p.condicion_pago === 'credito' ? '#dbeafe' : '#f3f4f6', color: p.condicion_pago === 'credito' ? '#1e40af' : '#6b7280' }}>
+                                            {p.condicion_pago === 'credito' ? `crédito ${p.dias_credito || 0}d` : 'contado'}
+                                        </span>
                                     </td>
                                     <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{p.telefono || '—'}</td>
                                     <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{p.contacto || '—'}</td>

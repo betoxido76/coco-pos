@@ -547,6 +547,10 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
     const [mostrarModal, setMostrarModal] = useState(false)
     const [mapaNombres, setMapaNombres] = useState({})
 
+    const [nroDocProveedor, setNroDocProveedor] = useState('')
+    const [condicionProveedorInicial, setCondicionProveedorInicial] = useState('contado')
+    const [diasCreditoProveedorInicial, setDiasCreditoProveedorInicial] = useState(0)
+
     // Para recepción libre
     const [insumos, setInsumos] = useState([])
     const [busquedaInsumo, setBusquedaInsumo] = useState('')
@@ -570,7 +574,7 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
     }, [])
 
     useEffect(() => {
-        supabase.from('proveedores').select('id, nombre').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
+        supabase.from('proveedores').select('id, nombre, condicion_pago, dias_credito').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
             .then(({ data }) => setProveedores(data || []))
 
         Promise.all([
@@ -660,7 +664,7 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
             : proveedorLibreId || null
 
         const payload = {
-            proveedor_id: proveedorId, usuario_id: user.id, numero_doc: numero,
+            proveedor_id: proveedorId, usuario_id: user.id, numero_doc: nroDocProveedor.trim() || numero,
             subtotal, total, estado: 'recibida', fecha_compra: new Date().toISOString(),
             orden_compra_id: modo === 'contra_oc' ? ocSeleccionada : null,
             ...datosPago
@@ -825,7 +829,12 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
                 <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px', marginBottom: '16px' }}>
                     <div style={{ marginBottom: '12px' }}>
                         <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Proveedor <span style={{ color: '#9ca3af', fontWeight: 400 }}>(opcional)</span></label>
-                        <select value={proveedorLibreId} onChange={e => setProveedorLibreId(e.target.value)}
+                        <select value={proveedorLibreId} onChange={e => {
+                            const pid = e.target.value
+                            setProveedorLibreId(pid)
+                            const p = proveedores.find(x => x.id === pid)
+                            if (p) { setCondicionProveedorInicial(p.condicion_pago || 'contado'); setDiasCreditoProveedorInicial(p.dias_credito || 0) }
+                        }}
                             style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', backgroundColor: '#fff' }}>
                             <option value="">— Sin proveedor —</option>
                             {proveedores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
@@ -867,7 +876,13 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
             {modo === 'contra_oc' && (
                 <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px', marginBottom: '16px' }}>
                     <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '8px' }}>Seleccionar OC Pendiente</label>
-                    <select value={ocSeleccionada} onChange={e => { setOcSeleccionada(e.target.value); cargarItemsDeOC(e.target.value) }}
+                    <select value={ocSeleccionada} onChange={e => {
+                        const ocId = e.target.value
+                        setOcSeleccionada(ocId)
+                        cargarItemsDeOC(ocId)
+                        const oc = ocsPendientes.find(o => o.id === ocId)
+                        if (oc) { const p = proveedores.find(x => x.id === oc.proveedor_id); if (p) { setCondicionProveedorInicial(p.condicion_pago || 'contado'); setDiasCreditoProveedorInicial(p.dias_credito || 0) } }
+                    }}
                         style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', backgroundColor: '#fff' }}>
                         <option value="">Buscar orden...</option>
                         {ocsPendientes.map(o => <option key={o.id} value={o.id}>{o.numero_oc} · {o.proveedores?.nombre} · {fmt(o.total)}</option>)}
@@ -924,6 +939,16 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#6b7280' }}> <span>IVA (16%)</span> <span>{fmt(iva)}</span> </div>                        <div style={{ height: '1px', backgroundColor: '#e5e7eb', margin: '4px 0' }} />
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '16px', fontWeight: 700, color: '#1f2937' }}><span>Total</span><span style={{ color: '#16a34a' }}>{fmt(total)}</span></div>
                     </div>
+                    <div style={{ marginBottom: '12px' }}>
+                        <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Nro. Doc. Proveedor</label>
+                        <input
+                            type="text"
+                            placeholder="Ej. NE-00123 o FAC-456"
+                            value={nroDocProveedor}
+                            onChange={e => setNroDocProveedor(e.target.value)}
+                            style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', boxSizing: 'border-box' }}
+                        />
+                    </div>
                     {error && <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', color: '#dc2626', marginBottom: '12px' }}>{error}</div>}
                     <button onClick={abrirConfirmacion} disabled={guardando || items.length === 0}
                         style={{ width: '100%', backgroundColor: items.length === 0 ? '#d1d5db' : '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '12px', fontSize: '14px', fontWeight: 600, cursor: items.length === 0 ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
@@ -932,20 +957,20 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
                 </div>
             </div>
 
-            {mostrarModal && <ModalPagoCompra total={total} onCerrar={() => setMostrarModal(false)} onConfirmar={confirmarRecepcion} />}
+            {mostrarModal && <ModalPagoCompra total={total} condicionInicial={condicionProveedorInicial} diasInicial={diasCreditoProveedorInicial} onCerrar={() => setMostrarModal(false)} onConfirmar={confirmarRecepcion} />}
         </div>
     )
 }
 
 // ─── Modal de Pago Compra ──────────────────────────────────────
-function ModalPagoCompra({ total, onCerrar, onConfirmar }) {
+function ModalPagoCompra({ total, condicionInicial = 'contado', diasInicial = 0, onCerrar, onConfirmar }) {
     const OPCIONES_TASA = [
         { key: 'tasa_bcv', label: 'USD · BCV' },
         { key: 'tasa_euro', label: 'EUR · BCV' },
         { key: 'tasa_binance', label: 'USD · Binance' },
     ]
-    const [condicion, setCondicion] = useState('contado')
-    const [diasCredito, setDiasCredito] = useState(30)
+    const [condicion, setCondicion] = useState(condicionInicial)
+    const [diasCredito, setDiasCredito] = useState(diasInicial || 30)
     const [tasas, setTasas] = useState({ tasa_bcv: 1, tasa_euro: 1, tasa_binance: 1 })
     const [tipoTasa, setTipoTasa] = useState('tasa_bcv')
     const [pagoUsd, setPagoUsd] = useState(total)
