@@ -56,14 +56,16 @@ export default function Bancos() {
 
     async function cargar() {
         setCargando(true)
-        const [{ data: cuentasData }, { data: cfgData }] = await Promise.all([
+        const [{ data: cuentasData }, { data: cfgRows }] = await Promise.all([
             supabase.from('cuentas_bancarias').select('*').eq('empresa_id', perfil.empresa_id).order('nombre'),
-            supabase.from('configuracion').select('tasa_bcv, tasa_euro, tasa_binance').eq('empresa_id', perfil.empresa_id).single(),
+            supabase.from('configuracion').select('clave, valor'),
         ])
 
         const lista = cuentasData || []
         setCuentas(lista)
-        setTasas(cfgData || {})
+        const cfgMap = {}
+        cfgRows?.forEach(r => { cfgMap[r.clave] = Number(r.valor) })
+        setTasas({ tasa_bcv: cfgMap.tasa_bcv || 1, tasa_euro: cfgMap.tasa_euro || 1, tasa_binance: cfgMap.tasa_binance || 1 })
 
         const resultados = await Promise.all(lista.map(c => calcularSaldoCuenta(c.id, c.moneda, c.saldo_inicial)))
         const mapa = {}
