@@ -17,7 +17,7 @@ const VACIO = {
 }
 
 const VACIO_AUTOPARTES = { marca: '', nro_parte: '', barras_2: '', barras_3: '' }
-const VACIO_COMPAT = { marca_vehiculo: '', modelo: '', anio_desde: '', anio_hasta: '' }
+const VACIO_COMPAT = { marca_vehiculo: '', modelo: '', anio_desde: '', anio_hasta: '', posicion: '' }
 
 export default function Productos() {
     const { perfil } = useAuth()
@@ -88,12 +88,22 @@ export default function Productos() {
             aplica_iva: p.aplica_iva ?? true,
         })
         if (esAutopartes) {
-            const [{ data: ap }, { data: cv }] = await Promise.all([
+            const [{ data: ap }, { data: pvData }] = await Promise.all([
                 supabase.from('productos_autopartes').select('*').eq('producto_id', p.id).single(),
-                supabase.from('compatibilidades_vehiculo').select('*').eq('producto_id', p.id).order('marca_vehiculo'),
+                supabase.from('producto_vehiculo')
+                    .select('id, año_inicio, año_fin, posicion, vehiculo_id, vehiculos(marca, modelo)')
+                    .eq('producto_id', p.id).eq('empresa_id', perfil.empresa_id),
             ])
             setFormAuto(ap ? { marca: ap.marca || '', nro_parte: ap.nro_parte || '', barras_2: ap.barras_2 || '', barras_3: ap.barras_3 || '' } : VACIO_AUTOPARTES)
-            setCompats(cv || [])
+            setCompats((pvData || []).map(pv => ({
+                id: pv.id,
+                vehiculo_id: pv.vehiculo_id,
+                marca_vehiculo: pv.vehiculos?.marca || '',
+                modelo: pv.vehiculos?.modelo || '',
+                anio_desde: pv.año_inicio?.toString() || '',
+                anio_hasta: pv.año_fin?.toString() || '',
+                posicion: pv.posicion || '',
+            })))
         } else {
             setFormAuto(VACIO_AUTOPARTES)
             setCompats([])
@@ -154,18 +164,29 @@ export default function Productos() {
                 barras_3: formAuto.barras_3.trim() || null,
             }, { onConflict: 'producto_id' })
 
-            await supabase.from('compatibilidades_vehiculo').delete().eq('producto_id', productoId)
-            if (compats.length > 0) {
-                await supabase.from('compatibilidades_vehiculo').insert(
-                    compats.map(c => ({
-                        producto_id: productoId,
+            await supabase.from('producto_vehiculo').delete()
+                .eq('producto_id', productoId).eq('empresa_id', perfil.empresa_id)
+            for (const c of compats) {
+                if (!c.marca_vehiculo.trim() || !c.modelo.trim()) continue
+                const { data: existing } = await supabase.from('vehiculos').select('id')
+                    .eq('empresa_id', perfil.empresa_id)
+                    .eq('marca', c.marca_vehiculo.trim()).eq('modelo', c.modelo.trim())
+                    .maybeSingle()
+                let vehiculoId = existing?.id
+                if (!vehiculoId) {
+                    const { data: newV } = await supabase.from('vehiculos').insert({
                         empresa_id: perfil.empresa_id,
-                        marca_vehiculo: c.marca_vehiculo,
-                        modelo: c.modelo,
-                        anio_desde: c.anio_desde || null,
-                        anio_hasta: c.anio_hasta || null,
-                    }))
-                )
+                        marca: c.marca_vehiculo.trim(), modelo: c.modelo.trim(),
+                    }).select('id').single()
+                    vehiculoId = newV?.id
+                }
+                if (!vehiculoId) continue
+                await supabase.from('producto_vehiculo').insert({
+                    empresa_id: perfil.empresa_id, producto_id: productoId, vehiculo_id: vehiculoId,
+                    año_inicio: parseInt(c.anio_desde) || 0,
+                    año_fin: parseInt(c.anio_hasta) || 9999,
+                    posicion: c.posicion?.trim() || null,
+                })
             }
         }
 
@@ -356,6 +377,7 @@ export default function Productos() {
                                             <span style={{ flex: 1, fontSize: '13px', color: '#374151' }}>
                                                 {c.marca_vehiculo} {c.modelo}
                                                 {(c.anio_desde || c.anio_hasta) && ` (${c.anio_desde || ''}${c.anio_hasta ? ' – ' + c.anio_hasta : ''})`}
+                                                {c.posicion && <span style={{ marginLeft: '6px', fontSize: '11px', backgroundColor: '#dbeafe', color: '#1e40af', padding: '1px 6px', borderRadius: '10px' }}>{c.posicion}</span>}
                                             </span>
                                             <button onClick={() => setCompats(prev => prev.filter((_, j) => j !== i))}
                                                 style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', padding: '2px' }}>
@@ -366,7 +388,7 @@ export default function Productos() {
                                 </div>
                             )}
 
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 80px 80px auto', gap: '8px', alignItems: 'end' }}>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 70px 70px 1fr auto', gap: '8px', alignItems: 'end' }}>
                                 {[
                                     { key: 'marca_vehiculo', label: 'Marca', placeholder: 'Toyota' },
                                     { key: 'modelo', label: 'Modelo', placeholder: 'Corolla' },
@@ -380,6 +402,21 @@ export default function Productos() {
                                             placeholder={f.placeholder} style={{ ...inputStyle, fontSize: '13px', padding: '6px 8px' }} />
                                     </div>
                                 ))}
+                                <div>
+                                    <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '4px' }}>Posición</label>
+                                    <select value={nuevoCompat.posicion} onChange={e => setNuevoCompat(p => ({ ...p, posicion: e.target.value }))}
+                                        style={{ ...inputStyle, fontSize: '13px', padding: '6px 8px' }}>
+                                        <option value="">— Todas —</option>
+                                        <option value="delantera">Delantera</option>
+                                        <option value="trasera">Trasera</option>
+                                        <option value="delantera izquierda">Del. Izq.</option>
+                                        <option value="delantera derecha">Del. Der.</option>
+                                        <option value="trasera izquierda">Tras. Izq.</option>
+                                        <option value="trasera derecha">Tras. Der.</option>
+                                        <option value="izquierda">Izquierda</option>
+                                        <option value="derecha">Derecha</option>
+                                    </select>
+                                </div>
                                 <button onClick={() => {
                                     if (!nuevoCompat.marca_vehiculo.trim() || !nuevoCompat.modelo.trim()) return
                                     setCompats(prev => [...prev, { ...nuevoCompat }])

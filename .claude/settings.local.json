@@ -9,7 +9,10 @@
       "Bash(supabase *)",
       "Bash(npm install *)",
       "PowerShell(winget install *)",
-      "Bash(npx supabase *)"
+      "Bash(npx supabase *)",
+      "Bash(git rm *)",
+      "Bash(git pull *)",
+      "Bash(python3 -c ' *)"
     ]
   }
 }

@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { Package, Beaker, Users, Settings, Truck, Filter, Tag, Warehouse, FlaskConical } from 'lucide-react'
+import { Package, Beaker, Users, Settings, Truck, Filter, Tag, Warehouse, FlaskConical, Car, Database } from 'lucide-react'
+import { useAuth } from '../contexts/AuthContext'
 import Productos from './Productos'
 import MateriasPrimas from './MateriasPrimas'
 import Consumibles from './Consumibles'
@@ -11,24 +12,27 @@ import ListasPrecios from './ListasPrecios'
 import GestionAlmacenes from './GestionAlmacenes'
 import AccesosUsuarios from './AccesosUsuarios'
 import Recetas from './Recetas'
-import { Database } from 'lucide-react'
-
-const TABS = [
-    { key: 'productos', label: 'Productos', icon: Package },
-    { key: 'insumos', label: 'Insumos', icon: Beaker },
-    { key: 'consumibles', label: 'Consumibles', icon: Filter },
-    { key: 'clientes', label: 'Clientes', icon: Users },
-    { key: 'proveedores', label: 'Proveedores', icon: Truck },
-    { key: 'tasas', label: 'Tasas de Cambio', icon: Settings },
-    { key: 'listas_precio', label: 'Listas de Precio', icon: Tag },
-    { key: 'almacenes', label: 'Almacenes', icon: Warehouse },
-    { key: 'recetas', label: 'Recetas', icon: FlaskConical },
-    { key: 'carga', label: 'Carga de Datos', icon: Database },
-    { key: 'accesos', label: 'Usuarios y accesos', icon: Users },
-]
+import GestionVehiculos from './GestionVehiculos'
 
 export default function Administracion() {
+    const { perfil } = useAuth()
+    const esAutopartes = perfil?.empresas?.perfil_negocio === 'autopartes'
     const [tabActiva, setTabActiva] = useState('productos')
+
+    const TABS = [
+        { key: 'productos', label: 'Productos', icon: Package },
+        { key: 'insumos', label: 'Insumos', icon: Beaker },
+        { key: 'consumibles', label: 'Consumibles', icon: Filter },
+        { key: 'clientes', label: 'Clientes', icon: Users },
+        { key: 'proveedores', label: 'Proveedores', icon: Truck },
+        { key: 'tasas', label: 'Tasas de Cambio', icon: Settings },
+        { key: 'listas_precio', label: 'Listas de Precio', icon: Tag },
+        { key: 'almacenes', label: 'Almacenes', icon: Warehouse },
+        { key: 'recetas', label: 'Recetas', icon: FlaskConical },
+        ...(esAutopartes ? [{ key: 'vehiculos', label: 'Vehículos', icon: Car }] : []),
+        { key: 'carga', label: 'Carga de Datos', icon: Database },
+        { key: 'accesos', label: 'Usuarios y accesos', icon: Users },
+    ]
 
     return (
         <div style={{ padding: '24px' }}>
@@ -65,6 +69,7 @@ export default function Administracion() {
                 {tabActiva === 'listas_precio' && <ListasPrecios />}
                 {tabActiva === 'almacenes' && <GestionAlmacenes />}
                 {tabActiva === 'recetas' && <Recetas />}
+                {tabActiva === 'vehiculos' && <GestionVehiculos />}
                 {tabActiva === 'carga' && <CargaDatos />}
                 {tabActiva === 'accesos' && <AccesosUsuarios />}
             </div>
