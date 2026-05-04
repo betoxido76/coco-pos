@@ -104,6 +104,21 @@ export function AuthProvider({ children }) {
         setLoading(false)
     }
 
+    async function recargarModulos() {
+        if (!user) return
+        if (perfil?.rol === 'superadmin') {
+            setModulosActivos(TODOS_LOS_MODULOS)
+            return
+        }
+        const { data: mods } = await supabase
+            .from('usuario_modulos')
+            .select('modulo_id')
+            .eq('usuario_id', user.id)
+            .eq('empresa_id', perfil.empresa_id)
+            .eq('activo', true)
+        setModulosActivos(mods ? mods.map(m => m.modulo_id) : [])
+    }
+
     async function login(email, password) {
         const { data, error } = await supabase.auth.signInWithPassword({ email, password })
         if (error) return { error }
@@ -122,7 +137,7 @@ export function AuthProvider({ children }) {
     }
 
     return (
-        <AuthContext.Provider value={{ user, perfil, modulosActivos, loading, login, logout }}>
+        <AuthContext.Provider value={{ user, perfil, modulosActivos, loading, login, logout, recargarModulos }}>
             {children}
         </AuthContext.Provider>
     )

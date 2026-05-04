@@ -5,7 +5,7 @@ import {
     LayoutDashboard, Package, ShoppingCart,
     TrendingDown, CreditCard, LogOut, Menu, X, Truck, FolderTree,
     ClipboardList, DollarSign, FlaskConical, AlertTriangle, ArrowLeftRight,
-    User, Tag, BarChart2, Landmark
+    User, Tag, BarChart2, Landmark, RefreshCw
 } from 'lucide-react'
 import { useState } from 'react'
 
@@ -29,9 +29,16 @@ const NAV_ITEMS = [
 ]
 
 export default function Layout() {
-    const { perfil, logout, modulosActivos } = useAuth()
+    const { perfil, logout, modulosActivos, recargarModulos } = useAuth()
     const navigate = useNavigate()
     const [open, setOpen] = useState(true)
+    const [recargando, setRecargando] = useState(false)
+
+    async function handleRecargar() {
+        setRecargando(true)
+        await recargarModulos()
+        setRecargando(false)
+    }
 
     const navFiltrado = modulosActivos === null
         ? []
@@ -112,8 +119,16 @@ export default function Layout() {
                 <div style={{ padding: '12px 8px', borderTop: '1px solid #f3f4f6' }}>
                     {open && perfil && (
                         <div style={{ padding: '0 12px', marginBottom: '8px' }}>
-                            <p style={{ fontSize: '13px', fontWeight: 500, color: '#374151', margin: 0 }}>{perfil.nombre}</p>
-                            <p style={{ fontSize: '11px', color: '#9ca3af', margin: '2px 0 0' }}>{perfil.rol}</p>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                <div>
+                                    <p style={{ fontSize: '13px', fontWeight: 500, color: '#374151', margin: 0 }}>{perfil.nombre}</p>
+                                    <p style={{ fontSize: '11px', color: '#9ca3af', margin: '2px 0 0' }}>{perfil.rol}</p>
+                                </div>
+                                <button onClick={handleRecargar} disabled={recargando} title="Recargar permisos"
+                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', padding: '4px', borderRadius: '6px', display: 'flex', alignItems: 'center' }}>
+                                    <RefreshCw size={13} style={{ animation: recargando ? 'spin 0.8s linear infinite' : 'none' }} />
+                                </button>
+                            </div>
                             <button onClick={abrirModalPass}
                                 style={{ marginTop: '4px', background: 'none', border: 'none', cursor: 'pointer', fontSize: '11px', color: '#9ca3af', padding: 0, textDecoration: 'underline' }}>
                                 Cambiar contraseña
