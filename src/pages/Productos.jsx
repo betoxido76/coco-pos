@@ -37,12 +37,25 @@ export default function Productos() {
     const [guardando, setGuardando] = useState(false)
     const [error, setError] = useState('')
     const [exito, setExito] = useState('')
+    const [vehiculosData, setVehiculosData] = useState([])
+
+    const marcasDisp = [...new Set(vehiculosData.map(v => v.marca))].sort()
+    const modelosDisp = vehiculosData
+        .filter(v => v.marca === nuevoCompat.marca_vehiculo)
+        .map(v => v.modelo)
+        .filter((m, i, a) => a.indexOf(m) === i)
+        .sort()
 
     useEffect(() => {
         cargar()
         supabase.from('proveedores').select('id, nombre')
             .eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
             .then(({ data }) => setProveedores(data || []))
+        if (esAutopartes) {
+            supabase.from('vehiculos').select('marca, modelo')
+                .eq('empresa_id', perfil.empresa_id).order('marca').order('modelo')
+                .then(({ data }) => setVehiculosData(data || []))
+        }
     }, [])
 
     async function cargar() {
@@ -369,6 +382,11 @@ export default function Productos() {
                         {/* Compatibilidades de vehículos */}
                         <div style={{ padding: '14px 16px', backgroundColor: '#f9fafb', borderRadius: '10px', border: '1px solid #e5e7eb' }}>
                             <p style={{ fontSize: '13px', fontWeight: 600, color: '#374151', margin: '0 0 12px' }}>Compatibilidades de vehículos</p>
+                            {marcasDisp.length === 0 && (
+                                <p style={{ fontSize: '12px', color: '#d97706', margin: '0 0 12px', padding: '8px 10px', backgroundColor: '#fffbeb', borderRadius: '6px', border: '1px solid #fde68a' }}>
+                                    Sin vehículos en catálogo — ve a Administración → Vehículos para agregarlos primero.
+                                </p>
+                            )}
 
                             {compats.length > 0 && (
                                 <div style={{ marginBottom: '12px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -389,15 +407,32 @@ export default function Productos() {
                             )}
 
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 70px 70px 1fr auto', gap: '8px', alignItems: 'end' }}>
+                                <div>
+                                    <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '4px' }}>Marca *</label>
+                                    <select value={nuevoCompat.marca_vehiculo}
+                                        onChange={e => setNuevoCompat(p => ({ ...p, marca_vehiculo: e.target.value, modelo: '' }))}
+                                        style={{ ...inputStyle, fontSize: '13px', padding: '6px 8px' }}>
+                                        <option value="">— Marca —</option>
+                                        {marcasDisp.map(m => <option key={m} value={m}>{m}</option>)}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '4px' }}>Modelo *</label>
+                                    <select value={nuevoCompat.modelo}
+                                        onChange={e => setNuevoCompat(p => ({ ...p, modelo: e.target.value }))}
+                                        disabled={!nuevoCompat.marca_vehiculo}
+                                        style={{ ...inputStyle, fontSize: '13px', padding: '6px 8px', opacity: !nuevoCompat.marca_vehiculo ? 0.5 : 1 }}>
+                                        <option value="">— Modelo —</option>
+                                        {modelosDisp.map(m => <option key={m} value={m}>{m}</option>)}
+                                    </select>
+                                </div>
                                 {[
-                                    { key: 'marca_vehiculo', label: 'Marca', placeholder: 'Toyota' },
-                                    { key: 'modelo', label: 'Modelo', placeholder: 'Corolla' },
-                                    { key: 'anio_desde', label: 'Desde', placeholder: '2010', type: 'number' },
-                                    { key: 'anio_hasta', label: 'Hasta', placeholder: '2020', type: 'number' },
+                                    { key: 'anio_desde', label: 'Desde', placeholder: '2010' },
+                                    { key: 'anio_hasta', label: 'Hasta', placeholder: '2020' },
                                 ].map(f => (
                                     <div key={f.key}>
                                         <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '4px' }}>{f.label}</label>
-                                        <input type={f.type || 'text'} value={nuevoCompat[f.key]}
+                                        <input type="number" value={nuevoCompat[f.key]}
                                             onChange={e => setNuevoCompat(p => ({ ...p, [f.key]: e.target.value }))}
                                             placeholder={f.placeholder} style={{ ...inputStyle, fontSize: '13px', padding: '6px 8px' }} />
                                     </div>
