@@ -53,6 +53,7 @@ export default function Cotizador() {
     const [marcaV, setMarcaV] = useState('')
     const [modeloV, setModeloV] = useState('')
     const [anioV, setAnioV] = useState('')
+    const [marcasError, setMarcasError] = useState('')
 
     const [resultados, setResultados] = useState(null)
     const [buscando, setBuscando] = useState(false)
@@ -74,7 +75,8 @@ export default function Cotizador() {
     useEffect(() => {
         if (!perfil?.empresa_id) return
         supabase.from('vehiculos').select('marca').eq('empresa_id', perfil.empresa_id).order('marca')
-            .then(({ data }) => {
+            .then(({ data, error: err }) => {
+                if (err) { setMarcasError('Error al cargar vehículos: ' + err.message); return }
                 const unicas = [...new Set((data || []).map(v => v.marca))].sort()
                 setMarcas(unicas)
             })
@@ -145,7 +147,7 @@ export default function Cotizador() {
 
     // ── Búsqueda por vehículo (nueva lógica con vehiculos + producto_vehiculo) ──
     async function buscarPorVehiculo() {
-        if (!marcaV) return
+        if (!marcaV) { setError('Selecciona al menos la marca del vehículo'); return }
         setBuscando(true); setError(''); setResultados(null)
 
         // 1. Obtener ids de vehículos que coinciden con marca/modelo
@@ -329,7 +331,10 @@ export default function Cotizador() {
                                     </select>
                                     <ChevronDown size={14} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af', pointerEvents: 'none' }} />
                                 </div>
-                                {marcas.length === 0 && (
+                                {marcasError && (
+                                    <p style={{ fontSize: '11px', color: '#dc2626', margin: '4px 0 0' }}>{marcasError}</p>
+                                )}
+                                {!marcasError && marcas.length === 0 && (
                                     <p style={{ fontSize: '11px', color: '#d97706', margin: '4px 0 0' }}>
                                         Sin vehículos en catálogo — agrégalos en Administración → Vehículos
                                     </p>
@@ -378,7 +383,7 @@ export default function Cotizador() {
                             </div>
                         </div>
                         <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                            <BotonesAccion hayFiltros={hayFiltros} buscando={buscando} onLimpiar={limpiarFiltros} onBuscar={handleBuscar} disabled={!marcaV} />
+                            <BotonesAccion hayFiltros={hayFiltros} buscando={buscando} onLimpiar={limpiarFiltros} onBuscar={handleBuscar} />
                         </div>
                     </div>
                 )}
