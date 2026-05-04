@@ -16,7 +16,7 @@ const VACIO = {
     aplica_iva: true,
 }
 
-const VACIO_AUTOPARTES = { marca: '', nro_parte: '', barras_2: '', barras_3: '' }
+const VACIO_AUTOPARTES = { marca: '', nro_parte: '', tipo: '', barras_2: '', barras_3: '' }
 const VACIO_COMPAT = { marca_vehiculo: '', modelo: '', anio_desde: '', anio_hasta: '', posicion: '' }
 
 export default function Productos() {
@@ -107,7 +107,7 @@ export default function Productos() {
                     .select('id, año_inicio, año_fin, posicion, vehiculo_id, vehiculos(marca, modelo)')
                     .eq('producto_id', p.id).eq('empresa_id', perfil.empresa_id),
             ])
-            setFormAuto(ap ? { marca: ap.marca || '', nro_parte: ap.nro_parte || '', barras_2: ap.barras_2 || '', barras_3: ap.barras_3 || '' } : VACIO_AUTOPARTES)
+            setFormAuto(ap ? { marca: ap.marca || '', nro_parte: ap.nro_parte || '', tipo: ap.tipo || '', barras_2: ap.barras_2 || '', barras_3: ap.barras_3 || '' } : VACIO_AUTOPARTES)
             setCompats((pvData || []).map(pv => ({
                 id: pv.id,
                 vehiculo_id: pv.vehiculo_id,
@@ -173,6 +173,7 @@ export default function Productos() {
                 empresa_id: perfil.empresa_id,
                 marca: formAuto.marca.trim() || null,
                 nro_parte: formAuto.nro_parte.trim() || null,
+                tipo: formAuto.tipo.trim() || null,
                 barras_2: formAuto.barras_2.trim() || null,
                 barras_3: formAuto.barras_3.trim() || null,
             }, { onConflict: 'producto_id' })
@@ -367,6 +368,7 @@ export default function Productos() {
                                 {[
                                     { key: 'marca', label: 'Marca', placeholder: 'Ej: Bosch' },
                                     { key: 'nro_parte', label: 'Número de parte', placeholder: 'Ej: 0001-234-567' },
+                                    { key: 'tipo', label: 'Tipo', placeholder: 'Ej: Original, Aftermarket...' },
                                     { key: 'barras_2', label: 'Código de barras 2', placeholder: 'Opcional' },
                                     { key: 'barras_3', label: 'Código de barras 3', placeholder: 'Opcional' },
                                 ].map(f => (
