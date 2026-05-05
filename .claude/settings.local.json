@@ -12,7 +12,13 @@
       "Bash(npx supabase *)",
       "Bash(git rm *)",
       "Bash(git pull *)",
-      "Bash(python3 -c ' *)"
+      "Bash(python3 -c ' *)",
+      "Bash(git commit *)",
+      "Bash(sqlite3 *)",
+      "PowerShell(Get-Command *)",
+      "Bash(python migrate_pos.py \"cd496885-bdea-4e1c-8e85-81cf7de3f9f4\" \"759a0053-0240-4e33-83a9-b24d505ad2d9\")",
+      "Bash(Select-String -Path migration.sql -Pattern \"INSERT INTO almacenes\")",
+      "Bash(Select-Object -First 2)"
     ]
   }
 }

@@ -193,24 +193,56 @@ lotes_produccion      -- Lotes de PT producidos
 
 ### Otros
 ```
-clientes              -- Con cat1_id a cat4_id, limite_credito numeric(12,2)
+clientes              -- cat1_id..cat4_id, limite_credito numeric, vehiculo text
 categorias_clientes   -- 4 niveles de categorías por empresa
-proveedores
-mermas                -- Con almacen_id para mermas de inventario
-cambios_mano_mano     -- Con almacen_id origen
-stock_reproceso       -- Stock pendiente de reproceso
-gastos                -- Con monto_usd, monto_bs, tipo_tasa
+perfilamiento_clientes -- Perfiles de segmentación de clientes
+proveedores           -- condicion_pago, dias_credito
+mermas                -- almacen_id, numero_merma, tipo_merma
+cambios_mano_mano     -- almacen_id origen
+stock_reproceso       -- almacen_id, estado
+gastos                -- monto_usd, monto_bs, tipo_tasa, metodo_pago,
+                      --   estado ('pagado'|'pendiente'), fecha_vencimiento,
+                      --   cuenta_bancaria_id   ← YA IMPLEMENTADO en BD
 tipos_gastos          -- Tipos de gasto personalizables por empresa
-configuracion         -- Tasas: tasa_bcv, tasa_euro, tasa_binance
+configuracion         -- Tasas: clave/valor por empresa_id
+                      --   claves: tasa_bcv, tasa_euro, tasa_binance
 listas_precio
 producto_precios
 direcciones_entrega   -- Direcciones de entrega por cliente
-visitas_comerciales   -- Visitas de campo registradas desde NuevoPedido
-                      --   id, empresa_id, vendedor_id (uuid→usuarios), cliente_id,
-                      --   tipo_visita (presencial|llamada|whatsapp|videollamada),
-                      --   resultado (pedido_tomado|sin_pedido|reagendar|no_contesto),
-                      --   notas text, created_at
-                      --   RLS: SELECT/INSERT propios con get_empresa_id() + auth.uid()
+visitas_comerciales   -- Visitas de campo desde NuevoPedido
+                      --   tipo text (presencial|llamada|whatsapp|videollamada)  ← NO tipo_visita
+                      --   resultado text (pedido_tomado|sin_pedido|reagendar|no_contesto)
+                      --   fecha_visita timestamptz NOT NULL
+                      --   pedido_id uuid (opcional)
+cobros                -- nota text (singular, NOT notas)
+                      --   cuenta_bancaria_id uuid
+```
+
+### Finanzas / Bancos
+```
+cuentas_bancarias     -- Cuentas por empresa: banco, numero_cuenta, tipo_cuenta, moneda, saldo_inicial, activa
+movimientos_financieros -- Movimientos de caja/banco
+                        --   tipo: 'cobro'|'pago'|'gasto'|'transferencia_entrada'|'transferencia_salida'
+                        --   monto_usd, monto_bs, tasa_cambio, tipo_tasa
+                        --   cuenta_bancaria_id, transferencia_par_id (UUID espejo en transferencias)
+                        --   estado, fecha, fecha_vencimiento
+```
+
+### Autopartes
+```
+vehiculos             -- Catálogo de vehículos (marca!, modelo!, submodelo, tipo) por empresa
+producto_vehiculo     -- Compatibilidad producto↔vehículo (año_inicio!, año_fin!, posicion)
+productos_autopartes  -- Datos extras de repuesto (nro_parte, marca, barras_2, barras_3)
+-- NOTA: compatibilidades_vehiculo es tabla LEGACY (usa parte_id y año_desde/año_hasta)
+--       Usar siempre producto_vehiculo + vehiculos para nuevas funcionalidades
+```
+
+### Inventario avanzado
+```
+inventario_ubicacion  -- Stock por tipo_item/item_id/ubicacion_id con info de lote
+lotes_inventario_mp   -- Lotes de recepción de MP/ME/consumibles (compra_id, proveedor_id, vencimiento)
+producto_ubicacion    -- Ubicaciones preferidas por producto (proveedor_preferido, stock_mínimo_ubicación)
+ubicaciones           -- Ubicaciones generales (tipo, ciudad, responsable_id) — distinto de almacen_ubicaciones
 ```
 
 ---
@@ -486,11 +518,12 @@ Los gastos son erogaciones operativas (nómina, impuestos, servicios, etc.) dist
 - Tienen semáforo de vencimiento igual al de CXC: verde > 3d, amarillo ≤ 3d, rojo vencido
 - Al pagar un gasto programado se marca `estado = 'pagado'` y se registra el método de pago
 
-### Cambios de BD requeridos
-```sql
-ALTER TABLE gastos ADD COLUMN estado text DEFAULT 'pagado' CHECK (estado IN ('pagado', 'pendiente'));
-ALTER TABLE gastos ADD COLUMN fecha_vencimiento date;
-ALTER TABLE gastos ADD COLUMN metodo_pago text; -- 'Efectivo', 'Transferencia', 'Pago Móvil', etc.
+### Cambios de BD — YA APLICADOS en Supabase
+```
+gastos.estado text              DEFAULT 'pagado' CHECK IN ('pagado','pendiente')
+gastos.fecha_vencimiento date
+gastos.metodo_pago text
+gastos.cuenta_bancaria_id uuid  → cuentas_bancarias
 ```
 
 ### Estados y flujo
@@ -500,3 +533,66 @@ Nuevo gasto
   └── Programado     → estado='pendiente', fecha_vencimiento ingresada por usuario
         └── [al pagar] → estado='pagado', actualizar monto y método
 ```
+
+---
+
+## 18. Check constraints importantes (descubiertos en migración)
+
+```
+ventas.estado_cobro          CHECK IN ('pendiente','parcial','pagado')
+                             — NO usar 'cobrado'; el equivalente correcto es 'pagado'
+
+compra_items.tipo_insumo     CHECK IN ('materia_prima','empaque','material_empaque',
+                                       'consumible','producto_terminado')
+                             — 'producto_terminado' fue agregado manualmente (ALTER TABLE)
+                               para soportar empresas que compran PT para revender
+
+modulos.id                   Es string (ej: 'bancos', 'dashboard'), NO uuid
+                             — Layout.jsx hace modulosActivos.includes('bancos')
+                             — Si se inserta un módulo nuevo debe usarse el string key,
+                               no un uuid generado
+```
+
+---
+
+## 19. Herramienta de migración SQLite → Supabase
+
+**Archivo:** `migrate_pos.py` (raíz del proyecto, en `.gitignore` los SQL generados)
+
+### Uso
+```bash
+python migrate_pos.py <empresa_id> <usuario_id>           # args directos
+python migrate_pos.py <empresa_id> <usuario_id> <db_path> # BD en ruta custom
+python migrate_pos.py                                      # modo interactivo
+```
+
+### Qué migra (de `pos_repuestos.db`)
+| SQLite | Supabase |
+|---|---|
+| tiendas | almacenes |
+| proveedores | proveedores |
+| clientes | clientes |
+| productos | productos_terminados + productos_autopartes |
+| inventarios | stock_ubicacion + stock_actual |
+| tipos_gastos | tipos_gastos |
+| configuracion | configuracion (tasa_cambio→tasa_bcv) |
+| gastos | gastos |
+| ventas + detalles_ventas | ventas + venta_items |
+| compras (detalle_json) | compras + compra_items |
+
+### Output
+Genera 9 archivos `migration_NN_nombre.sql`, cada uno con `BEGIN/COMMIT` propio e INSERTs idempotentes (`ON CONFLICT (id) DO NOTHING`). Córrelos en orden en el SQL Editor de Supabase.
+
+### Diseño clave
+- **UUIDs determinísticos** via `uuid.uuid5(NS, key)` — re-correr el script produce los mismos IDs, evita FK inconsistentes si se interrumpe la migración
+- **Archivos separados** porque Supabase limita el tamaño de query en el SQL Editor
+- Los archivos `.sql` y `.db` están en `.gitignore` (contienen datos de clientes)
+
+### Lo que NO migra (requiere trabajo manual o script adicional)
+- Compatibilidades vehículo↔producto (`producto_vehiculo`) — si el SQLite tiene una tabla de compatibilidades, hay que agregar una sección al script
+- Cobros parciales / historial de pagos
+
+### Cotizador — búsqueda por vehículo
+La búsqueda "Por vehículo" en `Cotizador.jsx` requiere datos en `producto_vehiculo`. Si la tabla está vacía, siempre retorna 0 resultados. Para que funcione hay que:
+1. Cargar el catálogo de vehículos (Administración → Vehículos)
+2. Asignar compatibilidades a cada producto (Administración → Productos → editar → sección Compatibilidades)

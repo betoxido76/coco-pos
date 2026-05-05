@@ -30,3 +30,7 @@ tokens*.txt
 *clave*.txt
 *password*.txt
 *secret*.txt
+
+# Archivos de migración generados (contienen datos de clientes)
+migration*.sql
+*.db
