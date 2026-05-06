@@ -34,6 +34,7 @@ export default function Productos() {
     const [formAuto, setFormAuto] = useState(VACIO_AUTOPARTES)
     const [compats, setCompats] = useState([])       // lista de compatibilidades
     const [nuevoCompat, setNuevoCompat] = useState(VACIO_COMPAT)
+    const [editandoCompatIdx, setEditandoCompatIdx] = useState(null)
     const [guardando, setGuardando] = useState(false)
     const [error, setError] = useState('')
     const [exito, setExito] = useState('')
@@ -75,6 +76,7 @@ export default function Productos() {
         setFormAuto(VACIO_AUTOPARTES)
         setCompats([])
         setNuevoCompat(VACIO_COMPAT)
+        setEditandoCompatIdx(null)
         setError('')
         setVista('form')
     }
@@ -122,6 +124,7 @@ export default function Productos() {
             setCompats([])
         }
         setNuevoCompat(VACIO_COMPAT)
+        setEditandoCompatIdx(null)
         setError('')
         setVista('form')
     }
@@ -393,14 +396,27 @@ export default function Productos() {
                             {compats.length > 0 && (
                                 <div style={{ marginBottom: '12px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
                                     {compats.map((c, i) => (
-                                        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 10px', backgroundColor: '#fff', borderRadius: '8px', border: '1px solid #e5e7eb' }}>
+                                        <div key={i} style={{
+                                            display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 10px',
+                                            backgroundColor: editandoCompatIdx === i ? '#eff6ff' : '#fff',
+                                            borderRadius: '8px',
+                                            border: `1px solid ${editandoCompatIdx === i ? '#93c5fd' : '#e5e7eb'}`,
+                                        }}>
                                             <span style={{ flex: 1, fontSize: '13px', color: '#374151' }}>
                                                 {c.marca_vehiculo} {c.modelo}
                                                 {(c.anio_desde || c.anio_hasta) && ` (${c.anio_desde || ''}${c.anio_hasta ? ' – ' + c.anio_hasta : ''})`}
                                                 {c.posicion && <span style={{ marginLeft: '6px', fontSize: '11px', backgroundColor: '#dbeafe', color: '#1e40af', padding: '1px 6px', borderRadius: '10px' }}>{c.posicion}</span>}
                                             </span>
-                                            <button onClick={() => setCompats(prev => prev.filter((_, j) => j !== i))}
-                                                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', padding: '2px' }}>
+                                            <button onClick={() => {
+                                                setNuevoCompat({ marca_vehiculo: c.marca_vehiculo, modelo: c.modelo, anio_desde: c.anio_desde, anio_hasta: c.anio_hasta, posicion: c.posicion })
+                                                setEditandoCompatIdx(i)
+                                            }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#2563eb', padding: '2px' }} title="Editar">
+                                                <Pencil size={14} />
+                                            </button>
+                                            <button onClick={() => {
+                                                setCompats(prev => prev.filter((_, j) => j !== i))
+                                                if (editandoCompatIdx === i) { setEditandoCompatIdx(null); setNuevoCompat(VACIO_COMPAT) }
+                                            }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', padding: '2px' }} title="Eliminar">
                                                 <Trash2 size={14} />
                                             </button>
                                         </div>
@@ -456,12 +472,25 @@ export default function Productos() {
                                 </div>
                                 <button onClick={() => {
                                     if (!nuevoCompat.marca_vehiculo.trim() || !nuevoCompat.modelo.trim()) return
-                                    setCompats(prev => [...prev, { ...nuevoCompat }])
+                                    if (editandoCompatIdx !== null) {
+                                        setCompats(prev => prev.map((c, j) => j === editandoCompatIdx ? { ...c, ...nuevoCompat } : c))
+                                        setEditandoCompatIdx(null)
+                                    } else {
+                                        setCompats(prev => [...prev, { ...nuevoCompat }])
+                                    }
                                     setNuevoCompat(VACIO_COMPAT)
-                                }} style={{ backgroundColor: '#1d4ed8', color: '#fff', border: 'none', borderRadius: '8px', padding: '6px 12px', fontSize: '13px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                                    + Agregar
+                                }} style={{ backgroundColor: editandoCompatIdx !== null ? '#d97706' : '#1d4ed8', color: '#fff', border: 'none', borderRadius: '8px', padding: '6px 12px', fontSize: '13px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                    {editandoCompatIdx !== null ? 'Actualizar' : '+ Agregar'}
                                 </button>
                             </div>
+                            {editandoCompatIdx !== null && (
+                                <div style={{ marginTop: '6px', textAlign: 'right' }}>
+                                    <button onClick={() => { setEditandoCompatIdx(null); setNuevoCompat(VACIO_COMPAT) }}
+                                        style={{ background: 'none', border: 'none', color: '#6b7280', fontSize: '12px', cursor: 'pointer', textDecoration: 'underline' }}>
+                                        Cancelar edición
+                                    </button>
+                                </div>
+                            )}
                         </div>
                     </div>
                 )}

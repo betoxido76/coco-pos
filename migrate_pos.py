@@ -171,11 +171,12 @@ def main():
             f"0, 0, 'unidad', 'comprado', {activo}, false, {esc(r['categoria'])});")
 
         # productos_autopartes — solo si tiene datos de autoparte
+        # barras_1 mapea a 'tipo' (ej: LISO, PERFORADO, ORIGINAL, AFTERMARKET)
         if any([r['marca'], r['nro_parte'], r['barras_1'], r['barras_2'], r['barras_3']]):
             apid = det_uuid('autoparte', EMPRESA_ID, r['sku'])
-            sql(f"INSERT INTO productos_autopartes (id, empresa_id, producto_id, marca, nro_parte, barras_2, barras_3) "
+            sql(f"INSERT INTO productos_autopartes (id, empresa_id, producto_id, marca, nro_parte, tipo, barras_2, barras_3) "
                 f"VALUES ('{apid}', '{EMPRESA_ID}', '{ptid}', "
-                f"{esc(r['marca'])}, {esc(r['nro_parte'])}, {esc(r['barras_2'])}, {esc(r['barras_3'])});")
+                f"{esc(r['marca'])}, {esc(r['nro_parte'])}, {esc(r['barras_1'])}, {esc(r['barras_2'])}, {esc(r['barras_3'])});")
 
     # ── 5. STOCK ──────────────────────────────────────────────────────────────
     section(5, 'Stock por almacen')
