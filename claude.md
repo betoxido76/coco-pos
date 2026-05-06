@@ -232,7 +232,8 @@ movimientos_financieros -- Movimientos de caja/banco
 ```
 vehiculos             -- Catálogo de vehículos (marca!, modelo!, submodelo, tipo) por empresa
 producto_vehiculo     -- Compatibilidad producto↔vehículo (año_inicio!, año_fin!, posicion)
-productos_autopartes  -- Datos extras de repuesto (nro_parte, marca, barras_2, barras_3)
+productos_autopartes  -- Datos extras de repuesto (nro_parte, marca, tipo, barras_2, barras_3)
+                      -- tipo mapea desde SQLite barras_1 (ej: LISO, PERFORADO)
 -- NOTA: compatibilidades_vehiculo es tabla LEGACY (usa parte_id y año_desde/año_hasta)
 --       Usar siempre producto_vehiculo + vehiculos para nuevas funcionalidades
 ```
@@ -296,18 +297,23 @@ El sistema está diseñado para soportar múltiples perfiles de negocio mediante
 -- Campo en empresas
 perfil_negocio text DEFAULT 'manufactura'
 
--- Tabla satélite
-productos_autopartes (producto_id, marca, nro_parte, vehiculo, año_desde, año_hasta, barras_2, barras_3)
+-- Tabla satélite (schema real verificado)
+productos_autopartes (id, empresa_id, producto_id, marca, nro_parte, tipo, barras_2, barras_3)
+-- NOTA: tipo viene de SQLite barras_1 (LISO/PERFORADO/etc) al migrar
+
+-- Compatibilidad vehículo (tablas activas)
+vehiculos (id, empresa_id, marca, modelo, submodelo, tipo)
+producto_vehiculo (id, producto_id, vehiculo_id, año_inicio, año_fin, posicion)
 
 -- Campos adicionales
 clientes.vehiculo
-ventas.vehiculo_cliente
 ```
 
 En el frontend, los componentes renderizan condicionalmente según `perfil_negocio`:
 ```jsx
-const { empresa } = useEmpresa()
-{empresa.perfil_negocio === 'autopartes' && <CamposAutopartes />}
+// perfil viene de useAuth(); empresas es el join desde usuarios→empresas
+const esAutopartes = perfil?.empresas?.perfil_negocio === 'autopartes'
+{esAutopartes && <CamposAutopartes />}
 ```
 
 ---
@@ -371,6 +377,22 @@ ON CONFLICT DO NOTHING;
 | NuevaVenta — días de crédito editables | Campo `diasCredito` pre-cargado desde catálogo del cliente, editable para casos excepcionales; muestra fecha de vencimiento en tiempo real; `confirmarVenta` usa este valor (no el del catálogo) para `fecha_vencimiento_pago` |
 | NuevaVenta — pago contado USD/Bs complementario | USD + (Bs/tasa) = Total; escribir en USD calcula el resto en Bs y viceversa; cambiar tasa recomputa Bs desde USD actual |
 
+### Completados (sesión 2026-05-06)
+
+| Item | Notas |
+|---|---|
+| migrate_pos.py — campo `tipo` en autopartes | SQLite `barras_1` (LISO/PERFORADO) mapea a `productos_autopartes.tipo` en el INSERT |
+| Productos.jsx — editar compatibilidad de vehículo | Botón lápiz por fila carga datos en el form; estado `editandoCompatIdx` (índice); resaltado azul de la fila en edición; botón cambia a "Actualizar" (naranja); link "Cancelar edición" |
+| Cotizador — filtros separados por parte | Tab "Por parte": 3 campos separados (N° parte texto, Marca select, Tipo select) en grilla 3 columnas. Tipo también disponible en tab "Por vehículo" |
+| Cotizador — Tipo en resultados | Resultados muestran `SKU · N° Parte · Marca · Tipo` |
+| Ventas/NuevaVenta — búsqueda avanzada autopartes | Panel expandible con N° parte, Marca, Tipo, Categoría + sección "Vehículo compatible" (Marca→Modelo en cascada, Año). Botón "+" siempre habilitado (sin restricción de stock). El modal de actualizar precio también aplica a ítems del panel avanzado |
+| Ventas/NuevaVenta — combobox de cliente | Reemplaza `<select>` por combobox searchable por RIF o nombre (máx 20 resultados); chip verde con × al seleccionar |
+| `obtener_siguiente_ventas_numero` — fix migración | Agregado filtro `AND numero_factura LIKE 'NE-%'` para ignorar facturas migradas con formato `1-XXX` |
+| Inventario VistaStock — paginación 25/50/100 | `.limit(5000)` en queries; `paginados = filtrados.slice(...)`; KPIs sobre `filtrados` completo; barra con selector + contador X–Y de Z + ← Pág N/Total → |
+| Inventario VistaPorAlmacen — paginación 25/50/100 | `.limit(5000)` en query stock_ubicacion; misma barra de paginación; reset de página al cambiar filtro/almacén |
+| Inventario VistaMovimientos — paginación configurable | Reemplaza `MOV_PAGE_SIZE=100` hardcodeado por estado `pageSize` (default 50); selector 25/50/100; misma barra consistente |
+| Inventario — valorización respeta `aplica_iva` | Las 4 tablas (PT, MP, ME, consumibles) tienen campo `aplica_iva boolean`. Cálculo: `p.aplica_iva ? costo / 1.16 : costo`. Antes siempre dividía por 1.16 |
+
 ### Backlog estratégico (capacidades de plataforma SaaS)
 
 Estos ítems no son mejoras funcionales al producto sino capacidades de la plataforma que se necesitan para escalar comercialmente.
@@ -391,6 +413,7 @@ Estos ítems no son mejoras funcionales al producto sino capacidades de la plata
 - Todos los INSERTs: `empresa_id: perfil.empresa_id`
 - Columna de movimientos es `notas` (con s), no `nota`
 - Mapeo de tipos de insumo: `materias_primas→materia_prima`, `materiales_empaque→material_empaque`, `consumibles→consumible`, `productos_terminados→producto_terminado`
+- Campo `aplica_iva boolean` existe en las 4 tablas de productos (PT, MP, ME, consumibles). Al calcular valorización: `p.aplica_iva ? valor / 1.16 : valor` — nunca dividir incondicionalmente
 - Estilos: inline styles con objetos JS (no clases Tailwind, excepto en Login/ResetPassword)
 - Formato de moneda USD: `fmt(n)` → `$X.XX`
 - Formato de moneda Bs: `fmtBs(n)` → `X.XX Bs.`
