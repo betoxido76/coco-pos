@@ -23,7 +23,7 @@ async function enriquecerConAutopartes(productos) {
     const ids = productos.map(p => p.id)
     const { data: apData } = await supabase
         .from('productos_autopartes')
-        .select('producto_id, nro_parte, marca')
+        .select('producto_id, nro_parte, marca, tipo')
         .in('producto_id', ids)
     const apMap = {}
     ;(apData || []).forEach(ap => { apMap[ap.producto_id] = ap })
@@ -31,6 +31,7 @@ async function enriquecerConAutopartes(productos) {
         producto_id: pt.id,
         nro_parte: apMap[pt.id]?.nro_parte ?? null,
         marca: apMap[pt.id]?.marca ?? null,
+        tipo: apMap[pt.id]?.tipo ?? null,
         vehiculos_match: [],
         productos_terminados: pt,
     }))
@@ -42,10 +43,14 @@ export default function Cotizador() {
     const [modo, setModo] = useState('parte')
 
     // Búsqueda por parte
-    const [queryParte, setQueryParte] = useState('')
+    const [queryNroParte, setQueryNroParte] = useState('')
+    const [queryMarca, setQueryMarca] = useState('')
+    const [queryTipo, setQueryTipo] = useState('')
     const [queryExtra, setQueryExtra] = useState('')
     const [categoriaFiltro, setCategoriaFiltro] = useState('')
     const [categorias, setCategorias] = useState([])
+    const [marcasRepuesto, setMarcasRepuesto] = useState([])
+    const [tiposRepuesto, setTiposRepuesto] = useState([])
 
     // Búsqueda por vehículo — dropdowns dinámicos
     const [marcas, setMarcas] = useState([])
@@ -59,7 +64,7 @@ export default function Cotizador() {
     const [buscando, setBuscando] = useState(false)
     const [error, setError] = useState('')
 
-    // Cargar categorías
+    // Cargar categorías, marcas y tipos de repuesto
     useEffect(() => {
         if (!perfil?.empresa_id) return
         supabase.from('productos_terminados')
@@ -68,6 +73,18 @@ export default function Cotizador() {
             .then(({ data }) => {
                 const unicas = [...new Set((data || []).map(p => p.categoria_1).filter(Boolean))].sort()
                 setCategorias(unicas)
+            })
+        supabase.from('productos_autopartes')
+            .select('marca').eq('empresa_id', perfil.empresa_id).not('marca', 'is', null)
+            .then(({ data }) => {
+                const unicas = [...new Set((data || []).map(p => p.marca).filter(Boolean))].sort()
+                setMarcasRepuesto(unicas)
+            })
+        supabase.from('productos_autopartes')
+            .select('tipo').eq('empresa_id', perfil.empresa_id).not('tipo', 'is', null)
+            .then(({ data }) => {
+                const unicos = [...new Set((data || []).map(p => p.tipo).filter(Boolean))].sort()
+                setTiposRepuesto(unicos)
             })
     }, [perfil?.empresa_id])
 
@@ -96,13 +113,18 @@ export default function Cotizador() {
 
     // ── Búsqueda por parte / descripción ──────────────────────────
     async function buscarPorParte() {
-        const tieneParte = queryParte.trim()
+        const tieneNroParte = queryNroParte.trim()
+        const tieneMarca = queryMarca
+        const tieneTipo = queryTipo
         const tieneExtra = queryExtra.trim()
-        if (!tieneParte && !tieneExtra && !categoriaFiltro) return
+        if (!tieneNroParte && !tieneMarca && !tieneTipo && !tieneExtra && !categoriaFiltro) return
 
         setBuscando(true); setError(''); setResultados(null)
 
-        if (tieneParte) {
+        const tieneAutoparteFilter = tieneNroParte || tieneMarca || tieneTipo
+
+        if (tieneAutoparteFilter) {
+            // Pre-filtrar productos_terminados si hay filtros de descripción/categoría
             let ptIds = null
             if (tieneExtra || categoriaFiltro) {
                 let ptQ = supabase.from('productos_terminados').select('id')
@@ -115,10 +137,12 @@ export default function Cotizador() {
             }
 
             let apQ = supabase.from('productos_autopartes')
-                .select('nro_parte, marca, producto_id, productos_terminados!inner(id, nombre, sku, descripcion, stock_actual, precio_venta, activo, categoria_1)')
+                .select('nro_parte, marca, tipo, producto_id, productos_terminados!inner(id, nombre, sku, descripcion, stock_actual, precio_venta, activo, categoria_1)')
                 .eq('empresa_id', perfil.empresa_id)
                 .eq('productos_terminados.activo', true)
-                .or(`nro_parte.ilike.%${tieneParte}%,marca.ilike.%${tieneParte}%`)
+            if (tieneNroParte) apQ = apQ.ilike('nro_parte', `%${tieneNroParte}%`)
+            if (tieneMarca) apQ = apQ.eq('marca', tieneMarca)
+            if (tieneTipo) apQ = apQ.eq('tipo', tieneTipo)
             if (ptIds !== null) apQ = apQ.in('producto_id', ptIds)
 
             const { data, error: err } = await apQ
@@ -128,6 +152,7 @@ export default function Cotizador() {
                 producto_id: r.producto_id,
                 nro_parte: r.nro_parte,
                 marca: r.marca,
+                tipo: r.tipo,
                 vehiculos_match: [],
                 productos_terminados: r.productos_terminados,
             })))
@@ -220,7 +245,7 @@ export default function Cotizador() {
     }
 
     function limpiarFiltros() {
-        setQueryParte(''); setQueryExtra(''); setCategoriaFiltro('')
+        setQueryNroParte(''); setQueryMarca(''); setQueryTipo(''); setQueryExtra(''); setCategoriaFiltro('')
         setMarcaV(''); setModeloV(''); setAnioV('')
         setResultados(null); setError('')
     }
@@ -243,7 +268,7 @@ export default function Cotizador() {
         window.open(`https://wa.me/?text=${encodeURIComponent(lines)}`, '_blank')
     }
 
-    const hayFiltros = queryParte || queryExtra || categoriaFiltro || marcaV || modeloV || anioV
+    const hayFiltros = queryNroParte || queryMarca || queryTipo || queryExtra || categoriaFiltro || marcaV || modeloV || anioV
 
     return (
         <div style={{ padding: '24px', maxWidth: '960px' }}>
@@ -282,19 +307,41 @@ export default function Cotizador() {
             <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '20px', marginBottom: '20px' }}>
                 {modo === 'parte' ? (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                        {/* Fila 1: N° parte, Marca, Tipo */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px' }}>
                             <div>
                                 <label style={{ fontSize: '12px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '5px' }}>
-                                    N° de parte / Marca <span style={{ fontWeight: 400 }}>(opcional)</span>
+                                    N° de parte <span style={{ fontWeight: 400 }}>(opcional)</span>
                                 </label>
                                 <div style={{ position: 'relative' }}>
                                     <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
-                                    <input value={queryParte} onChange={e => setQueryParte(e.target.value)}
+                                    <input value={queryNroParte} onChange={e => setQueryNroParte(e.target.value)}
                                         onKeyDown={e => e.key === 'Enter' && handleBuscar()}
-                                        placeholder="Ej: Bosch, 0001-234..."
+                                        placeholder="Ej: 0001-234..."
                                         style={{ ...inputStyle, paddingLeft: '32px' }} />
                                 </div>
                             </div>
+                            <div>
+                                <label style={{ fontSize: '12px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '5px' }}>
+                                    Marca <span style={{ fontWeight: 400 }}>(opcional)</span>
+                                </label>
+                                <select value={queryMarca} onChange={e => setQueryMarca(e.target.value)} style={inputStyle}>
+                                    <option value="">— Todas las marcas —</option>
+                                    {marcasRepuesto.map(m => <option key={m} value={m}>{m}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label style={{ fontSize: '12px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '5px' }}>
+                                    Tipo <span style={{ fontWeight: 400 }}>(opcional)</span>
+                                </label>
+                                <select value={queryTipo} onChange={e => setQueryTipo(e.target.value)} style={inputStyle}>
+                                    <option value="">— Todos los tipos —</option>
+                                    {tiposRepuesto.map(t => <option key={t} value={t}>{t}</option>)}
+                                </select>
+                            </div>
+                        </div>
+                        {/* Fila 2: Descripción, Categoría, botones */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: '10px', alignItems: 'flex-end' }}>
                             <div>
                                 <label style={{ fontSize: '12px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '5px' }}>
                                     Descripción / Código SKU <span style={{ fontWeight: 400 }}>(opcional)</span>
@@ -304,9 +351,7 @@ export default function Cotizador() {
                                     placeholder="Ej: pastilla, filtro, ACE-001..."
                                     style={inputStyle} />
                             </div>
-                        </div>
-                        <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end' }}>
-                            <div style={{ flex: 1 }}>
+                            <div>
                                 <label style={{ fontSize: '12px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '5px' }}>Categoría</label>
                                 <select value={categoriaFiltro} onChange={e => setCategoriaFiltro(e.target.value)} style={inputStyle}>
                                     <option value="">— Todas las categorías —</option>
@@ -428,8 +473,9 @@ export default function Cotizador() {
                                                 )}
                                                 <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', fontSize: '12px', color: '#6b7280' }}>
                                                     <span>SKU: <strong style={{ fontFamily: 'monospace', color: '#374151' }}>{pt.sku}</strong></span>
-                                                    {item.nro_parte && <span>Parte: <strong style={{ color: '#374151' }}>{item.nro_parte}</strong></span>}
+                                                    {item.nro_parte && <span>N° Parte: <strong style={{ color: '#374151' }}>{item.nro_parte}</strong></span>}
                                                     {item.marca && <span>Marca: <strong style={{ color: '#374151' }}>{item.marca}</strong></span>}
+                                                    {item.tipo && <span>Tipo: <strong style={{ color: '#374151' }}>{item.tipo}</strong></span>}
                                                 </div>
                                                 {/* Vehículos compatibles */}
                                                 {item.vehiculos_match?.length > 0 && (
