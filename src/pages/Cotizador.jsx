@@ -124,18 +124,6 @@ export default function Cotizador() {
         const tieneAutoparteFilter = tieneNroParte || tieneMarca || tieneTipo
 
         if (tieneAutoparteFilter) {
-            // Pre-filtrar productos_terminados si hay filtros de descripción/categoría
-            let ptIds = null
-            if (tieneExtra || categoriaFiltro) {
-                let ptQ = supabase.from('productos_terminados').select('id')
-                    .eq('empresa_id', perfil.empresa_id).eq('activo', true)
-                if (categoriaFiltro) ptQ = ptQ.eq('categoria_1', categoriaFiltro)
-                if (tieneExtra) ptQ = ptQ.or(`nombre.ilike.%${tieneExtra}%,sku.ilike.%${tieneExtra}%,descripcion.ilike.%${tieneExtra}%`)
-                const { data: ptData } = await ptQ
-                ptIds = (ptData || []).map(p => p.id)
-                if (ptIds.length === 0) { setResultados([]); setBuscando(false); return }
-            }
-
             let apQ = supabase.from('productos_autopartes')
                 .select('nro_parte, marca, tipo, producto_id, productos_terminados!inner(id, nombre, sku, descripcion, stock_actual, precio_venta, activo, categoria_1)')
                 .eq('empresa_id', perfil.empresa_id)
@@ -143,7 +131,11 @@ export default function Cotizador() {
             if (tieneNroParte) apQ = apQ.ilike('nro_parte', `%${tieneNroParte}%`)
             if (tieneMarca) apQ = apQ.eq('marca', tieneMarca)
             if (tieneTipo) apQ = apQ.eq('tipo', tieneTipo)
-            if (ptIds !== null) apQ = apQ.in('producto_id', ptIds)
+            if (categoriaFiltro) apQ = apQ.eq('productos_terminados.categoria_1', categoriaFiltro)
+            if (tieneExtra) apQ = apQ.or(
+                `nombre.ilike.%${tieneExtra}%,sku.ilike.%${tieneExtra}%,descripcion.ilike.%${tieneExtra}%`,
+                { referencedTable: 'productos_terminados' }
+            )
 
             const { data, error: err } = await apQ
             if (err) { setError('Error en búsqueda: ' + err.message); setBuscando(false); return }

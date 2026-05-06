@@ -725,20 +725,9 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
             if (ptIds.length === 0) { setResultadosAvanzados([]); setBuscandoAvanzado(false); return }
         }
 
-        // 2. Intersectar con filtros de descripción / categoría
-        if (busqueda.trim() || filtroCat) {
-            let ptQ = supabase.from('productos_terminados').select('id')
-                .eq('empresa_id', perfil.empresa_id).eq('activo', true)
-            if (filtroCat) ptQ = ptQ.eq('categoria_1', filtroCat)
-            if (busqueda.trim()) ptQ = ptQ.or(`nombre.ilike.%${busqueda.trim()}%,sku.ilike.%${busqueda.trim()}%,descripcion.ilike.%${busqueda.trim()}%`)
-            if (ptIds !== null) ptQ = ptQ.in('id', ptIds)
-            const { data } = await ptQ
-            ptIds = (data || []).map(p => p.id)
-            if (ptIds.length === 0) { setResultadosAvanzados([]); setBuscandoAvanzado(false); return }
-        }
-
-        // 3. Consulta final
+        // 2. Consulta final
         if (tieneAutoparteFilter || tieneVehiculoFilter) {
+            // Filtros de descripción/categoría se aplican directamente sobre el recurso embebido
             let apQ = supabase.from('productos_autopartes')
                 .select('nro_parte, marca, tipo, producto_id, productos_terminados!inner(id, nombre, sku, precio_venta, stock_actual, categoria_1)')
                 .eq('empresa_id', perfil.empresa_id)
@@ -747,19 +736,40 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
             if (filtroMarca) apQ = apQ.eq('marca', filtroMarca)
             if (filtroTipo) apQ = apQ.eq('tipo', filtroTipo)
             if (ptIds !== null) apQ = apQ.in('producto_id', ptIds)
+            if (filtroCat) apQ = apQ.eq('productos_terminados.categoria_1', filtroCat)
+            if (busqueda.trim()) apQ = apQ.or(
+                `nombre.ilike.%${busqueda.trim()}%,sku.ilike.%${busqueda.trim()}%,descripcion.ilike.%${busqueda.trim()}%`,
+                { referencedTable: 'productos_terminados' }
+            )
             const { data, error: err } = await apQ
             if (err) { setBuscandoAvanzado(false); return }
             setResultadosAvanzados((data || []).map(r => ({
                 producto_id: r.producto_id, nro_parte: r.nro_parte, marca: r.marca, tipo: r.tipo, pt: r.productos_terminados,
             })))
         } else {
+            // Solo filtros de descripción/categoría — consultar PT y enriquecer con datos de autopartes
             let ptQ = supabase.from('productos_terminados')
                 .select('id, nombre, sku, precio_venta, stock_actual, categoria_1')
                 .eq('empresa_id', perfil.empresa_id).eq('activo', true)
             if (filtroCat) ptQ = ptQ.eq('categoria_1', filtroCat)
-            if (busqueda.trim()) ptQ = ptQ.or(`nombre.ilike.%${busqueda.trim()}%,sku.ilike.%${busqueda.trim()}%`)
-            const { data } = await ptQ
-            setResultadosAvanzados((data || []).map(p => ({ producto_id: p.id, nro_parte: null, marca: null, tipo: null, pt: p })))
+            if (busqueda.trim()) ptQ = ptQ.or(`nombre.ilike.%${busqueda.trim()}%,sku.ilike.%${busqueda.trim()}%,descripcion.ilike.%${busqueda.trim()}%`)
+            const { data: ptData } = await ptQ
+            const ids = (ptData || []).map(p => p.id)
+            const apMap = {}
+            if (ids.length > 0) {
+                const { data: apData } = await supabase.from('productos_autopartes')
+                    .select('producto_id, nro_parte, marca, tipo')
+                    .eq('empresa_id', perfil.empresa_id)
+                    .in('producto_id', ids)
+                ;(apData || []).forEach(ap => { apMap[ap.producto_id] = ap })
+            }
+            setResultadosAvanzados((ptData || []).map(p => ({
+                producto_id: p.id,
+                nro_parte: apMap[p.id]?.nro_parte ?? null,
+                marca: apMap[p.id]?.marca ?? null,
+                tipo: apMap[p.id]?.tipo ?? null,
+                pt: p,
+            })))
         }
         setBuscandoAvanzado(false)
     }
