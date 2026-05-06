@@ -249,6 +249,8 @@ function VistaPorAlmacen() {
     const [loading, setLoading] = useState(false)
     const [busqueda, setBusqueda] = useState('')
     const [tipoFiltro, setTipoFiltro] = useState('todos')
+    const [pagina, setPagina] = useState(0)
+    const [pageSize, setPageSize] = useState(50)
 
     // Modal ajuste (editar cantidad existente)
     const [modalAjuste, setModalAjuste] = useState(null)
@@ -297,6 +299,8 @@ function VistaPorAlmacen() {
         cargarStock(almacenId)
     }, [almacenId])
 
+    useEffect(() => { setPagina(0) }, [busqueda, tipoFiltro, pageSize, almacenId])
+
     async function cargarUbicaciones(aid) {
         const { data } = await supabase.from('almacen_ubicaciones')
             .select('*').eq('almacen_id', aid).eq('activo', true).order('nombre')
@@ -311,6 +315,7 @@ function VistaPorAlmacen() {
             .eq('empresa_id', perfil.empresa_id)
             .gt('cantidad', 0)
             .order('tipo_item').order('item_id')
+            .limit(5000)
         if (data) setStock(data)
         setLoading(false)
     }
@@ -438,6 +443,8 @@ function VistaPorAlmacen() {
     })
 
     const totalUnidades = filtrados.reduce((s, i) => s + Number(i.cantidad), 0)
+    const totalPaginasAlm = Math.ceil(filtrados.length / pageSize)
+    const paginados = filtrados.slice(pagina * pageSize, (pagina + 1) * pageSize)
 
     // ── Ajuste manual ──
     async function confirmarAjuste() {
@@ -670,7 +677,7 @@ function VistaPorAlmacen() {
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {filtrados.map(s => (
+                                    {paginados.map(s => (
                                         <tr key={s.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
                                             <td className="px-4 py-3 text-sm font-medium text-gray-800">{s.nombre}</td>
                                             <td className="px-4 py-3 text-xs font-mono text-gray-500">{s.codigo}</td>
@@ -708,6 +715,28 @@ function VistaPorAlmacen() {
                             </table>
                         )}
                     </div>
+
+                    {filtrados.length > 0 && (
+                        <div className="flex items-center justify-between gap-4 text-sm text-gray-600">
+                            <div className="flex items-center gap-2">
+                                <span>Filas por página:</span>
+                                <select value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setPagina(0) }}
+                                    className="border border-gray-300 rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-green-500">
+                                    {PAGE_SIZE_OPTIONS.map(n => <option key={n} value={n}>{n}</option>)}
+                                </select>
+                            </div>
+                            <span className="text-gray-500">
+                                {pagina * pageSize + 1}–{Math.min((pagina + 1) * pageSize, filtrados.length)} de {filtrados.length}
+                            </span>
+                            <div className="flex items-center gap-1">
+                                <button onClick={() => setPagina(p => Math.max(0, p - 1))} disabled={pagina === 0}
+                                    className="px-3 py-1 rounded-md border border-gray-300 disabled:opacity-40 hover:bg-gray-50 transition-colors">←</button>
+                                <span className="px-3">Pág. {pagina + 1} / {totalPaginasAlm}</span>
+                                <button onClick={() => setPagina(p => Math.min(totalPaginasAlm - 1, p + 1))} disabled={pagina >= totalPaginasAlm - 1}
+                                    className="px-3 py-1 rounded-md border border-gray-300 disabled:opacity-40 hover:bg-gray-50 transition-colors">→</button>
+                            </div>
+                        </div>
+                    )}
 
                     {/* Botón para agregar stock nuevo */}
                     {stock.length > 0 && (
@@ -919,8 +948,6 @@ function VistaPorAlmacen() {
         </>
     )
 }
-const MOV_PAGE_SIZE = 100
-
 function VistaMovimientos() {
     const { perfil } = useAuth()
     const [movimientos, setMovimientos] = useState([])
@@ -932,10 +959,11 @@ function VistaMovimientos() {
     })
     const [fechaHasta, setFechaHasta] = useState(() => new Date().toISOString().split('T')[0])
     const [pagina, setPagina] = useState(0)
+    const [pageSize, setPageSize] = useState(50)
     const [totalMov, setTotalMov] = useState(0)
 
-    useEffect(() => { setPagina(0) }, [tipoFiltro, busqueda, fechaDesde, fechaHasta])
-    useEffect(() => { cargarMovimientos() }, [tipoFiltro, busqueda, fechaDesde, fechaHasta, pagina])
+    useEffect(() => { setPagina(0) }, [tipoFiltro, busqueda, fechaDesde, fechaHasta, pageSize])
+    useEffect(() => { cargarMovimientos() }, [tipoFiltro, busqueda, fechaDesde, fechaHasta, pagina, pageSize])
 
     async function cargarMovimientos() {
         setLoading(true)
@@ -946,7 +974,7 @@ function VistaMovimientos() {
             .gte('fecha', `${fechaDesde}T00:00:00`)
             .lte('fecha', `${fechaHasta}T23:59:59`)
             .order('fecha', { ascending: false })
-            .range(pagina * MOV_PAGE_SIZE, (pagina + 1) * MOV_PAGE_SIZE - 1)
+            .range(pagina * pageSize, (pagina + 1) * pageSize - 1)
 
         if (tipoFiltro !== 'todos') {
             const mapa = { pt: 'producto_terminado', mp: 'materia_prima', emp: 'material_empaque', con: 'consumible' }
@@ -1047,20 +1075,24 @@ function VistaMovimientos() {
                     </table>
                 )}
             </div>
-            {totalMov > MOV_PAGE_SIZE && (
-                <div className="flex items-center justify-between px-4 py-3 bg-white rounded-xl border border-gray-200">
-                    <span className="text-sm text-gray-500">
-                        Mostrando {pagina * MOV_PAGE_SIZE + 1}–{Math.min((pagina + 1) * MOV_PAGE_SIZE, totalMov)} de {totalMov}
+            {totalMov > 0 && (
+                <div className="flex items-center justify-between gap-4 text-sm text-gray-600">
+                    <div className="flex items-center gap-2">
+                        <span>Filas por página:</span>
+                        <select value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setPagina(0) }}
+                            className="border border-gray-300 rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-green-500">
+                            {PAGE_SIZE_OPTIONS.map(n => <option key={n} value={n}>{n}</option>)}
+                        </select>
+                    </div>
+                    <span className="text-gray-500">
+                        {pagina * pageSize + 1}–{Math.min((pagina + 1) * pageSize, totalMov)} de {totalMov}
                     </span>
-                    <div className="flex gap-2">
-                        <button onClick={() => setPagina(p => p - 1)} disabled={pagina === 0}
-                            className={`px-4 py-1.5 rounded-lg text-sm border border-gray-200 bg-white ${pagina === 0 ? 'text-gray-300 cursor-default' : 'text-gray-600 hover:bg-gray-50 cursor-pointer'}`}>
-                            ← Anterior
-                        </button>
-                        <button onClick={() => setPagina(p => p + 1)} disabled={(pagina + 1) * MOV_PAGE_SIZE >= totalMov}
-                            className={`px-4 py-1.5 rounded-lg text-sm border border-gray-200 bg-white ${(pagina + 1) * MOV_PAGE_SIZE >= totalMov ? 'text-gray-300 cursor-default' : 'text-gray-600 hover:bg-gray-50 cursor-pointer'}`}>
-                            Siguiente →
-                        </button>
+                    <div className="flex items-center gap-1">
+                        <button onClick={() => setPagina(p => Math.max(0, p - 1))} disabled={pagina === 0}
+                            className="px-3 py-1 rounded-md border border-gray-300 disabled:opacity-40 hover:bg-gray-50 transition-colors">←</button>
+                        <span className="px-3">Pág. {pagina + 1} / {Math.ceil(totalMov / pageSize)}</span>
+                        <button onClick={() => setPagina(p => p + 1)} disabled={(pagina + 1) * pageSize >= totalMov}
+                            className="px-3 py-1 rounded-md border border-gray-300 disabled:opacity-40 hover:bg-gray-50 transition-colors">→</button>
                     </div>
                 </div>
             )}
