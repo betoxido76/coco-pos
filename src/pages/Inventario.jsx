@@ -58,13 +58,19 @@ export default function Inventario() {
 }
 
 // ─── Vista: Stock Actual ──────────────────────────────────────
+const PAGE_SIZE_OPTIONS = [25, 50, 100]
+
 function VistaStock() {
     const { perfil } = useAuth()
     const [inventario, setInventario] = useState([])
     const [loading, setLoading] = useState(true)
     const [busqueda, setBusqueda] = useState('')
     const [tipoFiltro, setTipoFiltro] = useState('todos')
+    const [pagina, setPagina] = useState(0)
+    const [pageSize, setPageSize] = useState(50)
+
     useEffect(() => { cargarInventario() }, [tipoFiltro])
+    useEffect(() => { setPagina(0) }, [busqueda, tipoFiltro, pageSize])
 
     async function cargarInventario() {
         setLoading(true)
@@ -72,19 +78,19 @@ function VistaStock() {
         const sinIVA = (val) => Number(val || 0) / 1.16
 
         if (tipoFiltro === 'todos' || tipoFiltro === 'pt') {
-            const { data } = await supabase.from('productos_terminados').select('*').eq('activo', true).eq('empresa_id', perfil.empresa_id)
+            const { data } = await supabase.from('productos_terminados').select('*').eq('activo', true).eq('empresa_id', perfil.empresa_id).limit(5000)
             if (data) datos = [...datos, ...data.map(p => ({ ...p, tipo: 'Producto Terminado', codigo: p.sku, precio: sinIVA(p.costo_promedio), vencimiento: null }))]
         }
         if (tipoFiltro === 'todos' || tipoFiltro === 'mp') {
-            const { data } = await supabase.from('materias_primas').select('*').eq('activo', true).eq('empresa_id', perfil.empresa_id)
+            const { data } = await supabase.from('materias_primas').select('*').eq('activo', true).eq('empresa_id', perfil.empresa_id).limit(5000)
             if (data) datos = [...datos, ...data.map(p => ({ ...p, tipo: 'Materia Prima', codigo: p.codigo, precio: sinIVA(p.costo_compra_promedio), vencimiento: p.fecha_vencimiento }))]
         }
         if (tipoFiltro === 'todos' || tipoFiltro === 'emp') {
-            const { data } = await supabase.from('materiales_empaque').select('*').eq('activo', true).eq('empresa_id', perfil.empresa_id)
+            const { data } = await supabase.from('materiales_empaque').select('*').eq('activo', true).eq('empresa_id', perfil.empresa_id).limit(5000)
             if (data) datos = [...datos, ...data.map(p => ({ ...p, tipo: 'Material Empaque', codigo: p.codigo, precio: sinIVA(p.costo_compra_promedio), vencimiento: p.fecha_vencimiento }))]
         }
         if (tipoFiltro === 'todos' || tipoFiltro === 'con') {
-            const { data } = await supabase.from('consumibles').select('*').eq('activo', true).eq('empresa_id', perfil.empresa_id)
+            const { data } = await supabase.from('consumibles').select('*').eq('activo', true).eq('empresa_id', perfil.empresa_id).limit(5000)
             if (data) datos = [...datos, ...data.map(p => ({ ...p, tipo: 'Consumible', codigo: p.codigo, precio: sinIVA(p.costo_compra_promedio), vencimiento: p.fecha_vencimiento }))]
         }
 
@@ -92,14 +98,19 @@ function VistaStock() {
         setLoading(false)
     }
 
+    // filtrados = dataset completo según búsqueda (para KPIs y paginación)
     const filtrados = inventario.filter(p =>
         p.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
         p.codigo?.toLowerCase().includes(busqueda.toLowerCase())
     )
 
+    // KPIs siempre sobre el dataset completo filtrado (no sobre la página visible)
     const criticos = filtrados.filter(p => p.stock_actual <= p.stock_minimo).length
     const totalUnidades = filtrados.reduce((sum, p) => sum + (p.stock_actual || 0), 0)
     const valorTotalInventario = filtrados.reduce((sum, p) => sum + ((p.precio || 0) * (p.stock_actual || 0)), 0)
+
+    const totalPaginas = Math.ceil(filtrados.length / pageSize)
+    const paginados = filtrados.slice(pagina * pageSize, (pagina + 1) * pageSize)
 
     return (
         <>
@@ -160,7 +171,7 @@ function VistaStock() {
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {filtrados.map(p => (
+                                    {paginados.map(p => (
                                         <tr key={p.id} className={`border-b border-gray-50 hover:bg-gray-50 transition-colors ${p.stock_actual <= p.stock_minimo ? 'bg-amber-50/40' : ''}`}>
                                             <td className="px-4 py-3">
                                                 <div className="flex items-center gap-2">
@@ -195,6 +206,28 @@ function VistaStock() {
                             </table>
                         )}
             </div>
+
+            {filtrados.length > 0 && (
+                <div className="flex items-center justify-between gap-4 text-sm text-gray-600">
+                    <div className="flex items-center gap-2">
+                        <span>Filas por página:</span>
+                        <select value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setPagina(0) }}
+                            className="border border-gray-300 rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-green-500">
+                            {PAGE_SIZE_OPTIONS.map(n => <option key={n} value={n}>{n}</option>)}
+                        </select>
+                    </div>
+                    <span className="text-gray-500">
+                        {pagina * pageSize + 1}–{Math.min((pagina + 1) * pageSize, filtrados.length)} de {filtrados.length}
+                    </span>
+                    <div className="flex items-center gap-1">
+                        <button onClick={() => setPagina(p => Math.max(0, p - 1))} disabled={pagina === 0}
+                            className="px-3 py-1 rounded-md border border-gray-300 disabled:opacity-40 hover:bg-gray-50 transition-colors">←</button>
+                        <span className="px-3">Pág. {pagina + 1} / {totalPaginas}</span>
+                        <button onClick={() => setPagina(p => Math.min(totalPaginas - 1, p + 1))} disabled={pagina >= totalPaginas - 1}
+                            className="px-3 py-1 rounded-md border border-gray-300 disabled:opacity-40 hover:bg-gray-50 transition-colors">→</button>
+                    </div>
+                </div>
+            )}
 
             {criticos > 0 && (
                 <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-700">
