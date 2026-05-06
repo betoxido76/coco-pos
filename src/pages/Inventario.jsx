@@ -83,15 +83,15 @@ function VistaStock() {
         }
         if (tipoFiltro === 'todos' || tipoFiltro === 'mp') {
             const { data } = await supabase.from('materias_primas').select('*').eq('activo', true).eq('empresa_id', perfil.empresa_id).limit(5000)
-            if (data) datos = [...datos, ...data.map(p => ({ ...p, tipo: 'Materia Prima', codigo: p.codigo, precio: sinIVA(p.costo_compra_promedio), vencimiento: p.fecha_vencimiento }))]
+            if (data) datos = [...datos, ...data.map(p => ({ ...p, tipo: 'Materia Prima', codigo: p.codigo, precio: p.aplica_iva ? sinIVA(p.costo_compra_promedio) : Number(p.costo_compra_promedio || 0), vencimiento: p.fecha_vencimiento }))]
         }
         if (tipoFiltro === 'todos' || tipoFiltro === 'emp') {
             const { data } = await supabase.from('materiales_empaque').select('*').eq('activo', true).eq('empresa_id', perfil.empresa_id).limit(5000)
-            if (data) datos = [...datos, ...data.map(p => ({ ...p, tipo: 'Material Empaque', codigo: p.codigo, precio: sinIVA(p.costo_compra_promedio), vencimiento: p.fecha_vencimiento }))]
+            if (data) datos = [...datos, ...data.map(p => ({ ...p, tipo: 'Material Empaque', codigo: p.codigo, precio: p.aplica_iva ? sinIVA(p.costo_compra_promedio) : Number(p.costo_compra_promedio || 0), vencimiento: p.fecha_vencimiento }))]
         }
         if (tipoFiltro === 'todos' || tipoFiltro === 'con') {
             const { data } = await supabase.from('consumibles').select('*').eq('activo', true).eq('empresa_id', perfil.empresa_id).limit(5000)
-            if (data) datos = [...datos, ...data.map(p => ({ ...p, tipo: 'Consumible', codigo: p.codigo, precio: sinIVA(p.costo_compra_promedio), vencimiento: p.fecha_vencimiento }))]
+            if (data) datos = [...datos, ...data.map(p => ({ ...p, tipo: 'Consumible', codigo: p.codigo, precio: p.aplica_iva ? sinIVA(p.costo_compra_promedio) : Number(p.costo_compra_promedio || 0), vencimiento: p.fecha_vencimiento }))]
         }
 
         setInventario(datos.sort((a, b) => a.nombre.localeCompare(b.nombre)))
