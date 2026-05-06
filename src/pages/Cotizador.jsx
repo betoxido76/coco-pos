@@ -215,7 +215,7 @@ export default function Cotizador() {
         let ids = Object.keys(productoMatchMap)
         if (ids.length === 0) { setResultados([]); setBuscando(false); return }
 
-        // 5. Filtros adicionales sobre productos_terminados
+        // 5. Filtros adicionales
         if (queryExtra.trim() || categoriaFiltro) {
             let ptQ = supabase.from('productos_terminados').select('id')
                 .eq('empresa_id', perfil.empresa_id).eq('activo', true).in('id', ids)
@@ -223,6 +223,13 @@ export default function Cotizador() {
             if (queryExtra.trim()) ptQ = ptQ.or(`nombre.ilike.%${queryExtra.trim()}%,sku.ilike.%${queryExtra.trim()}%`)
             const { data: ptFiltrado } = await ptQ
             ids = (ptFiltrado || []).map(p => p.id)
+            if (ids.length === 0) { setResultados([]); setBuscando(false); return }
+        }
+        if (queryTipo && ids.length > 0) {
+            const { data: apFiltrado } = await supabase.from('productos_autopartes')
+                .select('producto_id').eq('empresa_id', perfil.empresa_id)
+                .eq('tipo', queryTipo).in('producto_id', ids)
+            ids = (apFiltrado || []).map(ap => ap.producto_id)
             if (ids.length === 0) { setResultados([]); setBuscando(false); return }
         }
 
@@ -407,7 +414,7 @@ export default function Cotizador() {
                             </div>
                         </div>
                         {/* Filtros adicionales */}
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px' }}>
                             <div>
                                 <label style={{ fontSize: '12px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '5px' }}>
                                     Descripción / Código SKU <span style={{ fontWeight: 400 }}>(opcional)</span>
@@ -424,6 +431,15 @@ export default function Cotizador() {
                                 <select value={categoriaFiltro} onChange={e => setCategoriaFiltro(e.target.value)} style={inputStyle}>
                                     <option value="">— Todas —</option>
                                     {categorias.map(c => <option key={c} value={c}>{c}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label style={{ fontSize: '12px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '5px' }}>
+                                    Tipo <span style={{ fontWeight: 400 }}>(opcional)</span>
+                                </label>
+                                <select value={queryTipo} onChange={e => setQueryTipo(e.target.value)} style={inputStyle}>
+                                    <option value="">— Todos los tipos —</option>
+                                    {tiposRepuesto.map(t => <option key={t} value={t}>{t}</option>)}
                                 </select>
                             </div>
                         </div>
