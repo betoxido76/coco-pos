@@ -605,6 +605,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
     const [clientes, setClientes] = useState([])
     const [productos, setProductos] = useState([])
     const [clienteId, setClienteId] = useState('')
+    const [busquedaCliente, setBusquedaCliente] = useState('')
     const [direcciones, setDirecciones] = useState([])
     const [direccionId, setDireccionId] = useState('')
     const [busqueda, setBusqueda] = useState('')
@@ -644,7 +645,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
     const [cuentaBancariaId, setCuentaBancariaId] = useState('')
 
     useEffect(() => {
-        supabase.from('clientes').select('id, nombre, condicion_pago, dias_credito').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
+        supabase.from('clientes').select('id, nombre, rif, condicion_pago, dias_credito').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
             .then(({ data }) => setClientes(data || []))
         supabase.from('productos_terminados').select('id, nombre, sku, precio_venta, stock_actual, unidad_medida').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
             .then(({ data }) => setProductos(data || []))
@@ -900,6 +901,24 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
         onVentaCreada(datos)
     }
 
+    const clienteSeleccionado = clientes.find(c => c.id === clienteId) || null
+    const clientesFiltrados = !clienteId && busquedaCliente.trim()
+        ? clientes.filter(c =>
+            c.nombre.toLowerCase().includes(busquedaCliente.toLowerCase()) ||
+            (c.rif || '').toLowerCase().includes(busquedaCliente.toLowerCase())
+          ).slice(0, 20)
+        : []
+
+    function elegirCliente(c) {
+        setBusquedaCliente('')
+        seleccionarCliente(c.id)
+    }
+
+    function limpiarCliente() {
+        setBusquedaCliente('')
+        seleccionarCliente('')
+    }
+
     return (
         <div style={{ padding: '24px', maxWidth: '900px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
@@ -912,11 +931,42 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
 
                     <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px' }}>
                         <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '8px' }}>Cliente</label>
-                        <select value={clienteId} onChange={e => seleccionarCliente(e.target.value)}
-                            style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', color: '#374151', backgroundColor: '#fff' }}>
-                            <option value="">Seleccionar cliente...</option>
-                            {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-                        </select>
+                        <div style={{ position: 'relative' }}>
+                            {clienteSeleccionado ? (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', border: '1px solid #16a34a', borderRadius: '8px', backgroundColor: '#f0fdf4' }}>
+                                    <div style={{ flex: 1, fontSize: '14px', color: '#1f2937' }}>
+                                        <span style={{ fontFamily: 'monospace', color: '#6b7280', fontSize: '13px' }}>{clienteSeleccionado.rif}</span>
+                                        <span style={{ margin: '0 6px', color: '#9ca3af' }}>·</span>
+                                        <span style={{ fontWeight: 500 }}>{clienteSeleccionado.nombre}</span>
+                                    </div>
+                                    <button onClick={limpiarCliente}
+                                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', fontSize: '16px', lineHeight: 1, padding: '0 2px' }}
+                                        title="Cambiar cliente">×</button>
+                                </div>
+                            ) : (
+                                <>
+                                    <Search size={15} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af', zIndex: 1 }} />
+                                    <input
+                                        value={busquedaCliente}
+                                        onChange={e => setBusquedaCliente(e.target.value)}
+                                        placeholder="Buscar por RIF o nombre..."
+                                        style={{ width: '100%', padding: '8px 12px 8px 32px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', color: '#374151', boxSizing: 'border-box' }} />
+                                    {clientesFiltrados.length > 0 && (
+                                        <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50, backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', marginTop: '4px', maxHeight: '220px', overflowY: 'auto' }}>
+                                            {clientesFiltrados.map(c => (
+                                                <div key={c.id} onClick={() => elegirCliente(c)}
+                                                    style={{ padding: '9px 12px', cursor: 'pointer', borderBottom: '1px solid #f3f4f6', fontSize: '13px' }}
+                                                    onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f0fdf4'}
+                                                    onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                                                    <span style={{ fontFamily: 'monospace', color: '#6b7280', marginRight: '8px' }}>{c.rif || '—'}</span>
+                                                    <span style={{ fontWeight: 500, color: '#1f2937' }}>{c.nombre}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </>
+                            )}
+                        </div>
 
                         {/* Selector de dirección */}
                         {direcciones.length > 1 && (
