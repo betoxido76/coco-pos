@@ -621,6 +621,12 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
     const [marcasRepuesto, setMarcasRepuesto] = useState([])
     const [tiposRepuesto, setTiposRepuesto] = useState([])
     const [categoriasRepuesto, setCategoriasRepuesto] = useState([])
+    // Filtros por vehículo dentro de búsqueda avanzada
+    const [marcaV, setMarcaV] = useState('')
+    const [modeloV, setModeloV] = useState('')
+    const [anioV, setAnioV] = useState('')
+    const [marcasV, setMarcasV] = useState([])
+    const [modelosV, setModelosV] = useState([])
     const [resultadosAvanzados, setResultadosAvanzados] = useState(null)
     const [buscandoAvanzado, setBuscandoAvanzado] = useState(false)
     const [nroReferencia, setNroReferencia] = useState('')
@@ -653,8 +659,17 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                 .then(({ data }) => setTiposRepuesto([...new Set((data || []).map(p => p.tipo).filter(Boolean))].sort()))
             supabase.from('productos_terminados').select('categoria_1').eq('empresa_id', perfil.empresa_id).eq('activo', true).not('categoria_1', 'is', null)
                 .then(({ data }) => setCategoriasRepuesto([...new Set((data || []).map(p => p.categoria_1).filter(Boolean))].sort()))
+            supabase.from('vehiculos').select('marca').eq('empresa_id', perfil.empresa_id).order('marca')
+                .then(({ data }) => setMarcasV([...new Set((data || []).map(v => v.marca).filter(Boolean))].sort()))
         }
     }, [])
+
+    useEffect(() => {
+        if (!marcaV || !perfil?.empresa_id) { setModelosV([]); setModeloV(''); return }
+        supabase.from('vehiculos').select('modelo')
+            .eq('empresa_id', perfil.empresa_id).eq('marca', marcaV).order('modelo')
+            .then(({ data }) => { setModelosV([...new Set((data || []).map(v => v.modelo))].sort()); setModeloV('') })
+    }, [marcaV])
 
     async function seleccionarCliente(id) {
         setClienteId(id)
@@ -682,21 +697,47 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
     async function buscarAvanzado() {
         const tieneNroParte = filtroNroParte.trim()
         const tieneAutoparteFilter = tieneNroParte || filtroMarca || filtroTipo
-        if (!tieneAutoparteFilter && !filtroCat && !busqueda.trim()) return
+        const tieneVehiculoFilter = !!marcaV
+        if (!tieneAutoparteFilter && !tieneVehiculoFilter && !filtroCat && !busqueda.trim()) return
         setBuscandoAvanzado(true); setResultadosAvanzados(null)
 
+        // 1. IDs compatibles con el vehículo buscado
         let ptIds = null
+        if (tieneVehiculoFilter) {
+            let vQ = supabase.from('vehiculos').select('id')
+                .eq('empresa_id', perfil.empresa_id).eq('marca', marcaV)
+            if (modeloV) vQ = vQ.eq('modelo', modeloV)
+            const { data: vData } = await vQ
+            const vehiculoIds = (vData || []).map(v => v.id)
+            if (vehiculoIds.length === 0) { setResultadosAvanzados([]); setBuscandoAvanzado(false); return }
+
+            const { data: pvData } = await supabase.from('producto_vehiculo')
+                .select('producto_id, año_inicio, año_fin')
+                .eq('empresa_id', perfil.empresa_id)
+                .in('vehiculo_id', vehiculoIds)
+            let pvFiltrado = pvData || []
+            if (anioV.trim()) {
+                const y = Number(anioV)
+                pvFiltrado = pvFiltrado.filter(pv => y >= pv.año_inicio && y <= pv.año_fin)
+            }
+            ptIds = [...new Set(pvFiltrado.map(pv => pv.producto_id))]
+            if (ptIds.length === 0) { setResultadosAvanzados([]); setBuscandoAvanzado(false); return }
+        }
+
+        // 2. Intersectar con filtros de descripción / categoría
         if (busqueda.trim() || filtroCat) {
             let ptQ = supabase.from('productos_terminados').select('id')
                 .eq('empresa_id', perfil.empresa_id).eq('activo', true)
             if (filtroCat) ptQ = ptQ.eq('categoria_1', filtroCat)
             if (busqueda.trim()) ptQ = ptQ.or(`nombre.ilike.%${busqueda.trim()}%,sku.ilike.%${busqueda.trim()}%,descripcion.ilike.%${busqueda.trim()}%`)
+            if (ptIds !== null) ptQ = ptQ.in('id', ptIds)
             const { data } = await ptQ
             ptIds = (data || []).map(p => p.id)
             if (ptIds.length === 0) { setResultadosAvanzados([]); setBuscandoAvanzado(false); return }
         }
 
-        if (tieneAutoparteFilter) {
+        // 3. Consulta final
+        if (tieneAutoparteFilter || tieneVehiculoFilter) {
             let apQ = supabase.from('productos_autopartes')
                 .select('nro_parte, marca, tipo, producto_id, productos_terminados!inner(id, nombre, sku, precio_venta, stock_actual, categoria_1)')
                 .eq('empresa_id', perfil.empresa_id)
@@ -708,11 +749,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
             const { data, error: err } = await apQ
             if (err) { setBuscandoAvanzado(false); return }
             setResultadosAvanzados((data || []).map(r => ({
-                producto_id: r.producto_id,
-                nro_parte: r.nro_parte,
-                marca: r.marca,
-                tipo: r.tipo,
-                pt: r.productos_terminados,
+                producto_id: r.producto_id, nro_parte: r.nro_parte, marca: r.marca, tipo: r.tipo, pt: r.productos_terminados,
             })))
         } else {
             let ptQ = supabase.from('productos_terminados')
@@ -950,6 +987,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                         ) : (
                             /* ── Panel de búsqueda avanzada (autopartes) ── */
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                                {/* Filtros de repuesto: N° parte, Marca, Tipo, Categoría */}
                                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
                                     <div>
                                         <label style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '3px' }}>N° de parte</label>
@@ -959,7 +997,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                                             style={{ width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '13px', boxSizing: 'border-box' }} />
                                     </div>
                                     <div>
-                                        <label style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '3px' }}>Marca</label>
+                                        <label style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '3px' }}>Marca repuesto</label>
                                         <select value={filtroMarca} onChange={e => setFiltroMarca(e.target.value)}
                                             style={{ width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '13px', boxSizing: 'border-box', backgroundColor: '#fff' }}>
                                             <option value="">— Todas —</option>
@@ -983,6 +1021,36 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                                         </select>
                                     </div>
                                 </div>
+                                {/* Filtros de vehículo: Marca, Modelo, Año */}
+                                <div style={{ padding: '8px 10px', backgroundColor: '#f0f9ff', borderRadius: '7px', border: '1px solid #bae6fd' }}>
+                                    <p style={{ fontSize: '11px', fontWeight: 600, color: '#0369a1', margin: '0 0 6px' }}>Vehículo compatible</p>
+                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 80px', gap: '8px' }}>
+                                        <div>
+                                            <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '3px' }}>Marca</label>
+                                            <select value={marcaV} onChange={e => setMarcaV(e.target.value)}
+                                                style={{ width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '13px', boxSizing: 'border-box', backgroundColor: '#fff' }}>
+                                                <option value="">— Todas —</option>
+                                                {marcasV.map(m => <option key={m} value={m}>{m}</option>)}
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '3px' }}>Modelo</label>
+                                            <select value={modeloV} onChange={e => setModeloV(e.target.value)}
+                                                disabled={!marcaV}
+                                                style={{ width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '13px', boxSizing: 'border-box', backgroundColor: '#fff', opacity: !marcaV ? 0.5 : 1 }}>
+                                                <option value="">— Todos —</option>
+                                                {modelosV.map(m => <option key={m} value={m}>{m}</option>)}
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '3px' }}>Año</label>
+                                            <input type="number" value={anioV} onChange={e => setAnioV(e.target.value)}
+                                                onKeyDown={e => e.key === 'Enter' && buscarAvanzado()}
+                                                placeholder="2015"
+                                                style={{ width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '13px', boxSizing: 'border-box' }} />
+                                        </div>
+                                    </div>
+                                </div>
                                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                                     <div style={{ position: 'relative', flex: 1 }}>
                                         <Search size={13} style={{ position: 'absolute', left: '9px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
@@ -995,8 +1063,8 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                                         style={{ padding: '7px 16px', backgroundColor: '#1d4ed8', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap', opacity: buscandoAvanzado ? 0.6 : 1 }}>
                                         {buscandoAvanzado ? 'Buscando...' : 'Buscar'}
                                     </button>
-                                    {(filtroNroParte || filtroMarca || filtroTipo || filtroCat || busqueda) && (
-                                        <button onClick={() => { setFiltroNroParte(''); setFiltroMarca(''); setFiltroTipo(''); setFiltroCat(''); setBusqueda(''); setResultadosAvanzados(null) }}
+                                    {(filtroNroParte || filtroMarca || filtroTipo || filtroCat || marcaV || busqueda) && (
+                                        <button onClick={() => { setFiltroNroParte(''); setFiltroMarca(''); setFiltroTipo(''); setFiltroCat(''); setMarcaV(''); setModeloV(''); setAnioV(''); setBusqueda(''); setResultadosAvanzados(null) }}
                                             style={{ padding: '7px 10px', backgroundColor: '#f3f4f6', color: '#6b7280', border: '1px solid #e5e7eb', borderRadius: '7px', fontSize: '12px', cursor: 'pointer' }}>
                                             Limpiar
                                         </button>
