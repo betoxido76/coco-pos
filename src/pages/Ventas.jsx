@@ -5,6 +5,12 @@ import { Plus, Search, Trash2, CheckCircle, FileText, RotateCcw, AlertTriangle, 
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 
+function semaforo(stock) {
+    if (stock <= 0) return { color: '#dc2626', bg: '#fef2f2', label: 'Sin stock' }
+    if (stock < 10) return { color: '#d97706', bg: '#fffbeb', label: `${stock} uds.` }
+    return { color: '#16a34a', bg: '#f0fdf4', label: `${stock} uds.` }
+}
+
 const METODOS_USD = ['Efectivo', 'Zelle', 'Transferencia USD', 'Otros']
 const METODOS_BS = ['Pago Móvil', 'Transferencia', 'Punto de Venta', 'Efectivo Bs.']
 const OPCIONES_TASA = [
@@ -594,6 +600,8 @@ function BadgeCobro({ estado }) {
 // ─── Nueva Venta ───────────────────────────────────────────────
 function NuevaVenta({ onVentaCreada, onCancelar }) {
     const { perfil } = useAuth()
+    const esAutopartes = perfil?.empresas?.perfil_negocio === 'autopartes'
+
     const [clientes, setClientes] = useState([])
     const [productos, setProductos] = useState([])
     const [clienteId, setClienteId] = useState('')
@@ -603,6 +611,18 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
     const [items, setItems] = useState([])
     const [guardando, setGuardando] = useState(false)
     const [error, setError] = useState('')
+
+    // Búsqueda avanzada (solo autopartes)
+    const [modoAvanzado, setModoAvanzado] = useState(false)
+    const [filtroNroParte, setFiltroNroParte] = useState('')
+    const [filtroMarca, setFiltroMarca] = useState('')
+    const [filtroTipo, setFiltroTipo] = useState('')
+    const [filtroCat, setFiltroCat] = useState('')
+    const [marcasRepuesto, setMarcasRepuesto] = useState([])
+    const [tiposRepuesto, setTiposRepuesto] = useState([])
+    const [categoriasRepuesto, setCategoriasRepuesto] = useState([])
+    const [resultadosAvanzados, setResultadosAvanzados] = useState(null)
+    const [buscandoAvanzado, setBuscandoAvanzado] = useState(false)
     const [nroReferencia, setNroReferencia] = useState('')
     const [condicion, setCondicion] = useState('credito')
     const [tasas, setTasas] = useState({})
@@ -626,6 +646,14 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
             .then(({ data }) => { if (data) { const t = {}; data.forEach(r => { t[r.clave] = Number(r.valor) }); setTasas(t) } })
         supabase.from('cuentas_bancarias').select('id, nombre, banco, moneda').eq('empresa_id', perfil.empresa_id).eq('activa', true)
             .then(({ data }) => setCuentasBancarias(data || []))
+        if (esAutopartes) {
+            supabase.from('productos_autopartes').select('marca').eq('empresa_id', perfil.empresa_id).not('marca', 'is', null)
+                .then(({ data }) => setMarcasRepuesto([...new Set((data || []).map(p => p.marca).filter(Boolean))].sort()))
+            supabase.from('productos_autopartes').select('tipo').eq('empresa_id', perfil.empresa_id).not('tipo', 'is', null)
+                .then(({ data }) => setTiposRepuesto([...new Set((data || []).map(p => p.tipo).filter(Boolean))].sort()))
+            supabase.from('productos_terminados').select('categoria_1').eq('empresa_id', perfil.empresa_id).eq('activo', true).not('categoria_1', 'is', null)
+                .then(({ data }) => setCategoriasRepuesto([...new Set((data || []).map(p => p.categoria_1).filter(Boolean))].sort()))
+        }
     }, [])
 
     async function seleccionarCliente(id) {
@@ -649,6 +677,53 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
             if (principal) setDireccionId(principal.id)
             else if (data.length === 1) setDireccionId(data[0].id)
         }
+    }
+
+    async function buscarAvanzado() {
+        const tieneNroParte = filtroNroParte.trim()
+        const tieneAutoparteFilter = tieneNroParte || filtroMarca || filtroTipo
+        if (!tieneAutoparteFilter && !filtroCat && !busqueda.trim()) return
+        setBuscandoAvanzado(true); setResultadosAvanzados(null)
+
+        let ptIds = null
+        if (busqueda.trim() || filtroCat) {
+            let ptQ = supabase.from('productos_terminados').select('id')
+                .eq('empresa_id', perfil.empresa_id).eq('activo', true)
+            if (filtroCat) ptQ = ptQ.eq('categoria_1', filtroCat)
+            if (busqueda.trim()) ptQ = ptQ.or(`nombre.ilike.%${busqueda.trim()}%,sku.ilike.%${busqueda.trim()}%,descripcion.ilike.%${busqueda.trim()}%`)
+            const { data } = await ptQ
+            ptIds = (data || []).map(p => p.id)
+            if (ptIds.length === 0) { setResultadosAvanzados([]); setBuscandoAvanzado(false); return }
+        }
+
+        if (tieneAutoparteFilter) {
+            let apQ = supabase.from('productos_autopartes')
+                .select('nro_parte, marca, tipo, producto_id, productos_terminados!inner(id, nombre, sku, precio_venta, stock_actual, categoria_1)')
+                .eq('empresa_id', perfil.empresa_id)
+                .eq('productos_terminados.activo', true)
+            if (tieneNroParte) apQ = apQ.ilike('nro_parte', `%${tieneNroParte}%`)
+            if (filtroMarca) apQ = apQ.eq('marca', filtroMarca)
+            if (filtroTipo) apQ = apQ.eq('tipo', filtroTipo)
+            if (ptIds !== null) apQ = apQ.in('producto_id', ptIds)
+            const { data, error: err } = await apQ
+            if (err) { setBuscandoAvanzado(false); return }
+            setResultadosAvanzados((data || []).map(r => ({
+                producto_id: r.producto_id,
+                nro_parte: r.nro_parte,
+                marca: r.marca,
+                tipo: r.tipo,
+                pt: r.productos_terminados,
+            })))
+        } else {
+            let ptQ = supabase.from('productos_terminados')
+                .select('id, nombre, sku, precio_venta, stock_actual, categoria_1')
+                .eq('empresa_id', perfil.empresa_id).eq('activo', true)
+            if (filtroCat) ptQ = ptQ.eq('categoria_1', filtroCat)
+            if (busqueda.trim()) ptQ = ptQ.or(`nombre.ilike.%${busqueda.trim()}%,sku.ilike.%${busqueda.trim()}%`)
+            const { data } = await ptQ
+            setResultadosAvanzados((data || []).map(p => ({ producto_id: p.id, nro_parte: null, marca: null, tipo: null, pt: p })))
+        }
+        setBuscandoAvanzado(false)
     }
 
     const productosFiltrados = productos.filter(p =>
@@ -829,32 +904,139 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                     </div>
 
                     <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px' }}>
-                        <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '8px' }}>Agregar productos</label>
-                        <div style={{ position: 'relative' }}>
-                            <Search size={15} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
-                            <input type="text" placeholder="Buscar por nombre o código..." value={busqueda}
-                                onChange={e => setBusqueda(e.target.value)}
-                                style={{ width: '100%', padding: '8px 12px 8px 32px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', boxSizing: 'border-box' }} />
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                            <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151' }}>Agregar productos</label>
+                            {esAutopartes && (
+                                <button onClick={() => { setModoAvanzado(m => !m); setResultadosAvanzados(null); setBusqueda('') }}
+                                    style={{ fontSize: '12px', padding: '4px 10px', borderRadius: '6px', border: '1px solid', cursor: 'pointer',
+                                        borderColor: modoAvanzado ? '#1d4ed8' : '#d1d5db',
+                                        backgroundColor: modoAvanzado ? '#eff6ff' : '#f9fafb',
+                                        color: modoAvanzado ? '#1d4ed8' : '#6b7280', fontWeight: 500 }}>
+                                    {modoAvanzado ? 'Búsqueda simple' : 'Búsqueda avanzada'}
+                                </button>
+                            )}
                         </div>
-                        {busqueda && (
-                            <div style={{ marginTop: '8px', border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden', maxHeight: '200px', overflowY: 'auto' }}>
-                                {productosFiltrados.length === 0
-                                    ? <div style={{ padding: '12px', fontSize: '13px', color: '#9ca3af', textAlign: 'center' }}>Sin resultados</div>
-                                    : productosFiltrados.map(p => (
-                                        <div key={p.id} onClick={() => agregarProducto(p)}
-                                            style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', cursor: 'pointer', borderBottom: '1px solid #f3f4f6', fontSize: '13px' }}
-                                            onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f0fdf4'}
-                                            onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
-                                            <div>
-                                                <span style={{ fontWeight: 500, color: '#1f2937' }}>{p.nombre}</span>
-                                                <span style={{ color: '#9ca3af', marginLeft: '8px', fontFamily: 'monospace', fontSize: '11px' }}>{p.sku}</span>
-                                            </div>
-                                            <div style={{ textAlign: 'right' }}>
-                                                <div style={{ fontWeight: 600, color: '#16a34a' }}>{fmt(p.precio_venta)}</div>
-                                                <div style={{ fontSize: '11px', color: '#9ca3af' }}>Stock: {p.stock_actual}</div>
-                                            </div>
-                                        </div>
-                                    ))}
+
+                        {!modoAvanzado ? (
+                            <>
+                                <div style={{ position: 'relative' }}>
+                                    <Search size={15} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
+                                    <input type="text" placeholder="Buscar por nombre o código..." value={busqueda}
+                                        onChange={e => setBusqueda(e.target.value)}
+                                        style={{ width: '100%', padding: '8px 12px 8px 32px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', boxSizing: 'border-box' }} />
+                                </div>
+                                {busqueda && (
+                                    <div style={{ marginTop: '8px', border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden', maxHeight: '200px', overflowY: 'auto' }}>
+                                        {productosFiltrados.length === 0
+                                            ? <div style={{ padding: '12px', fontSize: '13px', color: '#9ca3af', textAlign: 'center' }}>Sin resultados</div>
+                                            : productosFiltrados.map(p => (
+                                                <div key={p.id} onClick={() => agregarProducto(p)}
+                                                    style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', cursor: 'pointer', borderBottom: '1px solid #f3f4f6', fontSize: '13px' }}
+                                                    onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f0fdf4'}
+                                                    onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                                                    <div>
+                                                        <span style={{ fontWeight: 500, color: '#1f2937' }}>{p.nombre}</span>
+                                                        <span style={{ color: '#9ca3af', marginLeft: '8px', fontFamily: 'monospace', fontSize: '11px' }}>{p.sku}</span>
+                                                    </div>
+                                                    <div style={{ textAlign: 'right' }}>
+                                                        <div style={{ fontWeight: 600, color: '#16a34a' }}>{fmt(p.precio_venta)}</div>
+                                                        <div style={{ fontSize: '11px', color: '#9ca3af' }}>Stock: {p.stock_actual}</div>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                    </div>
+                                )}
+                            </>
+                        ) : (
+                            /* ── Panel de búsqueda avanzada (autopartes) ── */
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                                    <div>
+                                        <label style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '3px' }}>N° de parte</label>
+                                        <input value={filtroNroParte} onChange={e => setFiltroNroParte(e.target.value)}
+                                            onKeyDown={e => e.key === 'Enter' && buscarAvanzado()}
+                                            placeholder="Ej: 0001-234..."
+                                            style={{ width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '13px', boxSizing: 'border-box' }} />
+                                    </div>
+                                    <div>
+                                        <label style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '3px' }}>Marca</label>
+                                        <select value={filtroMarca} onChange={e => setFiltroMarca(e.target.value)}
+                                            style={{ width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '13px', boxSizing: 'border-box', backgroundColor: '#fff' }}>
+                                            <option value="">— Todas —</option>
+                                            {marcasRepuesto.map(m => <option key={m} value={m}>{m}</option>)}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '3px' }}>Tipo</label>
+                                        <select value={filtroTipo} onChange={e => setFiltroTipo(e.target.value)}
+                                            style={{ width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '13px', boxSizing: 'border-box', backgroundColor: '#fff' }}>
+                                            <option value="">— Todos —</option>
+                                            {tiposRepuesto.map(t => <option key={t} value={t}>{t}</option>)}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '3px' }}>Categoría</label>
+                                        <select value={filtroCat} onChange={e => setFiltroCat(e.target.value)}
+                                            style={{ width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '13px', boxSizing: 'border-box', backgroundColor: '#fff' }}>
+                                            <option value="">— Todas —</option>
+                                            {categoriasRepuesto.map(c => <option key={c} value={c}>{c}</option>)}
+                                        </select>
+                                    </div>
+                                </div>
+                                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                    <div style={{ position: 'relative', flex: 1 }}>
+                                        <Search size={13} style={{ position: 'absolute', left: '9px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
+                                        <input value={busqueda} onChange={e => setBusqueda(e.target.value)}
+                                            onKeyDown={e => e.key === 'Enter' && buscarAvanzado()}
+                                            placeholder="Descripción o SKU (opcional)..."
+                                            style={{ width: '100%', padding: '7px 10px 7px 28px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '13px', boxSizing: 'border-box' }} />
+                                    </div>
+                                    <button onClick={buscarAvanzado} disabled={buscandoAvanzado}
+                                        style={{ padding: '7px 16px', backgroundColor: '#1d4ed8', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap', opacity: buscandoAvanzado ? 0.6 : 1 }}>
+                                        {buscandoAvanzado ? 'Buscando...' : 'Buscar'}
+                                    </button>
+                                    {(filtroNroParte || filtroMarca || filtroTipo || filtroCat || busqueda) && (
+                                        <button onClick={() => { setFiltroNroParte(''); setFiltroMarca(''); setFiltroTipo(''); setFiltroCat(''); setBusqueda(''); setResultadosAvanzados(null) }}
+                                            style={{ padding: '7px 10px', backgroundColor: '#f3f4f6', color: '#6b7280', border: '1px solid #e5e7eb', borderRadius: '7px', fontSize: '12px', cursor: 'pointer' }}>
+                                            Limpiar
+                                        </button>
+                                    )}
+                                </div>
+
+                                {/* Resultados avanzados */}
+                                {resultadosAvanzados !== null && (
+                                    <div style={{ border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden', maxHeight: '260px', overflowY: 'auto' }}>
+                                        {resultadosAvanzados.length === 0 ? (
+                                            <div style={{ padding: '16px', fontSize: '13px', color: '#9ca3af', textAlign: 'center' }}>Sin resultados</div>
+                                        ) : resultadosAvanzados.map((item, i) => {
+                                            const pt = item.pt
+                                            const sem = semaforo(pt.stock_actual ?? 0)
+                                            return (
+                                                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', borderBottom: '1px solid #f3f4f6' }}
+                                                    onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
+                                                    onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                                        <div style={{ fontSize: '13px', fontWeight: 500, color: '#1f2937', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{pt.nombre}</div>
+                                                        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', fontSize: '11px', color: '#6b7280', marginTop: '2px' }}>
+                                                            <span style={{ fontFamily: 'monospace' }}>{pt.sku}</span>
+                                                            {item.nro_parte && <span>N° {item.nro_parte}</span>}
+                                                            {item.marca && <span>{item.marca}</span>}
+                                                            {item.tipo && <span style={{ backgroundColor: '#f3f4f6', padding: '0 5px', borderRadius: '4px' }}>{item.tipo}</span>}
+                                                        </div>
+                                                    </div>
+                                                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                                                        <div style={{ fontSize: '13px', fontWeight: 700, color: '#16a34a' }}>{fmt(pt.precio_venta)}</div>
+                                                        <div style={{ fontSize: '11px', fontWeight: 500, color: sem.color, backgroundColor: sem.bg, padding: '1px 6px', borderRadius: '10px', marginTop: '2px' }}>{sem.label}</div>
+                                                    </div>
+                                                    <button onClick={() => agregarProducto(pt)} disabled={pt.stock_actual <= 0}
+                                                        style={{ padding: '5px 10px', backgroundColor: pt.stock_actual <= 0 ? '#f3f4f6' : '#16a34a', color: pt.stock_actual <= 0 ? '#9ca3af' : '#fff', border: 'none', borderRadius: '6px', fontSize: '13px', fontWeight: 600, cursor: pt.stock_actual <= 0 ? 'default' : 'pointer', flexShrink: 0 }}>
+                                                        +
+                                                    </button>
+                                                </div>
+                                            )
+                                        })}
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>
