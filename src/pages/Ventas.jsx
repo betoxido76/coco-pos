@@ -1028,8 +1028,8 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                                                         <div style={{ fontSize: '13px', fontWeight: 700, color: '#16a34a' }}>{fmt(pt.precio_venta)}</div>
                                                         <div style={{ fontSize: '11px', fontWeight: 500, color: sem.color, backgroundColor: sem.bg, padding: '1px 6px', borderRadius: '10px', marginTop: '2px' }}>{sem.label}</div>
                                                     </div>
-                                                    <button onClick={() => agregarProducto(pt)} disabled={pt.stock_actual <= 0}
-                                                        style={{ padding: '5px 10px', backgroundColor: pt.stock_actual <= 0 ? '#f3f4f6' : '#16a34a', color: pt.stock_actual <= 0 ? '#9ca3af' : '#fff', border: 'none', borderRadius: '6px', fontSize: '13px', fontWeight: 600, cursor: pt.stock_actual <= 0 ? 'default' : 'pointer', flexShrink: 0 }}>
+                                                    <button onClick={() => agregarProducto(pt)}
+                                                        style={{ padding: '5px 10px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '13px', fontWeight: 600, cursor: 'pointer', flexShrink: 0 }}>
                                                         +
                                                     </button>
                                                 </div>
