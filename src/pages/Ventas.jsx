@@ -335,6 +335,7 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
                 producto_id: i.producto_id,
                 cantidad: i.cantidad,
                 precio_unitario: Number(i.precio_unitario) * (1 - Number(i.descuento_item || 0) / 100) * (1 - descGlobal / 100),
+                aplica_iva: i.productos_terminados?.aplica_iva ?? true,
                 empresa_id: perfil.empresa_id,
             }))
         )
@@ -851,7 +852,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
         if (errVenta) { setError('Error al crear la venta: ' + errVenta.message); setGuardando(false); return }
 
         await supabase.from('venta_items').insert(
-            items.map(i => ({ venta_id: venta.id, producto_id: i.producto_id, cantidad: i.cantidad, precio_unitario: i.precio_unitario, empresa_id: perfil.empresa_id }))
+            items.map(i => ({ venta_id: venta.id, producto_id: i.producto_id, cantidad: i.cantidad, precio_unitario: i.precio_unitario, aplica_iva: i.aplica_iva ?? true, empresa_id: perfil.empresa_id }))
         )
 
         if (condicion === 'contado') {
@@ -1448,7 +1449,10 @@ function Factura({ venta, onVolver, onDevolucionCreada }) {
         if (data) setDevoluciones(data)
     }
 
-    const subtotal = venta.subtotal != null ? venta.subtotal : items.reduce((s, i) => s + i.cantidad * i.precio_unitario, 0)
+    const subtotal = venta.subtotal != null ? venta.subtotal : items.reduce((s, i) => {
+        const lineTotal = i.cantidad * i.precio_unitario
+        return s + ((i.aplica_iva ?? true) ? lineTotal / 1.16 : lineTotal)
+    }, 0)
     const total = venta.total != null ? venta.total : subtotal
     const impuesto = total - subtotal
     const puedeDevolver = venta.estado_cobro !== 'anulado'
