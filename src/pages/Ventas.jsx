@@ -1413,6 +1413,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
 // ─── Factura + Devolución ──────────────────────────────────────
 // ─── Factura + Devolución (CORREGIDO PARA IMPRESIÓN) ──────────────────────
 function Factura({ venta, onVolver, onDevolucionCreada }) {
+    const { perfil } = useAuth()
     const [items, setItems] = useState(venta.items || [])
     const [devoluciones, setDevoluciones] = useState([])
     const [mostrarDevolucion, setMostrarDevolucion] = useState(false)
