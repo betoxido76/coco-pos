@@ -1523,9 +1523,8 @@ function Factura({ venta, onVolver, onDevolucionCreada }) {
             <div className="print-target" style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '32px', marginBottom: '16px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '32px' }}>
                     <div>
-                        <div style={{ fontSize: '22px', marginBottom: '4px' }}>🥥</div>
-                        <div style={{ fontSize: '16px', fontWeight: 700, color: '#1f2937' }}>Empresa de Cocos</div>
-                        <div style={{ fontSize: '12px', color: '#6b7280' }}>RIF: J-00000000-0</div>
+                        <div style={{ fontSize: '16px', fontWeight: 700, color: '#1f2937' }}>{perfil?.empresas?.nombre || 'Mi Empresa'}</div>
+                        <div style={{ fontSize: '12px', color: '#6b7280' }}>RIF: {perfil?.empresas?.rif || ''}</div>
                     </div>
                     <div style={{ textAlign: 'right' }}>
                         <div style={{ fontSize: '14px', fontWeight: 600, color: '#6b7280', marginBottom: '4px' }}>Nota de Entrega</div>
