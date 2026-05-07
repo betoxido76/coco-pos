@@ -272,7 +272,7 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
 
     useEffect(() => {
         supabase.from('pedido_items')
-            .select('*, productos_terminados(nombre, sku, stock_actual)')
+            .select('*, productos_terminados(nombre, sku, stock_actual, aplica_iva)')
             .eq('pedido_id', pedido.id)
             .then(({ data }) => { if (data) setItems(data); setLoading(false) })
         supabase.from('clientes').select('condicion_pago, dias_credito').eq('id', pedido.cliente_id).single()
@@ -289,11 +289,13 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
     }, [pedido.id])
 
     const descGlobal = Number(pedido.descuento_global || 0)
-    const totalConDescItems = items.reduce((s, i) => s + Number(i.cantidad) * Number(i.precio_unitario) * (1 - Number(i.descuento_item || 0) / 100), 0)
-    const totalConIVA = totalConDescItems * (1 - descGlobal / 100)
-    const subtotal = totalConIVA / 1.16
-    const iva = totalConIVA - subtotal
-    const total = totalConIVA
+    const discountFactor = 1 - descGlobal / 100
+    const total = items.reduce((s, i) => s + Number(i.cantidad) * Number(i.precio_unitario) * (1 - Number(i.descuento_item || 0) / 100), 0) * discountFactor
+    const subtotal = items.reduce((s, i) => {
+        const lineTotal = Number(i.cantidad) * Number(i.precio_unitario) * (1 - Number(i.descuento_item || 0) / 100) * discountFactor
+        return s + (i.productos_terminados?.aplica_iva ? lineTotal / 1.16 : lineTotal)
+    }, 0)
+    const iva = total - subtotal
 
     async function facturar() {
         setProcesando(true); setError('')
@@ -647,7 +649,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
     useEffect(() => {
         supabase.from('clientes').select('id, nombre, rif, condicion_pago, dias_credito').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
             .then(({ data }) => setClientes(data || []))
-        supabase.from('productos_terminados').select('id, nombre, sku, precio_venta, stock_actual, unidad_medida').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
+        supabase.from('productos_terminados').select('id, nombre, sku, precio_venta, stock_actual, unidad_medida, aplica_iva').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
             .then(({ data }) => setProductos(data || []))
         supabase.from('configuracion').select('clave, valor').eq('empresa_id', perfil.empresa_id)
             .then(({ data }) => { if (data) { const t = {}; data.forEach(r => { t[r.clave] = Number(r.valor) }); setTasas(t) } })
@@ -729,7 +731,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
         if (tieneAutoparteFilter || tieneVehiculoFilter) {
             // Filtros de descripción/categoría se aplican directamente sobre el recurso embebido
             let apQ = supabase.from('productos_autopartes')
-                .select('nro_parte, marca, tipo, producto_id, productos_terminados!inner(id, nombre, sku, precio_venta, stock_actual, categoria_1)')
+                .select('nro_parte, marca, tipo, producto_id, productos_terminados!inner(id, nombre, sku, precio_venta, stock_actual, categoria_1, aplica_iva)')
                 .eq('empresa_id', perfil.empresa_id)
                 .eq('productos_terminados.activo', true)
             if (tieneNroParte) apQ = apQ.ilike('nro_parte', `%${tieneNroParte}%`)
@@ -749,7 +751,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
         } else {
             // Solo filtros de descripción/categoría — consultar PT y enriquecer con datos de autopartes
             let ptQ = supabase.from('productos_terminados')
-                .select('id, nombre, sku, precio_venta, stock_actual, categoria_1')
+                .select('id, nombre, sku, precio_venta, stock_actual, categoria_1, aplica_iva')
                 .eq('empresa_id', perfil.empresa_id).eq('activo', true)
             if (filtroCat) ptQ = ptQ.eq('categoria_1', filtroCat)
             if (busqueda.trim()) ptQ = ptQ.or(`nombre.ilike.%${busqueda.trim()}%,sku.ilike.%${busqueda.trim()}%,descripcion.ilike.%${busqueda.trim()}%`)
@@ -783,7 +785,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
         setItems(prev => {
             const existe = prev.find(i => i.producto_id === producto.id)
             if (existe) return prev.map(i => i.producto_id === producto.id ? { ...i, cantidad: i.cantidad + 1 } : i)
-            return [...prev, { producto_id: producto.id, nombre: producto.nombre, sku: producto.sku, cantidad: 1, precio_unitario: producto.precio_venta, precio_original: producto.precio_venta, stock: producto.stock_actual }]
+            return [...prev, { producto_id: producto.id, nombre: producto.nombre, sku: producto.sku, cantidad: 1, precio_unitario: producto.precio_venta, precio_original: producto.precio_venta, stock: producto.stock_actual, aplica_iva: producto.aplica_iva }]
         })
         setBusqueda('')
     }
@@ -802,10 +804,12 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
         setItems(prev => prev.map(i => i.producto_id === id ? { ...i, precio_unitario: parseFloat(valor) || 0 } : i))
     }
 
-    const totalConIVA = items.reduce((s, i) => s + i.cantidad * i.precio_unitario, 0)
-    const subtotal = totalConIVA / 1.16
-    const impuesto = totalConIVA - subtotal
-    const total = totalConIVA
+    const total = items.reduce((s, i) => s + i.cantidad * i.precio_unitario, 0)
+    const subtotal = items.reduce((s, i) => {
+        const lineTotal = i.cantidad * i.precio_unitario
+        return s + (i.aplica_iva ? lineTotal / 1.16 : lineTotal)
+    }, 0)
+    const impuesto = total - subtotal
 
     async function confirmarVenta() {
         if (!clienteId) { setError('Selecciona un cliente'); return }
@@ -1444,9 +1448,9 @@ function Factura({ venta, onVolver, onDevolucionCreada }) {
         if (data) setDevoluciones(data)
     }
 
-    const subtotal = venta.subtotal || items.reduce((s, i) => s + i.cantidad * i.precio_unitario, 0)
-    const impuesto = subtotal * 0.16
-    const total = venta.total || subtotal + impuesto
+    const subtotal = venta.subtotal != null ? venta.subtotal : items.reduce((s, i) => s + i.cantidad * i.precio_unitario, 0)
+    const total = venta.total != null ? venta.total : subtotal
+    const impuesto = total - subtotal
     const puedeDevolver = venta.estado_cobro !== 'anulado'
     const [refEditando, setRefEditando] = useState(false)
     const [refValor, setRefValor] = useState(venta.nro_referencia || '')
