@@ -23,6 +23,19 @@ function BadgeEstado({ estado }) {
     )
 }
 
+function getNombreSalida(o) {
+    if (o.tipo_salida === 'materia_prima') return o.materias_primas?.nombre || '—'
+    return o.productos_terminados?.nombre || '—'
+}
+function getSkuSalida(o) {
+    if (o.tipo_salida === 'materia_prima') return o.materias_primas?.codigo || ''
+    return o.productos_terminados?.sku || ''
+}
+function getUnidadSalida(o) {
+    if (o.tipo_salida === 'materia_prima') return o.materias_primas?.unidad_medida || ''
+    return o.productos_terminados?.unidad_medida || ''
+}
+
 const inputStyle = {
     width: '100%', padding: '8px 12px', border: '1px solid #d1d5db',
     borderRadius: '8px', fontSize: '14px', color: '#374151',
@@ -46,7 +59,7 @@ export default function Produccion() {
         setLoading(true)
         let q = supabase
             .from('ordenes_produccion')
-            .select('*, productos_terminados(nombre, sku, unidad_medida)')
+            .select('*, productos_terminados(nombre, sku, unidad_medida), materias_primas!mp_salida_id(nombre, codigo, unidad_medida)')
             .eq('empresa_id', perfil.empresa_id)
             .order('created_at', { ascending: false })
         if (filtroEstado !== 'todos') q = q.eq('estado', filtroEstado)
@@ -150,14 +163,17 @@ export default function Produccion() {
                                                     : <span style={{ color: '#d97706', fontSize: '12px' }}>⚠ Sin lote</span>}
                                             </td>
                                             <td style={{ padding: '12px 14px', fontSize: '13px', color: '#1f2937', fontWeight: 500 }}>
-                                                {o.productos_terminados?.nombre}
-                                                <span style={{ fontSize: '11px', color: '#9ca3af', marginLeft: '6px', fontFamily: 'monospace' }}>{o.productos_terminados?.sku}</span>
+                                                {getNombreSalida(o)}
+                                                <span style={{ fontSize: '11px', color: '#9ca3af', marginLeft: '6px', fontFamily: 'monospace' }}>{getSkuSalida(o)}</span>
+                                                {o.tipo_salida === 'materia_prima' && (
+                                                    <span style={{ fontSize: '10px', backgroundColor: '#f0fdf4', color: '#16a34a', border: '1px solid #bbf7d0', borderRadius: '10px', padding: '1px 6px', marginLeft: '6px' }}>semi</span>
+                                                )}
                                             </td>
                                             <td style={{ padding: '12px 14px', fontSize: '13px', color: '#6b7280' }}>
-                                                {fmt(o.cantidad_planificada, 0)} {o.productos_terminados?.unidad_medida}
+                                                {fmt(o.cantidad_planificada, 0)} {getUnidadSalida(o)}
                                             </td>
                                             <td style={{ padding: '12px 14px', fontSize: '13px', color: o.cantidad_real ? '#166534' : '#9ca3af', fontWeight: o.cantidad_real ? 600 : 400 }}>
-                                                {o.cantidad_real ? `${fmt(o.cantidad_real, 0)} ${o.productos_terminados?.unidad_medida}` : '—'}
+                                                {o.cantidad_real ? `${fmt(o.cantidad_real, 0)} ${getUnidadSalida(o)}` : '—'}
                                             </td>
                                             <td style={{ padding: '12px 14px', fontSize: '13px', color: '#6b7280' }}>
                                                 {o.fecha_planificada ? new Date(o.fecha_planificada + 'T00:00:00').toLocaleDateString('es-VE') : '—'}
@@ -186,7 +202,10 @@ function NuevaOrden({ onCreada, onCancelar }) {
     const { perfil } = useAuth()
     const [paso, setPaso] = useState(1)
     const [productos, setProductos] = useState([])
+    const [mpsProducidas, setMpsProducidas] = useState([])
+    const [tipoSalida, setTipoSalida] = useState('producto_terminado')
     const [productoId, setProductoId] = useState('')
+    const [mpSalidaId, setMpSalidaId] = useState('')
     const [cantPlanif, setCantPlanif] = useState('')
     const [fechaPlan, setFechaPlan] = useState('')
     const [numeroLote, setNumeroLote] = useState('')
@@ -205,6 +224,9 @@ function NuevaOrden({ onCreada, onCancelar }) {
     useEffect(() => {
         supabase.from('productos_terminados').select('id, nombre, sku, unidad_medida, vida_util_dias').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
             .then(({ data }) => setProductos(data || []))
+        supabase.from('materias_primas').select('id, nombre, codigo, unidad_medida, vida_util_dias')
+            .eq('activo', true).eq('empresa_id', perfil.empresa_id).eq('tipo_producto', 'producido').order('nombre')
+            .then(({ data }) => setMpsProducidas(data || []))
         supabase.from('materias_primas').select('id, nombre, codigo, unidad_medida, stock_actual').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
             .then(({ data }) => setInsumosMp(data || []))
         supabase.from('materiales_empaque').select('id, nombre, codigo, unidad_medida, stock_actual').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
@@ -238,7 +260,8 @@ function NuevaOrden({ onCreada, onCancelar }) {
     }, [])
 
     async function cargarReceta() {
-        if (!productoId || !cantPlanif || Number(cantPlanif) <= 0) {
+        const idSalida = tipoSalida === 'materia_prima' ? mpSalidaId : productoId
+        if (!idSalida || !cantPlanif || Number(cantPlanif) <= 0) {
             setError('Selecciona un producto e ingresa una cantidad válida'); return
         }
         setError('')
@@ -246,7 +269,7 @@ function NuevaOrden({ onCreada, onCancelar }) {
         const { data: receta } = await supabase
             .from('recetas')
             .select('id, rinde_unidades, receta_items(id, tipo_insumo, insumo_id, cantidad, unidad)')
-            .eq('producto_id', productoId)
+            .eq('producto_id', idSalida)
             .eq('activo', true)
             .single()
 
@@ -344,7 +367,9 @@ function NuevaOrden({ onCreada, onCancelar }) {
         } : c))
     }
 
-    const productoSel = productos.find(p => p.id === productoId)
+    const productoActual = tipoSalida === 'materia_prima'
+        ? mpsProducidas.find(p => p.id === mpSalidaId)
+        : productos.find(p => p.id === productoId)
 
     // Alertas de stock insuficiente
     // Alertas de stock insuficiente — basadas en el almacén seleccionado
@@ -377,15 +402,18 @@ function NuevaOrden({ onCreada, onCancelar }) {
         const numero = numeroConsecutivo || 'OP-000001' // Fallback por si falla
 
         // Buscar receta
+        const idSalida = tipoSalida === 'materia_prima' ? mpSalidaId : productoId
         const { data: receta } = await supabase
-            .from('recetas').select('id').eq('producto_id', productoId).eq('activo', true).single()
+            .from('recetas').select('id').eq('producto_id', idSalida).eq('activo', true).single()
 
         const { data: orden, error: errOrden } = await supabase
             .from('ordenes_produccion')
             .insert({
                 numero_orden: numero,
                 numero_lote: numeroLote.trim() || null,
-                producto_id: productoId,
+                producto_id: tipoSalida === 'producto_terminado' ? productoId : null,
+                mp_salida_id: tipoSalida === 'materia_prima' ? mpSalidaId : null,
+                tipo_salida: tipoSalida,
                 receta_id: receta?.id || null,
                 cantidad_planificada: Number(cantPlanif),
                 estado: 'confirmada',
@@ -486,17 +514,54 @@ function NuevaOrden({ onCreada, onCancelar }) {
                 </div>
 
                 <div>
-                    <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Producto a producir *</label>
-                    <select value={productoId} onChange={e => setProductoId(e.target.value)} style={inputStyle}>
-                        <option value="">Seleccionar producto...</option>
-                        {productos.map(p => <option key={p.id} value={p.id}>{p.nombre} {p.sku ? `(${p.sku})` : ''}</option>)}
-                    </select>
+                    <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '8px' }}>Tipo de salida *</label>
+                    <div style={{ display: 'flex', gap: '10px' }}>
+                        {[
+                            { val: 'producto_terminado', label: 'Producto terminado (PT)', desc: 'Sale directamente a venta' },
+                            { val: 'materia_prima', label: 'Semiterminado / MP producida', desc: 'Insumo para otra orden de producción' },
+                        ].map(opt => (
+                            <button key={opt.val}
+                                onClick={() => { setTipoSalida(opt.val); setProductoId(''); setMpSalidaId('') }}
+                                style={{
+                                    flex: 1, padding: '10px 14px', borderRadius: '10px', border: '2px solid', cursor: 'pointer', textAlign: 'left',
+                                    borderColor: tipoSalida === opt.val ? '#16a34a' : '#e5e7eb',
+                                    backgroundColor: tipoSalida === opt.val ? '#f0fdf4' : '#fff',
+                                }}>
+                                <p style={{ fontSize: '13px', fontWeight: 600, color: tipoSalida === opt.val ? '#166534' : '#374151', margin: '0 0 2px' }}>{opt.label}</p>
+                                <p style={{ fontSize: '11px', color: '#9ca3af', margin: 0 }}>{opt.desc}</p>
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
+                <div>
+                    <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>
+                        {tipoSalida === 'materia_prima' ? 'Materia prima / semiterminado a producir *' : 'Producto terminado a producir *'}
+                    </label>
+                    {tipoSalida === 'producto_terminado' ? (
+                        <select value={productoId} onChange={e => setProductoId(e.target.value)} style={inputStyle}>
+                            <option value="">Seleccionar producto...</option>
+                            {productos.map(p => <option key={p.id} value={p.id}>{p.nombre} {p.sku ? `(${p.sku})` : ''}</option>)}
+                        </select>
+                    ) : (
+                        <>
+                            <select value={mpSalidaId} onChange={e => setMpSalidaId(e.target.value)} style={inputStyle}>
+                                <option value="">Seleccionar materia prima...</option>
+                                {mpsProducidas.map(p => <option key={p.id} value={p.id}>{p.nombre} {p.codigo ? `(${p.codigo})` : ''}</option>)}
+                            </select>
+                            {mpsProducidas.length === 0 && (
+                                <p style={{ fontSize: '12px', color: '#d97706', margin: '6px 0 0' }}>
+                                    No hay materias primas con tipo "Producido". Créala en Administración → Materias Primas.
+                                </p>
+                            )}
+                        </>
+                    )}
                 </div>
 
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                     <div>
                         <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>
-                            Cantidad planificada * {productoSel ? `(${productoSel.unidad_medida})` : ''}
+                            Cantidad planificada * {productoActual ? `(${productoActual.unidad_medida})` : ''}
                         </label>
                         <input type="number" min="1" value={cantPlanif} onChange={e => setCantPlanif(e.target.value)}
                             placeholder="Ej: 100" style={inputStyle} />
@@ -544,11 +609,11 @@ function NuevaOrden({ onCreada, onCancelar }) {
             <div style={{ backgroundColor: '#f0fdf4', borderRadius: '12px', border: '1px solid #bbf7d0', padding: '16px 20px', marginBottom: '20px', display: 'flex', gap: '32px', alignItems: 'center' }}>
                 <div>
                     <p style={{ fontSize: '11px', color: '#16a34a', margin: '0 0 2px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Producto</p>
-                    <p style={{ fontSize: '15px', fontWeight: 700, color: '#1f2937', margin: 0 }}>{productoSel?.nombre}</p>
+                    <p style={{ fontSize: '15px', fontWeight: 700, color: '#1f2937', margin: 0 }}>{productoActual?.nombre}</p>
                 </div>
                 <div>
                     <p style={{ fontSize: '11px', color: '#16a34a', margin: '0 0 2px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Cantidad planificada</p>
-                    <p style={{ fontSize: '15px', fontWeight: 700, color: '#1f2937', margin: 0 }}>{fmt(cantPlanif, 0)} {productoSel?.unidad_medida}</p>
+                    <p style={{ fontSize: '15px', fontWeight: 700, color: '#1f2937', margin: 0 }}>{fmt(cantPlanif, 0)} {productoActual?.unidad_medida}</p>
                 </div>
                 {numeroLote && (
                     <div>
@@ -744,12 +809,17 @@ function DetalleOrden({ orden, onVolver, onActualizada }) {
 
     async function cargarDetalle() {
         setLoading(true)
-        const [{ data: cons }, { data: prod }] = await Promise.all([
-            supabase.from('lote_consumos').select('*').eq('orden_id', orden.id),
-            supabase.from('productos_terminados').select('nombre, sku, unidad_medida, vida_util_dias').eq('id', orden.producto_id).single(),
-        ])
+        const { data: cons } = await supabase.from('lote_consumos').select('*').eq('orden_id', orden.id)
         if (cons) setConsumos(cons)
-        if (prod) setProducto(prod)
+        if (orden.tipo_salida === 'materia_prima' && orden.mp_salida_id) {
+            const { data: mp } = await supabase.from('materias_primas')
+                .select('nombre, codigo, unidad_medida, vida_util_dias').eq('id', orden.mp_salida_id).single()
+            if (mp) setProducto({ nombre: mp.nombre, sku: mp.codigo, unidad_medida: mp.unidad_medida, vida_util_dias: mp.vida_util_dias })
+        } else if (orden.producto_id) {
+            const { data: prod } = await supabase.from('productos_terminados')
+                .select('nombre, sku, unidad_medida, vida_util_dias').eq('id', orden.producto_id).single()
+            if (prod) setProducto(prod)
+        }
         setLoading(false)
     }
 
@@ -896,7 +966,7 @@ function DetalleOrden({ orden, onVolver, onActualizada }) {
                 {puedeCerrar && (
                     <button onClick={() => setModalCierre(true)}
                         style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px 20px', fontSize: '14px', fontWeight: 600, cursor: 'pointer' }}>
-                        <Package size={16} /> Cerrar orden y registrar PT
+                        <Package size={16} /> Cerrar orden y registrar {orden.tipo_salida === 'materia_prima' ? 'MP' : 'PT'}
                     </button>
                 )}
                 {puedeAnular && (
@@ -981,70 +1051,86 @@ function ModalCierre({ orden, producto, consumos, onCerrar, onCerrada }) {
 
         if (errOrden) { setError('Error: ' + errOrden.message); setGuardando(false); return }
 
-        // Sumar PT al stock global
-        const { data: pt } = await supabase.from('productos_terminados').select('stock_actual').eq('id', orden.producto_id).single()
-        if (pt) {
-            const nuevoStock = pt.stock_actual + Number(cantReal)
+        if (orden.tipo_salida === 'materia_prima') {
+            // Sumar MP producida al stock
+            const { data: mp } = await supabase.from('materias_primas').select('stock_actual').eq('id', orden.mp_salida_id).single()
+            if (mp) {
+                const nuevoStock = mp.stock_actual + Number(cantReal)
+                await supabase.from('materias_primas').update({ stock_actual: nuevoStock }).eq('id', orden.mp_salida_id)
 
-            await supabase.from('productos_terminados')
-                .update({ stock_actual: nuevoStock })
-                .eq('id', orden.producto_id)
+                const { data: su } = await supabase.from('stock_ubicacion')
+                    .select('id, cantidad')
+                    .eq('almacen_id', almacenId).eq('tipo_item', 'materia_prima')
+                    .eq('item_id', orden.mp_salida_id).eq('empresa_id', perfil.empresa_id)
+                    .is('almacen_ubicacion_id', null).maybeSingle()
+                if (su) {
+                    await supabase.from('stock_ubicacion')
+                        .update({ cantidad: Number(su.cantidad) + Number(cantReal), updated_at: new Date().toISOString() })
+                        .eq('id', su.id)
+                } else {
+                    await supabase.from('stock_ubicacion').insert({
+                        almacen_id: almacenId, almacen_ubicacion_id: null,
+                        tipo_item: 'materia_prima', item_id: orden.mp_salida_id,
+                        cantidad: Number(cantReal), empresa_id: perfil.empresa_id,
+                        updated_at: new Date().toISOString(),
+                    })
+                }
 
-            // Sumar a stock_ubicacion en el almacén seleccionado
-            const { data: su } = await supabase.from('stock_ubicacion')
-                .select('id, cantidad')
-                .eq('almacen_id', almacenId)
-                .eq('tipo_item', 'producto_terminado')
-                .eq('item_id', orden.producto_id)
-                .eq('empresa_id', perfil.empresa_id)
-                .is('almacen_ubicacion_id', null)
-                .maybeSingle()
-
-            if (su) {
-                await supabase.from('stock_ubicacion')
-                    .update({ cantidad: Number(su.cantidad) + Number(cantReal), updated_at: new Date().toISOString() })
-                    .eq('id', su.id)
-            } else {
-                await supabase.from('stock_ubicacion').insert({
-                    almacen_id: almacenId,
-                    almacen_ubicacion_id: null,
-                    tipo_item: 'producto_terminado',
-                    item_id: orden.producto_id,
-                    cantidad: Number(cantReal),
-                    empresa_id: perfil.empresa_id,
-                    updated_at: new Date().toISOString(),
+                await supabase.from('movimientos_inventario').insert({
+                    empresa_id: perfil.empresa_id, tipo_item: 'materia_prima',
+                    item_id: orden.mp_salida_id, item_nombre: producto?.nombre,
+                    item_codigo: producto?.sku || '', tipo_movimiento: 'entrada',
+                    cantidad: Number(cantReal), stock_anterior: mp.stock_actual,
+                    stock_actual: nuevoStock, origen: 'produccion_cierre',
+                    almacen_id: almacenId, fecha: new Date().toISOString()
                 })
             }
+        } else {
+            // Sumar PT al stock global
+            const { data: pt } = await supabase.from('productos_terminados').select('stock_actual').eq('id', orden.producto_id).single()
+            if (pt) {
+                const nuevoStock = pt.stock_actual + Number(cantReal)
+                await supabase.from('productos_terminados').update({ stock_actual: nuevoStock }).eq('id', orden.producto_id)
 
-            // Registrar movimiento
-            await supabase.from('movimientos_inventario').insert({
-                empresa_id: perfil.empresa_id,
-                tipo_item: 'producto_terminado',
-                item_id: orden.producto_id,
-                item_nombre: producto?.nombre,
-                item_codigo: producto?.sku || '',
-                tipo_movimiento: 'entrada',
-                cantidad: Number(cantReal),
-                stock_anterior: pt.stock_actual,
-                stock_actual: nuevoStock,
-                origen: 'produccion_cierre',
-                almacen_id: almacenId,
-                fecha: new Date().toISOString()
-            })
+                const { data: su } = await supabase.from('stock_ubicacion')
+                    .select('id, cantidad')
+                    .eq('almacen_id', almacenId).eq('tipo_item', 'producto_terminado')
+                    .eq('item_id', orden.producto_id).eq('empresa_id', perfil.empresa_id)
+                    .is('almacen_ubicacion_id', null).maybeSingle()
+                if (su) {
+                    await supabase.from('stock_ubicacion')
+                        .update({ cantidad: Number(su.cantidad) + Number(cantReal), updated_at: new Date().toISOString() })
+                        .eq('id', su.id)
+                } else {
+                    await supabase.from('stock_ubicacion').insert({
+                        almacen_id: almacenId, almacen_ubicacion_id: null,
+                        tipo_item: 'producto_terminado', item_id: orden.producto_id,
+                        cantidad: Number(cantReal), empresa_id: perfil.empresa_id,
+                        updated_at: new Date().toISOString(),
+                    })
+                }
+
+                await supabase.from('movimientos_inventario').insert({
+                    empresa_id: perfil.empresa_id, tipo_item: 'producto_terminado',
+                    item_id: orden.producto_id, item_nombre: producto?.nombre,
+                    item_codigo: producto?.sku || '', tipo_movimiento: 'entrada',
+                    cantidad: Number(cantReal), stock_anterior: pt.stock_actual,
+                    stock_actual: nuevoStock, origen: 'produccion_cierre',
+                    almacen_id: almacenId, fecha: new Date().toISOString()
+                })
+
+                // Registrar lote de PT en lotes_produccion
+                await supabase.from('lotes_produccion').insert({
+                    orden_id: orden.id, producto_id: orden.producto_id,
+                    usuario_id: (await supabase.auth.getUser()).data.user.id,
+                    numero_lote: numeroLote || orden.numero_lote || null,
+                    cantidad_producida: Number(cantReal),
+                    fecha_produccion: new Date().toISOString().split('T')[0],
+                    fecha_vencimiento: fechaVenc || null,
+                    observaciones: observ || null, empresa_id: perfil.empresa_id,
+                })
+            }
         }
-
-        // Registrar lote de PT en lotes_produccion
-        await supabase.from('lotes_produccion').insert({
-            orden_id: orden.id,
-            producto_id: orden.producto_id,
-            usuario_id: (await supabase.auth.getUser()).data.user.id,
-            numero_lote: numeroLote || orden.numero_lote || null,
-            cantidad_producida: Number(cantReal),
-            fecha_produccion: new Date().toISOString().split('T')[0],
-            fecha_vencimiento: fechaVenc || null,
-            observaciones: observ || null,
-            empresa_id: perfil.empresa_id,
-        })
 
         setGuardando(false)
         onCerrada(ordenCerrada)
@@ -1153,6 +1239,7 @@ function ModalCierre({ orden, producto, consumos, onCerrar, onCerrada }) {
                     <p style={{ fontSize: '12px', color: '#16a34a', margin: '0 0 6px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Impacto en inventario al confirmar</p>
                     <p style={{ fontSize: '13px', color: '#166534', margin: '0 0 2px' }}>
                         ✓ Se sumarán <strong>{fmt(cantReal, 0)} {producto?.unidad_medida}</strong> al stock de <strong>{producto?.nombre}</strong>
+                        {orden.tipo_salida === 'materia_prima' && <span style={{ fontSize: '12px', color: '#059669', marginLeft: '6px' }}>(materia prima)</span>}
                     </p>
                     <p style={{ fontSize: '12px', color: '#16a34a', margin: 0 }}>
                         (Los insumos ya fueron descontados al confirmar la orden)
@@ -1163,7 +1250,7 @@ function ModalCierre({ orden, producto, consumos, onCerrar, onCerrada }) {
 
                 <button onClick={cerrar} disabled={guardando}
                     style={{ width: '100%', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '10px', padding: '13px', fontSize: '15px', fontWeight: 700, cursor: 'pointer' }}>
-                    {guardando ? 'Cerrando orden...' : '✓ Confirmar cierre y registrar PT'}
+                    {guardando ? 'Cerrando orden...' : `✓ Confirmar cierre y registrar ${orden.tipo_salida === 'materia_prima' ? 'MP' : 'PT'}`}
                 </button>
             </div>
         </>
