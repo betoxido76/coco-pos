@@ -55,31 +55,35 @@ export default function ListasPrecios() {
         setExito(false)
         setError('')
 
-        const [{ data: prods }, { data: preciosExistentes }] = await Promise.all([
-            supabase.from('productos_terminados')
-                .select('id, nombre, sku, unidad_medida, precio_venta')
-                .eq('activo', true)
-                .eq('empresa_id', perfil.empresa_id)
-                .order('nombre'),
-            supabase.from('producto_precios')
-                .select('producto_id, precio')
-                .eq('lista_id', listaId)
-                .eq('empresa_id', perfil.empresa_id),
-        ])
+        const { data: prods, error: errProds } = await supabase
+            .from('productos_terminados')
+            .select('id, nombre, sku, unidad_medida, precio_venta')
+            .eq('empresa_id', perfil.empresa_id)
+            .order('nombre')
 
-        if (prods) setProductos(prods)
+        if (errProds) {
+            setError('Error al cargar productos: ' + errProds.message)
+            setLoading(false)
+            return
+        }
 
-        // Construir mapa de precios existentes
+        const listaIdActual = listaId
+        const { data: preciosExistentes } = await supabase
+            .from('producto_precios')
+            .select('producto_id, precio')
+            .eq('lista_id', listaIdActual)
+            .eq('empresa_id', perfil.empresa_id)
+
+        const listaProds = prods || []
+        setProductos(listaProds)
+
         const mapa = {}
         if (preciosExistentes) {
             preciosExistentes.forEach(p => { mapa[p.producto_id] = String(p.precio) })
         }
-        // Para productos sin precio en esta lista, dejar vacío
-        if (prods) {
-            prods.forEach(p => {
-                if (!(p.id in mapa)) mapa[p.id] = ''
-            })
-        }
+        listaProds.forEach(p => {
+            if (!(p.id in mapa)) mapa[p.id] = ''
+        })
         setPrecios(mapa)
         setLoading(false)
     }
