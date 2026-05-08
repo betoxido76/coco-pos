@@ -35,6 +35,9 @@ export default function MateriasPrimas({ tabInicial = 'materias_primas' }) {
 
     useEffect(() => {
         cargar()
+    }, [tabActiva])
+
+    useEffect(() => {
         supabase.from('proveedores').select('id, nombre')
             .eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
             .then(({ data }) => setProveedores(data || []))
