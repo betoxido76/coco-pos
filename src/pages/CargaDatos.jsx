@@ -109,7 +109,7 @@ const CATALOGOS = [
             { campo: 'rif', header: 'RIF', requerido: false },
             { campo: 'telefono', header: 'Telefono', requerido: false },
             { campo: 'contacto', header: 'Contacto', requerido: false },
-            { campo: 'tipo', header: 'Tipo', requerido: false },
+            { campo: 'tipo', header: 'Tipo', requerido: false, opciones: ['producto_terminado', 'materia_prima', 'material_empaque', 'consumibles', 'servicios'] },
         ],
         defaults: { activo: true }
     },
@@ -142,6 +142,9 @@ function procesarFila(filaRaw, columnas, defaults) {
             fila[col.campo] = parsearBooleano(val)
         } else if (['precio_venta', 'costo_promedio', 'costo_compra_promedio', 'stock_actual', 'stock_minimo', 'vida_util_dias', 'dias_credito', 'limite_credito'].includes(col.campo)) {
             fila[col.campo] = Number(val) || 0
+        } else if (col.opciones) {
+            const normalizado = String(val).trim().toLowerCase().replace(/\s+/g, '_')
+            fila[col.campo] = col.opciones.includes(normalizado) ? normalizado : null
         } else {
             fila[col.campo] = String(val).trim()
         }
@@ -171,7 +174,10 @@ export default function CargaDatos() {
             materiales_empaque: [['Botella PET 500ml', 'ME-BOT-001', 'Transparente', 'unidad', 0.15, 500, 100, 'Envases', 'Si']],
             consumibles: [['Guantes nitrilo M', 'CON-001', 'Caja x100', 'caja', 8.50, 10, 2, 'Seguridad', 'Si']],
             clientes: [['Supermercado Central', 'J-12345678-9', '0212-555-0101', 'compras@central.com', 'credito', 30, 5000]],
-            proveedores: [['Agroindustrial Los Llanos', 'J-98765432-1', '0414-555-0202', 'Juan Pérez', 'materia_prima']],
+            proveedores: [
+                ['Agroindustrial Los Llanos', 'J-98765432-1', '0414-555-0202', 'Juan Pérez', 'materia_prima'],
+                ['(Tipo puede ser: producto_terminado, materia_prima, material_empaque, consumibles, servicios)', '', '', '', ''],
+            ],
         }
         const ws = XLSX.utils.aoa_to_sheet([headers, ...(ejemplos[catalogoKey] || [])])
         ws['!cols'] = headers.map(() => ({ wch: 20 }))
