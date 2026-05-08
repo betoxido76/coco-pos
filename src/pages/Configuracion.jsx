@@ -54,6 +54,16 @@ export default function Configuracion() {
 
     if (loading) return <div style={{ padding: '24px', color: '#9ca3af' }}>Cargando...</div>
 
+    const bcv = Number(valores.tasa_bcv) || 0
+    const eur = Number(valores.tasa_euro) || 0
+    const bin = Number(valores.tasa_binance) || 0
+
+    function pct(tasa, base) {
+        if (!tasa || !base) return null
+        const v = ((tasa - base) / base * 100)
+        return `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`
+    }
+
     return (
         <div style={{ padding: '24px', maxWidth: '560px' }}>
             <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: '0 0 4px' }}>Configuración</h1>
@@ -82,6 +92,21 @@ export default function Configuracion() {
                         {valores[t.clave] > 0 && (
                             <p style={{ fontSize: '12px', color: '#16a34a', margin: '8px 0 0', textAlign: 'right' }}>
                                 $1.00 = {Number(valores[t.clave]).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.
+                            </p>
+                        )}
+                        {t.clave === 'tasa_euro' && eur > 0 && bcv > 0 && (
+                            <p style={{ fontSize: '12px', color: '#6b7280', margin: '2px 0 0', textAlign: 'right' }}>
+                                {pct(eur, bcv)} vs. USD·BCV
+                            </p>
+                        )}
+                        {t.clave === 'tasa_binance' && bin > 0 && bcv > 0 && (
+                            <p style={{ fontSize: '12px', color: '#6b7280', margin: '2px 0 0', textAlign: 'right' }}>
+                                {pct(bin, bcv)} vs. USD·BCV
+                            </p>
+                        )}
+                        {t.clave === 'tasa_binance' && bin > 0 && eur > 0 && (
+                            <p style={{ fontSize: '12px', color: '#6b7280', margin: '2px 0 0', textAlign: 'right' }}>
+                                {pct(bin, eur)} vs. EUR·BCV
                             </p>
                         )}
                     </div>
