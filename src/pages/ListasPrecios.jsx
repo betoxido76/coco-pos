@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
-import { Save, Check, Search } from 'lucide-react'
+import { Save, Check, Search, Plus, X } from 'lucide-react'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 
@@ -22,6 +22,10 @@ export default function ListasPrecios() {
     const [exito, setExito] = useState(false)
     const [error, setError] = useState('')
     const [loading, setLoading] = useState(false)
+    const [mostrarFormNueva, setMostrarFormNueva] = useState(false)
+    const [nombreNueva, setNombreNueva] = useState('')
+    const [esDefaultNueva, setEsDefaultNueva] = useState(false)
+    const [creando, setCreando] = useState(false)
 
     // Cargar listas
     useEffect(() => {
@@ -122,6 +126,30 @@ export default function ListasPrecios() {
         setTimeout(() => setExito(false), 3000)
     }
 
+    async function crearLista() {
+        if (!nombreNueva.trim()) return
+        setCreando(true)
+        if (esDefaultNueva) {
+            await supabase.from('listas_precio')
+                .update({ es_default: false })
+                .eq('empresa_id', perfil.empresa_id)
+        }
+        const { data, error: err } = await supabase.from('listas_precio')
+            .insert({ nombre: nombreNueva.trim(), empresa_id: perfil.empresa_id, es_default: esDefaultNueva, activo: true })
+            .select().single()
+        setCreando(false)
+        if (err) { setError('Error al crear: ' + err.message); return }
+        const nuevaLista = { id: data.id, nombre: data.nombre, es_default: data.es_default }
+        setListas(prev => esDefaultNueva
+            ? [...prev.map(l => ({ ...l, es_default: false })), nuevaLista]
+            : [...prev, nuevaLista]
+        )
+        setListaId(data.id)
+        setNombreNueva('')
+        setEsDefaultNueva(false)
+        setMostrarFormNueva(false)
+    }
+
     const listaActual = listas.find(l => l.id === listaId)
     const productosFiltrados = productos.filter(p =>
         p.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
@@ -134,10 +162,40 @@ export default function ListasPrecios() {
         <div style={{ padding: '24px' }}>
 
             {/* Header */}
-            <div style={{ marginBottom: '24px' }}>
-                <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: '0 0 4px' }}>Listas de Precio</h1>
-                <p style={{ fontSize: '13px', color: '#6b7280', margin: 0 }}>Define los precios de cada producto por lista</p>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
+                <div>
+                    <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: '0 0 4px' }}>Listas de Precio</h1>
+                    <p style={{ fontSize: '13px', color: '#6b7280', margin: 0 }}>Define los precios de cada producto por lista</p>
+                </div>
+                <button onClick={() => { setMostrarFormNueva(v => !v); setNombreNueva(''); setEsDefaultNueva(false) }}
+                    style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: mostrarFormNueva ? '#f3f4f6' : '#16a34a', color: mostrarFormNueva ? '#374151' : '#fff', border: 'none', borderRadius: '8px', padding: '9px 16px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}>
+                    {mostrarFormNueva ? <><X size={14} /> Cancelar</> : <><Plus size={14} /> Nueva lista</>}
+                </button>
             </div>
+
+            {/* Formulario nueva lista */}
+            {mostrarFormNueva && (
+                <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '12px', padding: '16px 20px', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                    <input
+                        autoFocus
+                        type="text"
+                        value={nombreNueva}
+                        onChange={e => setNombreNueva(e.target.value)}
+                        onKeyDown={e => e.key === 'Enter' && crearLista()}
+                        placeholder="Nombre de la lista (ej: Lista Mayoristas)"
+                        style={{ flex: 1, minWidth: '220px', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', color: '#374151' }}
+                    />
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: '#374151', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                        <input type="checkbox" checked={esDefaultNueva} onChange={e => setEsDefaultNueva(e.target.checked)}
+                            style={{ width: '15px', height: '15px', accentColor: '#16a34a' }} />
+                        Lista por defecto
+                    </label>
+                    <button onClick={crearLista} disabled={creando || !nombreNueva.trim()}
+                        style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: !nombreNueva.trim() ? '#d1d5db' : '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '9px 18px', fontSize: '13px', fontWeight: 600, cursor: !nombreNueva.trim() ? 'default' : 'pointer' }}>
+                        <Check size={14} /> {creando ? 'Creando...' : 'Crear lista'}
+                    </button>
+                </div>
+            )}
 
             {/* Selector de lista */}
             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '20px' }}>
