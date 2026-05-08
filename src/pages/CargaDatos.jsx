@@ -207,6 +207,24 @@ export default function CargaDatos() {
                 if (errs.length > 0) errores[idx] = errs
             })
 
+            // Detectar duplicados dentro del mismo archivo
+            const campoUnico = catalogo.conflicto.split(',').find(c => c !== 'empresa_id')
+            if (campoUnico) {
+                const vistos = {}
+                filasProcessadas.forEach((fila, idx) => {
+                    const val = fila[campoUnico]
+                    if (val !== undefined && val !== null && val !== '') {
+                        const key = String(val).toLowerCase()
+                        if (vistos[key] !== undefined) {
+                            if (!errores[idx]) errores[idx] = []
+                            errores[idx].push(`${campoUnico} "${val}" duplicado en el archivo (fila ${filasProcessadas[vistos[key]]._idx})`)
+                        } else {
+                            vistos[key] = idx
+                        }
+                    }
+                })
+            }
+
             setFilas(filasProcessadas)
             setErroresFila(errores)
             setPaso('preview')
