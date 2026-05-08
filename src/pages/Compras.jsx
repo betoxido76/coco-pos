@@ -250,9 +250,219 @@ function BadgeCobro({ estado }) {
     return <span style={{ backgroundColor: s.bg, color: s.color, padding: '2px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 500 }}>{estado}</span>
 }
 
+// ─── Panel búsqueda avanzada autopartes (compartido OC y Recepción) ──
+function PanelBusquedaAutopartes({ perfil, insumos, onAgregar }) {
+    const [filtroNroParte, setFiltroNroParte] = useState('')
+    const [filtroMarca, setFiltroMarca] = useState('')
+    const [filtroTipo, setFiltroTipo] = useState('')
+    const [filtroCat, setFiltroCat] = useState('')
+    const [busqueda, setBusqueda] = useState('')
+    const [marcasRepuesto, setMarcasRepuesto] = useState([])
+    const [tiposRepuesto, setTiposRepuesto] = useState([])
+    const [categoriasRepuesto, setCategoriasRepuesto] = useState([])
+    const [marcaV, setMarcaV] = useState('')
+    const [modeloV, setModeloV] = useState('')
+    const [anioV, setAnioV] = useState('')
+    const [marcasV, setMarcasV] = useState([])
+    const [modelosV, setModelosV] = useState([])
+    const [resultados, setResultados] = useState(null)
+    const [buscando, setBuscando] = useState(false)
+
+    useEffect(() => {
+        supabase.from('productos_autopartes').select('marca').eq('empresa_id', perfil.empresa_id).not('marca', 'is', null)
+            .then(({ data }) => setMarcasRepuesto([...new Set((data || []).map(p => p.marca).filter(Boolean))].sort()))
+        supabase.from('productos_autopartes').select('tipo').eq('empresa_id', perfil.empresa_id).not('tipo', 'is', null)
+            .then(({ data }) => setTiposRepuesto([...new Set((data || []).map(p => p.tipo).filter(Boolean))].sort()))
+        supabase.from('productos_terminados').select('categoria_1').eq('empresa_id', perfil.empresa_id).eq('activo', true).not('categoria_1', 'is', null)
+            .then(({ data }) => setCategoriasRepuesto([...new Set((data || []).map(p => p.categoria_1).filter(Boolean))].sort()))
+        supabase.from('vehiculos').select('marca').eq('empresa_id', perfil.empresa_id).order('marca')
+            .then(({ data }) => setMarcasV([...new Set((data || []).map(v => v.marca).filter(Boolean))].sort()))
+    }, [])
+
+    useEffect(() => {
+        if (!marcaV) { setModelosV([]); setModeloV(''); return }
+        supabase.from('vehiculos').select('modelo').eq('empresa_id', perfil.empresa_id).eq('marca', marcaV).order('modelo')
+            .then(({ data }) => { setModelosV([...new Set((data || []).map(v => v.modelo))].sort()); setModeloV('') })
+    }, [marcaV])
+
+    async function buscar() {
+        const tieneNroParte = filtroNroParte.trim()
+        const tieneAutoparteFilter = tieneNroParte || filtroMarca || filtroTipo
+        const tieneVehiculoFilter = !!marcaV
+        if (!tieneAutoparteFilter && !tieneVehiculoFilter && !filtroCat && !busqueda.trim()) return
+        setBuscando(true); setResultados(null)
+
+        let ptIds = null
+        if (tieneVehiculoFilter) {
+            let vQ = supabase.from('vehiculos').select('id').eq('empresa_id', perfil.empresa_id).eq('marca', marcaV)
+            if (modeloV) vQ = vQ.eq('modelo', modeloV)
+            const { data: vData } = await vQ
+            const vehiculoIds = (vData || []).map(v => v.id)
+            if (vehiculoIds.length === 0) { setResultados([]); setBuscando(false); return }
+            const { data: pvData } = await supabase.from('producto_vehiculo')
+                .select('producto_id, año_inicio, año_fin').eq('empresa_id', perfil.empresa_id).in('vehiculo_id', vehiculoIds)
+            let pvFiltrado = pvData || []
+            if (anioV.trim()) {
+                const y = Number(anioV)
+                pvFiltrado = pvFiltrado.filter(pv => y >= pv.año_inicio && y <= pv.año_fin)
+            }
+            ptIds = [...new Set(pvFiltrado.map(pv => pv.producto_id))]
+            if (ptIds.length === 0) { setResultados([]); setBuscando(false); return }
+        }
+
+        if (tieneAutoparteFilter || tieneVehiculoFilter) {
+            let apQ = supabase.from('productos_autopartes')
+                .select('nro_parte, marca, tipo, producto_id, productos_terminados!inner(id, nombre, sku, categoria_1)')
+                .eq('empresa_id', perfil.empresa_id).eq('productos_terminados.activo', true)
+            if (tieneNroParte) apQ = apQ.ilike('nro_parte', `%${tieneNroParte}%`)
+            if (filtroMarca) apQ = apQ.eq('marca', filtroMarca)
+            if (filtroTipo) apQ = apQ.eq('tipo', filtroTipo)
+            if (ptIds !== null) apQ = apQ.in('producto_id', ptIds)
+            if (filtroCat) apQ = apQ.eq('productos_terminados.categoria_1', filtroCat)
+            if (busqueda.trim()) apQ = apQ.or(
+                `nombre.ilike.%${busqueda.trim()}%,sku.ilike.%${busqueda.trim()}%`,
+                { referencedTable: 'productos_terminados' }
+            )
+            const { data } = await apQ
+            setResultados((data || []).map(r => ({ producto_id: r.producto_id, nro_parte: r.nro_parte, marca: r.marca, tipo: r.tipo, pt: r.productos_terminados })))
+        } else {
+            let ptQ = supabase.from('productos_terminados')
+                .select('id, nombre, sku, categoria_1').eq('empresa_id', perfil.empresa_id).eq('activo', true)
+            if (filtroCat) ptQ = ptQ.eq('categoria_1', filtroCat)
+            if (busqueda.trim()) ptQ = ptQ.or(`nombre.ilike.%${busqueda.trim()}%,sku.ilike.%${busqueda.trim()}%`)
+            const { data: ptData } = await ptQ
+            const ids = (ptData || []).map(p => p.id)
+            const apMap = {}
+            if (ids.length > 0) {
+                const { data: apData } = await supabase.from('productos_autopartes')
+                    .select('producto_id, nro_parte, marca, tipo').eq('empresa_id', perfil.empresa_id).in('producto_id', ids)
+                ;(apData || []).forEach(ap => { apMap[ap.producto_id] = ap })
+            }
+            setResultados((ptData || []).map(p => ({ producto_id: p.id, nro_parte: apMap[p.id]?.nro_parte ?? null, marca: apMap[p.id]?.marca ?? null, tipo: apMap[p.id]?.tipo ?? null, pt: p })))
+        }
+        setBuscando(false)
+    }
+
+    const hayFiltros = filtroNroParte || filtroMarca || filtroTipo || filtroCat || marcaV || busqueda
+    const inStyle = { width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '13px', boxSizing: 'border-box' }
+
+    return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                <div>
+                    <label style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '3px' }}>N° de parte</label>
+                    <input value={filtroNroParte} onChange={e => setFiltroNroParte(e.target.value)} onKeyDown={e => e.key === 'Enter' && buscar()}
+                        placeholder="Ej: 0001-234..." style={inStyle} />
+                </div>
+                <div>
+                    <label style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '3px' }}>Marca repuesto</label>
+                    <select value={filtroMarca} onChange={e => setFiltroMarca(e.target.value)} style={{ ...inStyle, backgroundColor: '#fff' }}>
+                        <option value="">— Todas —</option>
+                        {marcasRepuesto.map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                </div>
+                <div>
+                    <label style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '3px' }}>Tipo</label>
+                    <select value={filtroTipo} onChange={e => setFiltroTipo(e.target.value)} style={{ ...inStyle, backgroundColor: '#fff' }}>
+                        <option value="">— Todos —</option>
+                        {tiposRepuesto.map(t => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                </div>
+                <div>
+                    <label style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '3px' }}>Categoría</label>
+                    <select value={filtroCat} onChange={e => setFiltroCat(e.target.value)} style={{ ...inStyle, backgroundColor: '#fff' }}>
+                        <option value="">— Todas —</option>
+                        {categoriasRepuesto.map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                </div>
+            </div>
+            <div style={{ padding: '8px 10px', backgroundColor: '#f0f9ff', borderRadius: '7px', border: '1px solid #bae6fd' }}>
+                <p style={{ fontSize: '11px', fontWeight: 600, color: '#0369a1', margin: '0 0 6px' }}>Vehículo compatible</p>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 80px', gap: '8px' }}>
+                    <div>
+                        <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '3px' }}>Marca</label>
+                        <select value={marcaV} onChange={e => setMarcaV(e.target.value)} style={{ ...inStyle, backgroundColor: '#fff' }}>
+                            <option value="">— Todas —</option>
+                            {marcasV.map(m => <option key={m} value={m}>{m}</option>)}
+                        </select>
+                    </div>
+                    <div>
+                        <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '3px' }}>Modelo</label>
+                        <select value={modeloV} onChange={e => setModeloV(e.target.value)} disabled={!marcaV}
+                            style={{ ...inStyle, backgroundColor: '#fff', opacity: !marcaV ? 0.5 : 1 }}>
+                            <option value="">— Todos —</option>
+                            {modelosV.map(m => <option key={m} value={m}>{m}</option>)}
+                        </select>
+                    </div>
+                    <div>
+                        <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '3px' }}>Año</label>
+                        <input type="number" value={anioV} onChange={e => setAnioV(e.target.value)} onKeyDown={e => e.key === 'Enter' && buscar()}
+                            placeholder="2015" style={inStyle} />
+                    </div>
+                </div>
+            </div>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <div style={{ position: 'relative', flex: 1 }}>
+                    <Search size={13} style={{ position: 'absolute', left: '9px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
+                    <input value={busqueda} onChange={e => setBusqueda(e.target.value)} onKeyDown={e => e.key === 'Enter' && buscar()}
+                        placeholder="Descripción o SKU (opcional)..."
+                        style={{ ...inStyle, padding: '7px 10px 7px 28px' }} />
+                </div>
+                <button onClick={buscar} disabled={buscando}
+                    style={{ padding: '7px 16px', backgroundColor: '#1d4ed8', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap', opacity: buscando ? 0.6 : 1 }}>
+                    {buscando ? 'Buscando...' : 'Buscar'}
+                </button>
+                {hayFiltros && (
+                    <button onClick={() => { setFiltroNroParte(''); setFiltroMarca(''); setFiltroTipo(''); setFiltroCat(''); setMarcaV(''); setModeloV(''); setAnioV(''); setBusqueda(''); setResultados(null) }}
+                        style={{ padding: '7px 10px', backgroundColor: '#f3f4f6', color: '#6b7280', border: '1px solid #e5e7eb', borderRadius: '7px', fontSize: '12px', cursor: 'pointer' }}>
+                        Limpiar
+                    </button>
+                )}
+            </div>
+            {resultados !== null && (
+                <div style={{ border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden', maxHeight: '260px', overflowY: 'auto' }}>
+                    {resultados.length === 0 ? (
+                        <div style={{ padding: '16px', fontSize: '13px', color: '#9ca3af', textAlign: 'center' }}>Sin resultados</div>
+                    ) : resultados.map((item, idx) => {
+                        const ins = insumos.find(i => i.id === item.producto_id)
+                        return (
+                            <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', borderBottom: '1px solid #f3f4f6' }}
+                                onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
+                                onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div style={{ fontSize: '13px', fontWeight: 500, color: '#1f2937', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.pt?.nombre}</div>
+                                    <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', fontSize: '11px', color: '#6b7280', marginTop: '2px' }}>
+                                        <span style={{ fontFamily: 'monospace' }}>{item.pt?.sku}</span>
+                                        {item.nro_parte && <span>N° {item.nro_parte}</span>}
+                                        {item.marca && <span>{item.marca}</span>}
+                                        {item.tipo && <span style={{ backgroundColor: '#f3f4f6', padding: '0 5px', borderRadius: '4px' }}>{item.tipo}</span>}
+                                    </div>
+                                </div>
+                                <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                                    <div style={{ fontSize: '13px', fontWeight: 700, color: '#374151' }}>{fmt(ins?.costo || 0)}</div>
+                                    {ins && <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '1px' }}>Stock: {ins.stock_actual ?? '—'}</div>}
+                                </div>
+                                {ins ? (
+                                    <button onClick={() => onAgregar(ins)}
+                                        style={{ padding: '5px 10px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '13px', fontWeight: 600, cursor: 'pointer', flexShrink: 0 }}>
+                                        +
+                                    </button>
+                                ) : (
+                                    <span style={{ fontSize: '11px', color: '#9ca3af', padding: '5px' }}>No en catálogo</span>
+                                )}
+                            </div>
+                        )
+                    })}
+                </div>
+            )}
+        </div>
+    )
+}
+
 // ─── Nueva Orden de Compra ──────────────────────────────────────
 function NuevaOrden({ onCreada, onCancelar }) {
     const { perfil } = useAuth()
+    const esAutopartes = perfil?.empresas?.perfil_negocio === 'autopartes'
     const [proveedores, setProveedores] = useState([])
     const [insumos, setInsumos] = useState([])
     const [proveedorId, setProveedorId] = useState('')
@@ -262,6 +472,7 @@ function NuevaOrden({ onCreada, onCancelar }) {
     const [error, setError] = useState('')
     const [fechaEntrega, setFechaEntrega] = useState('')
     const [ocPendiente, setOcPendiente] = useState(null)
+    const [modoAvanzadoOC, setModoAvanzadoOC] = useState(false)
 
     useEffect(() => {
         supabase.from('proveedores').select('id, nombre').eq('activo', true).order('nombre')
@@ -421,23 +632,40 @@ function NuevaOrden({ onCreada, onCancelar }) {
                     </div>
 
                     <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px' }}>
-                        <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '8px' }}>Agregar insumos</label>
-                        <div style={{ position: 'relative' }}>
-                            <Search size={15} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
-                            <input type="text" placeholder="Buscar por nombre o código..." value={busqueda} onChange={e => setBusqueda(e.target.value)}
-                                style={{ width: '100%', padding: '8px 12px 8px 32px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', boxSizing: 'border-box' }} />
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                            <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151' }}>Agregar insumos</label>
+                            {esAutopartes && (
+                                <button onClick={() => setModoAvanzadoOC(m => !m)}
+                                    style={{ fontSize: '12px', padding: '4px 10px', borderRadius: '6px', border: '1px solid', cursor: 'pointer',
+                                        borderColor: modoAvanzadoOC ? '#1d4ed8' : '#d1d5db',
+                                        backgroundColor: modoAvanzadoOC ? '#eff6ff' : '#f9fafb',
+                                        color: modoAvanzadoOC ? '#1d4ed8' : '#6b7280', fontWeight: 500 }}>
+                                    {modoAvanzadoOC ? 'Búsqueda simple' : 'Búsqueda avanzada'}
+                                </button>
+                            )}
                         </div>
-                        {busqueda && (
-                            <div style={{ marginTop: '8px', border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden', maxHeight: '200px', overflowY: 'auto' }}>
-                                {insumosFiltrados.length === 0 ? <div style={{ padding: '12px', fontSize: '13px', color: '#9ca3af', textAlign: 'center' }}>Sin resultados</div>
-                                    : insumosFiltrados.map(p => (
-                                        <div key={`${p.id}-${p.tipo}`} onClick={() => agregarInsumo(p)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', cursor: 'pointer', borderBottom: '1px solid #f3f4f6', fontSize: '13px' }}
-                                            onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f0fdf4'} onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
-                                            <div><span style={{ fontWeight: 500, color: '#1f2937' }}>{p.nombre}</span><span style={{ color: '#9ca3af', marginLeft: '8px', fontFamily: 'monospace', fontSize: '11px' }}>{p.codigo}</span></div>
-                                            <div style={{ textAlign: 'right' }}><div style={{ fontWeight: 600, color: '#16a34a' }}>{fmt(p.costo)}</div></div>
-                                        </div>
-                                    ))}
-                            </div>
+                        {!modoAvanzadoOC ? (
+                            <>
+                                <div style={{ position: 'relative' }}>
+                                    <Search size={15} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
+                                    <input type="text" placeholder="Buscar por nombre o código..." value={busqueda} onChange={e => setBusqueda(e.target.value)}
+                                        style={{ width: '100%', padding: '8px 12px 8px 32px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', boxSizing: 'border-box' }} />
+                                </div>
+                                {busqueda && (
+                                    <div style={{ marginTop: '8px', border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden', maxHeight: '200px', overflowY: 'auto' }}>
+                                        {insumosFiltrados.length === 0 ? <div style={{ padding: '12px', fontSize: '13px', color: '#9ca3af', textAlign: 'center' }}>Sin resultados</div>
+                                            : insumosFiltrados.map(p => (
+                                                <div key={`${p.id}-${p.tipo}`} onClick={() => agregarInsumo(p)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', cursor: 'pointer', borderBottom: '1px solid #f3f4f6', fontSize: '13px' }}
+                                                    onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f0fdf4'} onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                                                    <div><span style={{ fontWeight: 500, color: '#1f2937' }}>{p.nombre}</span><span style={{ color: '#9ca3af', marginLeft: '8px', fontFamily: 'monospace', fontSize: '11px' }}>{p.codigo}</span></div>
+                                                    <div style={{ textAlign: 'right' }}><div style={{ fontWeight: 600, color: '#16a34a' }}>{fmt(p.costo)}</div></div>
+                                                </div>
+                                            ))}
+                                    </div>
+                                )}
+                            </>
+                        ) : (
+                            <PanelBusquedaAutopartes perfil={perfil} insumos={insumos} onAgregar={agregarInsumo} />
                         )}
                     </div>
 
@@ -537,6 +765,7 @@ function NuevaOrden({ onCreada, onCancelar }) {
 // ─── Nueva Recepción (con opción de vincular OC) ──────────────
 function NuevaRecepcion({ onCreada, onCancelar }) {
     const { perfil } = useAuth()
+    const esAutopartes = perfil?.empresas?.perfil_negocio === 'autopartes'
     const [proveedores, setProveedores] = useState([])
     const [ocsPendientes, setOcsPendientes] = useState([])
     const [ocSeleccionada, setOcSeleccionada] = useState('')
@@ -555,6 +784,7 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
     const [insumos, setInsumos] = useState([])
     const [busquedaInsumo, setBusquedaInsumo] = useState('')
     const [proveedorLibreId, setProveedorLibreId] = useState('')
+    const [modoAvanzadoRec, setModoAvanzadoRec] = useState(false)
 
     // Almacén destino
     const [almacenes, setAlmacenes] = useState([])
@@ -840,34 +1070,51 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
                             {proveedores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
                         </select>
                     </div>
-                    <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Agregar insumos</label>
-                    <div style={{ position: 'relative' }}>
-                        <Search size={15} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
-                        <input type="text" placeholder="Buscar por nombre o código..."
-                            value={busquedaInsumo} onChange={e => setBusquedaInsumo(e.target.value)}
-                            style={{ width: '100%', padding: '8px 12px 8px 32px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', boxSizing: 'border-box' }} />
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                        <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151' }}>Agregar insumos</label>
+                        {esAutopartes && (
+                            <button onClick={() => setModoAvanzadoRec(m => !m)}
+                                style={{ fontSize: '12px', padding: '4px 10px', borderRadius: '6px', border: '1px solid', cursor: 'pointer',
+                                    borderColor: modoAvanzadoRec ? '#1d4ed8' : '#d1d5db',
+                                    backgroundColor: modoAvanzadoRec ? '#eff6ff' : '#f9fafb',
+                                    color: modoAvanzadoRec ? '#1d4ed8' : '#6b7280', fontWeight: 500 }}>
+                                {modoAvanzadoRec ? 'Búsqueda simple' : 'Búsqueda avanzada'}
+                            </button>
+                        )}
                     </div>
-                    {busquedaInsumo && (
-                        <div style={{ marginTop: '6px', border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden', maxHeight: '220px', overflowY: 'auto' }}>
-                            {insumosFiltrados.length === 0
-                                ? <div style={{ padding: '12px', fontSize: '13px', color: '#9ca3af', textAlign: 'center' }}>Sin resultados</div>
-                                : insumosFiltrados.map(i => (
-                                    <div key={`${i.tipo}-${i.id}`} onClick={() => agregarInsumoLibre(i)}
-                                        style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', cursor: 'pointer', borderBottom: '1px solid #f3f4f6', fontSize: '13px' }}
-                                        onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f0fdf4'}
-                                        onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
-                                        <div>
-                                            <span style={{ fontWeight: 500, color: '#1f2937' }}>{i.nombre}</span>
-                                            {i.codigo && <span style={{ color: '#9ca3af', marginLeft: '8px', fontFamily: 'monospace', fontSize: '11px' }}>{i.codigo}</span>}
-                                            <span style={{ marginLeft: '8px', fontSize: '11px', backgroundColor: '#f3f4f6', color: '#6b7280', padding: '1px 6px', borderRadius: '10px' }}>
-                                                {TIPO_LABEL[i.tipo] || i.tipo}
-                                            </span>
-                                        </div>
-                                        <span style={{ fontSize: '12px', color: '#16a34a', fontWeight: 500 }}>{fmt(i.costo || 0)}</span>
-                                    </div>
-                                ))
-                            }
-                        </div>
+                    {!modoAvanzadoRec ? (
+                        <>
+                            <div style={{ position: 'relative' }}>
+                                <Search size={15} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
+                                <input type="text" placeholder="Buscar por nombre o código..."
+                                    value={busquedaInsumo} onChange={e => setBusquedaInsumo(e.target.value)}
+                                    style={{ width: '100%', padding: '8px 12px 8px 32px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', boxSizing: 'border-box' }} />
+                            </div>
+                            {busquedaInsumo && (
+                                <div style={{ marginTop: '6px', border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden', maxHeight: '220px', overflowY: 'auto' }}>
+                                    {insumosFiltrados.length === 0
+                                        ? <div style={{ padding: '12px', fontSize: '13px', color: '#9ca3af', textAlign: 'center' }}>Sin resultados</div>
+                                        : insumosFiltrados.map(i => (
+                                            <div key={`${i.tipo}-${i.id}`} onClick={() => agregarInsumoLibre(i)}
+                                                style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', cursor: 'pointer', borderBottom: '1px solid #f3f4f6', fontSize: '13px' }}
+                                                onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f0fdf4'}
+                                                onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                                                <div>
+                                                    <span style={{ fontWeight: 500, color: '#1f2937' }}>{i.nombre}</span>
+                                                    {i.codigo && <span style={{ color: '#9ca3af', marginLeft: '8px', fontFamily: 'monospace', fontSize: '11px' }}>{i.codigo}</span>}
+                                                    <span style={{ marginLeft: '8px', fontSize: '11px', backgroundColor: '#f3f4f6', color: '#6b7280', padding: '1px 6px', borderRadius: '10px' }}>
+                                                        {TIPO_LABEL[i.tipo] || i.tipo}
+                                                    </span>
+                                                </div>
+                                                <span style={{ fontSize: '12px', color: '#16a34a', fontWeight: 500 }}>{fmt(i.costo || 0)}</span>
+                                            </div>
+                                        ))
+                                    }
+                                </div>
+                            )}
+                        </>
+                    ) : (
+                        <PanelBusquedaAutopartes perfil={perfil} insumos={insumos} onAgregar={agregarInsumoLibre} />
                     )}
                 </div>
             )}
