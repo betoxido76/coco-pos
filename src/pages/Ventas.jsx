@@ -646,12 +646,21 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
     const [diasCredito, setDiasCredito] = useState(0)
     const [cuentasBancarias, setCuentasBancarias] = useState([])
     const [cuentaBancariaId, setCuentaBancariaId] = useState('')
+    const [listas, setListas] = useState([])
+    const [listaId, setListaId] = useState('')
+    const [descuentoGlobal, setDescuentoGlobal] = useState('')
 
     useEffect(() => {
         supabase.from('clientes').select('id, nombre, rif, condicion_pago, dias_credito').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
             .then(({ data }) => setClientes(data || []))
-        supabase.from('productos_terminados').select('id, nombre, sku, precio_venta, stock_actual, unidad_medida, aplica_iva').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
-            .then(({ data }) => setProductos(data || []))
+        supabase.from('listas_precio').select('id, nombre, es_default').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
+            .then(({ data }) => {
+                if (data && data.length > 0) {
+                    setListas(data)
+                    const def = data.find(l => l.es_default)
+                    setListaId(def ? def.id : data[0].id)
+                }
+            })
         supabase.from('configuracion').select('clave, valor').eq('empresa_id', perfil.empresa_id)
             .then(({ data }) => { if (data) { const t = {}; data.forEach(r => { t[r.clave] = Number(r.valor) }); setTasas(t) } })
         supabase.from('cuentas_bancarias').select('id, nombre, banco, moneda').eq('empresa_id', perfil.empresa_id).eq('activa', true)
@@ -667,6 +676,21 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                 .then(({ data }) => setMarcasV([...new Set((data || []).map(v => v.marca).filter(Boolean))].sort()))
         }
     }, [])
+
+    useEffect(() => {
+        if (!perfil?.empresa_id) return
+        if (!listaId) {
+            supabase.from('productos_terminados').select('id, nombre, sku, precio_venta, stock_actual, unidad_medida, aplica_iva').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
+                .then(({ data }) => setProductos(data || []))
+            return
+        }
+        supabase.from('producto_precios')
+            .select('precio, productos_terminados(id, nombre, sku, stock_actual, unidad_medida, aplica_iva)')
+            .eq('lista_id', listaId).eq('empresa_id', perfil.empresa_id)
+            .then(({ data }) => {
+                if (data) setProductos(data.filter(p => p.productos_terminados).map(p => ({ ...p.productos_terminados, precio_venta: p.precio })))
+            })
+    }, [listaId])
 
     useEffect(() => {
         if (!marcaV || !perfil?.empresa_id) { setModelosV([]); setModeloV(''); return }
@@ -783,10 +807,11 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
     )
 
     function agregarProducto(producto) {
+        const precioLista = productos.find(p => p.id === producto.id)?.precio_venta ?? producto.precio_venta
         setItems(prev => {
             const existe = prev.find(i => i.producto_id === producto.id)
             if (existe) return prev.map(i => i.producto_id === producto.id ? { ...i, cantidad: i.cantidad + 1 } : i)
-            return [...prev, { producto_id: producto.id, nombre: producto.nombre, sku: producto.sku, cantidad: 1, precio_unitario: producto.precio_venta, precio_original: producto.precio_venta, stock: producto.stock_actual, aplica_iva: producto.aplica_iva }]
+            return [...prev, { producto_id: producto.id, nombre: producto.nombre, sku: producto.sku, cantidad: 1, precio_unitario: precioLista, precio_original: precioLista, stock: producto.stock_actual, aplica_iva: producto.aplica_iva, descuento_item: '' }]
         })
         setBusqueda('')
     }
@@ -805,10 +830,15 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
         setItems(prev => prev.map(i => i.producto_id === id ? { ...i, precio_unitario: parseFloat(valor) || 0 } : i))
     }
 
-    const total = items.reduce((s, i) => s + i.cantidad * i.precio_unitario, 0)
+    function setDescItem(id, val) {
+        setItems(prev => prev.map(i => i.producto_id === id ? { ...i, descuento_item: val } : i))
+    }
+
+    const totalBruto = items.reduce((s, i) => s + i.cantidad * i.precio_unitario * (1 - Number(i.descuento_item || 0) / 100), 0)
+    const total = totalBruto * (1 - Number(descuentoGlobal || 0) / 100)
     const subtotal = items.reduce((s, i) => {
-        const lineTotal = i.cantidad * i.precio_unitario
-        return s + (i.aplica_iva ? lineTotal / 1.16 : lineTotal)
+        const line = i.cantidad * i.precio_unitario * (1 - Number(i.descuento_item || 0) / 100) * (1 - Number(descuentoGlobal || 0) / 100)
+        return s + (i.aplica_iva ? line / 1.16 : line)
     }, 0)
     const impuesto = total - subtotal
 
@@ -851,8 +881,13 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
 
         if (errVenta) { setError('Error al crear la venta: ' + errVenta.message); setGuardando(false); return }
 
+        const descGlobal = Number(descuentoGlobal) || 0
         await supabase.from('venta_items').insert(
-            items.map(i => ({ venta_id: venta.id, producto_id: i.producto_id, cantidad: i.cantidad, precio_unitario: i.precio_unitario, aplica_iva: i.aplica_iva ?? true, empresa_id: perfil.empresa_id }))
+            items.map(i => ({
+                venta_id: venta.id, producto_id: i.producto_id, cantidad: i.cantidad,
+                precio_unitario: i.precio_unitario * (1 - Number(i.descuento_item || 0) / 100) * (1 - descGlobal / 100),
+                aplica_iva: i.aplica_iva ?? true, empresa_id: perfil.empresa_id,
+            }))
         )
 
         if (condicion === 'contado') {
@@ -1008,6 +1043,13 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                     <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                             <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151' }}>Agregar productos</label>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            {listas.length > 0 && (
+                                <select value={listaId} onChange={e => setListaId(e.target.value)}
+                                    style={{ padding: '5px 8px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '12px', color: '#374151', backgroundColor: '#fff' }}>
+                                    {listas.map(l => <option key={l.id} value={l.id}>{l.nombre}{l.es_default ? ' ★' : ''}</option>)}
+                                </select>
+                            )}
                             {esAutopartes && (
                                 <button onClick={() => { setModoAvanzado(m => !m); setResultadosAvanzados(null); setBusqueda('') }}
                                     style={{ fontSize: '12px', padding: '4px 10px', borderRadius: '6px', border: '1px solid', cursor: 'pointer',
@@ -1017,6 +1059,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                                     {modoAvanzado ? 'Búsqueda simple' : 'Búsqueda avanzada'}
                                 </button>
                             )}
+                            </div>
                         </div>
 
                         {!modoAvanzado ? (
@@ -1179,7 +1222,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                                 <thead>
                                     <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                        {['Producto', 'Precio', 'Cant.', 'Subtotal', ''].map((h, i) => (
+                                        {['Producto', 'Precio', 'Desc.%', 'Cant.', 'Subtotal', ''].map((h, i) => (
                                             <th key={i} style={{ padding: '10px 12px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left' }}>{h}</th>
                                         ))}
                                     </tr>
@@ -1206,11 +1249,20 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                                                 />
                                             </td>
                                             <td style={{ padding: '10px 12px' }}>
+                                                <input type="number" min="0" max="100" step="0.1"
+                                                    value={item.descuento_item || ''}
+                                                    onChange={e => setDescItem(item.producto_id, e.target.value)}
+                                                    placeholder="0"
+                                                    style={{ width: '60px', padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '12px', textAlign: 'center' }} />
+                                            </td>
+                                            <td style={{ padding: '10px 12px' }}>
                                                 <input type="number" min="1" max={item.stock} value={item.cantidad}
                                                     onChange={e => cambiarCantidad(item.producto_id, e.target.value)}
                                                     style={{ width: '60px', padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px', textAlign: 'center' }} />
                                             </td>
-                                            <td style={{ padding: '10px 12px', fontSize: '13px', fontWeight: 600, color: '#1f2937' }}>{fmt(item.cantidad * item.precio_unitario)}</td>
+                                            <td style={{ padding: '10px 12px', fontSize: '13px', fontWeight: 600, color: '#1f2937' }}>
+                                                {fmt(item.cantidad * item.precio_unitario * (1 - Number(item.descuento_item || 0) / 100))}
+                                            </td>
                                             <td style={{ padding: '10px 12px' }}>
                                                 <button onClick={() => eliminarItem(item.producto_id)}
                                                     style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', padding: '4px' }}>
@@ -1233,13 +1285,28 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                                 <span>{l}</span><span>{v}</span>
                             </div>
                         ))}
+                        {(Number(descuentoGlobal) > 0 || items.some(i => Number(i.descuento_item) > 0)) && (
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#16a34a' }}>
+                                <span>Descuentos</span>
+                                <span>-{fmt(totalBruto - total)}</span>
+                            </div>
+                        )}
                         <div style={{ height: '1px', backgroundColor: '#e5e7eb', margin: '4px 0' }} />
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '16px', fontWeight: 700, color: '#1f2937' }}>
                             <span>Total</span><span style={{ color: '#16a34a' }}>{fmt(total)}</span>
                         </div>
                     </div>
-                    <div style={{ fontSize: '12px', color: '#9ca3af', marginBottom: '16px' }}>
+                    <div style={{ fontSize: '12px', color: '#9ca3af', marginBottom: '8px' }}>
                         {items.length} producto(s) · {items.reduce((s, i) => s + i.cantidad, 0)} unidades
+                    </div>
+
+                    {/* Descuento global */}
+                    <div style={{ marginBottom: '16px' }}>
+                        <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Descuento global %</label>
+                        <input type="number" min="0" max="100" step="0.1"
+                            value={descuentoGlobal} onChange={e => setDescuentoGlobal(e.target.value)}
+                            placeholder="0"
+                            style={{ width: '100px', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '14px', fontWeight: 600, textAlign: 'center' }} />
                     </div>
 
                     {/* Condición de pago */}
