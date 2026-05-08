@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
-import { Check, X, Shield, User } from 'lucide-react'
+import { Check, X, Shield, User, Pencil } from 'lucide-react'
 
 const ROL_LABEL = {
     admin:      { label: 'Admin',      bg: '#f0fdf4', color: '#166534' },
@@ -19,6 +19,9 @@ export default function AccesosUsuarios() {
     const [loading, setLoading] = useState(true)
     const [guardando, setGuardando] = useState({}) // { `${uid}-${mid}`: bool }
     const [usuarioSel, setUsuarioSel] = useState(null)
+    const [editandoNombre, setEditandoNombre] = useState(false)
+    const [nuevoNombreVal, setNuevoNombreVal] = useState('')
+    const [guardandoNombre, setGuardandoNombre] = useState(false)
 
     useEffect(() => { cargar() }, [])
 
@@ -112,6 +115,15 @@ export default function AccesosUsuarios() {
         setAccesos(prev => ({ ...prev, [usuarioId]: new Set(modulos.map(m => m.id)) }))
     }
 
+    async function guardarNombre() {
+        if (!nuevoNombreVal.trim()) return
+        setGuardandoNombre(true)
+        await supabase.from('usuarios').update({ nombre: nuevoNombreVal.trim() }).eq('id', usuarioSel)
+        setUsuarios(prev => prev.map(u => u.id === usuarioSel ? { ...u, nombre: nuevoNombreVal.trim() } : u))
+        setEditandoNombre(false)
+        setGuardandoNombre(false)
+    }
+
     async function quitarTodoAcceso(usuarioId) {
         await supabase.from('usuario_modulos')
             .delete()
@@ -147,7 +159,7 @@ export default function AccesosUsuarios() {
                         const nAccesos = (accesos[u.id] || new Set()).size
                         const seleccionado = usuarioSel === u.id
                         return (
-                            <div key={u.id} onClick={() => setUsuarioSel(u.id)}
+                            <div key={u.id} onClick={() => { setUsuarioSel(u.id); setEditandoNombre(false) }}
                                 style={{
                                     padding: '12px 16px', cursor: 'pointer', borderBottom: '1px solid #f9fafb',
                                     backgroundColor: seleccionado ? '#f0fdf4' : 'transparent',
@@ -183,7 +195,34 @@ export default function AccesosUsuarios() {
                                     <User size={20} style={{ color: '#16a34a' }} />
                                 </div>
                                 <div>
-                                    <div style={{ fontSize: '15px', fontWeight: 600, color: '#1f2937' }}>{usuarioActual.nombre}</div>
+                                    {editandoNombre ? (
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                            <input
+                                                autoFocus
+                                                value={nuevoNombreVal}
+                                                onChange={e => setNuevoNombreVal(e.target.value)}
+                                                onKeyDown={e => { if (e.key === 'Enter') guardarNombre(); if (e.key === 'Escape') setEditandoNombre(false) }}
+                                                style={{ fontSize: '14px', fontWeight: 600, color: '#1f2937', border: '1px solid #d1d5db', borderRadius: '6px', padding: '3px 8px', width: '180px' }}
+                                            />
+                                            <button onClick={guardarNombre} disabled={guardandoNombre}
+                                                style={{ padding: '3px 10px', fontSize: '12px', fontWeight: 500, backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer' }}>
+                                                {guardandoNombre ? '...' : 'Guardar'}
+                                            </button>
+                                            <button onClick={() => setEditandoNombre(false)}
+                                                style={{ padding: '3px 8px', fontSize: '12px', backgroundColor: 'transparent', color: '#6b7280', border: '1px solid #d1d5db', borderRadius: '6px', cursor: 'pointer' }}>
+                                                Cancelar
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                            <span style={{ fontSize: '15px', fontWeight: 600, color: '#1f2937' }}>{usuarioActual.nombre}</span>
+                                            <button onClick={() => { setNuevoNombreVal(usuarioActual.nombre); setEditandoNombre(true) }}
+                                                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px', color: '#9ca3af', display: 'flex', alignItems: 'center' }}
+                                                title="Editar nombre">
+                                                <Pencil size={13} />
+                                            </button>
+                                        </div>
+                                    )}
                                     <div style={{ fontSize: '12px', color: '#6b7280' }}>{usuarioActual.email}</div>
                                 </div>
                             </div>

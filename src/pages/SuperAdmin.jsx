@@ -156,6 +156,22 @@ export default function SuperAdmin() {
         setUsuarios(prev => prev.map(u => u.id === usuario.id ? { ...u, activo: !u.activo } : u))
     }
 
+    // ── Renombrar usuario ──
+    const [modalRenombrar, setModalRenombrar] = useState(null) // { id, nombre }
+    const [nuevoNombreRen, setNuevoNombreRen] = useState('')
+    const [guardandoRenombrar, setGuardandoRenombrar] = useState(false)
+    const [errorRenombrar, setErrorRenombrar] = useState('')
+
+    async function renombrarUsuario() {
+        if (!nuevoNombreRen.trim()) { setErrorRenombrar('El nombre no puede estar vacío'); return }
+        setGuardandoRenombrar(true); setErrorRenombrar('')
+        const { error } = await supabase.from('usuarios').update({ nombre: nuevoNombreRen.trim() }).eq('id', modalRenombrar.id)
+        if (error) { setErrorRenombrar('Error: ' + error.message); setGuardandoRenombrar(false); return }
+        setUsuarios(prev => prev.map(u => u.id === modalRenombrar.id ? { ...u, nombre: nuevoNombreRen.trim() } : u))
+        setGuardandoRenombrar(false)
+        setModalRenombrar(null)
+    }
+
     // ── Reset de contraseña ──
     const [modalReset, setModalReset] = useState(null) // { id, nombre }
     const [nuevaPass, setNuevaPass] = useState('')
@@ -464,6 +480,10 @@ export default function SuperAdmin() {
                                                             style={{ padding: '5px 10px', borderRadius: '6px', fontSize: '11px', border: '1px solid #fde68a', backgroundColor: '#fefce8', color: '#854d0e', cursor: 'pointer' }}>
                                                             🔑 Resetear clave
                                                         </button>
+                                                        <button onClick={() => { setModalRenombrar({ id: usuarioActual.id, nombre: usuarioActual.nombre }); setNuevoNombreRen(usuarioActual.nombre); setErrorRenombrar('') }}
+                                                            style={{ padding: '5px 10px', borderRadius: '6px', fontSize: '11px', border: '1px solid #ddd6fe', backgroundColor: '#f5f3ff', color: '#6d28d9', cursor: 'pointer' }}>
+                                                            ✏ Renombrar
+                                                        </button>
                                                     </div>
                                                 </div>
 
@@ -608,6 +628,46 @@ export default function SuperAdmin() {
                                 {guardandoUsuario ? 'Creando usuario...' : 'Crear usuario'}
                             </button>
                             <button onClick={() => setModalUsuario(false)}
+                                style={{ flex: 1, padding: '11px', borderRadius: '8px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: '#374151', fontSize: '14px', cursor: 'pointer' }}>
+                                Cancelar
+                            </button>
+                        </div>
+                    </div>
+                </>
+            )}
+
+            {/* Modal renombrar usuario */}
+            {modalRenombrar && (
+                <>
+                    <div onClick={() => setModalRenombrar(null)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', zIndex: 40 }} />
+                    <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', backgroundColor: '#fff', borderRadius: '16px', padding: '28px', width: '400px', zIndex: 50, boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+                        <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#1f2937', margin: '0 0 6px' }}>✏ Renombrar usuario</h3>
+                        <p style={{ fontSize: '13px', color: '#6b7280', margin: '0 0 20px' }}>
+                            Cuenta: <strong>{modalRenombrar.nombre}</strong>
+                        </p>
+                        <div>
+                            <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Nuevo nombre *</label>
+                            <input
+                                autoFocus
+                                type="text"
+                                value={nuevoNombreRen}
+                                onChange={e => setNuevoNombreRen(e.target.value)}
+                                onKeyDown={e => { if (e.key === 'Enter') renombrarUsuario(); if (e.key === 'Escape') setModalRenombrar(null) }}
+                                placeholder="Nombre completo"
+                                style={inputStyle}
+                            />
+                        </div>
+                        {errorRenombrar && (
+                            <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px', fontSize: '13px', color: '#dc2626', marginTop: '12px' }}>
+                                {errorRenombrar}
+                            </div>
+                        )}
+                        <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
+                            <button onClick={renombrarUsuario} disabled={guardandoRenombrar}
+                                style={{ flex: 2, backgroundColor: '#6d28d9', color: '#fff', border: 'none', borderRadius: '8px', padding: '11px', fontSize: '14px', fontWeight: 600, cursor: 'pointer', opacity: guardandoRenombrar ? 0.6 : 1 }}>
+                                {guardandoRenombrar ? 'Guardando...' : 'Guardar nombre'}
+                            </button>
+                            <button onClick={() => setModalRenombrar(null)}
                                 style={{ flex: 1, padding: '11px', borderRadius: '8px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: '#374151', fontSize: '14px', cursor: 'pointer' }}>
                                 Cancelar
                             </button>
