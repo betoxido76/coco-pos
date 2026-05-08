@@ -46,6 +46,7 @@ export default function ListasPrecios() {
     // Cargar productos y precios existentes cuando cambia la lista
     useEffect(() => {
         if (!listaId) return
+        setBusqueda('')
         cargarProductosYPrecios()
     }, [listaId])
 
@@ -151,9 +152,10 @@ export default function ListasPrecios() {
     }
 
     const listaActual = listas.find(l => l.id === listaId)
+    const q = busqueda.toLowerCase()
     const productosFiltrados = productos.filter(p =>
-        p.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
-        p.sku?.toLowerCase().includes(busqueda.toLowerCase())
+        (p.nombre || '').toLowerCase().includes(q) ||
+        (p.sku || '').toLowerCase().includes(q)
     )
     const conPrecio = productos.filter(p => precios[p.id] !== '' && Number(precios[p.id]) > 0).length
     const sinPrecio = productos.length - conPrecio
@@ -257,6 +259,13 @@ export default function ListasPrecios() {
                             </tr>
                         </thead>
                         <tbody>
+                            {productosFiltrados.length === 0 && (
+                                <tr>
+                                    <td colSpan={5} style={{ padding: '32px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>
+                                        {busqueda ? `Sin resultados para "${busqueda}"` : 'No hay productos cargados'}
+                                    </td>
+                                </tr>
+                            )}
                             {productosFiltrados.map(p => {
                                 const precioActual = precios[p.id]
                                 const tienePrecio = precioActual !== '' && Number(precioActual) > 0
