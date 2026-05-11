@@ -360,7 +360,8 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
         for (const item of items) {
             const prod = item.productos_terminados
             if (prod) {
-                const nuevoStock = prod.stock_actual - Number(item.cantidad)
+                const cantPrimaria = Number(item.cantidad_primaria ?? item.cantidad)
+                const nuevoStock = prod.stock_actual - cantPrimaria
                 await supabase.from('productos_terminados')
                     .update({ stock_actual: nuevoStock })
                     .eq('id', item.producto_id)
@@ -372,7 +373,7 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
                     item_nombre: prod.nombre,
                     item_codigo: prod.sku,
                     tipo_movimiento: 'salida',
-                    cantidad: Number(item.cantidad),
+                    cantidad: cantPrimaria,
                     stock_actual: nuevoStock,
                     origen: 'pedido_facturado',
                     fecha: new Date().toISOString()
@@ -680,12 +681,12 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
     useEffect(() => {
         if (!perfil?.empresa_id) return
         if (!listaId) {
-            supabase.from('productos_terminados').select('id, nombre, sku, precio_venta, stock_actual, unidad_medida, aplica_iva').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
+            supabase.from('productos_terminados').select('id, nombre, sku, precio_venta, stock_actual, unidad_medida, aplica_iva, unidad_venta_2, factor_conversion_2').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
                 .then(({ data }) => setProductos(data || []))
             return
         }
         supabase.from('producto_precios')
-            .select('precio, productos_terminados(id, nombre, sku, stock_actual, unidad_medida, aplica_iva)')
+            .select('precio, productos_terminados(id, nombre, sku, stock_actual, unidad_medida, aplica_iva, unidad_venta_2, factor_conversion_2)')
             .eq('lista_id', listaId).eq('empresa_id', perfil.empresa_id)
             .then(({ data }) => {
                 if (data) setProductos(data.filter(p => p.productos_terminados).map(p => ({ ...p.productos_terminados, precio_venta: p.precio })))
@@ -756,7 +757,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
         if (tieneAutoparteFilter || tieneVehiculoFilter) {
             // Filtros de descripción/categoría se aplican directamente sobre el recurso embebido
             let apQ = supabase.from('productos_autopartes')
-                .select('nro_parte, marca, tipo, producto_id, productos_terminados!inner(id, nombre, sku, precio_venta, stock_actual, categoria_1, aplica_iva)')
+                .select('nro_parte, marca, tipo, producto_id, productos_terminados!inner(id, nombre, sku, precio_venta, stock_actual, categoria_1, aplica_iva, unidad_venta_2, factor_conversion_2)')
                 .eq('empresa_id', perfil.empresa_id)
                 .eq('productos_terminados.activo', true)
             if (tieneNroParte) apQ = apQ.ilike('nro_parte', `%${tieneNroParte}%`)
@@ -776,7 +777,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
         } else {
             // Solo filtros de descripción/categoría — consultar PT y enriquecer con datos de autopartes
             let ptQ = supabase.from('productos_terminados')
-                .select('id, nombre, sku, precio_venta, stock_actual, categoria_1, aplica_iva')
+                .select('id, nombre, sku, precio_venta, stock_actual, categoria_1, aplica_iva, unidad_venta_2, factor_conversion_2')
                 .eq('empresa_id', perfil.empresa_id).eq('activo', true)
             if (filtroCat) ptQ = ptQ.eq('categoria_1', filtroCat)
             if (busqueda.trim()) ptQ = ptQ.or(`nombre.ilike.%${busqueda.trim()}%,sku.ilike.%${busqueda.trim()}%,descripcion.ilike.%${busqueda.trim()}%`)
@@ -811,9 +812,30 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
         setItems(prev => {
             const existe = prev.find(i => i.producto_id === producto.id)
             if (existe) return prev.map(i => i.producto_id === producto.id ? { ...i, cantidad: i.cantidad + 1 } : i)
-            return [...prev, { producto_id: producto.id, nombre: producto.nombre, sku: producto.sku, cantidad: 1, precio_unitario: precioLista, precio_original: precioLista, stock: producto.stock_actual, aplica_iva: producto.aplica_iva, descuento_item: '' }]
+            return [...prev, {
+                producto_id: producto.id, nombre: producto.nombre, sku: producto.sku,
+                cantidad: 1, precio_unitario: precioLista, precio_original: precioLista,
+                stock: producto.stock_actual, aplica_iva: producto.aplica_iva, descuento_item: '',
+                unidad_medida: producto.unidad_medida || 'unidad',
+                unidad_venta_2: producto.unidad_venta_2 || null,
+                factor_conversion_2: producto.factor_conversion_2 || 1,
+                unidadVenta: '1',
+            }]
         })
         setBusqueda('')
+    }
+
+    function cambiarUnidad(id) {
+        setItems(prev => prev.map(i => {
+            if (i.producto_id !== id || !i.unidad_venta_2) return i
+            const nueva = i.unidadVenta === '1' ? '2' : '1'
+            const factor = i.factor_conversion_2 || 1
+            return {
+                ...i,
+                unidadVenta: nueva,
+                precio_unitario: nueva === '2' ? i.precio_original * factor : i.precio_original,
+            }
+        }))
     }
 
     function cambiarCantidad(id, valor) {
@@ -887,6 +909,8 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                 venta_id: venta.id, producto_id: i.producto_id, cantidad: i.cantidad,
                 precio_unitario: i.precio_unitario * (1 - Number(i.descuento_item || 0) / 100) * (1 - descGlobal / 100),
                 aplica_iva: i.aplica_iva ?? true, empresa_id: perfil.empresa_id,
+                unidad_venta: i.unidadVenta === '2' ? i.unidad_venta_2 : i.unidad_medida,
+                cantidad_primaria: i.unidadVenta === '2' ? i.cantidad * (i.factor_conversion_2 || 1) : i.cantidad,
             }))
         )
 
@@ -909,9 +933,10 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
 
         for (const item of items) {
             const prod = productos.find(p => p.id === item.producto_id)
-            const nuevoStock = prod.stock_actual - item.cantidad
+            const cantPrimaria = item.unidadVenta === '2' ? item.cantidad * (item.factor_conversion_2 || 1) : item.cantidad
+            const nuevoStock = prod.stock_actual - cantPrimaria
             await supabase.from('productos_terminados')
-                .update({ stock_actual: prod.stock_actual - item.cantidad })
+                .update({ stock_actual: nuevoStock })
                 .eq('id', item.producto_id)
 
             await supabase.from('movimientos_inventario').insert({
@@ -921,7 +946,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                 item_nombre: item.nombre,
                 item_codigo: item.sku,
                 tipo_movimiento: 'salida',
-                cantidad: item.cantidad,
+                cantidad: cantPrimaria,
                 stock_actual: nuevoStock,
                 origen: 'venta',
                 fecha: new Date().toISOString()
@@ -1259,6 +1284,18 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                                                 <input type="number" min="1" max={item.stock} value={item.cantidad}
                                                     onChange={e => cambiarCantidad(item.producto_id, e.target.value)}
                                                     style={{ width: '60px', padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px', textAlign: 'center' }} />
+                                                {item.unidad_venta_2 && (
+                                                    <div style={{ display: 'flex', gap: '2px', marginTop: '4px' }}>
+                                                        <button onClick={() => item.unidadVenta !== '1' && cambiarUnidad(item.producto_id)}
+                                                            style={{ padding: '1px 5px', fontSize: '10px', borderRadius: '4px', border: 'none', cursor: item.unidadVenta !== '1' ? 'pointer' : 'default', backgroundColor: item.unidadVenta === '1' ? '#16a34a' : '#f3f4f6', color: item.unidadVenta === '1' ? '#fff' : '#6b7280' }}>
+                                                            {item.unidad_medida}
+                                                        </button>
+                                                        <button onClick={() => item.unidadVenta !== '2' && cambiarUnidad(item.producto_id)}
+                                                            style={{ padding: '1px 5px', fontSize: '10px', borderRadius: '4px', border: 'none', cursor: item.unidadVenta !== '2' ? 'pointer' : 'default', backgroundColor: item.unidadVenta === '2' ? '#16a34a' : '#f3f4f6', color: item.unidadVenta === '2' ? '#fff' : '#6b7280' }}>
+                                                            {item.unidad_venta_2}
+                                                        </button>
+                                                    </div>
+                                                )}
                                             </td>
                                             <td style={{ padding: '10px 12px', fontSize: '13px', fontWeight: 600, color: '#1f2937' }}>
                                                 {fmt(item.cantidad * item.precio_unitario * (1 - Number(item.descuento_item || 0) / 100))}

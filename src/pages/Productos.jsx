@@ -14,6 +14,7 @@ const VACIO = {
     categoria_1: '', categoria_2: '', categoria_3: '', categoria_4: '',
     tipo_producto: 'producido', vida_util_dias: '', activo: true,
     aplica_iva: true,
+    unidad_venta_2: '', factor_conversion_2: '',
 }
 
 const VACIO_AUTOPARTES = { marca: '', nro_parte: '', tipo: '', barras_2: '', barras_3: '' }
@@ -101,6 +102,8 @@ export default function Productos() {
             vida_util_dias: p.vida_util_dias ?? '',
             activo: p.activo ?? true,
             aplica_iva: p.aplica_iva ?? true,
+            unidad_venta_2: p.unidad_venta_2 || '',
+            factor_conversion_2: p.factor_conversion_2 ?? '',
         })
         if (esAutopartes) {
             const [{ data: ap }, { data: pvData }] = await Promise.all([
@@ -157,6 +160,8 @@ export default function Productos() {
             vida_util_dias: form.vida_util_dias !== '' ? Number(form.vida_util_dias) : null,
             activo: form.activo,
             aplica_iva: form.aplica_iva,
+            unidad_venta_2: form.unidad_venta_2.trim() || null,
+            factor_conversion_2: form.factor_conversion_2 !== '' ? Number(form.factor_conversion_2) : null,
         }
 
         let err, productoId = editando
@@ -300,6 +305,19 @@ export default function Productos() {
                     <select value={form.unidad_medida} onChange={e => campo('unidad_medida', e.target.value)} style={inputStyle}>
                         {UNIDADES.map(u => <option key={u} value={u}>{u}</option>)}
                     </select>
+                </Campo>
+
+                {/* Unidad de venta secundaria */}
+                <Campo label="Unidad venta 2 (opcional)">
+                    <input type="text" value={form.unidad_venta_2}
+                        onChange={e => campo('unidad_venta_2', e.target.value)}
+                        placeholder="ej: caja, bulto, paca" style={inputStyle} />
+                </Campo>
+                <Campo label="Factor conversión">
+                    <input type="number" min="0.0001" step="0.0001" value={form.factor_conversion_2}
+                        onChange={e => campo('factor_conversion_2', e.target.value)}
+                        placeholder="ej: 12 (1 caja = 12 unidades)" style={inputStyle}
+                        disabled={!form.unidad_venta_2.trim()} />
                 </Campo>
 
                 {/* Vida útil */}

@@ -1283,7 +1283,7 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
         if (cached) aplicarProductos(cached)
 
         supabase.from('producto_precios')
-            .select('precio, productos_terminados(id, nombre, sku, unidad_medida, stock_actual)')
+            .select('precio, productos_terminados(id, nombre, sku, unidad_medida, stock_actual, unidad_venta_2, factor_conversion_2)')
             .eq('lista_id', listaId).eq('empresa_id', perfil.empresa_id)
             .then(({ data }) => {
                 if (data) {
@@ -1294,6 +1294,8 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
                         unidad_medida: p.productos_terminados.unidad_medida,
                         precio: Number(p.precio),
                         stock: Number(p.productos_terminados.stock_actual || 0),
+                        unidad_venta_2: p.productos_terminados.unidad_venta_2 || null,
+                        factor_conversion_2: p.productos_terminados.factor_conversion_2 || null,
                     }))
                     cacheSet(cacheKey, prods)
                     aplicarProductos(prods)
@@ -1326,9 +1328,18 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
         setItems(prev => {
             const existe = prev.find(i => i.id === prod.id)
             if (existe) return prev.map(i => i.id === prod.id ? { ...i, cantidad: i.cantidad + 1 } : i)
-            return [...prev, { ...prod, cantidad: 1, descuento_item: '' }]
+            return [...prev, { ...prod, cantidad: 1, descuento_item: '', unidadVenta: '1', precioBase: prod.precio }]
         })
         setBusqProducto('')
+    }
+
+    function cambiarUnidad(id) {
+        setItems(prev => prev.map(i => {
+            if (i.id !== id || !i.unidad_venta_2) return i
+            const nueva = i.unidadVenta === '1' ? '2' : '1'
+            const factor = i.factor_conversion_2 || 1
+            return { ...i, unidadVenta: nueva, precio: nueva === '2' ? i.precioBase * factor : i.precioBase }
+        }))
     }
 
     function cambiarCantidad(id, delta) {
@@ -1373,6 +1384,8 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
                     producto_id: i.id, nombre_producto: i.nombre, cantidad: i.cantidad,
                     precio_unitario: i.precio / 1.16, descuento_item: Number(i.descuento_item) || 0,
                     subtotal: i.cantidad * i.precio * (1 - Number(i.descuento_item || 0) / 100),
+                    unidad_venta: i.unidadVenta === '2' ? i.unidad_venta_2 : (i.unidad_medida || 'unidad'),
+                    cantidad_primaria: i.unidadVenta === '2' ? i.cantidad * (i.factor_conversion_2 || 1) : i.cantidad,
                 })),
             }
             savePendingQueue([...getPendingQueue(), pedidoOffline])
@@ -1409,6 +1422,8 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
                 cantidad: i.cantidad, precio_unitario: i.precio / 1.16,
                 descuento_item: Number(i.descuento_item) || 0,
                 subtotal: i.cantidad * i.precio * (1 - Number(i.descuento_item || 0) / 100),
+                unidad_venta: i.unidadVenta === '2' ? i.unidad_venta_2 : (i.unidad_medida || 'unidad'),
+                cantidad_primaria: i.unidadVenta === '2' ? i.cantidad * (i.factor_conversion_2 || 1) : i.cantidad,
             }))
         )
         setGuardando(false); setPedidoCreado(pedido)
@@ -1610,7 +1625,20 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
                             <div style={{ flex: 1 }}>
                                 <p style={{ fontSize: '15px', fontWeight: 600, color: '#1f2937', margin: '0 0 2px' }}>{item.nombre}</p>
-                                <p style={{ fontSize: '13px', color: '#16a34a', margin: 0, fontWeight: 500 }}>{fmt(item.precio)} / {item.unidad_medida}</p>
+                                <p style={{ fontSize: '13px', color: '#16a34a', margin: 0, fontWeight: 500 }}>{fmt(item.precio)} / {item.unidadVenta === '2' ? item.unidad_venta_2 : item.unidad_medida}</p>
+                                {item.unidad_venta_2 && (
+                                    <div style={{ display: 'flex', gap: '4px', marginTop: '4px' }}>
+                                        {['1', '2'].map(u => (
+                                            <button key={u} onClick={() => cambiarUnidad(item.id)}
+                                                style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '6px', border: '1px solid', cursor: 'pointer', fontWeight: 500,
+                                                    backgroundColor: item.unidadVenta === u ? '#16a34a' : '#f9fafb',
+                                                    color: item.unidadVenta === u ? '#fff' : '#6b7280',
+                                                    borderColor: item.unidadVenta === u ? '#16a34a' : '#e5e7eb' }}>
+                                                {u === '1' ? item.unidad_medida : item.unidad_venta_2}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
                             <button onClick={() => eliminarItem(item.id)}
                                 style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', padding: '4px', marginLeft: '8px' }}>
