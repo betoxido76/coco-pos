@@ -995,7 +995,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
     }
 
     return (
-        <div style={{ padding: '24px', maxWidth: '900px' }}>
+        <div style={{ padding: '24px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
                 <button onClick={onCancelar} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', fontSize: '13px' }}>← Volver</button>
                 <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Nueva venta</h1>
@@ -1096,7 +1096,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                                         style={{ width: '100%', padding: '8px 12px 8px 32px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', boxSizing: 'border-box' }} />
                                 </div>
                                 {busqueda && (
-                                    <div style={{ marginTop: '8px', border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden', maxHeight: '200px', overflowY: 'auto' }}>
+                                    <div style={{ marginTop: '8px', border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden', maxHeight: '300px', overflowY: 'auto' }}>
                                         {productosFiltrados.length === 0
                                             ? <div style={{ padding: '12px', fontSize: '13px', color: '#9ca3af', textAlign: 'center' }}>Sin resultados</div>
                                             : productosFiltrados.map(p => (
@@ -1255,7 +1255,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                                 <tbody>
                                     {items.map(item => (
                                         <tr key={item.producto_id} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                                            <td style={{ padding: '10px 12px', fontSize: '13px', color: '#1f2937' }}>{item.nombre}</td>
+                                            <td style={{ padding: '10px 12px', fontSize: '13px', color: '#1f2937', maxWidth: '320px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={item.nombre}>{item.nombre}</td>
                                             <td style={{ padding: '10px 12px' }}>
                                                 <input
                                                     type="number"
