@@ -1626,19 +1626,6 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
                             <div style={{ flex: 1 }}>
                                 <p style={{ fontSize: '15px', fontWeight: 600, color: '#1f2937', margin: '0 0 2px' }}>{item.nombre}</p>
                                 <p style={{ fontSize: '13px', color: '#16a34a', margin: 0, fontWeight: 500 }}>{fmt(item.precio)} / {item.unidadVenta === '2' ? item.unidad_venta_2 : item.unidad_medida}</p>
-                                {item.unidad_venta_2 && (
-                                    <div style={{ display: 'flex', gap: '4px', marginTop: '4px' }}>
-                                        {['1', '2'].map(u => (
-                                            <button key={u} onClick={() => cambiarUnidad(item.id)}
-                                                style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '6px', border: '1px solid', cursor: 'pointer', fontWeight: 500,
-                                                    backgroundColor: item.unidadVenta === u ? '#16a34a' : '#f9fafb',
-                                                    color: item.unidadVenta === u ? '#fff' : '#6b7280',
-                                                    borderColor: item.unidadVenta === u ? '#16a34a' : '#e5e7eb' }}>
-                                                {u === '1' ? item.unidad_medida : item.unidad_venta_2}
-                                            </button>
-                                        ))}
-                                    </div>
-                                )}
                             </div>
                             <button onClick={() => eliminarItem(item.id)}
                                 style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', padding: '4px', marginLeft: '8px' }}>
@@ -1657,6 +1644,18 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
                                 style={{ width: '40px', height: '40px', borderRadius: '10px', border: '1px solid #16a34a', backgroundColor: '#f0fdf4', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#16a34a' }}>
                                 <Plus size={16} />
                             </button>
+                            {item.unidad_venta_2 && (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                    <button onClick={() => item.unidadVenta !== '1' && cambiarUnidad(item.id)}
+                                        style={{ padding: '5px 14px', fontSize: '12px', fontWeight: 600, borderRadius: '8px', border: '1px solid', cursor: item.unidadVenta !== '1' ? 'pointer' : 'default', backgroundColor: item.unidadVenta === '1' ? '#16a34a' : '#f9fafb', color: item.unidadVenta === '1' ? '#fff' : '#6b7280', borderColor: item.unidadVenta === '1' ? '#16a34a' : '#d1d5db', whiteSpace: 'nowrap' }}>
+                                        {item.unidad_medida}
+                                    </button>
+                                    <button onClick={() => item.unidadVenta !== '2' && cambiarUnidad(item.id)}
+                                        style={{ padding: '5px 14px', fontSize: '12px', fontWeight: 600, borderRadius: '8px', border: '1px solid', cursor: item.unidadVenta !== '2' ? 'pointer' : 'default', backgroundColor: item.unidadVenta === '2' ? '#16a34a' : '#f9fafb', color: item.unidadVenta === '2' ? '#fff' : '#6b7280', borderColor: item.unidadVenta === '2' ? '#16a34a' : '#d1d5db', whiteSpace: 'nowrap' }}>
+                                        {item.unidad_venta_2}
+                                    </button>
+                                </div>
+                            )}
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                             <span style={{ fontSize: '12px', color: '#6b7280', whiteSpace: 'nowrap' }}>Desc. item %:</span>

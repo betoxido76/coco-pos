@@ -1281,21 +1281,23 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                                                     style={{ width: '60px', padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '12px', textAlign: 'center' }} />
                                             </td>
                                             <td style={{ padding: '10px 12px' }}>
-                                                <input type="number" min="1" max={item.stock} value={item.cantidad}
-                                                    onChange={e => cambiarCantidad(item.producto_id, e.target.value)}
-                                                    style={{ width: '60px', padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px', textAlign: 'center' }} />
-                                                {item.unidad_venta_2 && (
-                                                    <div style={{ display: 'flex', gap: '2px', marginTop: '4px' }}>
-                                                        <button onClick={() => item.unidadVenta !== '1' && cambiarUnidad(item.producto_id)}
-                                                            style={{ padding: '1px 5px', fontSize: '10px', borderRadius: '4px', border: 'none', cursor: item.unidadVenta !== '1' ? 'pointer' : 'default', backgroundColor: item.unidadVenta === '1' ? '#16a34a' : '#f3f4f6', color: item.unidadVenta === '1' ? '#fff' : '#6b7280' }}>
-                                                            {item.unidad_medida}
-                                                        </button>
-                                                        <button onClick={() => item.unidadVenta !== '2' && cambiarUnidad(item.producto_id)}
-                                                            style={{ padding: '1px 5px', fontSize: '10px', borderRadius: '4px', border: 'none', cursor: item.unidadVenta !== '2' ? 'pointer' : 'default', backgroundColor: item.unidadVenta === '2' ? '#16a34a' : '#f3f4f6', color: item.unidadVenta === '2' ? '#fff' : '#6b7280' }}>
-                                                            {item.unidad_venta_2}
-                                                        </button>
-                                                    </div>
-                                                )}
+                                                <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                                                    <input type="number" min="1" max={item.stock} value={item.cantidad}
+                                                        onChange={e => cambiarCantidad(item.producto_id, e.target.value)}
+                                                        style={{ width: '60px', padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px', textAlign: 'center' }} />
+                                                    {item.unidad_venta_2 && (
+                                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                                                            <button onClick={() => item.unidadVenta !== '1' && cambiarUnidad(item.producto_id)}
+                                                                style={{ padding: '3px 10px', fontSize: '11px', fontWeight: 600, borderRadius: '6px', border: '1px solid', cursor: item.unidadVenta !== '1' ? 'pointer' : 'default', backgroundColor: item.unidadVenta === '1' ? '#16a34a' : '#f9fafb', color: item.unidadVenta === '1' ? '#fff' : '#6b7280', borderColor: item.unidadVenta === '1' ? '#16a34a' : '#d1d5db', whiteSpace: 'nowrap' }}>
+                                                                {item.unidad_medida}
+                                                            </button>
+                                                            <button onClick={() => item.unidadVenta !== '2' && cambiarUnidad(item.producto_id)}
+                                                                style={{ padding: '3px 10px', fontSize: '11px', fontWeight: 600, borderRadius: '6px', border: '1px solid', cursor: item.unidadVenta !== '2' ? 'pointer' : 'default', backgroundColor: item.unidadVenta === '2' ? '#16a34a' : '#f9fafb', color: item.unidadVenta === '2' ? '#fff' : '#6b7280', borderColor: item.unidadVenta === '2' ? '#16a34a' : '#d1d5db', whiteSpace: 'nowrap' }}>
+                                                                {item.unidad_venta_2}
+                                                            </button>
+                                                        </div>
+                                                    )}
+                                                </div>
                                             </td>
                                             <td style={{ padding: '10px 12px', fontSize: '13px', fontWeight: 600, color: '#1f2937' }}>
                                                 {fmt(item.cantidad * item.precio_unitario * (1 - Number(item.descuento_item || 0) / 100))}
