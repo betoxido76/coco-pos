@@ -123,17 +123,18 @@ function AlistarPedido({ pedido, onAlistado, onCancelar }) {
         if (itemsValidos.length === 0) { setError('Confirma al menos un ítem'); return }
         setProcesando(true); setError('')
 
-        const { data: { user } } = await supabase.auth.getUser()
-
         for (const item of items) {
-            await supabase.from('pedido_items')
+            const { error: errItem } = await supabase.from('pedido_items')
                 .update({ cantidad_alistada: Number(item.cantidad_alistar) })
                 .eq('id', item.id)
+            if (errItem) { setError('Error en ítem: ' + errItem.message); setProcesando(false); return }
         }
 
-        await supabase.from('pedidos')
+        const { error: errPedido } = await supabase.from('pedidos')
             .update({ estado: 'alistado' })
             .eq('id', pedido.id)
+
+        if (errPedido) { setError('Error al confirmar: ' + errPedido.message); setProcesando(false); return }
 
         setProcesando(false)
         onAlistado()
