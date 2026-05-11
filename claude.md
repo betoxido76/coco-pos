@@ -167,7 +167,10 @@ Después de cada ajuste, transferencia o recepción se llama `sincronizarStockAc
 ventas                -- Facturas
 venta_items           -- Detalle de facturas
 pedidos               -- Pedidos de venta (Realtime habilitado: supabase_realtime publication)
+                      --   estado CHECK IN ('pendiente','aprobado','alistado','rechazado','facturado')
+                      --   origen text ('oficina' | 'campo')
 pedido_items          -- Detalle de pedidos
+                      --   cantidad_alistada numeric (NULL = no alistado aún, 0 = cancelado, >0 = despachado)
 cobros                -- Cobros parciales/totales en multimoneda
 devoluciones          -- Notas de crédito
 devolucion_items      -- Detalle de devoluciones
@@ -393,6 +396,21 @@ ON CONFLICT DO NOTHING;
 | Inventario VistaMovimientos — paginación configurable | Reemplaza `MOV_PAGE_SIZE=100` hardcodeado por estado `pageSize` (default 50); selector 25/50/100; misma barra consistente |
 | Inventario — valorización respeta `aplica_iva` | Las 4 tablas (PT, MP, ME, consumibles) tienen campo `aplica_iva boolean`. Cálculo: `p.aplica_iva ? costo / 1.16 : costo`. Antes siempre dividía por 1.16 |
 
+### Completados (sesión 2026-05-10/11)
+
+| Item | Notas |
+|---|---|
+| UOM secundaria en FlujoPedido (NuevoPedido) | Query productos incluye `unidad_venta_2, factor_conversion_2`; `agregarProducto` agrega `unidadVenta:'1'`, `precioBase`; `cambiarUnidad(id)` alterna entre UM1 y UM2 ajustando precio; toggle pills apilados verticalmente junto al input de cantidad; guardar() inserta `unidad_venta` y `cantidad_primaria` en pedido_items (online y offline) |
+| Categorías dinámicas en Productos/MP/Consumibles | Eliminado array `CATEGORIAS` hardcodeado; `categorias` se deriva de los items ya cargados (`[...new Set(...)]`); form usa `<input list="cats-xxx">` + `<datalist>` para sugerencias con texto libre; filtro usa `<select>` dinámico que solo aparece si hay categorías |
+| Bug Consumibles.jsx — datos no cargaban | `setConsumibles(data)` → `setItems(data)` (función inexistente → datos nunca se mostraban) |
+| NuevaVenta — ancho completo | Eliminado `maxWidth: '900px'`; columna nombre en tabla usa `ellipsis` en lugar de wrap |
+| Flujo Pedido → Alistamiento → Facturación | NuevaVenta ya no factura directamente: registra un `pedido` sin rebajar stock. Nuevo módulo `Despacho.jsx`: almacén confirma cantidades por ítem (`cantidad_alistada`), pedido pasa a `estado='alistado'`. Ventas tab "Pedidos por registrar" muestra `estado='alistado'`; `FacturarPedido` usa `cantidad_alistada` y filtra ítems con cant=0. Stock se rebaja solo al facturar |
+| `aprobacion_pedido` configurable por empresa | Toggle en Administración → Tasas de Cambio (bottom de página). ON = NuevaVenta crea pedido `pendiente` (requiere aprobación en Pedidos). OFF = crea directo `aprobado` (va a Despacho sin revisión). **NuevoPedido (campo) siempre crea `pendiente`**, independiente del toggle |
+| Pedidos.jsx — tab Alistados | Nuevo tab `alistados` filtra `estado='alistado'`; ESTADOS map incluye badge naranja para `alistado` |
+| FacturarPedido — cálculo automático USD↔Bs | `handleUsdChange` computa Bs complementario; `handleBsChange` computa USD complementario; `useEffect([tipoTasa])` recalcula Bs al cambiar tasa |
+| AuthContext — empresas join + módulo despacho | `.select` de empresas incluye `aprobacion_pedido`; `TODOS_LOS_MODULOS` incluye `'despacho'` |
+| Layout + main.jsx — ruta Despacho | Nav item `PackageCheck · Despacho → /despacho`; ruta `ModuloProtegido modulo="despacho"` |
+
 ### Backlog estratégico (capacidades de plataforma SaaS)
 
 Estos ítems no son mejoras funcionales al producto sino capacidades de la plataforma que se necesitan para escalar comercialmente.
@@ -499,7 +517,25 @@ Función helper que extrae el fetch de `direcciones_entrega` + CxC vencido + úl
 **Listas — evitar sobreescritura de `listaId`:**
 En el background fetch de listas, `setListaId` solo se llama cuando `!listaId` para no pisar el valor ya seteado desde caché.
 
-### Supabase — cambios requeridos para esta sección
+### Supabase — cambios aplicados en sesión 2026-05-10/11
+```sql
+-- Flujo Pedido → Alistamiento → Facturación
+ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS origen text DEFAULT 'oficina';
+ALTER TABLE pedido_items ADD COLUMN IF NOT EXISTS cantidad_alistada numeric;
+
+ALTER TABLE pedidos DROP CONSTRAINT IF EXISTS pedidos_estado_check;
+ALTER TABLE pedidos ADD CONSTRAINT pedidos_estado_check
+  CHECK (estado IN ('pendiente','aprobado','alistado','rechazado','facturado'));
+
+-- Configuración de aprobación por empresa
+ALTER TABLE empresas ADD COLUMN IF NOT EXISTS aprobacion_pedido boolean DEFAULT true;
+CREATE POLICY "admin puede actualizar su empresa"
+  ON empresas FOR UPDATE
+  USING (id = get_empresa_id())
+  WITH CHECK (id = get_empresa_id());
+```
+
+### Supabase — cambios requeridos para sección NuevoPedido (anteriores)
 ```sql
 -- 1. Límite de crédito en clientes
 ALTER TABLE clientes ADD COLUMN limite_credito numeric(12,2) DEFAULT 0;
@@ -562,6 +598,9 @@ Nuevo gasto
 ## 18. Check constraints importantes (descubiertos en migración)
 
 ```
+pedidos.estado               CHECK IN ('pendiente','aprobado','alistado','rechazado','facturado')
+                             — 'alistado' fue agregado en sesión 2026-05-10 (ALTER TABLE DROP+ADD CONSTRAINT)
+
 ventas.estado_cobro          CHECK IN ('pendiente','parcial','pagado')
                              — NO usar 'cobrado'; el equivalente correcto es 'pagado'
 
