@@ -38,8 +38,9 @@ export default function Configuracion() {
 
     async function guardarConfiguracion() {
         setGuardandoConf(true)
-        await supabase.from('empresas').update({ aprobacion_pedido: aprobacionPedido }).eq('id', perfil.empresa_id)
+        const { error: err } = await supabase.from('empresas').update({ aprobacion_pedido: aprobacionPedido }).eq('id', perfil.empresa_id)
         setGuardandoConf(false)
+        if (err) { setError('Error al guardar configuración: ' + err.message); return }
         setExitoConf(true)
         setTimeout(() => setExitoConf(false), 3000)
     }
