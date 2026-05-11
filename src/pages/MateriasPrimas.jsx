@@ -3,7 +3,6 @@ import { supabase } from '../lib/supabaseClient'
 import { Plus, Search, Pencil, X, Check, AlertTriangle, Package, Layers } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 
-const CATEGORIAS = ['Químicos', 'Orgánicos', 'Envases', 'Etiquetas', 'Cajas', 'Otros']
 const TIPOS = ['producido', 'comprado']
 const UNIDADES = ['kg', 'g', 'litro', 'ml', 'unidad', 'metro', 'rollo', 'caja', 'bolsa']
 
@@ -132,6 +131,8 @@ export default function MateriasPrimas({ tabInicial = 'materias_primas' }) {
         cargar()
     }
 
+    const categorias = [...new Set(items.filter(p => p.categoria_1).map(p => p.categoria_1))].sort()
+
     const filtrados = items.filter(p => {
         const q = busqueda.toLowerCase()
         const coincide = p.nombre.toLowerCase().includes(q) || p.codigo?.toLowerCase().includes(q)
@@ -223,10 +224,14 @@ export default function MateriasPrimas({ tabInicial = 'materias_primas' }) {
                                     Categoría {n}
                                 </label>
                                 {n === 1 ? (
-                                    <select value={form.categoria_1} onChange={e => campo('categoria_1', e.target.value)} style={inputStyle}>
-                                        <option value="">— Sin categoría —</option>
-                                        {CATEGORIAS.map(c => <option key={c} value={c}>{c}</option>)}
-                                    </select>
+                                    <>
+                                        <input list="cats-mp" value={form.categoria_1}
+                                            onChange={e => campo('categoria_1', e.target.value)}
+                                            placeholder="Escribe o selecciona..." style={inputStyle} />
+                                        <datalist id="cats-mp">
+                                            {categorias.map(c => <option key={c} value={c} />)}
+                                        </datalist>
+                                    </>
                                 ) : (
                                     <input value={form[`categoria_${n}`]}
                                         onChange={e => campo(`categoria_${n}`, e.target.value)}
@@ -328,17 +333,13 @@ export default function MateriasPrimas({ tabInicial = 'materias_primas' }) {
                         value={busqueda} onChange={e => setBusqueda(e.target.value)}
                         style={{ ...inputStyle, paddingLeft: '32px', width: '100%', boxSizing: 'border-box' }} />
                 </div>
-                {['Todas', ...CATEGORIAS].map(c => (
-                    <button key={c} onClick={() => setFiltrocat(c)}
-                        style={{
-                            padding: '8px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid', cursor: 'pointer',
-                            borderColor: filtrocat === c ? '#16a34a' : '#e5e7eb',
-                            backgroundColor: filtrocat === c ? '#16a34a' : '#fff',
-                            color: filtrocat === c ? '#fff' : '#6b7280'
-                        }}>
-                        {c}
-                    </button>
-                ))}
+                {categorias.length > 0 && (
+                    <select value={filtrocat} onChange={e => setFiltrocat(e.target.value)}
+                        style={{ padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', color: '#374151', backgroundColor: '#fff', cursor: 'pointer' }}>
+                        <option value="Todas">Todas las categorías</option>
+                        {categorias.map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                )}
             </div>
 
             {/* Tabla */}
