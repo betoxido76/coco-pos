@@ -8,7 +8,7 @@ const SESSION_KEY = 'mipos_session_token'
 const TODOS_LOS_MODULOS = [
     'dashboard', 'inventario', 'ventas', 'pedidos', 'pedidos_campo',
     'compras', 'cxc', 'cxp', 'gastos', 'produccion', 'cambios', 'mermas', 'administracion',
-    'cotizador', 'finanzas', 'bancos',
+    'cotizador', 'finanzas', 'bancos', 'despacho',
 ]
 
 export function AuthProvider({ children }) {
@@ -75,7 +75,7 @@ export function AuthProvider({ children }) {
     async function cargarPerfil(userId) {
         const { data } = await supabase
             .from('usuarios')
-            .select('*, empresas(nombre, rif, logo_url, activo, perfil_negocio)')
+            .select('*, empresas(nombre, rif, logo_url, activo, perfil_negocio, aprobacion_pedido)')
             .eq('id', userId)
             .single()
 

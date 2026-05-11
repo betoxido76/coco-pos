@@ -8,6 +8,7 @@ const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 const ESTADOS = {
     pendiente: { bg: '#fef9c3', color: '#854d0e', label: 'Pendiente' },
     aprobado: { bg: '#dbeafe', color: '#1e40af', label: 'Aprobado' },
+    alistado: { bg: '#fff7ed', color: '#c2410c', label: 'Alistado' },
     rechazado: { bg: '#fee2e2', color: '#991b1b', label: 'Rechazado' },
     facturado: { bg: '#dcfce7', color: '#166534', label: 'Facturado' },
 }
@@ -87,6 +88,7 @@ export default function Pedidos() {
 
         if (tabActiva === 'pendientes') q = q.eq('estado', 'pendiente')
         else if (tabActiva === 'aprobados') q = q.eq('estado', 'aprobado')
+        else if (tabActiva === 'alistados') q = q.eq('estado', 'alistado')
         else if (tabActiva === 'historial') q = q.in('estado', ['rechazado', 'facturado'])
 
         const { data } = await q
@@ -136,6 +138,7 @@ export default function Pedidos() {
                 {[
                     { key: 'pendientes', label: 'Pendientes' },
                     { key: 'aprobados', label: 'Aprobados' },
+                    { key: 'alistados', label: 'Alistados' },
                     { key: 'historial', label: 'Historial' },
                 ].map(tab => (
                     <button key={tab.key} onClick={() => { setTabActiva(tab.key); setBusqueda(''); setFiltroVendedor('') }}

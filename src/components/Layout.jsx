@@ -5,7 +5,7 @@ import {
     LayoutDashboard, Package, ShoppingCart,
     TrendingDown, CreditCard, LogOut, Menu, X, Truck, FolderTree,
     ClipboardList, DollarSign, FlaskConical, AlertTriangle, ArrowLeftRight,
-    User, Tag, BarChart2, Landmark, RefreshCw
+    User, Tag, BarChart2, Landmark, RefreshCw, PackageCheck
 } from 'lucide-react'
 import { useState } from 'react'
 
@@ -15,6 +15,7 @@ const NAV_ITEMS = [
     { key: 'ventas', to: '/ventas', icon: ShoppingCart, label: 'Ventas' },
     { key: 'pedidos_campo', to: '/nuevo-pedido', icon: ClipboardList, label: 'Pedidos en Campo' },
     { key: 'pedidos', to: '/pedidos', icon: ClipboardList, label: 'Pedidos' },
+    { key: 'despacho', to: '/despacho', icon: PackageCheck, label: 'Despacho' },
     { key: 'compras', to: '/compras', icon: Truck, label: 'Compras' },
     { key: 'cxc', to: '/cuentas-cobrar', icon: DollarSign, label: 'Cuentas x Cobrar' },
     { key: 'cxp', to: '/cuentas-pagar', icon: CreditCard, label: 'Cuentas x Pagar' },

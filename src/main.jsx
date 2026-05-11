@@ -21,6 +21,7 @@ import Finanzas from './pages/Finanzas'
 import SuperAdmin from './pages/SuperAdmin'
 import Gastos from './pages/Gastos'
 import Bancos from './pages/Bancos'
+import Despacho from './pages/Despacho'
 import ResetPassword from './pages/ResetPassword'
 import './index.css'
 
@@ -82,6 +83,7 @@ function App() {
         <Route path="finanzas" element={<ModuloProtegido modulo="finanzas"><Finanzas /></ModuloProtegido>} />
         <Route path="gastos" element={<ModuloProtegido modulo="gastos"><Gastos /></ModuloProtegido>} />
         <Route path="bancos" element={<ModuloProtegido modulo="bancos"><Bancos /></ModuloProtegido>} />
+        <Route path="despacho" element={<ModuloProtegido modulo="despacho"><Despacho /></ModuloProtegido>} />
         <Route path="superadmin" element={<SuperAdmin />} />
         <Route path="reset-password" element={<ResetPassword />} />
       </Route>
