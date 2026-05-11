@@ -189,11 +189,10 @@ export default function NuevoPedido({ onCancelar }) {
             for (const p of queue) {
                 try {
                     const { data: num } = await supabase.rpc('obtener_siguiente_pedidos_numero', { p_empresa_id: p.empresa_id })
-                    const reqAprobacion = perfil?.empresas?.aprobacion_pedido ?? true
                     const { data: pedido, error } = await supabase.from('pedidos').insert({
                         empresa_id: p.empresa_id, cliente_id: p.cliente_id, vendedor_id: user.id,
                         lista_precio_id: p.lista_precio_id, descuento_global: p.descuento_global,
-                        estado: reqAprobacion ? 'pendiente' : 'aprobado',
+                        estado: 'pendiente',
                         origen: 'campo',
                         fecha_pedido: p.fecha_pedido, fecha_entrega: p.fecha_entrega,
                         notas: p.notas, numero_pedido: num || p.tempId,
@@ -1370,8 +1369,6 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
     async function guardar() {
         setGuardando(true); setError('')
 
-        const requiereAprobacion = perfil?.empresas?.aprobacion_pedido ?? true
-
         if (!navigator.onLine) {
             const tempId = `TEMP-${Date.now()}`
             const pedidoOffline = {
@@ -1410,7 +1407,7 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
             vendedor_id: user.id,
             lista_precio_id: listaId || null,
             descuento_global: Number(descuentoGlobal) || 0,
-            estado: requiereAprobacion ? 'pendiente' : 'aprobado',
+            estado: 'pendiente',
             origen: 'campo',
             fecha_pedido: new Date().toISOString(),
             fecha_entrega: fechaEntrega || null,
