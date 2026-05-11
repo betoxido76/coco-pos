@@ -300,6 +300,32 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
             .then(({ data }) => setCuentasBancarias(data || []))
     }, [pedido.id])
 
+    // Recalcular Bs cuando cambia la tasa (mantiene el monto USD como base)
+    useEffect(() => {
+        const tasa = tasas[tipoTasa] || 0
+        if (!tasa || !pagoUsd) return
+        const complemento = (total - Number(pagoUsd)) * tasa
+        setPagoBs(complemento > 0 ? complemento.toFixed(2) : '0')
+    }, [tipoTasa, tasas])
+
+    function handleUsdChange(val) {
+        setPagoUsd(val)
+        const tasa = tasas[tipoTasa] || 0
+        if (!tasa) return
+        const usd = Number(val) || 0
+        const complemento = (total - usd) * tasa
+        setPagoBs(complemento > 0 ? complemento.toFixed(2) : '0')
+    }
+
+    function handleBsChange(val) {
+        setPagoBs(val)
+        const tasa = tasas[tipoTasa] || 0
+        if (!tasa) return
+        const bs = Number(val) || 0
+        const complemento = total - bs / tasa
+        setPagoUsd(complemento > 0 ? complemento.toFixed(2) : '0')
+    }
+
     const descGlobal = Number(pedido.descuento_global || 0)
     const discountFactor = 1 - descGlobal / 100
     const total = items.reduce((s, i) => s + Number(i.cantidad) * Number(i.precio_unitario) * (1 - Number(i.descuento_item || 0) / 100), 0) * discountFactor
@@ -538,7 +564,7 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                             <div>
                                 <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Monto USD</label>
-                                <input type="number" min="0" step="0.01" value={pagoUsd} onChange={e => setPagoUsd(e.target.value)} placeholder="0.00"
+                                <input type="number" min="0" step="0.01" value={pagoUsd} onChange={e => handleUsdChange(e.target.value)} placeholder="0.00"
                                     style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', boxSizing: 'border-box' }} />
                             </div>
                             <div>
@@ -552,7 +578,7 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                             <div>
                                 <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Monto Bs.</label>
-                                <input type="number" min="0" step="0.01" value={pagoBs} onChange={e => setPagoBs(e.target.value)} placeholder="0.00"
+                                <input type="number" min="0" step="0.01" value={pagoBs} onChange={e => handleBsChange(e.target.value)} placeholder="0.00"
                                     style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', boxSizing: 'border-box' }} />
                             </div>
                             <div>
