@@ -18,7 +18,30 @@
       "PowerShell(Get-Command *)",
       "Bash(python migrate_pos.py \"cd496885-bdea-4e1c-8e85-81cf7de3f9f4\" \"759a0053-0240-4e33-83a9-b24d505ad2d9\")",
       "Bash(Select-String -Path migration.sql -Pattern \"INSERT INTO almacenes\")",
-      "Bash(Select-Object -First 2)"
+      "Bash(Select-Object -First 2)",
+      "Bash(python -c ' *)",
+      "Bash(python migrate_pos.py cd496885-6d74-4832-a619-21d042b00566 759a0053-0240-4e33-83a9-b24d505ad2d9)",
+      "Bash(grep -v \"//\\\\|^\\\\s*//\")",
+      "Bash(sed -n '530,580p' Compras.jsx)",
+      "Bash(sed -n '880,940p' Compras.jsx)",
+      "Bash(sed -n '410,460p' Produccion.jsx)",
+      "Bash(sed -n '1115,1155p' Produccion.jsx)",
+      "Bash(sed -n '445,510p' Mermas.jsx)",
+      "Bash(sed -n '620,650p' CambiosManoMano.jsx)",
+      "Bash(sed -n '530,560p' Gastos.jsx)",
+      "Bash(sed -n '188,215p' NuevoPedido.jsx)",
+      "Bash(sed -n '1385,1415p' NuevoPedido.jsx)",
+      "Bash(sed -n '65,80p' CambiosManoMano.jsx)",
+      "Bash(sed -n '685,700p' CambiosManoMano.jsx)",
+      "Bash(sed -n '596,615p' Bancos.jsx)",
+      "Bash(sed -n '700,730p' Bancos.jsx)",
+      "Bash(sed -n '809,835p' Ventas.jsx)",
+      "Bash(sed -n '880,935p' Ventas.jsx)",
+      "Bash(sed -n '1075,1095p' Ventas.jsx)",
+      "Bash(sed -n '1185,1275p' Ventas.jsx)",
+      "Bash(sed -n '1,20p' Productos.jsx)",
+      "Bash(sed -n '85,105p' Productos.jsx)",
+      "Bash(sed -n '140,170p' Productos.jsx)"
     ]
   }
 }

@@ -24,6 +24,9 @@ const PAGE_SIZE = 50
 
 export default function Ventas() {
     const { perfil } = useAuth()
+    // flujo_ventas: 'retail' → venta directa | 'manufactura' (default) → pedido → alistamiento → factura
+    const esRetail = perfil?.empresas?.flujo_ventas === 'retail'
+
     const [tabActiva, setTabActiva] = useState('ventas')
     const [vista, setVista] = useState('lista')
     const [ventas, setVentas] = useState([])
@@ -57,6 +60,7 @@ export default function Ventas() {
             .from('pedidos')
             .select('*, clientes(nombre, rif), usuarios(nombre)')
             .eq('empresa_id', perfil.empresa_id)
+            // retail no usa este tab, manufactura busca 'alistado'
             .eq('estado', 'alistado')
             .order('created_at', { ascending: false })
         if (data) setPedidosAprobados(data)
@@ -93,7 +97,9 @@ export default function Ventas() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
                 <div>
                     <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Ventas</h1>
-                    <p style={{ fontSize: '13px', color: '#6b7280', margin: '4px 0 0' }}>Historial de notas y pedidos por registrar</p>
+                    <p style={{ fontSize: '13px', color: '#6b7280', margin: '4px 0 0' }}>
+                        {esRetail ? 'Historial de notas de entrega' : 'Historial de notas y pedidos por registrar'}
+                    </p>
                 </div>
                 {tabActiva === 'ventas' && (
                     <button onClick={() => setVista('nueva')}
@@ -103,7 +109,7 @@ export default function Ventas() {
                 )}
             </div>
 
-            {/* Tabs */}
+            {/* Tabs — la pestaña de pedidos solo aparece en flujo manufactura */}
             <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
                 <button onClick={() => setTabActiva('ventas')}
                     style={{
@@ -116,22 +122,24 @@ export default function Ventas() {
                     }}>
                     <FileText size={14} /> Notas de Entrega
                 </button>
-                <button onClick={() => setTabActiva('pedidos')}
-                    style={{
-                        display: 'flex', alignItems: 'center', gap: '6px',
-                        padding: '8px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 500,
-                        border: '1px solid', cursor: 'pointer',
-                        borderColor: tabActiva === 'pedidos' ? '#16a34a' : '#e5e7eb',
-                        backgroundColor: tabActiva === 'pedidos' ? '#f0fdf4' : '#fff',
-                        color: tabActiva === 'pedidos' ? '#16a34a' : '#6b7280',
-                    }}>
-                    <ClipboardList size={14} /> Pedidos por registrar
-                    {pedidosAprobados.length > 0 && (
-                        <span style={{ backgroundColor: '#16a34a', color: '#fff', borderRadius: '20px', padding: '1px 7px', fontSize: '11px', fontWeight: 700 }}>
-                            {pedidosAprobados.length}
-                        </span>
-                    )}
-                </button>
+                {!esRetail && (
+                    <button onClick={() => setTabActiva('pedidos')}
+                        style={{
+                            display: 'flex', alignItems: 'center', gap: '6px',
+                            padding: '8px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 500,
+                            border: '1px solid', cursor: 'pointer',
+                            borderColor: tabActiva === 'pedidos' ? '#16a34a' : '#e5e7eb',
+                            backgroundColor: tabActiva === 'pedidos' ? '#f0fdf4' : '#fff',
+                            color: tabActiva === 'pedidos' ? '#16a34a' : '#6b7280',
+                        }}>
+                        <ClipboardList size={14} /> Pedidos por registrar
+                        {pedidosAprobados.length > 0 && (
+                            <span style={{ backgroundColor: '#16a34a', color: '#fff', borderRadius: '20px', padding: '1px 7px', fontSize: '11px', fontWeight: 700 }}>
+                                {pedidosAprobados.length}
+                            </span>
+                        )}
+                    </button>
+                )}
             </div>
 
             {/* Tab Ventas */}
@@ -203,8 +211,8 @@ export default function Ventas() {
                 </div>
             )}
 
-            {/* Tab Pedidos por facturar */}
-            {tabActiva === 'pedidos' && (
+            {/* Tab Pedidos por facturar (solo manufactura) */}
+            {!esRetail && tabActiva === 'pedidos' && (
                 <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
                     {loadingPedidos ? (
                         <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
@@ -250,7 +258,7 @@ export default function Ventas() {
     )
 }
 
-// ─── Facturar desde pedido ─────────────────────────────────────
+// ─── Facturar desde pedido (solo flujo manufactura) ────────────
 function FacturarPedido({ pedido, onFacturado, onCancelar }) {
     const { perfil } = useAuth()
     const [items, setItems] = useState([])
@@ -276,7 +284,6 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
             .eq('pedido_id', pedido.id)
             .then(({ data }) => {
                 if (data) {
-                    // Filter out items with cantidad_alistada = 0 (cancelled); use alistada quantity where set
                     const activos = data
                         .filter(i => i.cantidad_alistada === null || Number(i.cantidad_alistada) > 0)
                         .map(i => ({
@@ -347,7 +354,7 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
         let fechaVencimiento = null
         if (condicion === 'credito' && diasCredito > 0) {
             const d = new Date()
-            d.setDate(d.getDate() + diasCredito)
+            d.setDate(d.getDate() + Number(diasCredito))
             fechaVencimiento = d.toISOString().split('T')[0]
         }
 
@@ -472,7 +479,7 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
                         </thead>
                         <tbody>
                             {items.map((item, idx) => {
-                                const subtotal = Number(item.cantidad) * Number(item.precio_unitario) * (1 - Number(item.descuento_item || 0) / 100)
+                                const subtotalItem = Number(item.cantidad) * Number(item.precio_unitario) * (1 - Number(item.descuento_item || 0) / 100)
                                 return (
                                     <tr key={idx} style={{ borderBottom: '1px solid #f3f4f6' }}>
                                         <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>
@@ -488,7 +495,7 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
                                                 ? <span style={{ color: '#16a34a', fontWeight: 500 }}>-{item.descuento_item}%</span>
                                                 : <span style={{ color: '#9ca3af' }}>—</span>}
                                         </td>
-                                        <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(subtotal)}</td>
+                                        <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(subtotalItem)}</td>
                                     </tr>
                                 )
                             })}
@@ -640,10 +647,12 @@ function BadgeCobro({ estado }) {
     )
 }
 
-// ─── Nueva Venta ───────────────────────────────────────────────
+// ─── Nueva Venta (flujo dual: retail = venta directa | manufactura = pedido) ──
 function NuevaVenta({ onVentaCreada, onCancelar }) {
     const { perfil } = useAuth()
     const esAutopartes = perfil?.empresas?.perfil_negocio === 'autopartes'
+    // FLUJO DUAL: retail descuenta stock al confirmar; manufactura crea un pedido
+    const esRetail = perfil?.empresas?.flujo_ventas === 'retail'
 
     const [clientes, setClientes] = useState([])
     const [productos, setProductos] = useState([])
@@ -665,7 +674,6 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
     const [marcasRepuesto, setMarcasRepuesto] = useState([])
     const [tiposRepuesto, setTiposRepuesto] = useState([])
     const [categoriasRepuesto, setCategoriasRepuesto] = useState([])
-    // Filtros por vehículo dentro de búsqueda avanzada
     const [marcaV, setMarcaV] = useState('')
     const [modeloV, setModeloV] = useState('')
     const [anioV, setAnioV] = useState('')
@@ -673,10 +681,28 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
     const [modelosV, setModelosV] = useState([])
     const [resultadosAvanzados, setResultadosAvanzados] = useState(null)
     const [buscandoAvanzado, setBuscandoAvanzado] = useState(false)
-    const [notas, setNotas] = useState('')
+
     const [listas, setListas] = useState([])
     const [listaId, setListaId] = useState('')
     const [descuentoGlobal, setDescuentoGlobal] = useState('')
+
+    // ── Estados exclusivos flujo RETAIL ──
+    const [nroReferencia, setNroReferencia] = useState('')
+    const [condicion, setCondicion] = useState('credito')
+    const [tasas, setTasas] = useState({})
+    const [tipoTasa, setTipoTasa] = useState('tasa_bcv')
+    const [pagoUsd, setPagoUsd] = useState('')
+    const [metodoUsd, setMetodoUsd] = useState('Efectivo')
+    const [pagoBs, setPagoBs] = useState('')
+    const [metodoBs, setMetodoBs] = useState('Pago Móvil')
+    const [notaCobro, setNotaCobro] = useState('')
+    const [ventaPendiente, setVentaPendiente] = useState(null)
+    const [diasCredito, setDiasCredito] = useState(0)
+    const [cuentasBancarias, setCuentasBancarias] = useState([])
+    const [cuentaBancariaId, setCuentaBancariaId] = useState('')
+
+    // ── Estados exclusivos flujo MANUFACTURA ──
+    const [notas, setNotas] = useState('')
 
     useEffect(() => {
         supabase.from('clientes').select('id, nombre, rif, condicion_pago, dias_credito').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
@@ -689,6 +715,13 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                     setListaId(def ? def.id : data[0].id)
                 }
             })
+        // Tasas y cuentas bancarias solo se necesitan en retail (cobro inmediato)
+        if (esRetail) {
+            supabase.from('configuracion').select('clave, valor').eq('empresa_id', perfil.empresa_id)
+                .then(({ data }) => { if (data) { const t = {}; data.forEach(r => { t[r.clave] = Number(r.valor) }); setTasas(t) } })
+            supabase.from('cuentas_bancarias').select('id, nombre, banco, moneda').eq('empresa_id', perfil.empresa_id).eq('activa', true)
+                .then(({ data }) => setCuentasBancarias(data || []))
+        }
         if (esAutopartes) {
             supabase.from('productos_autopartes').select('marca').eq('empresa_id', perfil.empresa_id).not('marca', 'is', null)
                 .then(({ data }) => setMarcasRepuesto([...new Set((data || []).map(p => p.marca).filter(Boolean))].sort()))
@@ -699,7 +732,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
             supabase.from('vehiculos').select('marca').eq('empresa_id', perfil.empresa_id).order('marca')
                 .then(({ data }) => setMarcasV([...new Set((data || []).map(v => v.marca).filter(Boolean))].sort()))
         }
-    }, [])
+    }, [perfil.empresa_id, esRetail, esAutopartes])
 
     useEffect(() => {
         if (!perfil?.empresa_id) return
@@ -714,20 +747,28 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
             .then(({ data }) => {
                 if (data) setProductos(data.filter(p => p.productos_terminados).map(p => ({ ...p.productos_terminados, precio_venta: p.precio })))
             })
-    }, [listaId])
+    }, [listaId, perfil.empresa_id])
 
     useEffect(() => {
         if (!marcaV || !perfil?.empresa_id) { setModelosV([]); setModeloV(''); return }
         supabase.from('vehiculos').select('modelo')
             .eq('empresa_id', perfil.empresa_id).eq('marca', marcaV).order('modelo')
             .then(({ data }) => { setModelosV([...new Set((data || []).map(v => v.modelo))].sort()); setModeloV('') })
-    }, [marcaV])
+    }, [marcaV, perfil.empresa_id])
 
     async function seleccionarCliente(id) {
         setClienteId(id)
         setDireccionId('')
         setDirecciones([])
-        if (!id) return
+        if (!id) {
+            if (esRetail) setCondicion('credito')
+            return
+        }
+        if (esRetail) {
+            const cliente = clientes.find(c => c.id === id)
+            setCondicion(cliente?.condicion_pago || 'credito')
+            setDiasCredito(Number(cliente?.dias_credito) || 0)
+        }
         const { data } = await supabase.from('direcciones_entrega')
             .select('*')
             .eq('cliente_id', id)
@@ -750,7 +791,6 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
         if (!tieneAutoparteFilter && !tieneVehiculoFilter && !filtroCat && !busqueda.trim()) return
         setBuscandoAvanzado(true); setResultadosAvanzados(null)
 
-        // 1. IDs compatibles con el vehículo buscado
         let ptIds = null
         if (tieneVehiculoFilter) {
             let vQ = supabase.from('vehiculos').select('id')
@@ -773,9 +813,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
             if (ptIds.length === 0) { setResultadosAvanzados([]); setBuscandoAvanzado(false); return }
         }
 
-        // 2. Consulta final
         if (tieneAutoparteFilter || tieneVehiculoFilter) {
-            // Filtros de descripción/categoría se aplican directamente sobre el recurso embebido
             let apQ = supabase.from('productos_autopartes')
                 .select('nro_parte, marca, tipo, producto_id, productos_terminados!inner(id, nombre, sku, precio_venta, stock_actual, categoria_1, aplica_iva, unidad_venta_2, factor_conversion_2)')
                 .eq('empresa_id', perfil.empresa_id)
@@ -795,7 +833,6 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                 producto_id: r.producto_id, nro_parte: r.nro_parte, marca: r.marca, tipo: r.tipo, pt: r.productos_terminados,
             })))
         } else {
-            // Solo filtros de descripción/categoría — consultar PT y enriquecer con datos de autopartes
             let ptQ = supabase.from('productos_terminados')
                 .select('id, nombre, sku, precio_venta, stock_actual, categoria_1, aplica_iva, unidad_venta_2, factor_conversion_2')
                 .eq('empresa_id', perfil.empresa_id).eq('activo', true)
@@ -884,49 +921,145 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
     }, 0)
     const impuesto = total - subtotal
 
-    async function registrarPedido() {
+    // ── HANDLER UNIFICADO: bifurca internamente según flujo ──
+    async function procesar() {
         if (!clienteId) { setError('Selecciona un cliente'); return }
         if (items.length === 0) { setError('Agrega al menos un producto'); return }
         setGuardando(true); setError('')
 
         const { data: { user } } = await supabase.auth.getUser()
-        const { data: numeroConsecutivo } = await supabase.rpc('obtener_siguiente_pedidos_numero', { p_empresa_id: perfil.empresa_id })
-        const numero = numeroConsecutivo || 'PED-000001'
 
-        const requiereAprobacion = perfil?.empresas?.aprobacion_pedido ?? true
+        if (esRetail) {
+            // ── FLUJO RETAIL: venta directa con descuento inmediato de inventario ──
+            const { data: numeroConsecutivo } = await supabase.rpc('obtener_siguiente_ventas_numero', {
+                p_empresa_id: perfil.empresa_id
+            })
+            const numero = numeroConsecutivo || 'NE-000001'
 
-        const { data: pedido, error: errPedido } = await supabase.from('pedidos').insert({
-            empresa_id: perfil.empresa_id,
-            cliente_id: clienteId,
-            vendedor_id: user.id,
-            lista_precio_id: listaId || null,
-            descuento_global: Number(descuentoGlobal) || 0,
-            estado: requiereAprobacion ? 'pendiente' : 'aprobado',
-            origen: 'oficina',
-            fecha_pedido: new Date().toISOString(),
-            numero_pedido: numero,
-            notas: notas.trim() || null,
-            direccion_entrega_id: direccionId || null,
-            direccion_entrega_texto: direccionId ? direcciones.find(d => d.id === direccionId)?.direccion || null : null,
-        }).select().single()
+            let fechaVencimiento = null
+            if (condicion === 'credito' && diasCredito > 0) {
+                const d = new Date()
+                d.setDate(d.getDate() + Number(diasCredito))
+                fechaVencimiento = d.toISOString().split('T')[0]
+            }
 
-        if (errPedido) { setError('Error: ' + errPedido.message); setGuardando(false); return }
+            const { data: venta, error: errVenta } = await supabase
+                .from('ventas')
+                .insert({
+                    cliente_id: clienteId, usuario_id: user.id, numero_factura: numero,
+                    subtotal, total,
+                    estado_cobro: condicion === 'contado' ? 'pagado' : 'pendiente',
+                    empresa_id: perfil.empresa_id,
+                    nro_referencia: nroReferencia.trim() || null,
+                    fecha_vencimiento_pago: fechaVencimiento,
+                    direccion_entrega_id: direccionId || null,
+                    direccion_entrega_texto: direccionId
+                        ? direcciones.find(d => d.id === direccionId)?.direccion || null
+                        : null,
+                })
+                .select()
+                .single()
 
-        await supabase.from('pedido_items').insert(
-            items.map(i => ({
-                pedido_id: pedido.id, empresa_id: perfil.empresa_id,
-                producto_id: i.producto_id, nombre_producto: i.nombre,
-                cantidad: i.cantidad,
-                precio_unitario: i.precio_unitario,
-                descuento_item: Number(i.descuento_item) || 0,
-                subtotal: i.cantidad * i.precio_unitario * (1 - Number(i.descuento_item || 0) / 100),
-                unidad_venta: i.unidadVenta === '2' ? i.unidad_venta_2 : i.unidad_medida,
-                cantidad_primaria: i.unidadVenta === '2' ? i.cantidad * (i.factor_conversion_2 || 1) : i.cantidad,
-            }))
-        )
+            if (errVenta) { setError('Error al crear la venta: ' + errVenta.message); setGuardando(false); return }
 
-        setGuardando(false)
-        onVentaCreada({ numero_pedido: pedido.numero_pedido, cliente: clientes.find(c => c.id === clienteId)?.nombre })
+            const descGlobal = Number(descuentoGlobal) || 0
+            await supabase.from('venta_items').insert(
+                items.map(i => ({
+                    venta_id: venta.id, producto_id: i.producto_id, cantidad: i.cantidad,
+                    precio_unitario: i.precio_unitario * (1 - Number(i.descuento_item || 0) / 100) * (1 - descGlobal / 100),
+                    aplica_iva: i.aplica_iva ?? true, empresa_id: perfil.empresa_id,
+                    unidad_venta: i.unidadVenta === '2' ? i.unidad_venta_2 : i.unidad_medida,
+                    cantidad_primaria: i.unidadVenta === '2' ? i.cantidad * (i.factor_conversion_2 || 1) : i.cantidad,
+                }))
+            )
+
+            if (condicion === 'contado') {
+                const tasa = tasas[tipoTasa] || 1
+                await supabase.from('cobros').insert({
+                    venta_id: venta.id,
+                    monto_usd: Number(pagoUsd) || 0,
+                    monto_bs: Number(pagoBs) || 0,
+                    tasa_cambio: tasa,
+                    tipo_tasa: tipoTasa,
+                    metodo_usd: Number(pagoUsd) > 0 ? metodoUsd : null,
+                    metodo_bs: Number(pagoBs) > 0 ? metodoBs : null,
+                    nota: notaCobro || null,
+                    cuenta_bancaria_id: cuentaBancariaId || null,
+                    usuario_id: user.id,
+                    empresa_id: perfil.empresa_id,
+                })
+            }
+
+            // Descuento inmediato de inventario
+            for (const item of items) {
+                const prod = productos.find(p => p.id === item.producto_id)
+                const cantPrimaria = item.unidadVenta === '2' ? item.cantidad * (item.factor_conversion_2 || 1) : item.cantidad
+                const nuevoStock = prod.stock_actual - cantPrimaria
+                await supabase.from('productos_terminados')
+                    .update({ stock_actual: nuevoStock })
+                    .eq('id', item.producto_id)
+
+                await supabase.from('movimientos_inventario').insert({
+                    empresa_id: perfil.empresa_id,
+                    tipo_item: 'producto_terminado',
+                    item_id: item.producto_id,
+                    item_nombre: item.nombre,
+                    item_codigo: item.sku,
+                    tipo_movimiento: 'salida',
+                    cantidad: cantPrimaria,
+                    stock_actual: nuevoStock,
+                    origen: 'venta',
+                    fecha: new Date().toISOString()
+                })
+            }
+
+            const cambiados = items.filter(i => Number(i.precio_unitario) !== Number(i.precio_original))
+            if (cambiados.length > 0) {
+                setVentaPendiente({ ventaObj: { ...venta, clientes: { nombre: clientes.find(c => c.id === clienteId)?.nombre }, items }, cambiados })
+                setGuardando(false)
+                return
+            }
+            onVentaCreada({ ...venta, clientes: { nombre: clientes.find(c => c.id === clienteId)?.nombre }, items })
+
+        } else {
+            // ── FLUJO MANUFACTURA: crea un pedido sin tocar inventario ──
+            const { data: numeroConsecutivo } = await supabase.rpc('obtener_siguiente_pedidos_numero', { p_empresa_id: perfil.empresa_id })
+            const numero = numeroConsecutivo || 'PED-000001'
+            const requiereAprobacion = perfil?.empresas?.aprobacion_pedido ?? true
+
+            const { data: pedido, error: errPedido } = await supabase.from('pedidos').insert({
+                empresa_id: perfil.empresa_id,
+                cliente_id: clienteId,
+                vendedor_id: user.id,
+                lista_precio_id: listaId || null,
+                descuento_global: Number(descuentoGlobal) || 0,
+                estado: requiereAprobacion ? 'pendiente' : 'aprobado',
+                origen: 'oficina',
+                fecha_pedido: new Date().toISOString(),
+                numero_pedido: numero,
+                notas: notas.trim() || null,
+                direccion_entrega_id: direccionId || null,
+                direccion_entrega_texto: direccionId ? direcciones.find(d => d.id === direccionId)?.direccion || null : null,
+            }).select().single()
+
+            if (errPedido) { setError('Error: ' + errPedido.message); setGuardando(false); return }
+
+            await supabase.from('pedido_items').insert(
+                items.map(i => ({
+                    pedido_id: pedido.id, empresa_id: perfil.empresa_id,
+                    producto_id: i.producto_id, nombre_producto: i.nombre,
+                    cantidad: i.cantidad,
+                    precio_unitario: i.precio_unitario,
+                    descuento_item: Number(i.descuento_item) || 0,
+                    subtotal: i.cantidad * i.precio_unitario * (1 - Number(i.descuento_item || 0) / 100),
+                    unidad_venta: i.unidadVenta === '2' ? i.unidad_venta_2 : i.unidad_medida,
+                    cantidad_primaria: i.unidadVenta === '2' ? i.cantidad * (i.factor_conversion_2 || 1) : i.cantidad,
+                }))
+            )
+
+            setGuardando(false)
+            onVentaCreada({ numero_pedido: pedido.numero_pedido, cliente: clientes.find(c => c.id === clienteId)?.nombre })
+        }
     }
 
     const clienteSeleccionado = clientes.find(c => c.id === clienteId) || null
@@ -951,7 +1084,9 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
         <div style={{ padding: '24px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
                 <button onClick={onCancelar} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', fontSize: '13px' }}>← Volver</button>
-                <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Nueva venta</h1>
+                <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>
+                    {esRetail ? 'Nueva venta' : 'Nuevo pedido'}
+                </h1>
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: '20px' }}>
@@ -1073,7 +1208,6 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                         ) : (
                             /* ── Panel de búsqueda avanzada (autopartes) ── */
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                                {/* Filtros de repuesto: N° parte, Marca, Tipo, Categoría */}
                                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
                                     <div>
                                         <label style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '3px' }}>N° de parte</label>
@@ -1107,7 +1241,6 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                                         </select>
                                     </div>
                                 </div>
-                                {/* Filtros de vehículo: Marca, Modelo, Año */}
                                 <div style={{ padding: '8px 10px', backgroundColor: '#f0f9ff', borderRadius: '7px', border: '1px solid #bae6fd' }}>
                                     <p style={{ fontSize: '11px', fontWeight: 600, color: '#0369a1', margin: '0 0 6px' }}>Vehículo compatible</p>
                                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 80px', gap: '8px' }}>
@@ -1157,7 +1290,6 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                                     )}
                                 </div>
 
-                                {/* Resultados avanzados */}
                                 {resultadosAvanzados !== null && (
                                     <div style={{ border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden', maxHeight: '260px', overflowY: 'auto' }}>
                                         {resultadosAvanzados.length === 0 ? (
@@ -1210,21 +1342,9 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                                         <tr key={item.producto_id} style={{ borderBottom: '1px solid #f3f4f6' }}>
                                             <td style={{ padding: '10px 12px', fontSize: '13px', color: '#1f2937', maxWidth: '320px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={item.nombre}>{item.nombre}</td>
                                             <td style={{ padding: '10px 12px' }}>
-                                                <input
-                                                    type="number"
-                                                    min="0"
-                                                    step="0.01"
-                                                    value={item.precio_unitario}
+                                                <input type="number" min="0" step="0.01" value={item.precio_unitario}
                                                     onChange={e => cambiarPrecio(item.producto_id, e.target.value)}
-                                                    style={{
-                                                        width: '80px',
-                                                        padding: '4px 8px',
-                                                        border: '1px solid #d1d5db',
-                                                        borderRadius: '6px',
-                                                        fontSize: '13px',
-                                                        textAlign: 'right'
-                                                    }}
-                                                />
+                                                    style={{ width: '80px', padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px', textAlign: 'right' }} />
                                             </td>
                                             <td style={{ padding: '10px 12px' }}>
                                                 <input type="number" min="0" max="100" step="0.1"
@@ -1269,6 +1389,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                     )}
                 </div>
 
+                {/* Panel lateral de resumen y confirmación */}
                 <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '20px', height: 'fit-content', position: 'sticky', top: '24px' }}>
                     <h2 style={{ fontSize: '15px', fontWeight: 600, color: '#1f2937', margin: '0 0 16px' }}>Resumen</h2>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
@@ -1301,38 +1422,207 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                             style={{ width: '100px', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '14px', fontWeight: 600, textAlign: 'center' }} />
                     </div>
 
-                    {/* Notas del pedido */}
-                    <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: '14px', marginBottom: '14px' }}>
-                        <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>
-                            Notas <span style={{ color: '#9ca3af', fontWeight: 400 }}>(opcional)</span>
-                        </label>
-                        <textarea value={notas} onChange={e => setNotas(e.target.value)}
-                            placeholder="Instrucciones de entrega, observaciones..."
-                            rows={3}
-                            style={{ width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '12px', boxSizing: 'border-box', resize: 'vertical', color: '#374151' }} />
-                    </div>
+                    {/* ── PANEL RETAIL: condición de pago + cobro inmediato ── */}
+                    {esRetail && (
+                        <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: '14px', marginBottom: '14px' }}>
+                            <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '8px' }}>Condición de pago</label>
+                            <div style={{ display: 'flex', gap: '6px', marginBottom: '10px' }}>
+                                {['contado', 'credito'].map(c => (
+                                    <button key={c} onClick={() => setCondicion(c)}
+                                        style={{
+                                            flex: 1, padding: '7px', borderRadius: '7px', fontSize: '12px', fontWeight: 500,
+                                            border: '1px solid', cursor: 'pointer',
+                                            borderColor: condicion === c ? '#16a34a' : '#e5e7eb',
+                                            backgroundColor: condicion === c ? '#f0fdf4' : '#fff',
+                                            color: condicion === c ? '#166534' : '#6b7280',
+                                        }}>
+                                        {c === 'contado' ? 'Contado' : 'Crédito'}
+                                    </button>
+                                ))}
+                            </div>
+                            {condicion === 'credito' && (
+                                <div style={{ marginBottom: '10px' }}>
+                                    <label style={{ fontSize: '11px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Días de crédito</label>
+                                    <input type="number" min="0" value={diasCredito}
+                                        onChange={e => setDiasCredito(Number(e.target.value) || 0)}
+                                        style={{ width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '12px', boxSizing: 'border-box' }} />
+                                    {diasCredito > 0 && (() => {
+                                        const d = new Date(); d.setDate(d.getDate() + diasCredito)
+                                        return <p style={{ fontSize: '11px', color: '#6b7280', margin: '4px 0 0' }}>Vence: {d.toLocaleDateString('es-VE')}</p>
+                                    })()}
+                                </div>
+                            )}
+                            {condicion === 'contado' && (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                                    <div>
+                                        <label style={{ fontSize: '11px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Tasa de cambio</label>
+                                        <select value={tipoTasa} onChange={e => {
+                                            const t = e.target.value
+                                            setTipoTasa(t)
+                                            const tasa = tasas[t] || 1
+                                            const usd = parseFloat(pagoUsd) || 0
+                                            const restBs = Math.max(0, (total - usd) * tasa)
+                                            setPagoBs(restBs > 0 ? restBs.toFixed(2) : '')
+                                        }}
+                                            style={{ width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '12px', color: '#374151', backgroundColor: '#fff' }}>
+                                            {OPCIONES_TASA.map(o => (
+                                                <option key={o.key} value={o.key}>{o.label}{tasas[o.key] ? ` (${tasas[o.key]})` : ''}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
+                                        <div>
+                                            <label style={{ fontSize: '11px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Monto USD</label>
+                                            <input type="number" min="0" step="0.01" value={pagoUsd} onChange={e => {
+                                                const v = e.target.value
+                                                const usd = parseFloat(v) || 0
+                                                setPagoUsd(v)
+                                                const tasa = tasas[tipoTasa] || 1
+                                                const restBs = Math.max(0, (total - usd) * tasa)
+                                                setPagoBs(restBs > 0 ? restBs.toFixed(2) : '')
+                                            }} placeholder="0.00"
+                                                style={{ width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '12px', boxSizing: 'border-box' }} />
+                                        </div>
+                                        <div>
+                                            <label style={{ fontSize: '11px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Método</label>
+                                            <select value={metodoUsd} onChange={e => setMetodoUsd(e.target.value)}
+                                                style={{ width: '100%', padding: '7px 6px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '11px', color: '#374151', backgroundColor: '#fff' }}>
+                                                {METODOS_USD.map(m => <option key={m} value={m}>{m}</option>)}
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
+                                        <div>
+                                            <label style={{ fontSize: '11px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Monto Bs.</label>
+                                            <input type="number" min="0" step="0.01" value={pagoBs} onChange={e => {
+                                                const v = e.target.value
+                                                const bs = parseFloat(v) || 0
+                                                setPagoBs(v)
+                                                const tasa = tasas[tipoTasa] || 1
+                                                const restUsd = Math.max(0, total - bs / tasa)
+                                                setPagoUsd(restUsd > 0 ? restUsd.toFixed(2) : '')
+                                            }} placeholder="0.00"
+                                                style={{ width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '12px', boxSizing: 'border-box' }} />
+                                        </div>
+                                        <div>
+                                            <label style={{ fontSize: '11px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Método</label>
+                                            <select value={metodoBs} onChange={e => setMetodoBs(e.target.value)}
+                                                style={{ width: '100%', padding: '7px 6px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '11px', color: '#374151', backgroundColor: '#fff' }}>
+                                                {METODOS_BS.map(m => <option key={m} value={m}>{m}</option>)}
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label style={{ fontSize: '11px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Nota <span style={{ color: '#9ca3af', fontWeight: 400 }}>(opcional)</span></label>
+                                        <input type="text" value={notaCobro} onChange={e => setNotaCobro(e.target.value)} placeholder="Ej: Efectivo recibido en caja..."
+                                            style={{ width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '12px', boxSizing: 'border-box' }} />
+                                    </div>
+                                    {cuentasBancarias.length > 0 && (
+                                        <div>
+                                            <label style={{ fontSize: '11px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Cuenta bancaria <span style={{ color: '#9ca3af', fontWeight: 400 }}>(opcional)</span></label>
+                                            <select value={cuentaBancariaId} onChange={e => setCuentaBancariaId(e.target.value)}
+                                                style={{ width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '12px', color: '#374151', backgroundColor: '#fff' }}>
+                                                <option value="">— Efectivo / sin cuenta —</option>
+                                                {cuentasBancarias
+                                                    .filter(c => Number(pagoUsd) > 0 && Number(pagoBs) > 0 ? true : Number(pagoUsd) > 0 ? c.moneda !== 'Bs' : c.moneda === 'Bs')
+                                                    .map(c => <option key={c.id} value={c.id}>{c.nombre} ({c.banco} · {c.moneda})</option>)}
+                                            </select>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                            {/* N° de referencia (solo retail) */}
+                            <div style={{ marginTop: '10px' }}>
+                                <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>
+                                    N° de referencia <span style={{ color: '#9ca3af', fontWeight: 400 }}>(opcional)</span>
+                                </label>
+                                <input
+                                    type="text"
+                                    value={nroReferencia}
+                                    onChange={e => setNroReferencia(e.target.value)}
+                                    placeholder="Ej: REF-001, NP-2024..."
+                                    style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', color: '#374151', backgroundColor: '#fff', boxSizing: 'border-box' }}
+                                />
+                            </div>
+                        </div>
+                    )}
+
+                    {/* ── PANEL MANUFACTURA: solo notas ── */}
+                    {!esRetail && (
+                        <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: '14px', marginBottom: '14px' }}>
+                            <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>
+                                Notas <span style={{ color: '#9ca3af', fontWeight: 400 }}>(opcional)</span>
+                            </label>
+                            <textarea value={notas} onChange={e => setNotas(e.target.value)}
+                                placeholder="Instrucciones de entrega, observaciones..."
+                                rows={3}
+                                style={{ width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '12px', boxSizing: 'border-box', resize: 'vertical', color: '#374151' }} />
+                        </div>
+                    )}
 
                     {error && (
                         <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', color: '#dc2626', marginBottom: '12px' }}>
                             {error}
                         </div>
                     )}
-                    <button onClick={registrarPedido} disabled={guardando || items.length === 0}
+
+                    {/* Botón de acción — diferente según flujo */}
+                    <button
+                        onClick={procesar}
+                        disabled={guardando || items.length === 0}
                         style={{ width: '100%', backgroundColor: items.length === 0 ? '#d1d5db' : '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '12px', fontSize: '14px', fontWeight: 600, cursor: items.length === 0 ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
                         <CheckCircle size={16} />
-                        {guardando ? 'Registrando...' : 'Registrar pedido'}
+                        {guardando ? 'Procesando...' : esRetail ? 'Confirmar venta' : 'Registrar pedido'}
                     </button>
-                    <p style={{ fontSize: '11px', color: '#9ca3af', textAlign: 'center', margin: '8px 0 0' }}>
-                        El pedido pasa a {(perfil?.empresas?.aprobacion_pedido ?? true) ? 'aprobación' : 'despacho'} automáticamente
-                    </p>
+
+                    {!esRetail && (
+                        <p style={{ fontSize: '11px', color: '#9ca3af', textAlign: 'center', margin: '8px 0 0' }}>
+                            El pedido pasa a {(perfil?.empresas?.aprobacion_pedido ?? true) ? 'aprobación' : 'despacho'} automáticamente
+                        </p>
+                    )}
                 </div>
             </div>
+
+            {/* Modal de actualización de precios (solo retail) */}
+            {esRetail && ventaPendiente && (
+                <>
+                    <div onClick={() => aplicarActualizacionPrecios(false)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', zIndex: 40 }} />
+                    <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', backgroundColor: '#fff', borderRadius: '16px', padding: '28px', width: '480px', zIndex: 50, boxShadow: '0 20px 60px rgba(0,0,0,0.2)', maxHeight: '80vh', overflowY: 'auto' }}>
+                        <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#1f2937', margin: '0 0 6px' }}>Actualizar precios en catálogo</h3>
+                        <p style={{ fontSize: '13px', color: '#6b7280', margin: '0 0 18px' }}>Se modificaron los siguientes precios de venta. ¿Deseas actualizar el catálogo?</p>
+                        <div style={{ backgroundColor: '#f9fafb', borderRadius: '10px', border: '1px solid #e5e7eb', overflow: 'hidden', marginBottom: '20px' }}>
+                            {ventaPendiente.cambiados.map(item => (
+                                <div key={item.producto_id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 16px', borderBottom: '1px solid #f3f4f6' }}>
+                                    <div>
+                                        <div style={{ fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>{item.nombre}</div>
+                                        {item.sku && <div style={{ fontSize: '11px', color: '#9ca3af', fontFamily: 'monospace' }}>{item.sku}</div>}
+                                    </div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px' }}>
+                                        <span style={{ color: '#9ca3af', textDecoration: 'line-through' }}>{fmt(item.precio_original)}</span>
+                                        <span style={{ color: '#6b7280' }}>→</span>
+                                        <span style={{ fontWeight: 700, color: '#16a34a' }}>{fmt(item.precio_unitario)}</span>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                        <div style={{ display: 'flex', gap: '10px' }}>
+                            <button onClick={() => aplicarActualizacionPrecios(true)}
+                                style={{ flex: 2, padding: '11px', borderRadius: '8px', border: 'none', backgroundColor: '#16a34a', color: '#fff', fontSize: '14px', fontWeight: 600, cursor: 'pointer' }}>
+                                Sí, actualizar catálogo
+                            </button>
+                            <button onClick={() => aplicarActualizacionPrecios(false)}
+                                style={{ flex: 1, padding: '11px', borderRadius: '8px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: '#374151', fontSize: '14px', cursor: 'pointer' }}>
+                                No, continuar
+                            </button>
+                        </div>
+                    </div>
+                </>
+            )}
         </div>
     )
 }
 
 // ─── Factura + Devolución ──────────────────────────────────────
-// ─── Factura + Devolución (CORREGIDO PARA IMPRESIÓN) ──────────────────────
 function Factura({ venta, onVolver, onDevolucionCreada }) {
     const { perfil } = useAuth()
     const [items, setItems] = useState(venta.items || [])
@@ -1379,54 +1669,37 @@ function Factura({ venta, onVolver, onDevolucionCreada }) {
         const { error } = await supabase.from('ventas').update({ nro_referencia: refValor.trim() || null }).eq('id', venta.id)
         if (!error) {
             setRefEditando(false)
-            // Actualiza el estado local si es necesario, o recarga
         } else {
             alert('Error al guardar la referencia')
         }
     }
 
-    // Lógica para mostrar NE- en lugar de FAC-
-    const numeroDoc = venta.numero_factura ? venta.numero_factura.replace('FAC-', 'NE-') : '';
+    const numeroDoc = venta.numero_factura ? venta.numero_factura.replace('FAC-', 'NE-') : ''
 
     if (mostrarDevolucion)
         return <FormDevolucion
             venta={venta}
             items={items}
             onCancelar={() => setMostrarDevolucion(false)}
-            onConfirmada={() => { onDevolucionCreada(); }}
+            onConfirmada={() => { onDevolucionCreada() }}
         />
 
     return (
         <div style={{ padding: '24px', maxWidth: '680px' }}>
 
-            {/* 🖨️ ESTILOS PARA IMPRESIÓN */}
             <style>{`
                 @media print {
-                    /* Ocultar todo el body por defecto */
                     body * { visibility: hidden; }
-                    
-                    /* Hacer visible solo el documento */
                     .print-target, .print-target * { visibility: visible; }
-                    
-                    /* Ajustar posición y márgenes del documento para impresión */
                     .print-target {
-                        position: absolute;
-                        left: 0;
-                        top: 0;
-                        width: 100%;
-                        margin: 0;
-                        padding: 20px !important;
-                        border: none !important;
-                        box-shadow: none !important;
-                        background: white !important;
+                        position: absolute; left: 0; top: 0; width: 100%;
+                        margin: 0; padding: 20px !important;
+                        border: none !important; box-shadow: none !important; background: white !important;
                     }
-                    
-                    /* Asegurar que elementos ocultos no ocupen espacio */
                     .no-print { display: none !important; }
                 }
             `}</style>
 
-            {/* Encabezado de la App (Se oculta al imprimir) */}
             <div className="no-print" style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
                 <button onClick={onVolver} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', fontSize: '13px' }}>← Volver</button>
                 <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Nota de Entrega</h1>
@@ -1444,7 +1717,6 @@ function Factura({ venta, onVolver, onDevolucionCreada }) {
                 )}
             </div>
 
-            {/* Documento (Lo único que se imprime) */}
             <div className="print-target" style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '32px', marginBottom: '16px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '32px' }}>
                     <div>
@@ -1538,7 +1810,6 @@ function Factura({ venta, onVolver, onDevolucionCreada }) {
                 <div style={{ marginTop: '32px', textAlign: 'center', fontSize: '12px', color: '#d1d5db' }}>Gracias por su compra</div>
             </div>
 
-            {/* Historial de devoluciones */}
             {devoluciones.length > 0 && (
                 <div style={{ backgroundColor: '#fffbeb', borderRadius: '12px', border: '1px solid #fde68a', padding: '16px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '12px' }}>
@@ -1639,7 +1910,6 @@ function FormDevolucion({ venta, items, onCancelar, onConfirmada }) {
                     .update({ stock_actual: nuevoStock })
                     .eq('id', prodId)
 
-                // REGISTRAR MOVIMIENTO ✅
                 await supabase.from('movimientos_inventario').insert({
                     empresa_id: perfil.empresa_id,
                     tipo_item: 'producto_terminado',
@@ -1655,7 +1925,6 @@ function FormDevolucion({ venta, items, onCancelar, onConfirmada }) {
             }
         }
 
-        // Actualizar estado de la venta
         const nuevoEstado = esTotal ? 'anulado' : venta.estado_cobro
         await supabase.from('ventas').update({ estado_cobro: nuevoEstado }).eq('id', venta.id)
 
@@ -1675,7 +1944,6 @@ function FormDevolucion({ venta, items, onCancelar, onConfirmada }) {
                 <div style={{ fontSize: '13px', color: '#6b7280', marginTop: '2px' }}>{venta.clientes?.nombre}</div>
             </div>
 
-            {/* Selección de productos */}
             <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden', marginBottom: '16px' }}>
                 <div style={{ padding: '14px 16px', borderBottom: '1px solid #e5e7eb', fontSize: '13px', fontWeight: 500, color: '#374151' }}>
                     Selecciona los productos a devolver
@@ -1704,7 +1972,6 @@ function FormDevolucion({ venta, items, onCancelar, onConfirmada }) {
                 ))}
             </div>
 
-            {/* Tipo y motivo */}
             <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px', marginBottom: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 <div>
                     <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Tipo de devolución</label>
@@ -1723,7 +1990,6 @@ function FormDevolucion({ venta, items, onCancelar, onConfirmada }) {
                 </div>
             </div>
 
-            {/* Resumen */}
             {itemsADevolver.length > 0 && (
                 <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '12px', padding: '16px', marginBottom: '16px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', color: '#374151' }}>
