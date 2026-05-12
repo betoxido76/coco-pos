@@ -3,6 +3,10 @@ import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import { Plus, Search, Trash2, CheckCircle, FileText, RotateCcw, AlertTriangle, ClipboardList, ChevronRight, Edit } from 'lucide-react'
 
+console.log('perfil.empresas:', perfil?.empresas)
+console.log('flujo_ventas:', perfil?.empresas?.flujo_ventas)
+console.log('esRetail:', esRetail)
+
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 
 function semaforo(stock) {
@@ -846,7 +850,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                     .select('producto_id, nro_parte, marca, tipo')
                     .eq('empresa_id', perfil.empresa_id)
                     .in('producto_id', ids)
-                ;(apData || []).forEach(ap => { apMap[ap.producto_id] = ap })
+                    ; (apData || []).forEach(ap => { apMap[ap.producto_id] = ap })
             }
             setResultadosAvanzados((ptData || []).map(p => ({
                 producto_id: p.id,
@@ -1067,7 +1071,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
         ? clientes.filter(c =>
             c.nombre.toLowerCase().includes(busquedaCliente.toLowerCase()) ||
             (c.rif || '').toLowerCase().includes(busquedaCliente.toLowerCase())
-          ).slice(0, 20)
+        ).slice(0, 20)
         : []
 
     function elegirCliente(c) {
@@ -1157,21 +1161,23 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                             <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151' }}>Agregar productos</label>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            {listas.length > 0 && (
-                                <select value={listaId} onChange={e => setListaId(e.target.value)}
-                                    style={{ padding: '5px 8px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '12px', color: '#374151', backgroundColor: '#fff' }}>
-                                    {listas.map(l => <option key={l.id} value={l.id}>{l.nombre}{l.es_default ? ' ★' : ''}</option>)}
-                                </select>
-                            )}
-                            {esAutopartes && (
-                                <button onClick={() => { setModoAvanzado(m => !m); setResultadosAvanzados(null); setBusqueda('') }}
-                                    style={{ fontSize: '12px', padding: '4px 10px', borderRadius: '6px', border: '1px solid', cursor: 'pointer',
-                                        borderColor: modoAvanzado ? '#1d4ed8' : '#d1d5db',
-                                        backgroundColor: modoAvanzado ? '#eff6ff' : '#f9fafb',
-                                        color: modoAvanzado ? '#1d4ed8' : '#6b7280', fontWeight: 500 }}>
-                                    {modoAvanzado ? 'Búsqueda simple' : 'Búsqueda avanzada'}
-                                </button>
-                            )}
+                                {listas.length > 0 && (
+                                    <select value={listaId} onChange={e => setListaId(e.target.value)}
+                                        style={{ padding: '5px 8px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '12px', color: '#374151', backgroundColor: '#fff' }}>
+                                        {listas.map(l => <option key={l.id} value={l.id}>{l.nombre}{l.es_default ? ' ★' : ''}</option>)}
+                                    </select>
+                                )}
+                                {esAutopartes && (
+                                    <button onClick={() => { setModoAvanzado(m => !m); setResultadosAvanzados(null); setBusqueda('') }}
+                                        style={{
+                                            fontSize: '12px', padding: '4px 10px', borderRadius: '6px', border: '1px solid', cursor: 'pointer',
+                                            borderColor: modoAvanzado ? '#1d4ed8' : '#d1d5db',
+                                            backgroundColor: modoAvanzado ? '#eff6ff' : '#f9fafb',
+                                            color: modoAvanzado ? '#1d4ed8' : '#6b7280', fontWeight: 500
+                                        }}>
+                                        {modoAvanzado ? 'Búsqueda simple' : 'Búsqueda avanzada'}
+                                    </button>
+                                )}
                             </div>
                         </div>
 
