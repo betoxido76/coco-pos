@@ -3,9 +3,6 @@ import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import { Plus, Search, Trash2, CheckCircle, FileText, RotateCcw, AlertTriangle, ClipboardList, ChevronRight, Edit } from 'lucide-react'
 
-console.log('perfil.empresas:', perfil?.empresas)
-console.log('flujo_ventas:', perfil?.empresas?.flujo_ventas)
-console.log('esRetail:', esRetail)
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 
@@ -657,6 +654,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
     const esAutopartes = perfil?.empresas?.perfil_negocio === 'autopartes'
     // FLUJO DUAL: retail descuenta stock al confirmar; manufactura crea un pedido
     const esRetail = perfil?.empresas?.flujo_ventas === 'retail'
+    console.log('DEBUG flujo:', perfil?.empresas?.flujo_ventas, '| esRetail:', esRetail)
 
     const [clientes, setClientes] = useState([])
     const [productos, setProductos] = useState([])
