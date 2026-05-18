@@ -188,6 +188,11 @@ pagos_proveedor       -- Pagos a proveedores
 ### Producción
 ```
 recetas               -- Recetas de productos
+                      --   producto_id uuid → productos_terminados (nullable)
+                      --   mp_id uuid → materias_primas (nullable)  ← sesión 2026-05-17
+                      --   Exactamente uno de los dos tiene valor (el otro es NULL)
+                      --   Filtrar receta por PT: .eq('producto_id', id)
+                      --   Filtrar receta por MP: .eq('mp_id', id)
 receta_items          -- Ingredientes de recetas
 ordenes_produccion    -- Órdenes de producción
 lote_consumos         -- Insumos consumidos por lote (con almacen_id)
@@ -411,6 +416,14 @@ ON CONFLICT DO NOTHING;
 | AuthContext — empresas join + módulo despacho | `.select` de empresas incluye `aprobacion_pedido`; `TODOS_LOS_MODULOS` incluye `'despacho'` |
 | Layout + main.jsx — ruta Despacho | Nav item `PackageCheck · Despacho → /despacho`; ruta `ModuloProtegido modulo="despacho"` |
 
+### Completados (sesión 2026-05-17)
+
+| Item | Notas |
+|---|---|
+| Recetas — soporte para MP Producidas | Nueva FK `recetas.mp_id uuid → materias_primas`. Listado con tabs "Productos terminados" / "MP Producidas" (con contadores). Modal: toggle PT/MP (solo cambiable en recetas nuevas); al seleccionar MP filtra por `tipo_producto='producido'`. Require SQL: `ALTER TABLE recetas ADD COLUMN IF NOT EXISTS mp_id uuid REFERENCES materias_primas(id)` |
+| Produccion.jsx — fix lookup de receta para MP | `cargarReceta()` y `crearOrden()` usaban `.eq('producto_id', id)` para ambos tipos de salida. Ahora usan `.eq('mp_id', mpSalidaId)` cuando `tipoSalida='materia_prima'`. También cambiado `.single()` → `.maybeSingle()` |
+| IVA condicional en todos los módulos | Auditoría completa: Ventas.jsx ya era correcto. Corregidos: **NuevoPedido.jsx** (query producto_precios incluye `aplica_iva`; totales y `precio_unitario` en pedido_items condicionales), **Pedidos.jsx** (TotalPedido y DetallePedido cargan `aplica_iva` via join; IVA por item), **Compras.jsx** (NuevaOrden: queries + agregarInsumo + totales + `precio_unitario_esperado`; NuevaRecepcion: queries + cargarItemsDeOC + agregarInsumoLibre + totales; DetalleOrden usa `orden.subtotal` guardado). Convención: precios en formularios de compra/pedido son CON IVA para items que aplican; el sistema extrae subtotal e IVA |
+
 ### Backlog estratégico (capacidades de plataforma SaaS)
 
 Estos ítems no son mejoras funcionales al producto sino capacidades de la plataforma que se necesitan para escalar comercialmente.
@@ -431,7 +444,12 @@ Estos ítems no son mejoras funcionales al producto sino capacidades de la plata
 - Todos los INSERTs: `empresa_id: perfil.empresa_id`
 - Columna de movimientos es `notas` (con s), no `nota`
 - Mapeo de tipos de insumo: `materias_primas→materia_prima`, `materiales_empaque→material_empaque`, `consumibles→consumible`, `productos_terminados→producto_terminado`
-- Campo `aplica_iva boolean` existe en las 4 tablas de productos (PT, MP, ME, consumibles). Al calcular valorización: `p.aplica_iva ? valor / 1.16 : valor` — nunca dividir incondicionalmente
+- Campo `aplica_iva boolean` existe en las 4 tablas de productos (PT, MP, ME, consumibles). **Nunca aplicar ni extraer IVA sin verificar este campo.** Patrón correcto en TODOS los módulos:
+  - Extraer base de precio con IVA: `aplica_iva ? precio / 1.16 : precio`
+  - Calcular IVA sobre base: `aplica_iva ? base * 0.16 : 0`
+  - Total: suma de precios (con IVA embebido para items que aplican, sin IVA para los demás)
+  - Los queries que calculan subtotal/IVA/total DEBEN incluir `aplica_iva` en el SELECT
+  - Ventas.jsx es la referencia correcta; NuevoPedido, Pedidos, Compras fueron corregidos en sesión 2026-05-17
 - Estilos: inline styles con objetos JS (no clases Tailwind, excepto en Login/ResetPassword)
 - Formato de moneda USD: `fmt(n)` → `$X.XX`
 - Formato de moneda Bs: `fmtBs(n)` → `X.XX Bs.`
@@ -516,6 +534,14 @@ Función helper que extrae el fetch de `direcciones_entrega` + CxC vencido + úl
 
 **Listas — evitar sobreescritura de `listaId`:**
 En el background fetch de listas, `setListaId` solo se llama cuando `!listaId` para no pisar el valor ya seteado desde caché.
+
+### Supabase — cambios aplicados en sesión 2026-05-17
+```sql
+-- Recetas para MP producidas
+ALTER TABLE recetas ADD COLUMN IF NOT EXISTS mp_id uuid REFERENCES materias_primas(id);
+-- Exactamente uno de producto_id / mp_id tiene valor por receta.
+-- Recetas existentes conservan producto_id; las nuevas de MP usan mp_id.
+```
 
 ### Supabase — cambios aplicados en sesión 2026-05-10/11
 ```sql
