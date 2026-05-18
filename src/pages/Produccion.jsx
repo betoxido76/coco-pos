@@ -266,12 +266,14 @@ function NuevaOrden({ onCreada, onCancelar }) {
         }
         setError('')
         // Buscar receta activa del producto
-        const { data: receta } = await supabase
+        let recetaQ = supabase
             .from('recetas')
             .select('id, rinde_unidades, receta_items(id, tipo_insumo, insumo_id, cantidad, unidad)')
-            .eq('producto_id', idSalida)
             .eq('activo', true)
-            .single()
+        recetaQ = tipoSalida === 'materia_prima'
+            ? recetaQ.eq('mp_id', mpSalidaId)
+            : recetaQ.eq('producto_id', productoId)
+        const { data: receta } = await recetaQ.maybeSingle()
 
         if (!receta || !receta.receta_items?.length) {
             // Sin receta — crear consumos vacíos para que el usuario agregue manualmente
@@ -403,8 +405,11 @@ function NuevaOrden({ onCreada, onCancelar }) {
 
         // Buscar receta
         const idSalida = tipoSalida === 'materia_prima' ? mpSalidaId : productoId
-        const { data: receta } = await supabase
-            .from('recetas').select('id').eq('producto_id', idSalida).eq('activo', true).single()
+        let recetaQ2 = supabase.from('recetas').select('id').eq('activo', true)
+        recetaQ2 = tipoSalida === 'materia_prima'
+            ? recetaQ2.eq('mp_id', mpSalidaId)
+            : recetaQ2.eq('producto_id', productoId)
+        const { data: receta } = await recetaQ2.maybeSingle()
 
         const { data: orden, error: errOrden } = await supabase
             .from('ordenes_produccion')
