@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
-import { Plus, X, ChevronRight, FlaskConical, Trash2, Pencil } from 'lucide-react'
+import { Plus, X, FlaskConical, Trash2, Pencil } from 'lucide-react'
 
 const fmt = (n, dec = 4) => Number(n || 0).toLocaleString('es-VE', { minimumFractionDigits: 0, maximumFractionDigits: dec })
 
@@ -11,19 +11,17 @@ const inputStyle = {
     backgroundColor: '#fff', boxSizing: 'border-box',
 }
 
-const TIPO_LABEL = {
-    materia_prima: 'Materia prima',
-    material_empaque: 'Material de empaque',
-    empaque: 'Empaque',
-    consumible: 'Consumible',
-}
-
 const TIPO_COLOR = {
     materia_prima: { bg: '#dbeafe', color: '#1e40af' },
     material_empaque: { bg: '#fef9c3', color: '#854d0e' },
     empaque: { bg: '#fef9c3', color: '#854d0e' },
     consumible: { bg: '#f3e8ff', color: '#7c3aed' },
 }
+
+const TABS = [
+    { key: 'pt', label: 'Productos terminados' },
+    { key: 'mp', label: 'MP Producidas' },
+]
 
 // ══════════════════════════════════════════════════════════════
 // COMPONENTE PRINCIPAL
@@ -32,8 +30,9 @@ export default function Recetas() {
     const { perfil } = useAuth()
     const [recetas, setRecetas] = useState([])
     const [loading, setLoading] = useState(true)
+    const [tab, setTab] = useState('pt')
     const [modalAbierto, setModalAbierto] = useState(false)
-    const [recetaEditar, setRecetaEditar] = useState(null) // null = nueva, objeto = editar
+    const [recetaEditar, setRecetaEditar] = useState(null)
 
     useEffect(() => { cargar() }, [])
 
@@ -42,8 +41,9 @@ export default function Recetas() {
         const { data } = await supabase
             .from('recetas')
             .select(`
-                id, descripcion, merma_pct, activo, rinde_unidades, created_at,
+                id, descripcion, merma_pct, activo, rinde_unidades, producto_id, mp_id, created_at,
                 productos_terminados(id, nombre, sku, unidad_medida),
+                materias_primas(id, nombre, codigo, unidad_medida),
                 receta_items(id, tipo_insumo, insumo_id, cantidad, unidad)
             `)
             .eq('empresa_id', perfil.empresa_id)
@@ -72,13 +72,15 @@ export default function Recetas() {
         cargar()
     }
 
+    const recetasFiltradas = recetas.filter(r => tab === 'pt' ? r.producto_id !== null : r.mp_id !== null)
+
     return (
         <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                 <div>
                     <h2 style={{ fontSize: '16px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Recetas de producción</h2>
                     <p style={{ fontSize: '13px', color: '#6b7280', margin: '4px 0 0' }}>
-                        Define los insumos necesarios para producir cada producto terminado
+                        Define los insumos para producir cada producto terminado o materia prima producida
                     </p>
                 </div>
                 <button onClick={abrirNueva}
@@ -87,69 +89,101 @@ export default function Recetas() {
                 </button>
             </div>
 
+            {/* Tabs */}
+            <div style={{ display: 'flex', gap: '4px', marginBottom: '16px', borderBottom: '1px solid #e5e7eb', paddingBottom: '0' }}>
+                {TABS.map(t => {
+                    const count = recetas.filter(r => t.key === 'pt' ? r.producto_id !== null : r.mp_id !== null).length
+                    const activo = tab === t.key
+                    return (
+                        <button key={t.key} onClick={() => setTab(t.key)} style={{
+                            padding: '8px 16px', fontSize: '13px', fontWeight: activo ? 600 : 400,
+                            color: activo ? '#1f2937' : '#6b7280',
+                            background: 'none', border: 'none', borderBottom: activo ? '2px solid #16a34a' : '2px solid transparent',
+                            cursor: 'pointer', marginBottom: '-1px',
+                        }}>
+                            {t.label}
+                            <span style={{
+                                marginLeft: '6px', fontSize: '11px', fontWeight: 500,
+                                backgroundColor: activo ? '#dcfce7' : '#f3f4f6',
+                                color: activo ? '#166534' : '#9ca3af',
+                                borderRadius: '10px', padding: '1px 7px',
+                            }}>{count}</span>
+                        </button>
+                    )
+                })}
+            </div>
+
             {/* Lista */}
             <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
                 {loading
                     ? <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
-                    : recetas.length === 0
+                    : recetasFiltradas.length === 0
                         ? (
                             <div style={{ padding: '56px', textAlign: 'center' }}>
                                 <FlaskConical size={36} color="#d1d5db" style={{ margin: '0 auto 12px' }} />
-                                <p style={{ color: '#9ca3af', fontSize: '14px', margin: 0 }}>Aún no hay recetas registradas</p>
-                                <p style={{ color: '#d1d5db', fontSize: '13px', margin: '4px 0 0' }}>Crea la primera receta con el botón de arriba</p>
+                                <p style={{ color: '#9ca3af', fontSize: '14px', margin: 0 }}>
+                                    No hay recetas de {tab === 'pt' ? 'productos terminados' : 'MP producidas'}
+                                </p>
+                                <p style={{ color: '#d1d5db', fontSize: '13px', margin: '4px 0 0' }}>Crea la primera con el botón de arriba</p>
                             </div>
                         )
                         : (
                             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                                 <thead>
                                     <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                        {['Producto', 'Rinde', '% Merma', 'Insumos', 'Descripción', 'Estado', ''].map(h => (
+                                        {[tab === 'pt' ? 'Producto' : 'MP Producida', 'Rinde', '% Merma', 'Insumos', 'Descripción', 'Estado', ''].map(h => (
                                             <th key={h} style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
                                         ))}
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {recetas.map(r => (
-                                        <tr key={r.id} style={{ borderBottom: '1px solid #f3f4f6' }}
-                                            onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
-                                            onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
-                                            <td style={{ padding: '12px 14px' }}>
-                                                <span style={{ fontSize: '13px', fontWeight: 600, color: '#1f2937' }}>{r.productos_terminados?.nombre}</span>
-                                                <span style={{ fontSize: '11px', color: '#9ca3af', marginLeft: '6px', fontFamily: 'monospace' }}>{r.productos_terminados?.sku}</span>
-                                            </td>
-                                            <td style={{ padding: '12px 14px', fontSize: '13px', color: '#374151' }}>
-                                                {fmt(r.rinde_unidades, 3)} {r.productos_terminados?.unidad_medida}
-                                            </td>
-                                            <td style={{ padding: '12px 14px', fontSize: '13px', color: r.merma_pct > 0 ? '#d97706' : '#9ca3af' }}>
-                                                {r.merma_pct > 0 ? `${r.merma_pct}%` : '—'}
-                                            </td>
-                                            <td style={{ padding: '12px 14px', fontSize: '13px', color: '#374151' }}>
-                                                <span style={{ backgroundColor: '#f3f4f6', borderRadius: '6px', padding: '2px 8px', fontSize: '12px', fontWeight: 500 }}>
-                                                    {r.receta_items?.length || 0} ítem(s)
-                                                </span>
-                                            </td>
-                                            <td style={{ padding: '12px 14px', fontSize: '13px', color: '#6b7280', maxWidth: '200px' }}>
-                                                <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                                    {r.descripcion || '—'}
-                                                </span>
-                                            </td>
-                                            <td style={{ padding: '12px 14px' }}>
-                                                <button onClick={() => toggleActivo(r)} style={{
-                                                    padding: '2px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 500, border: 'none', cursor: 'pointer',
-                                                    backgroundColor: r.activo ? '#dcfce7' : '#f3f4f6',
-                                                    color: r.activo ? '#166534' : '#6b7280',
-                                                }}>
-                                                    {r.activo ? 'Activa' : 'Inactiva'}
-                                                </button>
-                                            </td>
-                                            <td style={{ padding: '12px 14px' }}>
-                                                <button onClick={() => abrirEditar(r)}
-                                                    style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
-                                                    <Pencil size={12} /> Editar
-                                                </button>
-                                            </td>
-                                        </tr>
-                                    ))}
+                                    {recetasFiltradas.map(r => {
+                                        const esPt = r.producto_id !== null
+                                        const nombre = esPt ? r.productos_terminados?.nombre : r.materias_primas?.nombre
+                                        const codigo = esPt ? r.productos_terminados?.sku : r.materias_primas?.codigo
+                                        const unidad = esPt ? r.productos_terminados?.unidad_medida : r.materias_primas?.unidad_medida
+                                        return (
+                                            <tr key={r.id} style={{ borderBottom: '1px solid #f3f4f6' }}
+                                                onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
+                                                onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                                                <td style={{ padding: '12px 14px' }}>
+                                                    <span style={{ fontSize: '13px', fontWeight: 600, color: '#1f2937' }}>{nombre}</span>
+                                                    <span style={{ fontSize: '11px', color: '#9ca3af', marginLeft: '6px', fontFamily: 'monospace' }}>{codigo}</span>
+                                                </td>
+                                                <td style={{ padding: '12px 14px', fontSize: '13px', color: '#374151' }}>
+                                                    {fmt(r.rinde_unidades, 3)} {unidad}
+                                                </td>
+                                                <td style={{ padding: '12px 14px', fontSize: '13px', color: r.merma_pct > 0 ? '#d97706' : '#9ca3af' }}>
+                                                    {r.merma_pct > 0 ? `${r.merma_pct}%` : '—'}
+                                                </td>
+                                                <td style={{ padding: '12px 14px', fontSize: '13px', color: '#374151' }}>
+                                                    <span style={{ backgroundColor: '#f3f4f6', borderRadius: '6px', padding: '2px 8px', fontSize: '12px', fontWeight: 500 }}>
+                                                        {r.receta_items?.length || 0} ítem(s)
+                                                    </span>
+                                                </td>
+                                                <td style={{ padding: '12px 14px', fontSize: '13px', color: '#6b7280', maxWidth: '200px' }}>
+                                                    <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                        {r.descripcion || '—'}
+                                                    </span>
+                                                </td>
+                                                <td style={{ padding: '12px 14px' }}>
+                                                    <button onClick={() => toggleActivo(r)} style={{
+                                                        padding: '2px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 500, border: 'none', cursor: 'pointer',
+                                                        backgroundColor: r.activo ? '#dcfce7' : '#f3f4f6',
+                                                        color: r.activo ? '#166534' : '#6b7280',
+                                                    }}>
+                                                        {r.activo ? 'Activa' : 'Inactiva'}
+                                                    </button>
+                                                </td>
+                                                <td style={{ padding: '12px 14px' }}>
+                                                    <button onClick={() => abrirEditar(r)}
+                                                        style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
+                                                        <Pencil size={12} /> Editar
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        )
+                                    })}
                                 </tbody>
                             </table>
                         )
@@ -160,6 +194,7 @@ export default function Recetas() {
             {modalAbierto && (
                 <ModalReceta
                     receta={recetaEditar}
+                    tabActivo={tab}
                     onGuardada={() => { cerrarModal(); cargar() }}
                     onCerrar={cerrarModal}
                 />
@@ -171,18 +206,24 @@ export default function Recetas() {
 // ══════════════════════════════════════════════════════════════
 // MODAL CREAR / EDITAR RECETA
 // ══════════════════════════════════════════════════════════════
-function ModalReceta({ receta, onGuardada, onCerrar }) {
+function ModalReceta({ receta, tabActivo, onGuardada, onCerrar }) {
     const { perfil } = useAuth()
     const esNueva = !receta
 
+    // tipoSalida: 'pt' = producto terminado, 'mp' = materia prima producida
+    const tipoInicial = receta ? (receta.mp_id ? 'mp' : 'pt') : tabActivo
+    const [tipoSalida, setTipoSalida] = useState(tipoInicial)
+
     // Maestros
     const [productos, setProductos] = useState([])
+    const [mpProducidas, setMpProducidas] = useState([])
     const [insumosMp, setInsumosMp] = useState([])
     const [insumosMe, setInsumosMe] = useState([])
     const [insumosC, setInsumosC] = useState([])
 
     // Cabecera
     const [productoId, setProductoId] = useState(receta?.producto_id || '')
+    const [mpId, setMpId] = useState(receta?.mp_id || '')
     const [descripcion, setDescripcion] = useState(receta?.descripcion || '')
     const [merma, setMerma] = useState(receta?.merma_pct ?? 0)
     const [rinde, setRinde] = useState(receta?.rinde_unidades ?? 1)
@@ -194,20 +235,20 @@ function ModalReceta({ receta, onGuardada, onCerrar }) {
     const [error, setError] = useState('')
 
     useEffect(() => {
-        // Cargar maestros
         Promise.all([
             supabase.from('productos_terminados').select('id, nombre, sku, unidad_medida').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre'),
+            supabase.from('materias_primas').select('id, nombre, codigo, unidad_medida').eq('activo', true).eq('empresa_id', perfil.empresa_id).eq('tipo_producto', 'producido').order('nombre'),
             supabase.from('materias_primas').select('id, nombre, codigo, unidad_medida').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre'),
             supabase.from('materiales_empaque').select('id, nombre, codigo, unidad_medida').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre'),
             supabase.from('consumibles').select('id, nombre, codigo, unidad_medida').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre'),
-        ]).then(([pt, mp, me, co]) => {
+        ]).then(([pt, mpProd, mp, me, co]) => {
             setProductos(pt.data || [])
+            setMpProducidas(mpProd.data || [])
             setInsumosMp(mp.data || [])
             setInsumosMe(me.data || [])
             setInsumosC(co.data || [])
         })
 
-        // Cargar items si es edición
         if (!esNueva && receta.receta_items?.length) {
             setItems(receta.receta_items.map(i => ({
                 _key: i.id,
@@ -248,7 +289,6 @@ function ModalReceta({ receta, onGuardada, onCerrar }) {
         setItems(prev => prev.map(i => {
             if (i._key !== key) return i
             const updated = { ...i, [campo]: valor }
-            // Si cambia el tipo o el insumo, actualizar la unidad automáticamente
             if (campo === 'insumo_id' || campo === 'tipo_insumo') {
                 const tipo = campo === 'tipo_insumo' ? valor : i.tipo_insumo
                 const insumoId = campo === 'insumo_id' ? valor : i.insumo_id
@@ -261,16 +301,15 @@ function ModalReceta({ receta, onGuardada, onCerrar }) {
         }))
     }
 
-    function nombreInsumo(item) {
-        const lista = getListaPorTipo(item.tipo_insumo)
-        return lista.find(x => x.id === item.insumo_id)?.nombre || ''
-    }
-
-    const productoSel = productos.find(p => p.id === productoId)
+    const esPt = tipoSalida === 'pt'
+    const productoSel = esPt
+        ? productos.find(p => p.id === productoId)
+        : mpProducidas.find(p => p.id === mpId)
 
     async function guardar() {
         setError('')
-        if (!productoId) return setError('Selecciona un producto terminado')
+        if (esPt && !productoId) return setError('Selecciona un producto terminado')
+        if (!esPt && !mpId) return setError('Selecciona una materia prima producida')
         if (Number(rinde) <= 0) return setError('El rendimiento debe ser mayor a 0')
         const itemsValidos = items.filter(i => i.insumo_id && i.cantidad && Number(i.cantidad) > 0)
         if (itemsValidos.length === 0) return setError('Agrega al menos un insumo con cantidad válida')
@@ -280,17 +319,18 @@ function ModalReceta({ receta, onGuardada, onCerrar }) {
         try {
             let recetaId = receta?.id
 
+            const cabecera = {
+                producto_id: esPt ? productoId : null,
+                mp_id: esPt ? null : mpId,
+                descripcion: descripcion.trim() || null,
+                merma_pct: Number(merma) || 0,
+                rinde_unidades: Number(rinde) || 1,
+            }
+
             if (esNueva) {
                 const { data: nueva, error: errReceta } = await supabase
                     .from('recetas')
-                    .insert({
-                        producto_id: productoId,
-                        descripcion: descripcion.trim() || null,
-                        merma_pct: Number(merma) || 0,
-                        rinde_unidades: Number(rinde) || 1,
-                        activo: true,
-                        empresa_id: perfil.empresa_id,
-                    })
+                    .insert({ ...cabecera, activo: true, empresa_id: perfil.empresa_id })
                     .select()
                     .single()
 
@@ -299,20 +339,13 @@ function ModalReceta({ receta, onGuardada, onCerrar }) {
             } else {
                 const { error: errUpd } = await supabase
                     .from('recetas')
-                    .update({
-                        descripcion: descripcion.trim() || null,
-                        merma_pct: Number(merma) || 0,
-                        rinde_unidades: Number(rinde) || 1,
-                    })
+                    .update(cabecera)
                     .eq('id', recetaId)
 
                 if (errUpd) throw new Error(errUpd.message)
-
-                // Eliminar items existentes y reinsertar (estrategia simple y segura)
                 await supabase.from('receta_items').delete().eq('receta_id', recetaId)
             }
 
-            // Insertar items
             const inserts = itemsValidos.map(i => ({
                 receta_id: recetaId,
                 tipo_insumo: i.tipo_insumo,
@@ -332,6 +365,8 @@ function ModalReceta({ receta, onGuardada, onCerrar }) {
         }
     }
 
+    const nombreSalida = esPt ? 'Producto terminado' : 'MP Producida'
+
     return (
         <>
             <div onClick={onCerrar} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', zIndex: 40 }} />
@@ -349,9 +384,9 @@ function ModalReceta({ receta, onGuardada, onCerrar }) {
                         <h2 style={{ fontSize: '17px', fontWeight: 700, color: '#1f2937', margin: 0 }}>
                             {esNueva ? 'Nueva receta' : 'Editar receta'}
                         </h2>
-                        {!esNueva && receta.productos_terminados && (
+                        {!esNueva && (
                             <p style={{ fontSize: '13px', color: '#6b7280', margin: '3px 0 0' }}>
-                                {receta.productos_terminados.nombre}
+                                {esPt ? receta.productos_terminados?.nombre : receta.materias_primas?.nombre}
                             </p>
                         )}
                     </div>
@@ -360,28 +395,71 @@ function ModalReceta({ receta, onGuardada, onCerrar }) {
                     </button>
                 </div>
 
-                {/* ── SECCIÓN 1: Cabecera ── */}
+                {/* ── SECCIÓN 1: Tipo + Cabecera ── */}
                 <div style={{ backgroundColor: '#f9fafb', borderRadius: '10px', padding: '16px', marginBottom: '20px' }}>
                     <p style={{ fontSize: '11px', fontWeight: 600, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 12px' }}>
                         Producto y rendimiento
                     </p>
 
+                    {/* Toggle tipo */}
+                    <div style={{ display: 'flex', gap: '6px', marginBottom: '14px' }}>
+                        {[
+                            { key: 'pt', label: 'Producto terminado', activeColor: '#16a34a', activeBg: '#dcfce7' },
+                            { key: 'mp', label: 'MP Producida', activeColor: '#7c3aed', activeBg: '#ede9fe' },
+                        ].map(opt => {
+                            const activo = tipoSalida === opt.key
+                            return (
+                                <button key={opt.key}
+                                    onClick={() => { if (esNueva) { setTipoSalida(opt.key); setProductoId(''); setMpId('') } }}
+                                    style={{
+                                        padding: '6px 16px', borderRadius: '20px', fontSize: '13px', fontWeight: 500,
+                                        border: `1px solid ${activo ? opt.activeColor : '#e5e7eb'}`,
+                                        backgroundColor: activo ? opt.activeBg : '#fff',
+                                        color: activo ? opt.activeColor : '#6b7280',
+                                        cursor: esNueva ? 'pointer' : 'not-allowed',
+                                    }}>
+                                    {opt.label}
+                                </button>
+                            )
+                        })}
+                        {!esNueva && (
+                            <span style={{ fontSize: '11px', color: '#9ca3af', alignSelf: 'center', marginLeft: '4px' }}>
+                                (no editable)
+                            </span>
+                        )}
+                    </div>
+
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                        {/* Producto */}
+                        {/* Selector PT o MP */}
                         <div style={{ gridColumn: '1 / -1' }}>
                             <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>
-                                Producto terminado *
+                                {nombreSalida} *
                             </label>
                             {esNueva ? (
-                                <select value={productoId} onChange={e => setProductoId(e.target.value)} style={inputStyle}>
-                                    <option value="">— Selecciona un producto —</option>
-                                    {productos.map(p => (
-                                        <option key={p.id} value={p.id}>{p.nombre} {p.sku ? `(${p.sku})` : ''}</option>
-                                    ))}
-                                </select>
+                                esPt ? (
+                                    <select value={productoId} onChange={e => setProductoId(e.target.value)} style={inputStyle}>
+                                        <option value="">— Selecciona un producto —</option>
+                                        {productos.map(p => (
+                                            <option key={p.id} value={p.id}>{p.nombre} {p.sku ? `(${p.sku})` : ''}</option>
+                                        ))}
+                                    </select>
+                                ) : (
+                                    <select value={mpId} onChange={e => setMpId(e.target.value)} style={inputStyle}>
+                                        <option value="">— Selecciona una MP producida —</option>
+                                        {mpProducidas.length === 0
+                                            ? <option disabled>No hay materias primas con tipo "producido"</option>
+                                            : mpProducidas.map(p => (
+                                                <option key={p.id} value={p.id}>{p.nombre} {p.codigo ? `(${p.codigo})` : ''}</option>
+                                            ))
+                                        }
+                                    </select>
+                                )
                             ) : (
                                 <div style={{ ...inputStyle, backgroundColor: '#f3f4f6', color: '#6b7280', cursor: 'not-allowed' }}>
-                                    {receta.productos_terminados?.nombre} — <span style={{ fontSize: '12px', fontFamily: 'monospace' }}>{receta.productos_terminados?.sku}</span>
+                                    {esPt
+                                        ? `${receta.productos_terminados?.nombre} — ${receta.productos_terminados?.sku || ''}`
+                                        : `${receta.materias_primas?.nombre} — ${receta.materias_primas?.codigo || ''}`
+                                    }
                                 </div>
                             )}
                         </div>
@@ -457,7 +535,6 @@ function ModalReceta({ receta, onGuardada, onCerrar }) {
                         </div>
                     )}
 
-                    {/* Resumen */}
                     {items.length > 0 && (
                         <div style={{ marginTop: '12px', backgroundColor: '#f0fdf4', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#166534' }}>
                             <strong>{items.filter(i => i.insumo_id && i.cantidad).length}</strong> insumo(s) con cantidad •
