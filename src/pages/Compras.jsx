@@ -479,9 +479,9 @@ function NuevaOrden({ onCreada, onCancelar }) {
             .then(({ data }) => setProveedores(data || []))
 
         Promise.all([
-            supabase.from('materias_primas').select('id, nombre, codigo, stock_actual, unidad_medida, costo_compra_promedio').eq('activo', true),
-            supabase.from('materiales_empaque').select('id, nombre, codigo, stock_actual, unidad_medida, costo_compra_promedio').eq('activo', true),
-            supabase.from('productos_terminados').select('id, nombre, sku, stock_actual, unidad_medida, costo_promedio, tipo_producto').eq('activo', true)
+            supabase.from('materias_primas').select('id, nombre, codigo, stock_actual, unidad_medida, costo_compra_promedio, aplica_iva').eq('activo', true),
+            supabase.from('materiales_empaque').select('id, nombre, codigo, stock_actual, unidad_medida, costo_compra_promedio, aplica_iva').eq('activo', true),
+            supabase.from('productos_terminados').select('id, nombre, sku, stock_actual, unidad_medida, costo_promedio, tipo_producto, aplica_iva').eq('activo', true)
         ]).then(([mp, emp, pt]) => {
             const unidos = [
                 ...(mp.data || []).map(i => ({ ...i, tipo: 'materias_primas', costo: i.costo_compra_promedio })),
@@ -500,7 +500,7 @@ function NuevaOrden({ onCreada, onCancelar }) {
         setItems(prev => {
             const existe = prev.find(i => i.id === ins.id && i.tipo === ins.tipo)
             if (existe) return prev.map(i => (i.id === ins.id && i.tipo === ins.tipo) ? { ...i, cantidad: i.cantidad + 1 } : i)
-            return [...prev, { id: ins.id, tipo: ins.tipo, nombre: ins.nombre, codigo: ins.codigo, cantidad: 1, precio_unitario: ins.costo || 0, precio_original: ins.costo || 0 }]
+            return [...prev, { id: ins.id, tipo: ins.tipo, nombre: ins.nombre, codigo: ins.codigo, cantidad: 1, precio_unitario: ins.costo || 0, precio_original: ins.costo || 0, aplica_iva: ins.aplica_iva ?? true }]
         })
         setBusqueda('')
     }
@@ -519,10 +519,12 @@ function NuevaOrden({ onCreada, onCancelar }) {
 
     function eliminarItem(id, tipo) { setItems(prev => prev.filter(i => !(i.id === id && i.tipo === tipo))) }
 
-    const totalConIVA = items.reduce((s, i) => s + i.cantidad * i.precio_unitario, 0)
-    const subtotal = totalConIVA / 1.16
-    const iva = totalConIVA - subtotal
-    const total = totalConIVA
+    const total = items.reduce((s, i) => s + i.cantidad * i.precio_unitario, 0)
+    const subtotal = items.reduce((s, i) => {
+        const linea = i.cantidad * i.precio_unitario
+        return s + ((i.aplica_iva ?? true) ? linea / 1.16 : linea)
+    }, 0)
+    const iva = total - subtotal
 
     async function confirmar() {
         if (!proveedorId) { setError('Selecciona un proveedor'); return }
@@ -566,7 +568,7 @@ function NuevaOrden({ onCreada, onCancelar }) {
                     insumo_id: i.id,
                     cantidad_solicitada: i.cantidad,
                     cantidad_recibida: 0,
-                    precio_unitario_esperado: i.precio_unitario / 1.16,  // Guardar sin IVA
+                    precio_unitario_esperado: (i.aplica_iva ?? true) ? i.precio_unitario / 1.16 : i.precio_unitario,
                 }))
             )
 
@@ -808,10 +810,10 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
             .then(({ data }) => setProveedores(data || []))
 
         Promise.all([
-            supabase.from('materias_primas').select('id, nombre, codigo, unidad_medida, costo_compra_promedio').eq('empresa_id', perfil.empresa_id),
-            supabase.from('materiales_empaque').select('id, nombre, codigo, unidad_medida, costo_compra_promedio').eq('empresa_id', perfil.empresa_id),
-            supabase.from('productos_terminados').select('id, nombre, sku, unidad_medida, costo_promedio').eq('empresa_id', perfil.empresa_id),
-            supabase.from('consumibles').select('id, nombre, codigo, unidad_medida, costo_compra_promedio').eq('empresa_id', perfil.empresa_id),
+            supabase.from('materias_primas').select('id, nombre, codigo, unidad_medida, costo_compra_promedio, aplica_iva').eq('empresa_id', perfil.empresa_id),
+            supabase.from('materiales_empaque').select('id, nombre, codigo, unidad_medida, costo_compra_promedio, aplica_iva').eq('empresa_id', perfil.empresa_id),
+            supabase.from('productos_terminados').select('id, nombre, sku, unidad_medida, costo_promedio, aplica_iva').eq('empresa_id', perfil.empresa_id),
+            supabase.from('consumibles').select('id, nombre, codigo, unidad_medida, costo_compra_promedio, aplica_iva').eq('empresa_id', perfil.empresa_id),
         ]).then(([mp, me, pt, con]) => {
             const mapa = {}
             const todos = [
@@ -839,15 +841,19 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
     function cargarItemsDeOC(ocId) {
         const oc = ocsPendientes.find(o => o.id === ocId)
         if (!oc) return
-        setItems(oc.orden_compra_items.map(i => ({
-            id: i.insumo_id,
-            tipo: i.tipo_insumo,
-            nombre: mapaNombres[i.insumo_id] || 'Cargando...',
-            cantidad: i.cantidad_solicitada - i.cantidad_recibida,
-            precio_unitario: i.precio_unitario_esperado,
-            pendiente: i.cantidad_solicitada - i.cantidad_recibida,
-            orden_item_id: i.id
-        })))
+        setItems(oc.orden_compra_items.map(i => {
+            const insumo = insumos.find(ins => ins.id === i.insumo_id)
+            return {
+                id: i.insumo_id,
+                tipo: i.tipo_insumo,
+                nombre: mapaNombres[i.insumo_id] || 'Cargando...',
+                cantidad: i.cantidad_solicitada - i.cantidad_recibida,
+                precio_unitario: i.precio_unitario_esperado,
+                pendiente: i.cantidad_solicitada - i.cantidad_recibida,
+                orden_item_id: i.id,
+                aplica_iva: insumo?.aplica_iva ?? true,
+            }
+        }))
     }
 
     function agregarInsumoLibre(insumo) {
@@ -860,6 +866,7 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
                 nombre: insumo.nombre,
                 cantidad: 1,
                 precio_unitario: insumo.costo || 0,
+                aplica_iva: insumo.aplica_iva ?? true,
             }]
         })
         setBusquedaInsumo('')
@@ -870,10 +877,12 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
         i.codigo?.toLowerCase().includes(busquedaInsumo.toLowerCase())
     )
 
-    const totalConIVA = items.reduce((s, i) => s + i.cantidad * i.precio_unitario, 0)
-    const subtotal = totalConIVA / 1.16
-    const iva = totalConIVA - subtotal
-    const total = totalConIVA
+    const total = items.reduce((s, i) => s + i.cantidad * i.precio_unitario, 0)
+    const subtotal = items.reduce((s, i) => {
+        const linea = i.cantidad * i.precio_unitario
+        return s + ((i.aplica_iva ?? true) ? linea / 1.16 : linea)
+    }, 0)
+    const iva = total - subtotal
 
     function abrirConfirmacion() {
         if (modo === 'contra_oc' && !ocSeleccionada) { setError('Selecciona una OC'); return }
@@ -1346,9 +1355,8 @@ function DetalleOrden({ orden, onVolver }) {
             })
     }, [orden.id, orden.empresa_id])
 
-    // Calcular subtotal e IVA (el total ya incluye IVA)
     const total = orden.total || 0
-    const subtotal = total / 1.16
+    const subtotal = orden.subtotal || 0
     const iva = total - subtotal
 
     return (

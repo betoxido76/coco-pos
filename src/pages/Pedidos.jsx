@@ -255,17 +255,17 @@ export default function Pedidos() {
 function TotalPedido({ pedidoId, descuentoGlobal }) {
     const [total, setTotal] = useState(null)
     useEffect(() => {
-        supabase.from('pedido_items').select('cantidad, precio_unitario, descuento_item')
+        supabase.from('pedido_items').select('cantidad, precio_unitario, descuento_item, productos_terminados(aplica_iva)')
             .eq('pedido_id', pedidoId)
             .then(({ data }) => {
                 if (!data) return
-                const subtotal = data.reduce((s, i) => {
+                const total = data.reduce((s, i) => {
                     const precio = Number(i.precio_unitario)
                     const desc = Number(i.descuento_item || 0)
-                    return s + (Number(i.cantidad) * precio * (1 - desc / 100))
+                    const linea = Number(i.cantidad) * precio * (1 - desc / 100) * (1 - Number(descuentoGlobal || 0) / 100)
+                    return s + ((i.productos_terminados?.aplica_iva ?? true) ? linea * 1.16 : linea)
                 }, 0)
-                const conDescGlobal = subtotal * (1 - Number(descuentoGlobal || 0) / 100)
-                setTotal(conDescGlobal * 1.16)
+                setTotal(total)
             })
     }, [pedidoId])
     return <span>{total !== null ? fmt(total) : '—'}</span>
@@ -286,19 +286,21 @@ function DetallePedido({ pedido, onVolver }) {
 
     useEffect(() => {
         supabase.from('pedido_items')
-            .select('*, productos_terminados(nombre, sku)')
+            .select('*, productos_terminados(nombre, sku, aplica_iva)')
             .eq('pedido_id', pedido.id)
             .then(({ data }) => { if (data) setItems(data); setLoading(false) })
     }, [pedido.id])
 
-    const subtotalBruto = items.reduce((s, i) => s + Number(i.cantidad) * Number(i.precio_unitario), 0)
-    const subtotalConDescItems = items.reduce((s, i) => {
+    const descGlobal = Number(pedido.descuento_global || 0)
+    const subtotalFinal = items.reduce((s, i) => {
         const desc = Number(i.descuento_item || 0)
         return s + Number(i.cantidad) * Number(i.precio_unitario) * (1 - desc / 100)
+    }, 0) * (1 - descGlobal / 100)
+    const iva = items.reduce((s, i) => {
+        if (!(i.productos_terminados?.aplica_iva ?? true)) return s
+        const desc = Number(i.descuento_item || 0)
+        return s + Number(i.cantidad) * Number(i.precio_unitario) * (1 - desc / 100) * (1 - descGlobal / 100) * 0.16
     }, 0)
-    const descGlobal = Number(pedido.descuento_global || 0)
-    const subtotalFinal = subtotalConDescItems * (1 - descGlobal / 100)
-    const iva = subtotalFinal * 0.16
     const total = subtotalFinal + iva
 
     async function aprobar() {

@@ -1285,7 +1285,7 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
         if (cached) aplicarProductos(cached)
 
         supabase.from('producto_precios')
-            .select('precio, productos_terminados(id, nombre, sku, unidad_medida, stock_actual, unidad_venta_2, factor_conversion_2)')
+            .select('precio, productos_terminados(id, nombre, sku, unidad_medida, stock_actual, aplica_iva, unidad_venta_2, factor_conversion_2)')
             .eq('lista_id', listaId).eq('empresa_id', perfil.empresa_id)
             .then(({ data }) => {
                 if (data) {
@@ -1296,6 +1296,7 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
                         unidad_medida: p.productos_terminados.unidad_medida,
                         precio: Number(p.precio),
                         stock: Number(p.productos_terminados.stock_actual || 0),
+                        aplica_iva: p.productos_terminados.aplica_iva ?? true,
                         unidad_venta_2: p.productos_terminados.unidad_venta_2 || null,
                         factor_conversion_2: p.productos_terminados.factor_conversion_2 || null,
                     }))
@@ -1361,10 +1362,12 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
     function eliminarItem(id) { setItems(prev => prev.filter(i => i.id !== id)) }
 
     const totalConDescItems = items.reduce((s, i) => s + i.cantidad * i.precio * (1 - Number(i.descuento_item || 0) / 100), 0)
-    const totalConIVA = totalConDescItems * (1 - Number(descuentoGlobal || 0) / 100)
-    const subtotal = totalConIVA / 1.16
-    const iva = totalConIVA - subtotal
-    const total = totalConIVA
+    const total = totalConDescItems * (1 - Number(descuentoGlobal || 0) / 100)
+    const subtotal = items.reduce((s, i) => {
+        const linea = i.cantidad * i.precio * (1 - Number(i.descuento_item || 0) / 100) * (1 - Number(descuentoGlobal || 0) / 100)
+        return s + ((i.aplica_iva ?? true) ? linea / 1.16 : linea)
+    }, 0)
+    const iva = total - subtotal
 
     async function guardar() {
         setGuardando(true); setError('')
@@ -1385,7 +1388,7 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
                 direccion_entrega_texto: direccionId ? direcciones.find(d => d.id === direccionId)?.direccion || null : null,
                 items: items.map(i => ({
                     producto_id: i.id, nombre_producto: i.nombre, cantidad: i.cantidad,
-                    precio_unitario: i.precio / 1.16, descuento_item: Number(i.descuento_item) || 0,
+                    precio_unitario: (i.aplica_iva ?? true) ? i.precio / 1.16 : i.precio, descuento_item: Number(i.descuento_item) || 0,
                     subtotal: i.cantidad * i.precio * (1 - Number(i.descuento_item || 0) / 100),
                     unidad_venta: i.unidadVenta === '2' ? i.unidad_venta_2 : (i.unidad_medida || 'unidad'),
                     cantidad_primaria: i.unidadVenta === '2' ? i.cantidad * (i.factor_conversion_2 || 1) : i.cantidad,
@@ -1423,7 +1426,7 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
             items.map(i => ({
                 pedido_id: pedido.id, empresa_id: perfil.empresa_id,
                 producto_id: i.id, nombre_producto: i.nombre,
-                cantidad: i.cantidad, precio_unitario: i.precio / 1.16,
+                cantidad: i.cantidad, precio_unitario: (i.aplica_iva ?? true) ? i.precio / 1.16 : i.precio,
                 descuento_item: Number(i.descuento_item) || 0,
                 subtotal: i.cantidad * i.precio * (1 - Number(i.descuento_item || 0) / 100),
                 unidad_venta: i.unidadVenta === '2' ? i.unidad_venta_2 : (i.unidad_medida || 'unidad'),
