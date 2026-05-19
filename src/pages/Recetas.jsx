@@ -195,6 +195,7 @@ export default function Recetas() {
                 <ModalReceta
                     receta={recetaEditar}
                     tabActivo={tab}
+                    recetas={recetas}
                     onGuardada={() => { cerrarModal(); cargar() }}
                     onCerrar={cerrarModal}
                 />
@@ -206,7 +207,7 @@ export default function Recetas() {
 // ══════════════════════════════════════════════════════════════
 // MODAL CREAR / EDITAR RECETA
 // ══════════════════════════════════════════════════════════════
-function ModalReceta({ receta, tabActivo, onGuardada, onCerrar }) {
+function ModalReceta({ receta, tabActivo, recetas = [], onGuardada, onCerrar }) {
     const { perfil } = useAuth()
     const esNueva = !receta
 
@@ -302,6 +303,12 @@ function ModalReceta({ receta, tabActivo, onGuardada, onCerrar }) {
     }
 
     const esPt = tipoSalida === 'pt'
+
+    const ptConReceta = new Set(recetas.filter(r => r.producto_id).map(r => r.producto_id))
+    const mpConReceta = new Set(recetas.filter(r => r.mp_id).map(r => r.mp_id))
+    const productosFiltrados = esNueva ? productos.filter(p => !ptConReceta.has(p.id)) : productos
+    const mpProducidasFiltradas = esNueva ? mpProducidas.filter(p => !mpConReceta.has(p.id)) : mpProducidas
+
     const productoSel = esPt
         ? productos.find(p => p.id === productoId)
         : mpProducidas.find(p => p.id === mpId)
@@ -439,16 +446,16 @@ function ModalReceta({ receta, tabActivo, onGuardada, onCerrar }) {
                                 esPt ? (
                                     <select value={productoId} onChange={e => setProductoId(e.target.value)} style={inputStyle}>
                                         <option value="">— Selecciona un producto —</option>
-                                        {productos.map(p => (
+                                        {productosFiltrados.map(p => (
                                             <option key={p.id} value={p.id}>{p.nombre} {p.sku ? `(${p.sku})` : ''}</option>
                                         ))}
                                     </select>
                                 ) : (
                                     <select value={mpId} onChange={e => setMpId(e.target.value)} style={inputStyle}>
                                         <option value="">— Selecciona una MP producida —</option>
-                                        {mpProducidas.length === 0
+                                        {mpProducidasFiltradas.length === 0
                                             ? <option disabled>No hay materias primas con tipo "producido"</option>
-                                            : mpProducidas.map(p => (
+                                            : mpProducidasFiltradas.map(p => (
                                                 <option key={p.id} value={p.id}>{p.nombre} {p.codigo ? `(${p.codigo})` : ''}</option>
                                             ))
                                         }
