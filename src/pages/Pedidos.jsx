@@ -292,10 +292,12 @@ function DetallePedido({ pedido, onVolver }) {
     }, [pedido.id])
 
     const descGlobal = Number(pedido.descuento_global || 0)
-    const subtotalFinal = items.reduce((s, i) => {
+    const subtotalConDescItems = items.reduce((s, i) => {
         const desc = Number(i.descuento_item || 0)
         return s + Number(i.cantidad) * Number(i.precio_unitario) * (1 - desc / 100)
-    }, 0) * (1 - descGlobal / 100)
+    }, 0)
+    const subtotalBruto = subtotalConDescItems
+    const subtotalFinal = subtotalConDescItems * (1 - descGlobal / 100)
     const iva = items.reduce((s, i) => {
         if (!(i.productos_terminados?.aplica_iva ?? true)) return s
         const desc = Number(i.descuento_item || 0)
