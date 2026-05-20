@@ -285,14 +285,21 @@ function TotalPedido({ pedidoId, descuentoGlobal, estado }) {
     const [total, setTotal] = useState(null)
     const usarAlistada = estado === 'alistado' || estado === 'facturado'
     useEffect(() => {
-        supabase.from('pedido_items').select('cantidad, cantidad_alistada, precio_unitario, descuento_item, productos_terminados(aplica_iva)')
+        supabase.from('pedido_items').select('cantidad, cantidad_alistada, precio_unitario, descuento_item, unidad_venta, productos_terminados(aplica_iva, unidad_venta_2, factor_conversion_2)')
             .eq('pedido_id', pedidoId)
             .then(({ data }) => {
                 if (!data) return
                 // precio_unitario ya incluye IVA → el total es la suma directa de líneas
                 const total = data.reduce((s, i) => {
-                    const cant = usarAlistada ? Number(i.cantidad_alistada ?? i.cantidad) : Number(i.cantidad)
+                    let cant = usarAlistada ? Number(i.cantidad_alistada ?? i.cantidad) : Number(i.cantidad)
                     if (cant === 0) return s
+                    if (usarAlistada) {
+                        const uv = i.unidad_venta
+                        const uv2 = i.productos_terminados?.unidad_venta_2
+                        const factor = Number(i.productos_terminados?.factor_conversion_2 || 1)
+                        const esSecundaria = uv === '2' || (uv2 && uv === uv2)
+                        if (esSecundaria && factor > 1) cant = cant / factor
+                    }
                     const precio = Number(i.precio_unitario)
                     const desc = Number(i.descuento_item || 0)
                     const linea = cant * precio * (1 - desc / 100) * (1 - Number(descuentoGlobal || 0) / 100)
@@ -326,13 +333,19 @@ function DetallePedido({ pedido, onVolver }) {
 
     const descGlobal = Number(pedido.descuento_global || 0)
     const esAlistado = pedido.estado === 'alistado'
-    // cantidad_alistada está en unidades primarias; si la venta fue en unidad secundaria
-    // hay que convertir de vuelta dividiendo por factor_conversion_2
+    // NuevoPedido guarda unidad_venta='2'; Ventas guarda el nombre (ej: 'caja').
+    // Ambos casos indican unidad secundaria si coincide con unidad_venta_2 del producto.
+    const esUM2 = (item) => {
+        const uv = item.unidad_venta
+        const uv2 = item.productos_terminados?.unidad_venta_2
+        return uv === '2' || (uv2 && uv === uv2)
+    }
+    // cantidad_alistada está en unidades primarias → convertir a unidad de venta
     const cantFn = (item) => {
         if (!esAlistado) return Number(item.cantidad)
         const cantAlistada = Number(item.cantidad_alistada ?? item.cantidad)
         const factor = Number(item.productos_terminados?.factor_conversion_2 || 1)
-        return (item.unidad_venta === '2' && factor > 1) ? cantAlistada / factor : cantAlistada
+        return (esUM2(item) && factor > 1) ? cantAlistada / factor : cantAlistada
     }
     // precio_unitario ya incluye IVA para items con aplica_iva=true → extraer base
     const subtotalConDescItems = items.reduce((s, i) => {
@@ -405,7 +418,7 @@ function DetallePedido({ pedido, onVolver }) {
                 .map(i => {
                     const cantAlistada = Number(i.cantidad_alistada ?? i.cantidad)
                     const factor = Number(i.productos_terminados?.factor_conversion_2 || 1)
-                    const cantidad = (i.unidad_venta === '2' && factor > 1) ? cantAlistada / factor : cantAlistada
+                    const cantidad = (esUM2(i) && factor > 1) ? cantAlistada / factor : cantAlistada
                     return {
                         venta_id: venta.id,
                         producto_id: i.producto_id,
@@ -507,9 +520,9 @@ function DetallePedido({ pedido, onVolver }) {
                                             </td>
                                         )}
                                         <td style={{ padding: '12px 16px', fontSize: '12px', color: '#6b7280' }}>
-                                            {item.unidad_venta === '2'
-                                                ? (item.productos_terminados?.unidad_venta_2 || '—')
-                                                : (item.productos_terminados?.unidad_medida || '—')}
+                                            {esUM2(item)
+                                                ? (item.productos_terminados?.unidad_venta_2 || item.unidad_venta || '—')
+                                                : (item.productos_terminados?.unidad_medida || item.unidad_venta || '—')}
                                         </td>
                                         <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{fmt(item.precio_unitario)}</td>
                                         <td style={{ padding: '12px 16px', fontSize: '13px', textAlign: 'right' }}>
