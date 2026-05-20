@@ -167,10 +167,10 @@ Después de cada ajuste, transferencia o recepción se llama `sincronizarStockAc
 ventas                -- Facturas
 venta_items           -- Detalle de facturas
 pedidos               -- Pedidos de venta (Realtime habilitado: supabase_realtime publication)
-                      --   estado CHECK IN ('pendiente','aprobado','alistado','rechazado','facturado')
+                      --   estado CHECK IN ('pendiente','aprobado','alistado','rechazado','facturado','despachado')
                       --   origen text ('oficina' | 'campo')
 pedido_items          -- Detalle de pedidos
-                      --   cantidad_alistada numeric (NULL = no alistado aún, 0 = cancelado, >0 = despachado)
+                      --   cantidad_alistada numeric (NULL = no alistado aún, 0 = cancelado, >0 = alistado)
 cobros                -- Cobros parciales/totales en multimoneda
 devoluciones          -- Notas de crédito
 devolucion_items      -- Detalle de devoluciones
@@ -424,6 +424,18 @@ ON CONFLICT DO NOTHING;
 | Produccion.jsx — fix lookup de receta para MP | `cargarReceta()` y `crearOrden()` usaban `.eq('producto_id', id)` para ambos tipos de salida. Ahora usan `.eq('mp_id', mpSalidaId)` cuando `tipoSalida='materia_prima'`. También cambiado `.single()` → `.maybeSingle()` |
 | IVA condicional en todos los módulos | Auditoría completa: Ventas.jsx ya era correcto. Corregidos: **NuevoPedido.jsx** (query producto_precios incluye `aplica_iva`; totales y `precio_unitario` en pedido_items condicionales), **Pedidos.jsx** (TotalPedido y DetallePedido cargan `aplica_iva` via join; IVA por item), **Compras.jsx** (NuevaOrden: queries + agregarInsumo + totales + `precio_unitario_esperado`; NuevaRecepcion: queries + cargarItemsDeOC + agregarInsumoLibre + totales; DetalleOrden usa `orden.subtotal` guardado). Convención: precios en formularios de compra/pedido son CON IVA para items que aplican; el sistema extrae subtotal e IVA |
 
+### Completados (sesión 2026-05-20)
+
+| Item | Notas |
+|---|---|
+| Ventas: fix FacturarPedido — cantidad de stock | `FacturarPedido` usaba `item.cantidad_primaria` (cantidad del pedido original) para descontar stock. Debía usar `cantidad_alistada`. Fix: usar `item.cantidad` que ya viene remapeado a `cantidad_alistada` al cargar el pedido |
+| Flujo despacho: nuevo estado `despachado` | Estado final tras confirmar entrega física. **Pedidos.jsx**: tab "Por Despachar" muestra `estado='facturado'`; historial incluye `despachado`. **Despacho.jsx**: refactorizado con 2 tabs — "Alistamiento" (estado=aprobado, igual que antes) + "Despacho" (estado=facturado); botón "Confirmar Despacho" → `estado='despachado'` sin tocar stock (ya descontado al facturar). Stock no cambia en este paso: solo es confirmación de entrega física |
+| Productos.jsx: columnas ordenables | Estados `sortCol`/`sortDir`; función `handleSort(col)`; array `ordenados` computado sobre `filtrados`. 7 columnas ordenables: nombre, sku, tipo, precio, costo, stock, categoría. Indicador ↑/↓/↕ con color verde activo. Mismo patrón que Inventario VistaStock |
+| Auditoría inventario — Produccion.jsx | **Bug 1 (crítico)**: `anularOrden` revertía `stock_actual` pero no `stock_ubicacion` y no insertaba en `movimientos_inventario`. Corregido con loop completo que actualiza ambas tablas usando `orden.empresa_id`. **Bug 2**: `crearOrden` faltaba rama `else` para insertar registro en `stock_ubicacion` cuando no existe (solo hacía UPDATE). Corregido con INSERT explícito |
+| Auditoría inventario — CambiosManoMano.jsx | **Bug**: `ModalSalida` con `accion='reprocesar'` podía confirmar sin `almacenDestino`. `stock_actual` aumentaba pero `stock_ubicacion` no se tocaba → invariante rota. Corregido con estado `error` en `ModalSalida` y validación en `confirmar()` |
+| Auditoría inventario — Mermas.jsx | **Bug crítico**: función `anular` revertía `stock_actual` pero NO `stock_ubicacion`. Corregido: agregar reverso de `stock_ubicacion` cuando `merma.almacen_id` está presente (solo mermas de inventario); usa `tipoItemMap` (`empaque→material_empaque`); crea registro si no existe. También agregados `stock_anterior` y `almacen_id` que faltaban en el insert de `movimientos_inventario` |
+| Auditoría inventario — Compras.jsx | **Bug crítico**: `cargarItemsDeOC` asignaba `tipo: i.tipo_insumo` (forma singular: `'materia_prima'`, `'empaque'`…) pero `confirmarRecepcion` compara contra nombres de tabla en plural. Todas las condiciones fallaban → 100% de los items OC actualizaban stock en `productos_terminados` en lugar de su tabla correcta. Corregido con `tipoToPlural` map en `cargarItemsDeOC`. **Bug menor**: insert de `compra_items` no tenía caso `'productos_terminados'→'producto_terminado'`, caía a `'materia_prima'`. Corregido |
+
 ### Backlog estratégico (capacidades de plataforma SaaS)
 
 Estos ítems no son mejoras funcionales al producto sino capacidades de la plataforma que se necesitan para escalar comercialmente.
@@ -450,6 +462,14 @@ Estos ítems no son mejoras funcionales al producto sino capacidades de la plata
   - Total: suma de precios (con IVA embebido para items que aplican, sin IVA para los demás)
   - Los queries que calculan subtotal/IVA/total DEBEN incluir `aplica_iva` en el SELECT
   - Ventas.jsx es la referencia correcta; NuevoPedido, Pedidos, Compras fueron corregidos en sesión 2026-05-17
+- **Invariante stock — patrón obligatorio en TODO movimiento de inventario** (alta, baja o reverso):
+  1. Leer `stock_actual` actual antes de modificar (para `stock_anterior` en movimiento)
+  2. Actualizar `stock_actual` en la tabla del producto
+  3. Actualizar `stock_ubicacion` con SELECT + UPDATE si existe / INSERT si no existe (nunca UPSERT con ON CONFLICT cuando `almacen_ubicacion_id=NULL`)
+  4. Insertar en `movimientos_inventario` con `stock_anterior`, `stock_actual`, `almacen_id`, `origen`
+  - El punto más débil históricamente son las funciones de **anulación/reverso**: suelen revertir `stock_actual` pero olvidar `stock_ubicacion`. Verificar siempre los 4 pasos en rutas de cancel/anulación.
+  - Para conversión de tipo de insumo entre formulario y `stock_ubicacion` usar: `{ materias_primas→materia_prima, materiales_empaque→material_empaque, consumibles→consumible, productos_terminados→producto_terminado }`
+  - Para conversión desde `compra_items.tipo_insumo` (singular) a nombre de tabla (plural) usar: `{ materia_prima→materias_primas, empaque→materiales_empaque, material_empaque→materiales_empaque, consumible→consumibles, producto_terminado→productos_terminados }`
 - Estilos: inline styles con objetos JS (no clases Tailwind, excepto en Login/ResetPassword)
 - Formato de moneda USD: `fmt(n)` → `$X.XX`
 - Formato de moneda Bs: `fmtBs(n)` → `X.XX Bs.`
@@ -534,6 +554,14 @@ Función helper que extrae el fetch de `direcciones_entrega` + CxC vencido + úl
 
 **Listas — evitar sobreescritura de `listaId`:**
 En el background fetch de listas, `setListaId` solo se llama cuando `!listaId` para no pisar el valor ya seteado desde caché.
+
+### Supabase — cambios aplicados en sesión 2026-05-20
+```sql
+-- Estado despachado en flujo de pedidos
+ALTER TABLE pedidos DROP CONSTRAINT IF EXISTS pedidos_estado_check;
+ALTER TABLE pedidos ADD CONSTRAINT pedidos_estado_check
+  CHECK (estado IN ('pendiente','aprobado','alistado','rechazado','facturado','despachado'));
+```
 
 ### Supabase — cambios aplicados en sesión 2026-05-17
 ```sql
@@ -624,8 +652,9 @@ Nuevo gasto
 ## 18. Check constraints importantes (descubiertos en migración)
 
 ```
-pedidos.estado               CHECK IN ('pendiente','aprobado','alistado','rechazado','facturado')
-                             — 'alistado' fue agregado en sesión 2026-05-10 (ALTER TABLE DROP+ADD CONSTRAINT)
+pedidos.estado               CHECK IN ('pendiente','aprobado','alistado','rechazado','facturado','despachado')
+                             — 'alistado' agregado en sesión 2026-05-10
+                             — 'despachado' agregado en sesión 2026-05-20 (ALTER TABLE DROP+ADD CONSTRAINT)
 
 ventas.estado_cobro          CHECK IN ('pendiente','parcial','pagado')
                              — NO usar 'cobrado'; el equivalente correcto es 'pagado'
