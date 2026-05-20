@@ -1760,9 +1760,19 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
                     <label style={s.label}>Cliente</label>
                     <p style={{ fontSize: '16px', fontWeight: 600, color: '#1f2937', margin: '0 0 2px' }}>{clienteSel.nombre}</p>
                     {clienteSel.rif && <p style={{ fontSize: '12px', color: '#9ca3af', margin: 0, fontFamily: 'monospace' }}>{clienteSel.rif}</p>}
-                    {direccionId && direcciones.find(d => d.id === direccionId) && (
+                    {direcciones.length > 1 && (
+                        <div style={{ marginTop: '10px' }}>
+                            <p style={{ fontSize: '12px', fontWeight: 600, color: '#374151', margin: '0 0 6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Dirección de entrega</p>
+                            <select value={direccionId} onChange={e => setDireccionId(e.target.value)}
+                                style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', backgroundColor: '#fff', color: '#374151' }}>
+                                <option value="">— Sin dirección específica —</option>
+                                {direcciones.map(d => <option key={d.id} value={d.id}>{d.nombre}{d.es_principal ? ' ★' : ''} — {d.direccion}</option>)}
+                            </select>
+                        </div>
+                    )}
+                    {direcciones.length === 1 && (
                         <div style={{ marginTop: '8px', backgroundColor: '#f0fdf4', borderRadius: '8px', padding: '8px 10px', fontSize: '12px', color: '#166534' }}>
-                            📍 {direcciones.find(d => d.id === direccionId)?.nombre} — {direcciones.find(d => d.id === direccionId)?.direccion}
+                            📍 {direcciones[0].nombre} — {direcciones[0].direccion}
                         </div>
                     )}
                 </div>
