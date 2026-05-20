@@ -15,7 +15,7 @@ const NAV_ITEMS = [
     { key: 'ventas', to: '/ventas', icon: ShoppingCart, label: 'Ventas' },
     { key: 'pedidos_campo', to: '/nuevo-pedido', icon: ClipboardList, label: 'Fuerza de Ventas' },
     { key: 'pedidos', to: '/pedidos', icon: ClipboardList, label: 'Pedidos' },
-    { key: 'despacho', to: '/despacho', icon: PackageCheck, label: 'Despacho' },
+    { key: 'despacho', to: '/despacho', icon: PackageCheck, label: 'Alistamiento y Despacho' },
     { key: 'compras', to: '/compras', icon: Truck, label: 'Compras' },
     { key: 'cxc', to: '/cuentas-cobrar', icon: DollarSign, label: 'Cuentas x Cobrar' },
     { key: 'cxp', to: '/cuentas-pagar', icon: CreditCard, label: 'Cuentas x Pagar' },
