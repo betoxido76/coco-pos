@@ -841,11 +841,20 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
     function cargarItemsDeOC(ocId) {
         const oc = ocsPendientes.find(o => o.id === ocId)
         if (!oc) return
+        // OC guarda tipo_insumo en singular ('materia_prima', 'empaque'…)
+        // confirmarRecepcion espera plural igual que agregarInsumoLibre
+        const tipoToPlural = {
+            materia_prima: 'materias_primas',
+            empaque: 'materiales_empaque',
+            material_empaque: 'materiales_empaque',
+            consumible: 'consumibles',
+            producto_terminado: 'productos_terminados',
+        }
         setItems(oc.orden_compra_items.map(i => {
             const insumo = insumos.find(ins => ins.id === i.insumo_id)
             return {
                 id: i.insumo_id,
-                tipo: i.tipo_insumo,
+                tipo: tipoToPlural[i.tipo_insumo] || 'materias_primas',
                 nombre: mapaNombres[i.insumo_id] || 'Cargando...',
                 cantidad: i.cantidad_solicitada - i.cantidad_recibida,
                 precio_unitario: i.precio_unitario_esperado,
@@ -919,7 +928,8 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
                 tipo_insumo: i.tipo === 'materias_primas' ? 'materia_prima'
                     : i.tipo === 'materiales_empaque' ? 'empaque'
                         : i.tipo === 'consumibles' ? 'consumible'
-                            : 'materia_prima',
+                            : i.tipo === 'productos_terminados' ? 'producto_terminado'
+                                : 'materia_prima',
                 insumo_id: i.id,
                 cantidad: i.cantidad,
                 precio_unitario: i.precio_unitario
