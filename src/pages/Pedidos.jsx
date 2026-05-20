@@ -412,22 +412,49 @@ function DetallePedido({ pedido, onVolver }) {
 
         if (errVenta) { setError('Error al crear factura: ' + errVenta.message); setProcesando(false); return }
 
+        const itemsDespachar = items.filter(i => Number(i.cantidad_alistada ?? i.cantidad) > 0)
+
         await supabase.from('venta_items').insert(
-            items
-                .filter(i => Number(i.cantidad_alistada ?? i.cantidad) > 0)
-                .map(i => {
-                    const cantAlistada = Number(i.cantidad_alistada ?? i.cantidad)
-                    const factor = Number(i.productos_terminados?.factor_conversion_2 || 1)
-                    const cantidad = (esUM2(i) && factor > 1) ? cantAlistada / factor : cantAlistada
-                    return {
-                        venta_id: venta.id,
-                        producto_id: i.producto_id,
-                        cantidad,
-                        precio_unitario: Number(i.precio_unitario) * (1 - Number(i.descuento_item || 0) / 100) * (1 - descGlobal / 100),
-                        empresa_id: perfil.empresa_id,
-                    }
-                })
+            itemsDespachar.map(i => {
+                const cantAlistada = Number(i.cantidad_alistada ?? i.cantidad)
+                const factor = Number(i.productos_terminados?.factor_conversion_2 || 1)
+                const cantidad = (esUM2(i) && factor > 1) ? cantAlistada / factor : cantAlistada
+                return {
+                    venta_id: venta.id,
+                    producto_id: i.producto_id,
+                    cantidad,
+                    precio_unitario: Number(i.precio_unitario) * (1 - Number(i.descuento_item || 0) / 100) * (1 - descGlobal / 100),
+                    empresa_id: perfil.empresa_id,
+                }
+            })
         )
+
+        // Descontar stock — usar cantidad_alistada (unidades primarias reales despachadas)
+        for (const item of itemsDespachar) {
+            const cantPrimaria = Number(item.cantidad_alistada ?? item.cantidad)
+            const { data: prod } = await supabase
+                .from('productos_terminados')
+                .select('stock_actual, nombre, sku')
+                .eq('id', item.producto_id)
+                .single()
+            if (!prod) continue
+            const nuevoStock = Math.max(0, prod.stock_actual - cantPrimaria)
+            await supabase.from('productos_terminados')
+                .update({ stock_actual: nuevoStock })
+                .eq('id', item.producto_id)
+            await supabase.from('movimientos_inventario').insert({
+                empresa_id: perfil.empresa_id,
+                tipo_item: 'producto_terminado',
+                item_id: item.producto_id,
+                item_nombre: prod.nombre,
+                item_codigo: prod.sku,
+                tipo_movimiento: 'salida',
+                cantidad: cantPrimaria,
+                stock_actual: nuevoStock,
+                origen: 'pedido_facturado',
+                fecha: new Date().toISOString()
+            })
+        }
 
         await supabase.from('pedidos')
             .update({ estado: 'facturado', venta_id: venta.id })
