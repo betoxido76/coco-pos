@@ -89,18 +89,52 @@ export default function Mermas() {
     }
 
     async function anular(merma, motivoAnulacion) {
-        // Revertir stock en la tabla correspondiente
         const def = TIPOS_ITEM.find(t => t.key === merma.tipo_item)
         if (def) {
             const { data: item } = await supabase
                 .from(def.tabla).select('stock_actual').eq('id', merma.item_id).single()
             if (item) {
+                const stockAnterior = item.stock_actual
+                const stockResultante = stockAnterior + Number(merma.cantidad)
+
                 await supabase.from(def.tabla)
-                    .update({ stock_actual: item.stock_actual + Number(merma.cantidad) })
+                    .update({ stock_actual: stockResultante })
                     .eq('id', merma.item_id)
 
-                // Registrar movimiento de Entrada por Anulación ✅
-                const stockResultante = item.stock_actual + Number(merma.cantidad)
+                // Revertir stock_ubicacion (solo mermas de inventario con almacén registrado)
+                if (merma.almacen_id) {
+                    const tipoItemMap = {
+                        producto_terminado: 'producto_terminado',
+                        materia_prima: 'materia_prima',
+                        empaque: 'material_empaque',
+                        consumible: 'consumible',
+                    }
+                    const tipoSu = tipoItemMap[merma.tipo_item] || merma.tipo_item
+                    const { data: su } = await supabase
+                        .from('stock_ubicacion')
+                        .select('id, cantidad')
+                        .eq('empresa_id', perfil.empresa_id)
+                        .eq('tipo_item', tipoSu)
+                        .eq('item_id', merma.item_id)
+                        .eq('almacen_id', merma.almacen_id)
+                        .is('almacen_ubicacion_id', null)
+                        .maybeSingle()
+                    if (su) {
+                        await supabase.from('stock_ubicacion')
+                            .update({ cantidad: su.cantidad + Number(merma.cantidad) })
+                            .eq('id', su.id)
+                    } else {
+                        await supabase.from('stock_ubicacion').insert({
+                            empresa_id: perfil.empresa_id,
+                            tipo_item: tipoSu,
+                            item_id: merma.item_id,
+                            almacen_id: merma.almacen_id,
+                            almacen_ubicacion_id: null,
+                            cantidad: Number(merma.cantidad),
+                        })
+                    }
+                }
+
                 await supabase.from('movimientos_inventario').insert({
                     empresa_id: perfil.empresa_id,
                     tipo_item: merma.tipo_item,
@@ -109,7 +143,9 @@ export default function Mermas() {
                     item_codigo: merma.item_codigo || null,
                     tipo_movimiento: 'entrada',
                     cantidad: Number(merma.cantidad),
+                    stock_anterior: stockAnterior,
                     stock_actual: stockResultante,
+                    almacen_id: merma.almacen_id || null,
                     origen: 'anulacion_merma',
                     fecha: new Date().toISOString()
                 })
