@@ -285,11 +285,12 @@ function TotalPedido({ pedidoId, descuentoGlobal }) {
             .eq('pedido_id', pedidoId)
             .then(({ data }) => {
                 if (!data) return
+                // precio_unitario ya incluye IVA → el total es la suma directa de líneas
                 const total = data.reduce((s, i) => {
                     const precio = Number(i.precio_unitario)
                     const desc = Number(i.descuento_item || 0)
                     const linea = Number(i.cantidad) * precio * (1 - desc / 100) * (1 - Number(descuentoGlobal || 0) / 100)
-                    return s + ((i.productos_terminados?.aplica_iva ?? true) ? linea * 1.16 : linea)
+                    return s + linea
                 }, 0)
                 setTotal(total)
             })
@@ -322,16 +323,20 @@ function DetallePedido({ pedido, onVolver }) {
     const cantFn = (item) => esAlistado
         ? Number(item.cantidad_alistada ?? item.cantidad)
         : Number(item.cantidad)
+    // precio_unitario ya incluye IVA para items con aplica_iva=true → extraer base
     const subtotalConDescItems = items.reduce((s, i) => {
         const desc = Number(i.descuento_item || 0)
-        return s + cantFn(i) * Number(i.precio_unitario) * (1 - desc / 100)
+        const precio = Number(i.precio_unitario) * (1 - desc / 100)
+        const aplica = i.productos_terminados?.aplica_iva ?? true
+        return s + cantFn(i) * (aplica ? precio / 1.16 : precio)
     }, 0)
     const subtotalBruto = subtotalConDescItems
     const subtotalFinal = subtotalConDescItems * (1 - descGlobal / 100)
     const iva = items.reduce((s, i) => {
         if (!(i.productos_terminados?.aplica_iva ?? true)) return s
         const desc = Number(i.descuento_item || 0)
-        return s + cantFn(i) * Number(i.precio_unitario) * (1 - desc / 100) * (1 - descGlobal / 100) * 0.16
+        const base = cantFn(i) * Number(i.precio_unitario) / 1.16 * (1 - desc / 100) * (1 - descGlobal / 100)
+        return s + base * 0.16
     }, 0)
     const total = subtotalFinal + iva
 
