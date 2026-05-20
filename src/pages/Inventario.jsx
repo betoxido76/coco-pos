@@ -68,9 +68,17 @@ function VistaStock() {
     const [tipoFiltro, setTipoFiltro] = useState('todos')
     const [pagina, setPagina] = useState(0)
     const [pageSize, setPageSize] = useState(50)
+    const [sortCol, setSortCol] = useState('nombre')
+    const [sortDir, setSortDir] = useState('asc')
 
     useEffect(() => { cargarInventario() }, [tipoFiltro])
     useEffect(() => { setPagina(0) }, [busqueda, tipoFiltro, pageSize])
+
+    function handleSort(col) {
+        if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+        else { setSortCol(col); setSortDir('asc') }
+        setPagina(0)
+    }
 
     async function cargarInventario() {
         setLoading(true)
@@ -109,8 +117,25 @@ function VistaStock() {
     const totalUnidades = filtrados.reduce((sum, p) => sum + (p.stock_actual || 0), 0)
     const valorTotalInventario = filtrados.reduce((sum, p) => sum + ((p.precio || 0) * (p.stock_actual || 0)), 0)
 
+    const ordenados = [...filtrados].sort((a, b) => {
+        let av, bv
+        switch (sortCol) {
+            case 'nombre':     av = a.nombre || '';          bv = b.nombre || '';          break
+            case 'codigo':     av = a.codigo || '';          bv = b.codigo || '';          break
+            case 'tipo':       av = a.tipo || '';            bv = b.tipo || '';            break
+            case 'stock':      av = Number(a.stock_actual || 0);  bv = Number(b.stock_actual || 0);  break
+            case 'minimo':     av = Number(a.stock_minimo || 0);  bv = Number(b.stock_minimo || 0);  break
+            case 'precio':     av = Number(a.precio || 0);        bv = Number(b.precio || 0);        break
+            case 'valorTotal': av = Number(a.precio || 0) * Number(a.stock_actual || 0);
+                               bv = Number(b.precio || 0) * Number(b.stock_actual || 0);             break
+            default:           return 0
+        }
+        if (typeof av === 'string') return sortDir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av)
+        return sortDir === 'asc' ? av - bv : bv - av
+    })
+
     const totalPaginas = Math.ceil(filtrados.length / pageSize)
-    const paginados = filtrados.slice(pagina * pageSize, (pagina + 1) * pageSize)
+    const paginados = ordenados.slice(pagina * pageSize, (pagina + 1) * pageSize)
 
     return (
         <>
@@ -160,13 +185,23 @@ function VistaStock() {
                             <table className="w-full">
                                 <thead>
                                     <tr className="border-b border-gray-100 bg-gray-50">
-                                        <th className="text-left text-xs font-medium text-gray-500 px-4 py-3">Nombre</th>
-                                        <th className="text-left text-xs font-medium text-gray-500 px-4 py-3">Código</th>
-                                        <th className="text-left text-xs font-medium text-gray-500 px-4 py-3">Tipo</th>
-                                        <th className="text-right text-xs font-medium text-gray-500 px-4 py-3">Stock</th>
-                                        <th className="text-right text-xs font-medium text-gray-500 px-4 py-3">Mínimo</th>
-                                        <th className="text-right text-xs font-medium text-gray-500 px-4 py-3">Valor unit.</th>
-                                        <th className="text-right text-xs font-medium text-gray-500 px-4 py-3">Valor total</th>
+                                        {[
+                                            { key: 'nombre',     label: 'Nombre',      align: 'left'   },
+                                            { key: 'codigo',     label: 'Código',      align: 'left'   },
+                                            { key: 'tipo',       label: 'Tipo',        align: 'left'   },
+                                            { key: 'stock',      label: 'Stock',       align: 'right'  },
+                                            { key: 'minimo',     label: 'Mínimo',      align: 'right'  },
+                                            { key: 'precio',     label: 'Valor unit.', align: 'right'  },
+                                            { key: 'valorTotal', label: 'Valor total', align: 'right'  },
+                                        ].map(col => (
+                                            <th key={col.key} onClick={() => handleSort(col.key)}
+                                                className={`text-${col.align} text-xs font-medium text-gray-500 px-4 py-3 cursor-pointer select-none hover:text-gray-800 whitespace-nowrap`}>
+                                                {col.label}{' '}
+                                                <span className={sortCol === col.key ? 'text-green-600' : 'text-gray-300'}>
+                                                    {sortCol === col.key ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}
+                                                </span>
+                                            </th>
+                                        ))}
                                         <th className="text-center text-xs font-medium text-gray-500 px-4 py-3">Estado</th>
                                     </tr>
                                 </thead>
