@@ -318,16 +318,20 @@ function DetallePedido({ pedido, onVolver }) {
     }, [pedido.id])
 
     const descGlobal = Number(pedido.descuento_global || 0)
+    const esAlistado = pedido.estado === 'alistado'
+    const cantFn = (item) => esAlistado
+        ? Number(item.cantidad_alistada ?? item.cantidad)
+        : Number(item.cantidad)
     const subtotalConDescItems = items.reduce((s, i) => {
         const desc = Number(i.descuento_item || 0)
-        return s + Number(i.cantidad) * Number(i.precio_unitario) * (1 - desc / 100)
+        return s + cantFn(i) * Number(i.precio_unitario) * (1 - desc / 100)
     }, 0)
     const subtotalBruto = subtotalConDescItems
     const subtotalFinal = subtotalConDescItems * (1 - descGlobal / 100)
     const iva = items.reduce((s, i) => {
         if (!(i.productos_terminados?.aplica_iva ?? true)) return s
         const desc = Number(i.descuento_item || 0)
-        return s + Number(i.cantidad) * Number(i.precio_unitario) * (1 - desc / 100) * (1 - descGlobal / 100) * 0.16
+        return s + cantFn(i) * Number(i.precio_unitario) * (1 - desc / 100) * (1 - descGlobal / 100) * 0.16
     }, 0)
     const total = subtotalFinal + iva
 
@@ -380,13 +384,15 @@ function DetallePedido({ pedido, onVolver }) {
         if (errVenta) { setError('Error al crear factura: ' + errVenta.message); setProcesando(false); return }
 
         await supabase.from('venta_items').insert(
-            items.map(i => ({
-                venta_id: venta.id,
-                producto_id: i.producto_id,
-                cantidad: i.cantidad,
-                precio_unitario: Number(i.precio_unitario) * (1 - Number(i.descuento_item || 0) / 100) * (1 - descGlobal / 100),
-                empresa_id: perfil.empresa_id,
-            }))
+            items
+                .filter(i => Number(i.cantidad_alistada ?? i.cantidad) > 0)
+                .map(i => ({
+                    venta_id: venta.id,
+                    producto_id: i.producto_id,
+                    cantidad: Number(i.cantidad_alistada ?? i.cantidad),
+                    precio_unitario: Number(i.precio_unitario) * (1 - Number(i.descuento_item || 0) / 100) * (1 - descGlobal / 100),
+                    empresa_id: perfil.empresa_id,
+                }))
         )
 
         await supabase.from('pedidos')
@@ -453,7 +459,7 @@ function DetallePedido({ pedido, onVolver }) {
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
                             <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                {['Producto', 'Cant.', 'Precio lista', 'Desc. item', 'Subtotal'].map((h, i) => (
+                                {['Producto', 'Cant. pedida', esAlistado ? 'Cant. alistada' : null, 'Precio lista', 'Desc. item', 'Subtotal'].filter(Boolean).map((h, i) => (
                                     <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: i > 0 ? 'right' : 'left' }}>{h}</th>
                                 ))}
                             </tr>
@@ -461,23 +467,31 @@ function DetallePedido({ pedido, onVolver }) {
                         <tbody>
                             {items.map((item, idx) => {
                                 const precioConDesc = Number(item.precio_unitario) * (1 - Number(item.descuento_item || 0) / 100)
-                                const subtotal = Number(item.cantidad) * precioConDesc
+                                const cantUsada = cantFn(item)
+                                const cancelado = esAlistado && Number(item.cantidad_alistada) === 0
+                                const subtotal = cantUsada * precioConDesc
                                 return (
-                                    <tr key={idx} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                                    <tr key={idx} style={{ borderBottom: '1px solid #f3f4f6', opacity: cancelado ? 0.5 : 1 }}>
                                         <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1f2937', fontWeight: 500 }}>
                                             {item.nombre_producto || item.productos_terminados?.nombre || '—'}
                                             {item.productos_terminados?.sku && (
                                                 <span style={{ fontSize: '11px', color: '#9ca3af', marginLeft: '6px', fontFamily: 'monospace' }}>{item.productos_terminados.sku}</span>
                                             )}
+                                            {cancelado && <span style={{ fontSize: '11px', color: '#dc2626', marginLeft: '8px', fontWeight: 600 }}>CANCELADO</span>}
                                         </td>
                                         <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{Number(item.cantidad).toLocaleString('es-VE')}</td>
+                                        {esAlistado && (
+                                            <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, textAlign: 'right', color: cancelado ? '#dc2626' : '#16a34a' }}>
+                                                {item.cantidad_alistada != null ? Number(item.cantidad_alistada).toLocaleString('es-VE') : '—'}
+                                            </td>
+                                        )}
                                         <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{fmt(item.precio_unitario)}</td>
                                         <td style={{ padding: '12px 16px', fontSize: '13px', textAlign: 'right' }}>
                                             {Number(item.descuento_item || 0) > 0
                                                 ? <span style={{ color: '#16a34a', fontWeight: 500 }}>-{item.descuento_item}%</span>
                                                 : <span style={{ color: '#9ca3af' }}>—</span>}
                                         </td>
-                                        <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(subtotal)}</td>
+                                        <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{cancelado ? '—' : fmt(subtotal)}</td>
                                     </tr>
                                 )
                             })}
@@ -523,7 +537,7 @@ function DetallePedido({ pedido, onVolver }) {
                 </div>
             )}
 
-            {pedido.estado === 'aprobado' && (
+            {pedido.estado === 'alistado' && (
                 <button onClick={convertirEnFactura} disabled={procesando}
                     style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#1d4ed8', color: '#fff', border: 'none', borderRadius: '8px', padding: '11px 24px', fontSize: '14px', fontWeight: 600, cursor: 'pointer', opacity: procesando ? 0.6 : 1 }}>
                     <ChevronRight size={16} /> {procesando ? 'Creando factura...' : 'Convertir en factura'}
