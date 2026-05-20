@@ -13,7 +13,7 @@ const NAV_ITEMS = [
     { key: 'dashboard', to: '/', icon: LayoutDashboard, label: 'Dashboard' },
     { key: 'inventario', to: '/inventario', icon: Package, label: 'Inventario' },
     { key: 'ventas', to: '/ventas', icon: ShoppingCart, label: 'Ventas' },
-    { key: 'pedidos_campo', to: '/nuevo-pedido', icon: ClipboardList, label: 'Pedidos en Campo' },
+    { key: 'pedidos_campo', to: '/nuevo-pedido', icon: ClipboardList, label: 'Fuerza de Ventas' },
     { key: 'pedidos', to: '/pedidos', icon: ClipboardList, label: 'Pedidos' },
     { key: 'despacho', to: '/despacho', icon: PackageCheck, label: 'Despacho' },
     { key: 'compras', to: '/compras', icon: Truck, label: 'Compras' },
