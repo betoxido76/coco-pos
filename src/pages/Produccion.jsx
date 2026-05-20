@@ -465,18 +465,24 @@ function NuevaOrden({ onCreada, onCancelar }) {
 
                     // Descontar de stock_ubicacion si hay almacén seleccionado
                     if (c.almacen_id) {
+                        const tipoItemSu = c.tipo_insumo === 'materia_prima' ? 'materia_prima' : 'material_empaque'
                         const { data: su } = await supabase.from('stock_ubicacion')
                             .select('id, cantidad')
-                            .eq('almacen_id', c.almacen_id)
-                            .eq('tipo_item', c.tipo_insumo === 'materia_prima' ? 'materia_prima' : 'material_empaque')
-                            .eq('item_id', c.insumo_id)
-                            .eq('empresa_id', perfil.empresa_id)
-                            .is('almacen_ubicacion_id', null)
-                            .maybeSingle()
+                            .eq('almacen_id', c.almacen_id).eq('tipo_item', tipoItemSu)
+                            .eq('item_id', c.insumo_id).eq('empresa_id', perfil.empresa_id)
+                            .is('almacen_ubicacion_id', null).maybeSingle()
                         if (su) {
                             await supabase.from('stock_ubicacion')
                                 .update({ cantidad: Math.max(0, Number(su.cantidad) - Number(c.cantidad_real)), updated_at: new Date().toISOString() })
                                 .eq('id', su.id)
+                        } else {
+                            // Registro no existía (datos cargados externamente) — crear en cero
+                            await supabase.from('stock_ubicacion').insert({
+                                almacen_id: c.almacen_id, almacen_ubicacion_id: null,
+                                tipo_item: tipoItemSu, item_id: c.insumo_id,
+                                cantidad: 0, empresa_id: perfil.empresa_id,
+                                updated_at: new Date().toISOString(),
+                            })
                         }
                     }
 
@@ -843,13 +849,47 @@ function DetalleOrden({ orden, onVolver, onActualizada }) {
         if (!confirm('¿Seguro que deseas anular esta orden? Se revertirá el stock descontado.')) return
         setProcesando(true)
 
-        // Revertir stock
         for (const c of consumos) {
             const tabla = c.tipo_insumo === 'materia_prima' ? 'materias_primas' : 'materiales_empaque'
-            const { data: insumo } = await supabase.from(tabla).select('stock_actual').eq('id', c.insumo_id).single()
-            if (insumo) {
-                await supabase.from(tabla).update({ stock_actual: insumo.stock_actual + Number(c.cantidad_consumida) }).eq('id', c.insumo_id)
+            const tipoItem = c.tipo_insumo === 'materia_prima' ? 'materia_prima' : 'material_empaque'
+            const { data: insumo } = await supabase.from(tabla).select('stock_actual, nombre, codigo').eq('id', c.insumo_id).single()
+            if (!insumo) continue
+
+            const nuevoStock = insumo.stock_actual + Number(c.cantidad_consumida)
+            await supabase.from(tabla).update({ stock_actual: nuevoStock }).eq('id', c.insumo_id)
+
+            // Revertir stock_ubicacion del almacén original
+            if (c.almacen_id) {
+                const { data: su } = await supabase.from('stock_ubicacion')
+                    .select('id, cantidad')
+                    .eq('almacen_id', c.almacen_id).eq('tipo_item', tipoItem)
+                    .eq('item_id', c.insumo_id).eq('empresa_id', orden.empresa_id)
+                    .is('almacen_ubicacion_id', null).maybeSingle()
+                if (su) {
+                    await supabase.from('stock_ubicacion')
+                        .update({ cantidad: Number(su.cantidad) + Number(c.cantidad_consumida), updated_at: new Date().toISOString() })
+                        .eq('id', su.id)
+                } else {
+                    await supabase.from('stock_ubicacion').insert({
+                        almacen_id: c.almacen_id, almacen_ubicacion_id: null,
+                        tipo_item: tipoItem, item_id: c.insumo_id,
+                        cantidad: Number(c.cantidad_consumida),
+                        empresa_id: orden.empresa_id, updated_at: new Date().toISOString(),
+                    })
+                }
             }
+
+            // Registrar reversión en historial
+            await supabase.from('movimientos_inventario').insert({
+                empresa_id: orden.empresa_id, tipo_item: tipoItem,
+                item_id: c.insumo_id,
+                item_nombre: c.insumo_nombre || insumo.nombre,
+                item_codigo: insumo.codigo || '',
+                tipo_movimiento: 'entrada', cantidad: Number(c.cantidad_consumida),
+                stock_anterior: insumo.stock_actual, stock_actual: nuevoStock,
+                origen: 'produccion_anulada',
+                almacen_id: c.almacen_id || null, fecha: new Date().toISOString()
+            })
         }
 
         const { data } = await supabase.from('ordenes_produccion')
