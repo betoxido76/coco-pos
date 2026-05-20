@@ -510,6 +510,7 @@ function ListaClientes({ onVerFicha, onNuevoPedido, onVolver }) {
                                 <div style={{ flex: 1 }} onClick={() => onVerFicha(c)}>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '2px' }}>
                                         <p style={{ fontSize: '15px', fontWeight: 600, color: '#1f2937', margin: 0 }}>{c.nombre}</p>
+                                        {c.descripcion && <span style={{ fontSize: '12px', color: '#9ca3af', fontWeight: 400 }}>— {c.descripcion}</span>}
                                         {clientesConDeuda.has(c.id) && (
                                             <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#ef4444', display: 'inline-block', flexShrink: 0 }} />
                                         )}
@@ -1561,7 +1562,10 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
                                 onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
                                 onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
                                 <div>
-                                    <p style={{ fontSize: '15px', fontWeight: 500, color: '#1f2937', margin: '0 0 2px' }}>{c.nombre}</p>
+                                    <p style={{ fontSize: '15px', fontWeight: 500, color: '#1f2937', margin: '0 0 2px' }}>
+                                        {c.nombre}
+                                        {c.descripcion && <span style={{ fontSize: '12px', color: '#9ca3af', fontWeight: 400, marginLeft: '6px' }}>— {c.descripcion}</span>}
+                                    </p>
                                     {c.rif && <p style={{ fontSize: '12px', color: '#9ca3af', margin: 0, fontFamily: 'monospace' }}>{c.rif}</p>}
                                 </div>
                                 <ChevronRight size={16} color="#d1d5db" />

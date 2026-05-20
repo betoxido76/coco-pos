@@ -1116,6 +1116,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                                         <span style={{ fontFamily: 'monospace', color: '#6b7280', fontSize: '13px' }}>{clienteSeleccionado.rif}</span>
                                         <span style={{ margin: '0 6px', color: '#9ca3af' }}>·</span>
                                         <span style={{ fontWeight: 500 }}>{clienteSeleccionado.nombre}</span>
+                                        {clienteSeleccionado.descripcion && <span style={{ color: '#9ca3af', marginLeft: '6px', fontSize: '13px' }}>— {clienteSeleccionado.descripcion}</span>}
                                     </div>
                                     <button onClick={limpiarCliente}
                                         style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', fontSize: '16px', lineHeight: 1, padding: '0 2px' }}
@@ -1138,6 +1139,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                                                     onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
                                                     <span style={{ fontFamily: 'monospace', color: '#6b7280', marginRight: '8px' }}>{c.rif || '—'}</span>
                                                     <span style={{ fontWeight: 500, color: '#1f2937' }}>{c.nombre}</span>
+                                                    {c.descripcion && <span style={{ color: '#9ca3af', marginLeft: '6px' }}>— {c.descripcion}</span>}
                                                 </div>
                                             ))}
                                         </div>
