@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext'
 
 const VACIO = {
     nombre: '', rif: '', telefono: '', email: '',
+    descripcion: '',
     condicion_pago: 'contado', dias_credito: 0, limite_credito: 0, activo: true,
     contribuyente_especial: false, tipo_cliente_id: '',
     direccion_fiscal: '',
@@ -104,6 +105,7 @@ export default function Clientes() {
             rif: c.rif || '',
             telefono: c.telefono || '',
             email: c.email || '',
+            descripcion: c.descripcion || '',
             condicion_pago: c.condicion_pago || 'contado',
             dias_credito: c.dias_credito ?? 0,
             limite_credito: c.limite_credito ?? 0,
@@ -132,6 +134,7 @@ export default function Clientes() {
             rif: form.rif.trim() || null,
             telefono: form.telefono.trim() || null,
             email: form.email.trim() || null,
+            descripcion: form.descripcion.trim() || null,
             condicion_pago: form.condicion_pago,
             dias_credito: form.condicion_pago === 'credito' ? Number(form.dias_credito) : 0,
             limite_credito: Number(form.limite_credito) || 0,
@@ -248,10 +251,14 @@ export default function Clientes() {
         await cargarDirecciones(editando)
     }
 
-    const filtrados = clientes.filter(c =>
-        c.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
-        c.rif?.toLowerCase().includes(busqueda.toLowerCase())
-    )
+    const filtrados = clientes.filter(c => {
+        const q = busqueda.toLowerCase()
+        return (
+            c.nombre.toLowerCase().includes(q) ||
+            c.rif?.toLowerCase().includes(q) ||
+            c.descripcion?.toLowerCase().includes(q)
+        )
+    })
 
     // ── FORMULARIO ──
     if (vista === 'form') return (
@@ -269,6 +276,16 @@ export default function Clientes() {
                     <Campo label="RIF / Cédula "><input value={form.rif} onChange={e => campo('rif', e.target.value)} placeholder="J-12345678-9" style={inputStyle} /></Campo>
                     <Campo label="Teléfono "><input value={form.telefono} onChange={e => campo('telefono', e.target.value)} placeholder="0414-000-0000" style={inputStyle} /></Campo>
                     <Campo label="Email " span={2}><input type="email" value={form.email} onChange={e => campo('email', e.target.value)} placeholder="correo@empresa.com" style={inputStyle} /></Campo>
+
+                    <Campo label="Descripción" span={2}>
+                        <textarea
+                            value={form.descripcion}
+                            onChange={e => campo('descripcion', e.target.value)}
+                            placeholder="Breve descripción del cliente, sector, observaciones generales..."
+                            rows={2}
+                            style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }}
+                        />
+                    </Campo>
 
                     {/* 👈 NUEVO CAMPO: DIRECCIÓN FISCAL */}
                     <Campo label="Dirección Fiscal" span={2}>
@@ -540,7 +557,7 @@ export default function Clientes() {
 
             <div style={{ position: 'relative', marginBottom: '16px', maxWidth: '360px' }}>
                 <Search size={15} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
-                <input type="text" placeholder="Buscar por nombre o RIF..."
+                <input type="text" placeholder="Buscar por nombre, RIF o descripción..."
                     value={busqueda} onChange={e => setBusqueda(e.target.value)}
                     style={{ ...inputStyle, paddingLeft: '32px' }} />
             </div>
@@ -561,7 +578,10 @@ export default function Clientes() {
                                     onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
                                     onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
                                     <td style={{ padding: '12px 16px', fontSize: '12px', fontFamily: 'monospace', color: '#6b7280' }}>{c.codigo || '—'}</td>
-                                    <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>{c.nombre}</td>
+                                    <td style={{ padding: '12px 16px' }}>
+                                        <div style={{ fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>{c.nombre}</div>
+                                        {c.descripcion && <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '2px' }}>{c.descripcion}</div>}
+                                    </td>
                                     <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280', fontFamily: 'monospace' }}>{c.rif || '—'}</td>
                                     <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{c.telefono || '—'}</td>
                                     <td style={{ padding: '12px 16px' }}>
