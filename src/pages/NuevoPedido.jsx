@@ -456,7 +456,7 @@ function ListaClientes({ onVerFicha, onNuevoPedido, onVolver }) {
 
         Promise.all([
             supabase.from('clientes')
-                .select('id, nombre, rif, condicion_pago, dias_credito, telefono, limite_credito')
+                .select('id, nombre, rif, descripcion, condicion_pago, dias_credito, telefono, limite_credito')
                 .eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre'),
             supabase.from('ventas')
                 .select('cliente_id')
@@ -469,10 +469,12 @@ function ListaClientes({ onVerFicha, onNuevoPedido, onVolver }) {
         }).catch(() => setLoading(false))
     }, [])
 
-    const filtrados = clientes.filter(c =>
-        c.nombre.toLowerCase().includes(busq.toLowerCase()) ||
-        c.rif?.toLowerCase().includes(busq.toLowerCase())
-    )
+    const filtrados = clientes.filter(c => {
+        const q = busq.toLowerCase()
+        return c.nombre.toLowerCase().includes(q) ||
+            c.rif?.toLowerCase().includes(q) ||
+            c.descripcion?.toLowerCase().includes(q)
+    })
 
     return (
         <div style={s.container}>
@@ -1247,7 +1249,7 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
         if (cachedClientes) setClientes(cachedClientes)
 
         supabase.from('clientes')
-            .select('id, nombre, rif, condicion_pago, dias_credito, limite_credito')
+            .select('id, nombre, rif, descripcion, condicion_pago, dias_credito, limite_credito')
             .eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
             .then(({ data }) => { if (data) { setClientes(data); cacheSet(cacheClientes, data) } })
 
@@ -1332,10 +1334,12 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
         await cargarDatosCliente(c.id)
     }
 
-    const clientesFiltrados = clientes.filter(c =>
-        c.nombre.toLowerCase().includes(busqCliente.toLowerCase()) ||
-        c.rif?.toLowerCase().includes(busqCliente.toLowerCase())
-    )
+    const clientesFiltrados = clientes.filter(c => {
+        const q = busqCliente.toLowerCase()
+        return c.nombre.toLowerCase().includes(q) ||
+            c.rif?.toLowerCase().includes(q) ||
+            c.descripcion?.toLowerCase().includes(q)
+    })
     const productosFiltrados = productos.filter(p =>
         p.nombre.toLowerCase().includes(busqProducto.toLowerCase()) ||
         p.sku?.toLowerCase().includes(busqProducto.toLowerCase())

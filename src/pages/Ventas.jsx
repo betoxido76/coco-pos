@@ -708,7 +708,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
     const [notas, setNotas] = useState('')
 
     useEffect(() => {
-        supabase.from('clientes').select('id, nombre, rif, condicion_pago, dias_credito').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
+        supabase.from('clientes').select('id, nombre, rif, descripcion, condicion_pago, dias_credito').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
             .then(({ data }) => setClientes(data || []))
         supabase.from('listas_precio').select('id, nombre, es_default').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
             .then(({ data }) => {
@@ -1077,10 +1077,12 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
 
     const clienteSeleccionado = clientes.find(c => c.id === clienteId) || null
     const clientesFiltrados = !clienteId && busquedaCliente.trim()
-        ? clientes.filter(c =>
-            c.nombre.toLowerCase().includes(busquedaCliente.toLowerCase()) ||
-            (c.rif || '').toLowerCase().includes(busquedaCliente.toLowerCase())
-        ).slice(0, 20)
+        ? clientes.filter(c => {
+            const q = busquedaCliente.toLowerCase()
+            return c.nombre.toLowerCase().includes(q) ||
+                (c.rif || '').toLowerCase().includes(q) ||
+                (c.descripcion || '').toLowerCase().includes(q)
+        }).slice(0, 20)
         : []
 
     function elegirCliente(c) {
