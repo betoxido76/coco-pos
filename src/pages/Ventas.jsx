@@ -407,7 +407,8 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
         for (const item of items) {
             const prod = item.productos_terminados
             if (prod) {
-                const cantPrimaria = Number(item.cantidad_primaria ?? item.cantidad)
+                // item.cantidad fue remapeado a cantidad_alistada al cargar los items
+                const cantPrimaria = Number(item.cantidad)
                 const nuevoStock = prod.stock_actual - cantPrimaria
                 await supabase.from('productos_terminados')
                     .update({ stock_actual: nuevoStock })
