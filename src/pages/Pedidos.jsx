@@ -6,11 +6,12 @@ import { Check, X, FileText, ChevronRight, Clock, Search, Bell } from 'lucide-re
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 
 const ESTADOS = {
-    pendiente: { bg: '#fef9c3', color: '#854d0e', label: 'Pendiente' },
-    aprobado: { bg: '#dbeafe', color: '#1e40af', label: 'Aprobado' },
-    alistado: { bg: '#fff7ed', color: '#c2410c', label: 'Alistado' },
-    rechazado: { bg: '#fee2e2', color: '#991b1b', label: 'Rechazado' },
-    facturado: { bg: '#dcfce7', color: '#166534', label: 'Facturado' },
+    pendiente:  { bg: '#fef9c3', color: '#854d0e', label: 'Pendiente' },
+    aprobado:   { bg: '#dbeafe', color: '#1e40af', label: 'Aprobado' },
+    alistado:   { bg: '#fff7ed', color: '#c2410c', label: 'Alistado' },
+    rechazado:  { bg: '#fee2e2', color: '#991b1b', label: 'Rechazado' },
+    facturado:  { bg: '#dcfce7', color: '#166534', label: 'Facturado' },
+    despachado: { bg: '#d1fae5', color: '#065f46', label: 'Despachado' },
 }
 
 function BadgeEstado({ estado }) {
@@ -42,7 +43,7 @@ export default function Pedidos() {
     const [vendedores, setVendedores] = useState([])
     const [toasts, setToasts] = useState([])
     const [reloadKey, setReloadKey] = useState(0)
-    const [conteos, setConteos] = useState({ pendiente: 0, aprobado: 0, alistado: 0 })
+    const [conteos, setConteos] = useState({ pendiente: 0, aprobado: 0, alistado: 0, facturado: 0 })
 
     useEffect(() => { cargar(); cargarConteos() }, [tabActiva, reloadKey])
 
@@ -77,12 +78,13 @@ export default function Pedidos() {
 
     async function cargarConteos() {
         const eid = perfil.empresa_id
-        const [r1, r2, r3] = await Promise.all([
+        const [r1, r2, r3, r4] = await Promise.all([
             supabase.from('pedidos').select('*', { count: 'exact', head: true }).eq('empresa_id', eid).eq('estado', 'pendiente'),
             supabase.from('pedidos').select('*', { count: 'exact', head: true }).eq('empresa_id', eid).eq('estado', 'aprobado'),
             supabase.from('pedidos').select('*', { count: 'exact', head: true }).eq('empresa_id', eid).eq('estado', 'alistado'),
+            supabase.from('pedidos').select('*', { count: 'exact', head: true }).eq('empresa_id', eid).eq('estado', 'facturado'),
         ])
-        setConteos({ pendiente: r1.count || 0, aprobado: r2.count || 0, alistado: r3.count || 0 })
+        setConteos({ pendiente: r1.count || 0, aprobado: r2.count || 0, alistado: r3.count || 0, facturado: r4.count || 0 })
     }
 
     async function cargar() {
@@ -100,7 +102,8 @@ export default function Pedidos() {
         if (tabActiva === 'pendientes') q = q.eq('estado', 'pendiente')
         else if (tabActiva === 'aprobados') q = q.eq('estado', 'aprobado')
         else if (tabActiva === 'alistados') q = q.eq('estado', 'alistado')
-        else if (tabActiva === 'historial') q = q.in('estado', ['rechazado', 'facturado'])
+        else if (tabActiva === 'pordespachar') q = q.eq('estado', 'facturado')
+        else if (tabActiva === 'historial') q = q.in('estado', ['rechazado', 'despachado'])
 
         const { data } = await q
         if (data) setPedidos(data)
@@ -146,10 +149,11 @@ export default function Pedidos() {
             {/* Tabs */}
             <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', flexWrap: 'wrap' }}>
                 {[
-                    { key: 'pendientes', label: 'Pendientes por Aprobación', estado: 'pendiente', badgeBg: '#fef9c3', badgeColor: '#854d0e' },
-                    { key: 'aprobados', label: 'Por Alistar', estado: 'aprobado', badgeBg: '#dbeafe', badgeColor: '#1e40af' },
-                    { key: 'alistados', label: 'Por Registrar', estado: 'alistado', badgeBg: '#fff7ed', badgeColor: '#c2410c' },
-                    { key: 'historial', label: 'Completados', estado: null },
+                    { key: 'pendientes',   label: 'Pendientes por Aprobación', estado: 'pendiente',  badgeBg: '#fef9c3', badgeColor: '#854d0e' },
+                    { key: 'aprobados',    label: 'Por Alistar',               estado: 'aprobado',   badgeBg: '#dbeafe', badgeColor: '#1e40af' },
+                    { key: 'alistados',    label: 'Por Registrar',             estado: 'alistado',   badgeBg: '#fff7ed', badgeColor: '#c2410c' },
+                    { key: 'pordespachar', label: 'Por Despachar',             estado: 'facturado',  badgeBg: '#dcfce7', badgeColor: '#166534' },
+                    { key: 'historial',    label: 'Completados',               estado: null },
                 ].map(tab => {
                     const count = tab.estado ? conteos[tab.estado] : 0
                     const isActive = tabActiva === tab.key
@@ -283,7 +287,7 @@ export default function Pedidos() {
 // ── Total calculado desde items ────────────────────────────────
 function TotalPedido({ pedidoId, descuentoGlobal, estado }) {
     const [total, setTotal] = useState(null)
-    const usarAlistada = estado === 'alistado' || estado === 'facturado'
+    const usarAlistada = ['alistado', 'facturado', 'despachado'].includes(estado)
     useEffect(() => {
         supabase.from('pedido_items').select('cantidad, cantidad_alistada, precio_unitario, descuento_item, unidad_venta, productos_terminados(aplica_iva, unidad_venta_2, factor_conversion_2)')
             .eq('pedido_id', pedidoId)
@@ -332,7 +336,7 @@ function DetallePedido({ pedido, onVolver }) {
     }, [pedido.id])
 
     const descGlobal = Number(pedido.descuento_global || 0)
-    const esAlistado = pedido.estado === 'alistado'
+    const esAlistado = ['alistado', 'facturado', 'despachado'].includes(pedido.estado)
     // NuevoPedido guarda unidad_venta='2'; Ventas guarda el nombre (ej: 'caja').
     // Ambos casos indican unidad secundaria si coincide con unidad_venta_2 del producto.
     const esUM2 = (item) => {
