@@ -480,8 +480,8 @@ function DetallePedido({ pedido, onVolver }) {
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
                             <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                {['Producto', 'Cant. pedida', esAlistado ? 'Cant. alistada' : null, 'Unidad', 'Precio lista', 'Desc. item', 'Subtotal'].filter(Boolean).map((h, i) => (
-                                    <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: (i === 0 || h === 'Unidad') ? 'left' : 'right' }}>{h}</th>
+                                {['Producto', 'Cant. pedida', esAlistado ? 'Cant. alistada' : null, 'UM', 'Precio lista', 'Desc. item', 'Subtotal'].filter(Boolean).map((h, i) => (
+                                    <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: (i === 0 || h === 'UM') ? 'left' : 'right' }}>{h}</th>
                                 ))}
                             </tr>
                         </thead>
