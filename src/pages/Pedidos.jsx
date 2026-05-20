@@ -319,7 +319,7 @@ function DetallePedido({ pedido, onVolver }) {
 
     useEffect(() => {
         supabase.from('pedido_items')
-            .select('*, productos_terminados(nombre, sku, aplica_iva, factor_conversion_2)')
+            .select('*, productos_terminados(nombre, sku, aplica_iva, factor_conversion_2, unidad_medida, unidad_venta_2)')
             .eq('pedido_id', pedido.id)
             .then(({ data }) => { if (data) setItems(data); setLoading(false) })
     }, [pedido.id])
@@ -480,8 +480,8 @@ function DetallePedido({ pedido, onVolver }) {
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
                             <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                {['Producto', 'Cant. pedida', esAlistado ? 'Cant. alistada' : null, 'Precio lista', 'Desc. item', 'Subtotal'].filter(Boolean).map((h, i) => (
-                                    <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: i > 0 ? 'right' : 'left' }}>{h}</th>
+                                {['Producto', 'Cant. pedida', esAlistado ? 'Cant. alistada' : null, 'Unidad', 'Precio lista', 'Desc. item', 'Subtotal'].filter(Boolean).map((h, i) => (
+                                    <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: (i === 0 || h === 'Unidad') ? 'left' : 'right' }}>{h}</th>
                                 ))}
                             </tr>
                         </thead>
@@ -506,6 +506,11 @@ function DetallePedido({ pedido, onVolver }) {
                                                 {item.cantidad_alistada != null ? Number(item.cantidad_alistada).toLocaleString('es-VE') : '—'}
                                             </td>
                                         )}
+                                        <td style={{ padding: '12px 16px', fontSize: '12px', color: '#6b7280' }}>
+                                            {item.unidad_venta === '2'
+                                                ? (item.productos_terminados?.unidad_venta_2 || '—')
+                                                : (item.productos_terminados?.unidad_medida || '—')}
+                                        </td>
                                         <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{fmt(item.precio_unitario)}</td>
                                         <td style={{ padding: '12px 16px', fontSize: '13px', textAlign: 'right' }}>
                                             {Number(item.descuento_item || 0) > 0
