@@ -319,16 +319,21 @@ function DetallePedido({ pedido, onVolver }) {
 
     useEffect(() => {
         supabase.from('pedido_items')
-            .select('*, productos_terminados(nombre, sku, aplica_iva)')
+            .select('*, productos_terminados(nombre, sku, aplica_iva, factor_conversion_2)')
             .eq('pedido_id', pedido.id)
             .then(({ data }) => { if (data) setItems(data); setLoading(false) })
     }, [pedido.id])
 
     const descGlobal = Number(pedido.descuento_global || 0)
     const esAlistado = pedido.estado === 'alistado'
-    const cantFn = (item) => esAlistado
-        ? Number(item.cantidad_alistada ?? item.cantidad)
-        : Number(item.cantidad)
+    // cantidad_alistada está en unidades primarias; si la venta fue en unidad secundaria
+    // hay que convertir de vuelta dividiendo por factor_conversion_2
+    const cantFn = (item) => {
+        if (!esAlistado) return Number(item.cantidad)
+        const cantAlistada = Number(item.cantidad_alistada ?? item.cantidad)
+        const factor = Number(item.productos_terminados?.factor_conversion_2 || 1)
+        return (item.unidad_venta === '2' && factor > 1) ? cantAlistada / factor : cantAlistada
+    }
     // precio_unitario ya incluye IVA para items con aplica_iva=true → extraer base
     const subtotalConDescItems = items.reduce((s, i) => {
         const desc = Number(i.descuento_item || 0)
@@ -397,13 +402,18 @@ function DetallePedido({ pedido, onVolver }) {
         await supabase.from('venta_items').insert(
             items
                 .filter(i => Number(i.cantidad_alistada ?? i.cantidad) > 0)
-                .map(i => ({
-                    venta_id: venta.id,
-                    producto_id: i.producto_id,
-                    cantidad: Number(i.cantidad_alistada ?? i.cantidad),
-                    precio_unitario: Number(i.precio_unitario) * (1 - Number(i.descuento_item || 0) / 100) * (1 - descGlobal / 100),
-                    empresa_id: perfil.empresa_id,
-                }))
+                .map(i => {
+                    const cantAlistada = Number(i.cantidad_alistada ?? i.cantidad)
+                    const factor = Number(i.productos_terminados?.factor_conversion_2 || 1)
+                    const cantidad = (i.unidad_venta === '2' && factor > 1) ? cantAlistada / factor : cantAlistada
+                    return {
+                        venta_id: venta.id,
+                        producto_id: i.producto_id,
+                        cantidad,
+                        precio_unitario: Number(i.precio_unitario) * (1 - Number(i.descuento_item || 0) / 100) * (1 - descGlobal / 100),
+                        empresa_id: perfil.empresa_id,
+                    }
+                })
         )
 
         await supabase.from('pedidos')
