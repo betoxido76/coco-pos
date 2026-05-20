@@ -49,7 +49,7 @@ export default function Despacho() {
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
                             <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                {['Pedido', 'Cliente', 'Vendedor', 'Origen', 'Entrega', ''].map((h, i) => (
+                                {['Pedido', 'Cliente', 'Vendedor', 'Origen', 'Fecha Prometida', ''].map((h, i) => (
                                     <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left' }}>{h}</th>
                                 ))}
                             </tr>
@@ -99,6 +99,7 @@ function AlistarPedido({ pedido, onAlistado, onCancelar }) {
     const [loading, setLoading] = useState(true)
     const [procesando, setProcesando] = useState(false)
     const [error, setError] = useState('')
+    const [fechaDespacho, setFechaDespacho] = useState('')
 
     useEffect(() => {
         supabase.from('pedido_items')
@@ -131,7 +132,7 @@ function AlistarPedido({ pedido, onAlistado, onCancelar }) {
         }
 
         const { error: errPedido } = await supabase.from('pedidos')
-            .update({ estado: 'alistado' })
+            .update({ estado: 'alistado', ...(fechaDespacho ? { fecha_despacho: fechaDespacho } : {}) })
             .eq('id', pedido.id)
 
         if (errPedido) { setError('Error al confirmar: ' + errPedido.message); setProcesando(false); return }
@@ -151,17 +152,22 @@ function AlistarPedido({ pedido, onAlistado, onCancelar }) {
             </div>
 
             {/* Info */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '20px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '12px', marginBottom: '20px' }}>
                 {[
                     { label: 'Cliente', valor: pedido.clientes?.nombre || '—' },
                     { label: 'Vendedor', valor: pedido.usuarios?.nombre || '—' },
-                    { label: 'Entrega', valor: pedido.fecha_entrega ? new Date(pedido.fecha_entrega + 'T00:00:00').toLocaleDateString('es-VE') : '—' },
+                    { label: 'Fecha Prometida', valor: pedido.fecha_entrega ? new Date(pedido.fecha_entrega + 'T00:00:00').toLocaleDateString('es-VE') : '—' },
                 ].map(f => (
                     <div key={f.label} style={{ backgroundColor: '#f9fafb', borderRadius: '10px', border: '1px solid #e5e7eb', padding: '12px 16px' }}>
                         <p style={{ fontSize: '11px', color: '#9ca3af', margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{f.label}</p>
                         <p style={{ fontSize: '14px', fontWeight: 500, color: '#1f2937', margin: 0 }}>{f.valor}</p>
                     </div>
                 ))}
+                <div style={{ backgroundColor: '#f9fafb', borderRadius: '10px', border: '1px solid #e5e7eb', padding: '12px 16px' }}>
+                    <p style={{ fontSize: '11px', color: '#9ca3af', margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Fecha Programada</p>
+                    <input type="date" value={fechaDespacho} onChange={e => setFechaDespacho(e.target.value)}
+                        style={{ width: '100%', border: 'none', background: 'transparent', fontSize: '14px', fontWeight: 500, color: '#1f2937', padding: 0, cursor: 'pointer', boxSizing: 'border-box' }} />
+                </div>
             </div>
 
             {pedido.notas && (
