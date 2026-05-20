@@ -42,8 +42,9 @@ export default function Pedidos() {
     const [vendedores, setVendedores] = useState([])
     const [toasts, setToasts] = useState([])
     const [reloadKey, setReloadKey] = useState(0)
+    const [conteos, setConteos] = useState({ pendiente: 0, aprobado: 0, alistado: 0 })
 
-    useEffect(() => { cargar() }, [tabActiva, reloadKey])
+    useEffect(() => { cargar(); cargarConteos() }, [tabActiva, reloadKey])
 
     useEffect(() => {
         if (!perfil?.empresa_id) return
@@ -73,6 +74,16 @@ export default function Pedidos() {
             .order('nombre')
             .then(({ data }) => setVendedores(data || []))
     }, [])
+
+    async function cargarConteos() {
+        const eid = perfil.empresa_id
+        const [r1, r2, r3] = await Promise.all([
+            supabase.from('pedidos').select('*', { count: 'exact', head: true }).eq('empresa_id', eid).eq('estado', 'pendiente'),
+            supabase.from('pedidos').select('*', { count: 'exact', head: true }).eq('empresa_id', eid).eq('estado', 'aprobado'),
+            supabase.from('pedidos').select('*', { count: 'exact', head: true }).eq('empresa_id', eid).eq('estado', 'alistado'),
+        ])
+        setConteos({ pendiente: r1.count || 0, aprobado: r2.count || 0, alistado: r3.count || 0 })
+    }
 
     async function cargar() {
         setLoading(true)
@@ -107,9 +118,6 @@ export default function Pedidos() {
         return matchBusqueda && matchVendedor
     })
 
-    // KPIs
-    const pendientesCount = pedidos.filter(p => p.estado === 'pendiente').length
-
     if (pedidoActual)
         return <DetallePedido
             pedido={pedidoActual}
@@ -125,35 +133,50 @@ export default function Pedidos() {
                     <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Pedidos</h1>
                     <p style={{ fontSize: '13px', color: '#6b7280', margin: '4px 0 0' }}>Gestión de pedidos de la fuerza de ventas</p>
                 </div>
-                {pendientesCount > 0 && (
+                {conteos.pendiente > 0 && (
                     <div style={{ backgroundColor: '#fef9c3', border: '1px solid #fde68a', borderRadius: '10px', padding: '10px 16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <Clock size={16} style={{ color: '#d97706' }} />
                         <span style={{ fontSize: '13px', fontWeight: 600, color: '#854d0e' }}>
-                            {pendientesCount} pedido{pendientesCount > 1 ? 's' : ''} pendiente{pendientesCount > 1 ? 's' : ''} de revisión
+                            {conteos.pendiente} pedido{conteos.pendiente > 1 ? 's' : ''} pendiente{conteos.pendiente > 1 ? 's' : ''} de revisión
                         </span>
                     </div>
                 )}
             </div>
 
             {/* Tabs */}
-            <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', flexWrap: 'wrap' }}>
                 {[
-                    { key: 'pendientes', label: 'Pendientes' },
-                    { key: 'aprobados', label: 'Aprobados' },
-                    { key: 'alistados', label: 'Alistados' },
-                    { key: 'historial', label: 'Historial' },
-                ].map(tab => (
-                    <button key={tab.key} onClick={() => { setTabActiva(tab.key); setBusqueda(''); setFiltroVendedor('') }}
-                        style={{
-                            padding: '8px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 500,
-                            border: '1px solid', cursor: 'pointer',
-                            borderColor: tabActiva === tab.key ? '#16a34a' : '#e5e7eb',
-                            backgroundColor: tabActiva === tab.key ? '#f0fdf4' : '#fff',
-                            color: tabActiva === tab.key ? '#16a34a' : '#6b7280',
-                        }}>
-                        {tab.label}
-                    </button>
-                ))}
+                    { key: 'pendientes', label: 'Pendientes', estado: 'pendiente', badgeBg: '#fef9c3', badgeColor: '#854d0e' },
+                    { key: 'aprobados', label: 'Aprobados', estado: 'aprobado', badgeBg: '#dbeafe', badgeColor: '#1e40af' },
+                    { key: 'alistados', label: 'Alistados', estado: 'alistado', badgeBg: '#fff7ed', badgeColor: '#c2410c' },
+                    { key: 'historial', label: 'Historial', estado: null },
+                ].map(tab => {
+                    const count = tab.estado ? conteos[tab.estado] : 0
+                    const isActive = tabActiva === tab.key
+                    const hasItems = count > 0
+                    return (
+                        <button key={tab.key} onClick={() => { setTabActiva(tab.key); setBusqueda(''); setFiltroVendedor('') }}
+                            style={{
+                                padding: '8px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 500,
+                                border: '1px solid', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px',
+                                borderColor: isActive ? '#16a34a' : hasItems ? tab.badgeColor + '66' : '#e5e7eb',
+                                backgroundColor: isActive ? '#f0fdf4' : '#fff',
+                                color: isActive ? '#16a34a' : '#6b7280',
+                            }}>
+                            {tab.label}
+                            {hasItems && (
+                                <span style={{
+                                    backgroundColor: isActive ? '#16a34a' : tab.badgeBg,
+                                    color: isActive ? '#fff' : tab.badgeColor,
+                                    fontSize: '11px', fontWeight: 700,
+                                    padding: '1px 7px', borderRadius: '10px', lineHeight: '18px',
+                                }}>
+                                    {count}
+                                </span>
+                            )}
+                        </button>
+                    )
+                })}
             </div>
 
             {/* Filtros */}
