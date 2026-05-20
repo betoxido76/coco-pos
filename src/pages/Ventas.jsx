@@ -686,6 +686,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
 
     const [listas, setListas] = useState([])
     const [listaId, setListaId] = useState('')
+    const [listasClienteIds, setListasClienteIds] = useState(null) // null = sin restricción
     const [descuentoGlobal, setDescuentoGlobal] = useState('')
 
     // ── Estados exclusivos flujo RETAIL ──
@@ -764,6 +765,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
         setDirecciones([])
         if (!id) {
             if (esRetail) setCondicion('credito')
+            setListasClienteIds(null)
             return
         }
         if (esRetail) {
@@ -771,18 +773,27 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
             setCondicion(cliente?.condicion_pago || 'credito')
             setDiasCredito(Number(cliente?.dias_credito) || 0)
         }
-        const { data } = await supabase.from('direcciones_entrega')
-            .select('*')
-            .eq('cliente_id', id)
-            .eq('empresa_id', perfil.empresa_id)
-            .eq('activo', true)
-            .order('es_principal', { ascending: false })
-            .order('nombre')
-        if (data) {
-            setDirecciones(data)
-            const principal = data.find(d => d.es_principal)
+        const [{ data: dirs }, { data: listasCli }] = await Promise.all([
+            supabase.from('direcciones_entrega')
+                .select('*').eq('cliente_id', id).eq('empresa_id', perfil.empresa_id)
+                .eq('activo', true).order('es_principal', { ascending: false }).order('nombre'),
+            supabase.from('cliente_listas_precio')
+                .select('lista_precio_id, es_default')
+                .eq('cliente_id', id).eq('empresa_id', perfil.empresa_id),
+        ])
+        if (dirs) {
+            setDirecciones(dirs)
+            const principal = dirs.find(d => d.es_principal)
             if (principal) setDireccionId(principal.id)
-            else if (data.length === 1) setDireccionId(data[0].id)
+            else if (dirs.length === 1) setDireccionId(dirs[0].id)
+        }
+        if (listasCli && listasCli.length > 0) {
+            setListasClienteIds(new Set(listasCli.map(l => l.lista_precio_id)))
+            const def = listasCli.find(l => l.es_default)
+            const defaultId = def?.lista_precio_id || listasCli[0].lista_precio_id
+            setListaId(defaultId)
+        } else {
+            setListasClienteIds(null)
         }
     }
 
@@ -1162,7 +1173,8 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                                 {listas.length > 0 && (
                                     <select value={listaId} onChange={e => setListaId(e.target.value)}
                                         style={{ padding: '5px 8px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '12px', color: '#374151', backgroundColor: '#fff' }}>
-                                        {listas.map(l => <option key={l.id} value={l.id}>{l.nombre}{l.es_default ? ' ★' : ''}</option>)}
+                                        {(listasClienteIds ? listas.filter(l => listasClienteIds.has(l.id)) : listas)
+                                            .map(l => <option key={l.id} value={l.id}>{l.nombre}{l.es_default ? ' ★' : ''}</option>)}
                                     </select>
                                 )}
                                 {esAutopartes && (

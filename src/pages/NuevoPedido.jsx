@@ -1176,6 +1176,8 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
     // Paso 2 — Productos
     const [listas, setListas] = useState([])
     const [listaId, setListaId] = useState('')
+    const [listasClienteIds, setListasClienteIds] = useState(null) // null = sin restricción
+    const [listaClienteDefaultId, setListaClienteDefaultId] = useState(null)
     const [productos, setProductos] = useState([])
     const [busqProducto, setBusqProducto] = useState('')
     const [items, setItems] = useState([])
@@ -1189,7 +1191,7 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
     const [pedidoCreado, setPedidoCreado] = useState(null)
 
     async function cargarDatosCliente(clienteId) {
-        const [{ data: dirs }, { data: ventas }, { data: ultimosPedidos }] = await Promise.all([
+        const [{ data: dirs }, { data: ventas }, { data: ultimosPedidos }, { data: listasCli }] = await Promise.all([
             supabase.from('direcciones_entrega')
                 .select('*').eq('cliente_id', clienteId).eq('empresa_id', perfil.empresa_id)
                 .eq('activo', true).order('es_principal', { ascending: false }).order('nombre'),
@@ -1200,7 +1202,10 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
             supabase.from('pedidos')
                 .select('fecha_pedido, pedido_items(producto_id, cantidad)')
                 .eq('cliente_id', clienteId).eq('empresa_id', perfil.empresa_id)
-                .order('fecha_pedido', { ascending: false }).limit(1)
+                .order('fecha_pedido', { ascending: false }).limit(1),
+            supabase.from('cliente_listas_precio')
+                .select('lista_precio_id, es_default')
+                .eq('cliente_id', clienteId).eq('empresa_id', perfil.empresa_id)
         ])
         if (dirs) {
             setDirecciones(dirs)
@@ -1225,6 +1230,14 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
                 map[i.producto_id] = { cantidad: i.cantidad, fecha: ultimosPedidos[0].fecha_pedido }
             })
             setUltimaCompra(map)
+        }
+        if (listasCli && listasCli.length > 0) {
+            setListasClienteIds(new Set(listasCli.map(l => l.lista_precio_id)))
+            const def = listasCli.find(l => l.es_default)
+            setListaClienteDefaultId(def?.lista_precio_id || listasCli[0].lista_precio_id)
+        } else {
+            setListasClienteIds(null)
+            setListaClienteDefaultId(null)
         }
     }
 
@@ -1264,6 +1277,13 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
 
         if (clienteInicial) cargarDatosCliente(clienteInicial.id)
     }, [])
+
+    // Auto-seleccionar lista default del cliente cuando cambia
+    useEffect(() => {
+        if (!listaClienteDefaultId) return
+        const existe = listas.find(l => l.id === listaClienteDefaultId)
+        if (existe) setListaId(listaClienteDefaultId)
+    }, [listaClienteDefaultId, listas])
 
     const itemsPreloaded = useRef(false)
 
@@ -1578,7 +1598,8 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
                 </div>
                 <select value={listaId} onChange={e => setListaId(e.target.value)}
                     style={{ ...s.input, fontSize: '14px', padding: '10px 12px' }}>
-                    {listas.map(l => <option key={l.id} value={l.id}>{l.nombre}{l.es_default ? ' (default)' : ''}</option>)}
+                    {(listasClienteIds ? listas.filter(l => listasClienteIds.has(l.id)) : listas)
+                        .map(l => <option key={l.id} value={l.id}>{l.nombre}{l.es_default ? ' (default)' : ''}</option>)}
                 </select>
             </div>
 

@@ -44,6 +44,11 @@ export default function Clientes() {
     const [cats3, setCats3] = useState([])
     const [cats4, setCats4] = useState([])
 
+    // Listas de precio
+    const [listasEmpresa, setListasEmpresa] = useState([])
+    const [listasSeleccionadas, setListasSeleccionadas] = useState(new Set())
+    const [listaDefaultId, setListaDefaultId] = useState('')
+
     // Direcciones
     const [direcciones, setDirecciones] = useState([])
     const [modalDir, setModalDir] = useState(null)
@@ -57,6 +62,9 @@ export default function Clientes() {
             .eq('empresa_id', perfil.empresa_id).eq('activo', true).order('nombre')
             .then(({ data }) => setTiposCliente(data || []))
         cargarCategorias()
+        supabase.from('listas_precio').select('id, nombre, es_default')
+            .eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
+            .then(({ data }) => setListasEmpresa(data || []))
     }, [])
 
     async function cargarCategorias() {
@@ -94,10 +102,11 @@ export default function Clientes() {
 
     function abrirNuevo() {
         setEditando(null); setForm(VACIO); setDirecciones([])
+        setListasSeleccionadas(new Set()); setListaDefaultId('')
         setError(''); setVista('form')
     }
 
-    function abrirEditar(c) {
+    async function abrirEditar(c) {
         setEditando(c.id)
         setForm({
             codigo: c.codigo || '',
@@ -119,6 +128,19 @@ export default function Clientes() {
             cat4_id: c.cat4_id || '',
         })
         cargarDirecciones(c.id)
+
+        const { data: listasCli } = await supabase.from('cliente_listas_precio')
+            .select('lista_precio_id, es_default')
+            .eq('cliente_id', c.id).eq('empresa_id', perfil.empresa_id)
+        if (listasCli && listasCli.length > 0) {
+            setListasSeleccionadas(new Set(listasCli.map(l => l.lista_precio_id)))
+            const def = listasCli.find(l => l.es_default)
+            setListaDefaultId(def?.lista_precio_id || '')
+        } else {
+            setListasSeleccionadas(new Set())
+            setListaDefaultId('')
+        }
+
         setError(''); setVista('form')
     }
 
@@ -169,6 +191,24 @@ export default function Clientes() {
                     id: undefined // Eliminamos IDs temporales si los hubiera
                 }))
                 await supabase.from('direcciones_entrega').insert(direccionesParaGuardar)
+            }
+        }
+
+        // Guardar listas de precio asignadas
+        const clienteIdFinal = editando || nuevoClienteId
+        if (clienteIdFinal) {
+            if (editando) {
+                await supabase.from('cliente_listas_precio').delete().eq('cliente_id', clienteIdFinal)
+            }
+            if (listasSeleccionadas.size > 0) {
+                await supabase.from('cliente_listas_precio').insert(
+                    Array.from(listasSeleccionadas).map(lid => ({
+                        empresa_id: perfil.empresa_id,
+                        cliente_id: clienteIdFinal,
+                        lista_precio_id: lid,
+                        es_default: lid === listaDefaultId,
+                    }))
+                )
             }
         }
 
@@ -365,6 +405,63 @@ export default function Clientes() {
                         </div>
                     ))}
                 </div>
+            </div>
+
+            {/* Listas de precio */}
+            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '20px', marginBottom: '20px' }}>
+                <p style={{ fontSize: '13px', fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 4px' }}>Listas de precio</p>
+                <p style={{ fontSize: '12px', color: '#9ca3af', margin: '0 0 14px' }}>
+                    Marca las listas disponibles para este cliente. La marcada como default se pre-selecciona en ventas y pedidos.
+                </p>
+                {listasEmpresa.length === 0 ? (
+                    <p style={{ fontSize: '13px', color: '#9ca3af', margin: 0 }}>Sin listas de precio configuradas.</p>
+                ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        {listasEmpresa.map(l => {
+                            const checked = listasSeleccionadas.has(l.id)
+                            const isDefault = listaDefaultId === l.id
+                            return (
+                                <div key={l.id} style={{
+                                    display: 'flex', alignItems: 'center', gap: '12px',
+                                    padding: '10px 14px', borderRadius: '8px',
+                                    backgroundColor: checked ? '#f0fdf4' : '#f9fafb',
+                                    border: `1px solid ${checked ? '#bbf7d0' : '#e5e7eb'}`,
+                                }}>
+                                    <input type="checkbox" id={`lista_${l.id}`} checked={checked}
+                                        onChange={e => {
+                                            const next = new Set(listasSeleccionadas)
+                                            if (e.target.checked) next.add(l.id)
+                                            else { next.delete(l.id); if (listaDefaultId === l.id) setListaDefaultId('') }
+                                            setListasSeleccionadas(next)
+                                        }}
+                                        style={{ width: '16px', height: '16px', accentColor: '#16a34a', cursor: 'pointer' }} />
+                                    <label htmlFor={`lista_${l.id}`} style={{ flex: 1, fontSize: '13px', fontWeight: 500, color: '#1f2937', cursor: 'pointer' }}>
+                                        {l.nombre}
+                                        {l.es_default && <span style={{ fontSize: '11px', color: '#9ca3af', marginLeft: '6px' }}>(global default)</span>}
+                                    </label>
+                                    {checked && (
+                                        <button type="button" onClick={() => setListaDefaultId(isDefault ? '' : l.id)}
+                                            style={{
+                                                display: 'flex', alignItems: 'center', gap: '4px',
+                                                padding: '3px 10px', borderRadius: '20px', fontSize: '11px', fontWeight: 600,
+                                                border: '1px solid', cursor: 'pointer',
+                                                borderColor: isDefault ? '#16a34a' : '#d1d5db',
+                                                backgroundColor: isDefault ? '#16a34a' : '#fff',
+                                                color: isDefault ? '#fff' : '#9ca3af',
+                                            }}>
+                                            {isDefault ? '★ Default' : '☆ Default'}
+                                        </button>
+                                    )}
+                                </div>
+                            )
+                        })}
+                    </div>
+                )}
+                {listasSeleccionadas.size === 0 && listasEmpresa.length > 0 && (
+                    <p style={{ fontSize: '11px', color: '#9ca3af', margin: '10px 0 0' }}>
+                        Sin listas asignadas — se mostrarán todas las listas disponibles al crear ventas o pedidos.
+                    </p>
+                )}
             </div>
 
             {/* 👈 SECCIÓN DE DIRECCIONES (AHORA VISIBLE SIEMPRE) */}
