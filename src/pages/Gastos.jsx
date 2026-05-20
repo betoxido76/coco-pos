@@ -88,7 +88,7 @@ export default function Gastos() {
         if (filtroEstado !== 'todos') kpiQ = kpiQ.eq('estado', filtroEstado)
 
         let tablaQ = supabase.from('gastos')
-            .select('*, tipos_gastos(nombre), usuarios(nombre)', { count: 'exact' })
+            .select('*, tipos_gastos(nombre), usuarios(nombre), proveedores(nombre)', { count: 'exact' })
             .eq('empresa_id', perfil.empresa_id)
             .order('fecha', { ascending: false })
             .order('created_at', { ascending: false })
@@ -268,6 +268,7 @@ export default function Gastos() {
                                                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                         <div>
                                                             <div style={{ fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>{g.nombre}</div>
+                                                            {g.proveedores?.nombre && <div style={{ fontSize: '11px', color: '#6b7280', marginTop: '2px' }}>Proveedor: {g.proveedores.nombre}</div>}
                                                             {g.descripcion && <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '2px' }}>{g.descripcion}</div>}
                                                         </div>
                                                         {estado === 'pendiente' && (
@@ -509,11 +510,18 @@ function NuevoGasto({ tasas, tipos, onGuardado, onCancelar }) {
     const [error, setError] = useState('')
     const [cuentasBancarias, setCuentasBancarias] = useState([])
     const [cuentaBancariaId, setCuentaBancariaId] = useState('')
+    const [proveedores, setProveedores] = useState([])
+    const [proveedorId, setProveedorId] = useState('')
 
     useEffect(() => {
         if (perfil?.empresa_id) {
-            supabase.from('cuentas_bancarias').select('id, nombre, banco, moneda').eq('empresa_id', perfil.empresa_id).eq('activa', true)
-                .then(({ data }) => setCuentasBancarias(data || []))
+            Promise.all([
+                supabase.from('cuentas_bancarias').select('id, nombre, banco, moneda').eq('empresa_id', perfil.empresa_id).eq('activa', true),
+                supabase.from('proveedores').select('id, nombre').eq('empresa_id', perfil.empresa_id).order('nombre'),
+            ]).then(([{ data: cuentas }, { data: provs }]) => {
+                setCuentasBancarias(cuentas || [])
+                setProveedores(provs || [])
+            })
         }
     }, [perfil?.empresa_id])
 
@@ -540,6 +548,7 @@ function NuevoGasto({ tasas, tipos, onGuardado, onCancelar }) {
             tipo_gasto_id: tipoGastoId,
             categoria: tipos.find(t => t.id === tipoGastoId)?.nombre || '',
             cuenta_bancaria_id: estadoGasto === 'pagado' ? (cuentaBancariaId || null) : null,
+            proveedor_id: proveedorId || null,
             fecha,
             estado: estadoGasto,
             fecha_vencimiento: estadoGasto === 'pendiente' ? fechaVencimiento : null,
@@ -609,6 +618,19 @@ function NuevoGasto({ tasas, tipos, onGuardado, onCancelar }) {
                         )}
                     </div>
                 </div>
+
+                {/* Proveedor */}
+                {proveedores.length > 0 && (
+                    <div>
+                        <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>
+                            Proveedor <span style={{ color: '#9ca3af', fontWeight: 400 }}>(opcional)</span>
+                        </label>
+                        <select value={proveedorId} onChange={e => setProveedorId(e.target.value)} style={inputStyle}>
+                            <option value="">— Sin proveedor —</option>
+                            {proveedores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+                        </select>
+                    </div>
+                )}
 
                 {/* Fecha */}
                 <div style={{ display: 'grid', gridTemplateColumns: estadoGasto === 'pendiente' ? '1fr 1fr' : '1fr 1fr', gap: '16px' }}>
