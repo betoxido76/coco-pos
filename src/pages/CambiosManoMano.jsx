@@ -402,6 +402,7 @@ function ModalSalida({ item, onConfirmar, onCerrar }) {
     const [procesando, setProcesando] = useState(false)
     const [almacenes, setAlmacenes] = useState([])
     const [almacenDestino, setAlmacenDestino] = useState('')
+    const [error, setError] = useState('')
     const { perfil } = useAuth()
 
     useEffect(() => {
@@ -418,6 +419,11 @@ function ModalSalida({ item, onConfirmar, onCerrar }) {
     }, [])
 
     async function confirmar() {
+        if (accion === 'reprocesar' && !almacenDestino) {
+            setError('Selecciona el almacén de destino para el reproceso')
+            return
+        }
+        setError('')
         setProcesando(true)
         await onConfirmar(accion, notas, almacenDestino)
         setProcesando(false)
@@ -516,6 +522,12 @@ function ModalSalida({ item, onConfirmar, onCerrar }) {
                         placeholder="Observaciones sobre el reproceso o desecho..."
                         style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }} />
                 </div>
+
+                {error && (
+                    <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 14px', fontSize: '13px', color: '#dc2626', marginBottom: '12px' }}>
+                        {error}
+                    </div>
+                )}
 
                 <div style={{ display: 'flex', gap: '10px' }}>
                     <button onClick={onCerrar}
