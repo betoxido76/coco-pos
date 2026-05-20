@@ -146,10 +146,10 @@ export default function Pedidos() {
             {/* Tabs */}
             <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', flexWrap: 'wrap' }}>
                 {[
-                    { key: 'pendientes', label: 'Pendientes', estado: 'pendiente', badgeBg: '#fef9c3', badgeColor: '#854d0e' },
-                    { key: 'aprobados', label: 'Aprobados', estado: 'aprobado', badgeBg: '#dbeafe', badgeColor: '#1e40af' },
-                    { key: 'alistados', label: 'Alistados', estado: 'alistado', badgeBg: '#fff7ed', badgeColor: '#c2410c' },
-                    { key: 'historial', label: 'Historial', estado: null },
+                    { key: 'pendientes', label: 'Pendientes por Aprobación', estado: 'pendiente', badgeBg: '#fef9c3', badgeColor: '#854d0e' },
+                    { key: 'aprobados', label: 'Por Alistar', estado: 'aprobado', badgeBg: '#dbeafe', badgeColor: '#1e40af' },
+                    { key: 'alistados', label: 'Por Registrar', estado: 'alistado', badgeBg: '#fff7ed', badgeColor: '#c2410c' },
+                    { key: 'historial', label: 'Completados', estado: null },
                 ].map(tab => {
                     const count = tab.estado ? conteos[tab.estado] : 0
                     const isActive = tabActiva === tab.key
