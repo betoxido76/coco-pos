@@ -39,6 +39,8 @@ export default function Productos() {
     const [error, setError] = useState('')
     const [exito, setExito] = useState('')
     const [vehiculosData, setVehiculosData] = useState([])
+    const [sortCol, setSortCol] = useState('nombre')
+    const [sortDir, setSortDir] = useState('asc')
 
     const marcasDisp = [...new Set(vehiculosData.map(v => v.marca))].sort()
     const modelosDisp = vehiculosData
@@ -541,6 +543,21 @@ export default function Productos() {
         </div>
     )
 
+    function handleSort(col) {
+        if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+        else { setSortCol(col); setSortDir('asc') }
+    }
+
+    const NUMERICAS = ['precio_venta', 'costo_promedio', 'stock_actual']
+    const ordenados = [...filtrados].sort((a, b) => {
+        const av = a[sortCol] ?? (NUMERICAS.includes(sortCol) ? -Infinity : '')
+        const bv = b[sortCol] ?? (NUMERICAS.includes(sortCol) ? -Infinity : '')
+        const cmp = NUMERICAS.includes(sortCol)
+            ? Number(av) - Number(bv)
+            : String(av).localeCompare(String(bv), 'es', { sensitivity: 'base' })
+        return sortDir === 'asc' ? cmp : -cmp
+    })
+
     // ── LISTA ────────────────────────────────────────────────────
     return (
         <div style={{ padding: '24px' }}>
@@ -591,13 +608,38 @@ export default function Productos() {
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
                             <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                {['Producto', 'SKU', 'Tipo', 'Precio', 'Costo', 'Stock', 'Categoría', 'Estado', ''].map(h => (
-                                    <th key={h} style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
+                                {[
+                                    { label: 'Producto',  col: 'nombre' },
+                                    { label: 'SKU',       col: 'sku' },
+                                    { label: 'Tipo',      col: 'tipo_producto' },
+                                    { label: 'Precio',    col: 'precio_venta' },
+                                    { label: 'Costo',     col: 'costo_promedio' },
+                                    { label: 'Stock',     col: 'stock_actual' },
+                                    { label: 'Categoría', col: 'categoria_1' },
+                                    { label: 'Estado',    col: null },
+                                    { label: '',          col: null },
+                                    { label: 'IVA',       col: null },
+                                ].map(({ label, col }) => (
+                                    <th key={label}
+                                        onClick={col ? () => handleSort(col) : undefined}
+                                        style={{
+                                            padding: '10px 14px', fontSize: '12px', fontWeight: 500, textAlign: 'left', whiteSpace: 'nowrap',
+                                            color: col && sortCol === col ? '#16a34a' : '#6b7280',
+                                            cursor: col ? 'pointer' : 'default',
+                                            userSelect: 'none',
+                                        }}>
+                                        {label}
+                                        {col && (
+                                            <span style={{ marginLeft: '4px', fontSize: '10px', color: sortCol === col ? '#16a34a' : '#d1d5db' }}>
+                                                {sortCol === col ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}
+                                            </span>
+                                        )}
+                                    </th>
                                 ))}
                             </tr>
                         </thead>
                         <tbody>
-                            {filtrados.map(p => (
+                            {ordenados.map(p => (
                                 <tr key={p.id} style={{ borderBottom: '1px solid #f3f4f6' }}
                                     onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
                                     onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
