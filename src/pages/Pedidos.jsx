@@ -232,7 +232,7 @@ export default function Pedidos() {
                                         {p.fecha_entrega ? new Date(p.fecha_entrega + 'T00:00:00').toLocaleDateString('es-VE') : '—'}
                                     </td>
                                     <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937' }}>
-                                        <TotalPedido pedidoId={p.id} descuentoGlobal={p.descuento_global} />
+                                        <TotalPedido pedidoId={p.id} descuentoGlobal={p.descuento_global} estado={p.estado} />
                                     </td>
                                     <td style={{ padding: '12px 16px' }}><BadgeEstado estado={p.estado} /></td>
                                     <td style={{ padding: '12px 16px' }}>
@@ -278,18 +278,21 @@ export default function Pedidos() {
 }
 
 // ── Total calculado desde items ────────────────────────────────
-function TotalPedido({ pedidoId, descuentoGlobal }) {
+function TotalPedido({ pedidoId, descuentoGlobal, estado }) {
     const [total, setTotal] = useState(null)
+    const usarAlistada = estado === 'alistado' || estado === 'facturado'
     useEffect(() => {
-        supabase.from('pedido_items').select('cantidad, precio_unitario, descuento_item, productos_terminados(aplica_iva)')
+        supabase.from('pedido_items').select('cantidad, cantidad_alistada, precio_unitario, descuento_item, productos_terminados(aplica_iva)')
             .eq('pedido_id', pedidoId)
             .then(({ data }) => {
                 if (!data) return
                 // precio_unitario ya incluye IVA → el total es la suma directa de líneas
                 const total = data.reduce((s, i) => {
+                    const cant = usarAlistada ? Number(i.cantidad_alistada ?? i.cantidad) : Number(i.cantidad)
+                    if (cant === 0) return s
                     const precio = Number(i.precio_unitario)
                     const desc = Number(i.descuento_item || 0)
-                    const linea = Number(i.cantidad) * precio * (1 - desc / 100) * (1 - Number(descuentoGlobal || 0) / 100)
+                    const linea = cant * precio * (1 - desc / 100) * (1 - Number(descuentoGlobal || 0) / 100)
                     return s + linea
                 }, 0)
                 setTotal(total)
