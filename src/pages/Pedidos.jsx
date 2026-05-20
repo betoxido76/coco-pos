@@ -80,7 +80,7 @@ export default function Pedidos() {
             .from('pedidos')
             .select(`
                 *,
-                clientes(nombre, rif),
+                clientes(nombre, rif, descripcion),
                 usuarios(nombre)
             `)
             .eq('empresa_id', perfil.empresa_id)
@@ -97,10 +97,12 @@ export default function Pedidos() {
     }
 
     const filtrados = pedidos.filter(p => {
+        const q = busqueda.toLowerCase()
         const matchBusqueda =
-            p.clientes?.nombre?.toLowerCase().includes(busqueda.toLowerCase()) ||
-            p.numero_pedido?.toLowerCase().includes(busqueda.toLowerCase()) ||
-            p.usuarios?.nombre?.toLowerCase().includes(busqueda.toLowerCase())
+            p.clientes?.nombre?.toLowerCase().includes(q) ||
+            p.clientes?.descripcion?.toLowerCase().includes(q) ||
+            p.numero_pedido?.toLowerCase().includes(q) ||
+            p.usuarios?.nombre?.toLowerCase().includes(q)
         const matchVendedor = filtroVendedor ? p.vendedor_id === filtroVendedor : true
         return matchBusqueda && matchVendedor
     })
