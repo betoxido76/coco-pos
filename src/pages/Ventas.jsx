@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
-import { Plus, Search, Trash2, CheckCircle, FileText, RotateCcw, AlertTriangle, ClipboardList, ChevronRight, Edit } from 'lucide-react'
+import { Plus, Search, Trash2, Check, CheckCircle, FileText, RotateCcw, AlertTriangle, ClipboardList, ChevronRight, Edit, X } from 'lucide-react'
 
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
@@ -708,6 +708,8 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
     // ── Estados exclusivos flujo MANUFACTURA ──
     const [notas, setNotas] = useState('')
 
+    const [mostrarNuevoProducto, setMostrarNuevoProducto] = useState(false)
+
     useEffect(() => {
         supabase.from('clientes').select('id, nombre, rif, descripcion, condicion_pago, dias_credito').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
             .then(({ data }) => setClientes(data || []))
@@ -1182,6 +1184,10 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                                             .map(l => <option key={l.id} value={l.id}>{l.nombre}{l.es_default ? ' ★' : ''}</option>)}
                                     </select>
                                 )}
+                                <button onClick={() => setMostrarNuevoProducto(true)}
+                                    style={{ fontSize: '12px', padding: '4px 10px', borderRadius: '6px', border: '1px solid #d97706', cursor: 'pointer', backgroundColor: '#fffbeb', color: '#d97706', fontWeight: 500 }}>
+                                    + Crear nuevo
+                                </button>
                                 {esAutopartes && (
                                     <button onClick={() => { setModoAvanzado(m => !m); setResultadosAvanzados(null); setBusqueda('') }}
                                         style={{
@@ -1206,9 +1212,15 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                                 </div>
                                 {busqueda && (
                                     <div style={{ marginTop: '8px', border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden', maxHeight: '300px', overflowY: 'auto' }}>
-                                        {productosFiltrados.length === 0
-                                            ? <div style={{ padding: '12px', fontSize: '13px', color: '#9ca3af', textAlign: 'center' }}>Sin resultados</div>
-                                            : productosFiltrados.map(p => (
+                                        {productosFiltrados.length === 0 ? (
+                                            <div style={{ padding: '12px', fontSize: '13px', color: '#9ca3af', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
+                                                Sin resultados
+                                                <button onClick={() => setMostrarNuevoProducto(true)}
+                                                    style={{ fontSize: '12px', color: '#d97706', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}>
+                                                    + Crear "{busqueda}"
+                                                </button>
+                                            </div>
+                                        ) : productosFiltrados.map(p => (
                                                 <div key={p.id} onClick={() => agregarProducto(p)}
                                                     style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', cursor: 'pointer', borderBottom: '1px solid #f3f4f6', fontSize: '13px' }}
                                                     onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f0fdf4'}
@@ -1604,6 +1616,18 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                 </div>
             </div>
 
+            {mostrarNuevoProducto && (
+                <ModalNuevoProductoVenta
+                    perfil={perfil}
+                    onCerrar={() => setMostrarNuevoProducto(false)}
+                    onCreado={producto => {
+                        setProductos(prev => [...prev, producto])
+                        agregarProducto(producto)
+                        setMostrarNuevoProducto(false)
+                    }}
+                />
+            )}
+
             {/* Modal de actualización de precios (solo retail) */}
             {esRetail && ventaPendiente && (
                 <>
@@ -1644,6 +1668,124 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
 }
 
 // ─── Factura + Devolución ──────────────────────────────────────
+// ─── Modal Nuevo Producto (desde NuevaVenta) ──────────────────
+const UNIDADES_VENTA = ['unidad', 'kg', 'g', 'litro', 'ml', 'caja', 'bolsa', 'rollo', 'metro', 'paquete']
+
+function ModalNuevoProductoVenta({ perfil, onCreado, onCerrar }) {
+    const [nombre, setNombre] = useState('')
+    const [sku, setSku] = useState('')
+    const [unidad, setUnidad] = useState('unidad')
+    const [precioVenta, setPrecioVenta] = useState('')
+    const [aplicaIva, setAplicaIva] = useState(true)
+    const [guardando, setGuardando] = useState(false)
+    const [error, setError] = useState('')
+
+    async function guardar() {
+        if (!nombre.trim()) { setError('El nombre es obligatorio'); return }
+        if (!sku.trim()) { setError('El SKU es obligatorio'); return }
+        setGuardando(true); setError('')
+
+        const skuNorm = sku.trim().toUpperCase()
+        const { data, error: err } = await supabase.from('productos_terminados').insert({
+            empresa_id: perfil.empresa_id,
+            nombre: nombre.trim(),
+            sku: skuNorm,
+            unidad_medida: unidad,
+            precio_venta: precioVenta !== '' ? Number(precioVenta) : null,
+            aplica_iva: aplicaIva,
+            activo: true,
+            stock_actual: 0,
+            tipo_producto: 'producido',
+        }).select('id').single()
+
+        if (err) {
+            setGuardando(false)
+            setError(err.code === '23505' ? `El SKU "${skuNorm}" ya existe. Elige otro.` : 'Error: ' + err.message)
+            return
+        }
+
+        onCreado({
+            id: data.id,
+            nombre: nombre.trim(),
+            sku: skuNorm,
+            precio_venta: precioVenta !== '' ? Number(precioVenta) : 0,
+            stock_actual: 0,
+            aplica_iva: aplicaIva,
+            unidad_medida: unidad,
+            unidad_venta_2: null,
+            factor_conversion_2: null,
+        })
+    }
+
+    const inStyle = { width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', color: '#374151', backgroundColor: '#fff', outline: 'none', boxSizing: 'border-box' }
+
+    return (
+        <>
+            <div onClick={onCerrar} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', zIndex: 40 }} />
+            <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', backgroundColor: '#fff', borderRadius: '16px', padding: '28px', width: '440px', zIndex: 50, boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                    <h2 style={{ fontSize: '17px', fontWeight: 700, color: '#1f2937', margin: 0 }}>Nuevo producto</h2>
+                    <button onClick={onCerrar} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af' }}><X size={20} /></button>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                    <div>
+                        <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Nombre *</label>
+                        <input value={nombre} onChange={e => setNombre(e.target.value)}
+                            placeholder="Ej: Agua de Coco Natural 500ml" style={inStyle} autoFocus />
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                        <div>
+                            <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>SKU *</label>
+                            <input value={sku} onChange={e => setSku(e.target.value)}
+                                placeholder="Ej: ACN-500" style={inStyle} />
+                        </div>
+                        <div>
+                            <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Unidad</label>
+                            <select value={unidad} onChange={e => setUnidad(e.target.value)} style={inStyle}>
+                                {UNIDADES_VENTA.map(u => <option key={u} value={u}>{u}</option>)}
+                            </select>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Precio de venta ($)</label>
+                        <input type="number" min="0" step="0.01" value={precioVenta}
+                            onChange={e => setPrecioVenta(e.target.value)} placeholder="0.00" style={inStyle} />
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', backgroundColor: '#f9fafb', borderRadius: '8px' }}>
+                        <input type="checkbox" id="npv_aplica_iva" checked={aplicaIva}
+                            onChange={e => setAplicaIva(e.target.checked)}
+                            style={{ width: '16px', height: '16px', accentColor: '#16a34a', cursor: 'pointer' }} />
+                        <label htmlFor="npv_aplica_iva" style={{ fontSize: '13px', color: '#374151', cursor: 'pointer' }}>
+                            Aplica IVA (16%)
+                        </label>
+                    </div>
+
+                    {error && (
+                        <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 14px', fontSize: '13px', color: '#dc2626' }}>
+                            {error}
+                        </div>
+                    )}
+
+                    <div style={{ display: 'flex', gap: '10px', marginTop: '4px' }}>
+                        <button onClick={guardar} disabled={guardando}
+                            style={{ flex: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px 20px', fontSize: '14px', fontWeight: 600, cursor: guardando ? 'default' : 'pointer', opacity: guardando ? 0.7 : 1 }}>
+                            <Check size={16} /> {guardando ? 'Guardando...' : 'Crear y agregar'}
+                        </button>
+                        <button onClick={onCerrar}
+                            style={{ flex: 1, backgroundColor: '#f3f4f6', color: '#374151', border: 'none', borderRadius: '8px', padding: '10px 20px', fontSize: '14px', cursor: 'pointer' }}>
+                            Cancelar
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </>
+    )
+}
+
 function Factura({ venta, onVolver, onDevolucionCreada }) {
     const { perfil } = useAuth()
     const [items, setItems] = useState(venta.items || [])
