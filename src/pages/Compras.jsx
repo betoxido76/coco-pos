@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
-import { Plus, Search, Trash2, CheckCircle, FileText, X, AlertTriangle, Truck, ClipboardList, ArrowRight } from 'lucide-react'
+import { Plus, Search, Trash2, Check, CheckCircle, FileText, X, AlertTriangle, Truck, ClipboardList, ArrowRight } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
@@ -473,6 +473,7 @@ function NuevaOrden({ onCreada, onCancelar }) {
     const [fechaEntrega, setFechaEntrega] = useState('')
     const [ocPendiente, setOcPendiente] = useState(null)
     const [modoAvanzadoOC, setModoAvanzadoOC] = useState(false)
+    const [mostrarNuevoInsumo, setMostrarNuevoInsumo] = useState(false)
 
     useEffect(() => {
         supabase.from('proveedores').select('id, nombre').eq('activo', true).order('nombre')
@@ -636,15 +637,21 @@ function NuevaOrden({ onCreada, onCancelar }) {
                     <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                             <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151' }}>Agregar insumos</label>
-                            {esAutopartes && (
-                                <button onClick={() => setModoAvanzadoOC(m => !m)}
-                                    style={{ fontSize: '12px', padding: '4px 10px', borderRadius: '6px', border: '1px solid', cursor: 'pointer',
-                                        borderColor: modoAvanzadoOC ? '#1d4ed8' : '#d1d5db',
-                                        backgroundColor: modoAvanzadoOC ? '#eff6ff' : '#f9fafb',
-                                        color: modoAvanzadoOC ? '#1d4ed8' : '#6b7280', fontWeight: 500 }}>
-                                    {modoAvanzadoOC ? 'Búsqueda simple' : 'Búsqueda avanzada'}
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                                <button onClick={() => setMostrarNuevoInsumo(true)}
+                                    style={{ fontSize: '12px', padding: '4px 10px', borderRadius: '6px', border: '1px solid #d97706', cursor: 'pointer', backgroundColor: '#fffbeb', color: '#d97706', fontWeight: 500 }}>
+                                    + Crear nuevo
                                 </button>
-                            )}
+                                {esAutopartes && (
+                                    <button onClick={() => setModoAvanzadoOC(m => !m)}
+                                        style={{ fontSize: '12px', padding: '4px 10px', borderRadius: '6px', border: '1px solid', cursor: 'pointer',
+                                            borderColor: modoAvanzadoOC ? '#1d4ed8' : '#d1d5db',
+                                            backgroundColor: modoAvanzadoOC ? '#eff6ff' : '#f9fafb',
+                                            color: modoAvanzadoOC ? '#1d4ed8' : '#6b7280', fontWeight: 500 }}>
+                                        {modoAvanzadoOC ? 'Búsqueda simple' : 'Búsqueda avanzada'}
+                                    </button>
+                                )}
+                            </div>
                         </div>
                         {!modoAvanzadoOC ? (
                             <>
@@ -655,8 +662,15 @@ function NuevaOrden({ onCreada, onCancelar }) {
                                 </div>
                                 {busqueda && (
                                     <div style={{ marginTop: '8px', border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden', maxHeight: '200px', overflowY: 'auto' }}>
-                                        {insumosFiltrados.length === 0 ? <div style={{ padding: '12px', fontSize: '13px', color: '#9ca3af', textAlign: 'center' }}>Sin resultados</div>
-                                            : insumosFiltrados.map(p => (
+                                        {insumosFiltrados.length === 0 ? (
+                                            <div style={{ padding: '12px', fontSize: '13px', color: '#9ca3af', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
+                                                Sin resultados
+                                                <button onClick={() => setMostrarNuevoInsumo(true)}
+                                                    style={{ fontSize: '12px', color: '#d97706', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}>
+                                                    + Crear "{busqueda}"
+                                                </button>
+                                            </div>
+                                        ) : insumosFiltrados.map(p => (
                                                 <div key={`${p.id}-${p.tipo}`} onClick={() => agregarInsumo(p)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', cursor: 'pointer', borderBottom: '1px solid #f3f4f6', fontSize: '13px' }}
                                                     onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f0fdf4'} onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
                                                     <div><span style={{ fontWeight: 500, color: '#1f2937' }}>{p.nombre}</span><span style={{ color: '#9ca3af', marginLeft: '8px', fontFamily: 'monospace', fontSize: '11px' }}>{p.codigo}</span></div>
@@ -726,6 +740,14 @@ function NuevaOrden({ onCreada, onCancelar }) {
                 </div>
             </div>
 
+            {mostrarNuevoInsumo && (
+                <ModalNuevoInsumo
+                    perfil={perfil}
+                    onCerrar={() => setMostrarNuevoInsumo(false)}
+                    onCreado={insumo => { setInsumos(prev => [...prev, insumo]); agregarInsumo(insumo); setMostrarNuevoInsumo(false) }}
+                />
+            )}
+
             {ocPendiente && (
                 <>
                     <div onClick={() => aplicarActualizacionCostos(false)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', zIndex: 40 }} />
@@ -787,6 +809,7 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
     const [busquedaInsumo, setBusquedaInsumo] = useState('')
     const [proveedorLibreId, setProveedorLibreId] = useState('')
     const [modoAvanzadoRec, setModoAvanzadoRec] = useState(false)
+    const [mostrarNuevoInsumo, setMostrarNuevoInsumo] = useState(false)
 
     // Almacén destino
     const [almacenes, setAlmacenes] = useState([])
@@ -1091,15 +1114,21 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
                         <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151' }}>Agregar insumos</label>
-                        {esAutopartes && (
-                            <button onClick={() => setModoAvanzadoRec(m => !m)}
-                                style={{ fontSize: '12px', padding: '4px 10px', borderRadius: '6px', border: '1px solid', cursor: 'pointer',
-                                    borderColor: modoAvanzadoRec ? '#1d4ed8' : '#d1d5db',
-                                    backgroundColor: modoAvanzadoRec ? '#eff6ff' : '#f9fafb',
-                                    color: modoAvanzadoRec ? '#1d4ed8' : '#6b7280', fontWeight: 500 }}>
-                                {modoAvanzadoRec ? 'Búsqueda simple' : 'Búsqueda avanzada'}
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                            <button onClick={() => setMostrarNuevoInsumo(true)}
+                                style={{ fontSize: '12px', padding: '4px 10px', borderRadius: '6px', border: '1px solid #d97706', cursor: 'pointer', backgroundColor: '#fffbeb', color: '#d97706', fontWeight: 500 }}>
+                                + Crear nuevo
                             </button>
-                        )}
+                            {esAutopartes && (
+                                <button onClick={() => setModoAvanzadoRec(m => !m)}
+                                    style={{ fontSize: '12px', padding: '4px 10px', borderRadius: '6px', border: '1px solid', cursor: 'pointer',
+                                        borderColor: modoAvanzadoRec ? '#1d4ed8' : '#d1d5db',
+                                        backgroundColor: modoAvanzadoRec ? '#eff6ff' : '#f9fafb',
+                                        color: modoAvanzadoRec ? '#1d4ed8' : '#6b7280', fontWeight: 500 }}>
+                                    {modoAvanzadoRec ? 'Búsqueda simple' : 'Búsqueda avanzada'}
+                                </button>
+                            )}
+                        </div>
                     </div>
                     {!modoAvanzadoRec ? (
                         <>
@@ -1111,9 +1140,15 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
                             </div>
                             {busquedaInsumo && (
                                 <div style={{ marginTop: '6px', border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden', maxHeight: '220px', overflowY: 'auto' }}>
-                                    {insumosFiltrados.length === 0
-                                        ? <div style={{ padding: '12px', fontSize: '13px', color: '#9ca3af', textAlign: 'center' }}>Sin resultados</div>
-                                        : insumosFiltrados.map(i => (
+                                    {insumosFiltrados.length === 0 ? (
+                                        <div style={{ padding: '12px', fontSize: '13px', color: '#9ca3af', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
+                                            Sin resultados
+                                            <button onClick={() => setMostrarNuevoInsumo(true)}
+                                                style={{ fontSize: '12px', color: '#d97706', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}>
+                                                + Crear "{busquedaInsumo}"
+                                            </button>
+                                        </div>
+                                    ) : insumosFiltrados.map(i => (
                                             <div key={`${i.tipo}-${i.id}`} onClick={() => agregarInsumoLibre(i)}
                                                 style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', cursor: 'pointer', borderBottom: '1px solid #f3f4f6', fontSize: '13px' }}
                                                 onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f0fdf4'}
@@ -1223,8 +1258,159 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
                 </div>
             </div>
 
+            {mostrarNuevoInsumo && (
+                <ModalNuevoInsumo
+                    perfil={perfil}
+                    onCerrar={() => setMostrarNuevoInsumo(false)}
+                    onCreado={insumo => { setInsumos(prev => [...prev, insumo]); agregarInsumoLibre(insumo); setMostrarNuevoInsumo(false) }}
+                />
+            )}
+
             {mostrarModal && <ModalPagoCompra total={total} condicionInicial={condicionProveedorInicial} diasInicial={diasCreditoProveedorInicial} onCerrar={() => setMostrarModal(false)} onConfirmar={confirmarRecepcion} />}
         </div>
+    )
+}
+
+// ─── Modal Nuevo Insumo / Producto ────────────────────────────
+const TIPOS_INSUMO = [
+    { value: 'materias_primas',    label: 'Materia Prima' },
+    { value: 'materiales_empaque', label: 'Material de Empaque' },
+    { value: 'consumibles',        label: 'Consumible' },
+    { value: 'productos_terminados', label: 'Producto Terminado (comprado)' },
+]
+const UNIDADES_INSUMO = ['unidad', 'kg', 'g', 'litro', 'ml', 'caja', 'bolsa', 'rollo', 'metro', 'paquete']
+
+function ModalNuevoInsumo({ perfil, onCreado, onCerrar }) {
+    const [tipo, setTipo] = useState('materias_primas')
+    const [nombre, setNombre] = useState('')
+    const [codigo, setCodigo] = useState('')
+    const [unidad, setUnidad] = useState('unidad')
+    const [costo, setCosto] = useState('')
+    const [aplicaIva, setAplicaIva] = useState(true)
+    const [guardando, setGuardando] = useState(false)
+    const [error, setError] = useState('')
+
+    const esProductoTerminado = tipo === 'productos_terminados'
+    const labelCodigo = esProductoTerminado ? 'SKU *' : 'Código *'
+
+    async function guardar() {
+        if (!nombre.trim()) { setError('El nombre es obligatorio'); return }
+        if (!codigo.trim()) { setError(`El ${esProductoTerminado ? 'SKU' : 'código'} es obligatorio`); return }
+        setGuardando(true); setError('')
+
+        const tablasMap = {
+            materias_primas:      { campoCosto: 'costo_compra_promedio' },
+            materiales_empaque:   { campoCosto: 'costo_compra_promedio' },
+            consumibles:          { campoCosto: 'costo_compra_promedio' },
+            productos_terminados: { campoCosto: 'costo_promedio' },
+        }
+        const { campoCosto } = tablasMap[tipo]
+        const codigoNorm = codigo.trim().toUpperCase()
+
+        const payload = {
+            empresa_id: perfil.empresa_id,
+            nombre: nombre.trim(),
+            [esProductoTerminado ? 'sku' : 'codigo']: codigoNorm,
+            unidad_medida: unidad,
+            [campoCosto]: costo !== '' ? Number(costo) : 0,
+            aplica_iva: aplicaIva,
+            activo: true,
+            stock_actual: 0,
+            ...(esProductoTerminado ? { tipo_producto: 'comprado' } : {}),
+        }
+
+        const { data, error: err } = await supabase.from(tipo).insert(payload).select('id').single()
+        if (err) {
+            setGuardando(false)
+            setError(err.code === '23505' ? `El código "${codigoNorm}" ya existe. Elige otro.` : 'Error: ' + err.message)
+            return
+        }
+
+        onCreado({
+            id: data.id,
+            tipo,
+            nombre: nombre.trim(),
+            codigo: codigoNorm,
+            unidad_medida: unidad,
+            costo: costo !== '' ? Number(costo) : 0,
+            aplica_iva: aplicaIva,
+            stock_actual: 0,
+        })
+    }
+
+    const inStyle = { width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', color: '#374151', backgroundColor: '#fff', outline: 'none', boxSizing: 'border-box' }
+
+    return (
+        <>
+            <div onClick={onCerrar} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', zIndex: 40 }} />
+            <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', backgroundColor: '#fff', borderRadius: '16px', padding: '28px', width: '480px', zIndex: 50, boxShadow: '0 20px 60px rgba(0,0,0,0.2)', maxHeight: '90vh', overflowY: 'auto' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                    <h2 style={{ fontSize: '17px', fontWeight: 700, color: '#1f2937', margin: 0 }}>Nuevo insumo / producto</h2>
+                    <button onClick={onCerrar} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af' }}><X size={20} /></button>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                    <div>
+                        <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Tipo *</label>
+                        <select value={tipo} onChange={e => setTipo(e.target.value)} style={inStyle}>
+                            {TIPOS_INSUMO.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                        </select>
+                    </div>
+
+                    <div>
+                        <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Nombre *</label>
+                        <input value={nombre} onChange={e => setNombre(e.target.value)}
+                            placeholder="Ej: Azúcar refinada" style={inStyle} autoFocus />
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                        <div>
+                            <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>{labelCodigo}</label>
+                            <input value={codigo} onChange={e => setCodigo(e.target.value)}
+                                placeholder={esProductoTerminado ? 'Ej: ACN-500' : 'Ej: MP-001'} style={inStyle} />
+                        </div>
+                        <div>
+                            <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Unidad</label>
+                            <select value={unidad} onChange={e => setUnidad(e.target.value)} style={inStyle}>
+                                {UNIDADES_INSUMO.map(u => <option key={u} value={u}>{u}</option>)}
+                            </select>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Costo de compra ($)</label>
+                        <input type="number" min="0" step="0.01" value={costo}
+                            onChange={e => setCosto(e.target.value)} placeholder="0.00" style={inStyle} />
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', backgroundColor: '#f9fafb', borderRadius: '8px' }}>
+                        <input type="checkbox" id="nii_aplica_iva" checked={aplicaIva}
+                            onChange={e => setAplicaIva(e.target.checked)}
+                            style={{ width: '16px', height: '16px', accentColor: '#16a34a', cursor: 'pointer' }} />
+                        <label htmlFor="nii_aplica_iva" style={{ fontSize: '13px', color: '#374151', cursor: 'pointer' }}>
+                            Aplica IVA (16%)
+                        </label>
+                    </div>
+
+                    {error && (
+                        <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 14px', fontSize: '13px', color: '#dc2626' }}>
+                            {error}
+                        </div>
+                    )}
+
+                    <div style={{ display: 'flex', gap: '10px', marginTop: '4px' }}>
+                        <button onClick={guardar} disabled={guardando}
+                            style={{ flex: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px 20px', fontSize: '14px', fontWeight: 600, cursor: guardando ? 'default' : 'pointer', opacity: guardando ? 0.7 : 1 }}>
+                            <Check size={16} /> {guardando ? 'Guardando...' : 'Crear y agregar'}
+                        </button>
+                        <button onClick={onCerrar}
+                            style={{ flex: 1, backgroundColor: '#f3f4f6', color: '#374151', border: 'none', borderRadius: '8px', padding: '10px 20px', fontSize: '14px', cursor: 'pointer' }}>
+                            Cancelar
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </>
     )
 }
 
