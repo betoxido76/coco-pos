@@ -1669,16 +1669,37 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
 
 // ─── Factura + Devolución ──────────────────────────────────────
 // ─── Modal Nuevo Producto (desde NuevaVenta) ──────────────────
-const UNIDADES_VENTA = ['unidad', 'kg', 'g', 'litro', 'ml', 'caja', 'bolsa', 'rollo', 'metro', 'paquete']
+const UNIDADES_VENTA = ['unidad', 'kg', 'g', 'litro', 'ml', 'caja', 'bolsa', 'rollo', 'metro', 'paquete', 'par', 'juego']
+const TIPOS_PRODUCTO_VTA = ['producido', 'comprado']
 
 function ModalNuevoProductoVenta({ perfil, onCreado, onCerrar }) {
+    const [proveedores, setProveedores] = useState([])
     const [nombre, setNombre] = useState('')
     const [sku, setSku] = useState('')
+    const [descripcion, setDescripcion] = useState('')
+    const [tipoProducto, setTipoProducto] = useState('producido')
     const [unidad, setUnidad] = useState('unidad')
     const [precioVenta, setPrecioVenta] = useState('')
+    const [costo, setCosto] = useState('')
+    const [stockActual, setStockActual] = useState('')
+    const [stockMinimo, setStockMinimo] = useState('')
+    const [vidaUtilDias, setVidaUtilDias] = useState('')
+    const [proveedorId, setProveedorId] = useState('')
+    const [cat1, setCat1] = useState('')
+    const [cat2, setCat2] = useState('')
+    const [cat3, setCat3] = useState('')
+    const [cat4, setCat4] = useState('')
+    const [unidadVenta2, setUnidadVenta2] = useState('')
+    const [factorConversion2, setFactorConversion2] = useState('')
     const [aplicaIva, setAplicaIva] = useState(true)
+    const [activo, setActivo] = useState(true)
     const [guardando, setGuardando] = useState(false)
     const [error, setError] = useState('')
+
+    useEffect(() => {
+        supabase.from('proveedores').select('id, nombre').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('nombre')
+            .then(({ data }) => { if (data) setProveedores(data) })
+    }, [perfil.empresa_id])
 
     async function guardar() {
         if (!nombre.trim()) { setError('El nombre es obligatorio'); return }
@@ -1686,18 +1707,30 @@ function ModalNuevoProductoVenta({ perfil, onCreado, onCerrar }) {
         setGuardando(true); setError('')
 
         const skuNorm = sku.trim().toUpperCase()
-        const { data, error: err } = await supabase.from('productos_terminados').insert({
+        const payload = {
             empresa_id: perfil.empresa_id,
             nombre: nombre.trim(),
             sku: skuNorm,
+            descripcion: descripcion.trim() || null,
+            tipo_producto: tipoProducto,
             unidad_medida: unidad,
             precio_venta: precioVenta !== '' ? Number(precioVenta) : null,
+            costo_promedio: costo !== '' ? Number(costo) : null,
+            stock_actual: stockActual !== '' ? Number(stockActual) : 0,
+            stock_minimo: stockMinimo !== '' ? Number(stockMinimo) : null,
+            vida_util_dias: vidaUtilDias !== '' ? Number(vidaUtilDias) : null,
+            proveedor_preferido_id: proveedorId || null,
+            categoria_1: cat1.trim() || null,
+            categoria_2: cat2.trim() || null,
+            categoria_3: cat3.trim() || null,
+            categoria_4: cat4.trim() || null,
+            unidad_venta_2: unidadVenta2.trim() || null,
+            factor_conversion_2: factorConversion2 !== '' ? Number(factorConversion2) : null,
             aplica_iva: aplicaIva,
-            activo: true,
-            stock_actual: 0,
-            tipo_producto: 'producido',
-        }).select('id').single()
+            activo,
+        }
 
+        const { data, error: err } = await supabase.from('productos_terminados').insert(payload).select('id').single()
         if (err) {
             setGuardando(false)
             setError(err.code === '23505' ? `El SKU "${skuNorm}" ya existe. Elige otro.` : 'Error: ' + err.message)
@@ -1709,58 +1742,152 @@ function ModalNuevoProductoVenta({ perfil, onCreado, onCerrar }) {
             nombre: nombre.trim(),
             sku: skuNorm,
             precio_venta: precioVenta !== '' ? Number(precioVenta) : 0,
-            stock_actual: 0,
+            stock_actual: stockActual !== '' ? Number(stockActual) : 0,
             aplica_iva: aplicaIva,
             unidad_medida: unidad,
-            unidad_venta_2: null,
-            factor_conversion_2: null,
+            unidad_venta_2: unidadVenta2.trim() || null,
+            factor_conversion_2: factorConversion2 !== '' ? Number(factorConversion2) : null,
         })
     }
 
     const inStyle = { width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', color: '#374151', backgroundColor: '#fff', outline: 'none', boxSizing: 'border-box' }
+    const labelStyle = { fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }
+    const sectionStyle = { fontSize: '11px', fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '4px 0 10px', borderBottom: '1px solid #e5e7eb', paddingBottom: '4px' }
 
     return (
         <>
             <div onClick={onCerrar} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', zIndex: 40 }} />
-            <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', backgroundColor: '#fff', borderRadius: '16px', padding: '28px', width: '440px', zIndex: 50, boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+            <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', backgroundColor: '#fff', borderRadius: '16px', padding: '28px', width: '560px', maxHeight: '90vh', overflowY: 'auto', zIndex: 50, boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                    <h2 style={{ fontSize: '17px', fontWeight: 700, color: '#1f2937', margin: 0 }}>Nuevo producto</h2>
+                    <h2 style={{ fontSize: '17px', fontWeight: 700, color: '#1f2937', margin: 0 }}>Nuevo producto terminado</h2>
                     <button onClick={onCerrar} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af' }}><X size={20} /></button>
                 </div>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                    <p style={sectionStyle}>Información básica</p>
+
                     <div>
-                        <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Nombre *</label>
+                        <label style={labelStyle}>Nombre *</label>
                         <input value={nombre} onChange={e => setNombre(e.target.value)}
                             placeholder="Ej: Agua de Coco Natural 500ml" style={inStyle} autoFocus />
                     </div>
 
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                         <div>
-                            <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>SKU *</label>
+                            <label style={labelStyle}>SKU *</label>
                             <input value={sku} onChange={e => setSku(e.target.value)}
                                 placeholder="Ej: ACN-500" style={inStyle} />
                         </div>
                         <div>
-                            <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Unidad</label>
-                            <select value={unidad} onChange={e => setUnidad(e.target.value)} style={inStyle}>
-                                {UNIDADES_VENTA.map(u => <option key={u} value={u}>{u}</option>)}
+                            <label style={labelStyle}>Tipo de producto</label>
+                            <select value={tipoProducto} onChange={e => setTipoProducto(e.target.value)} style={inStyle}>
+                                {TIPOS_PRODUCTO_VTA.map(t => <option key={t} value={t}>{t}</option>)}
                             </select>
                         </div>
                     </div>
 
                     <div>
-                        <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Precio de venta ($)</label>
-                        <input type="number" min="0" step="0.01" value={precioVenta}
-                            onChange={e => setPrecioVenta(e.target.value)} placeholder="0.00" style={inStyle} />
+                        <label style={labelStyle}>Descripción</label>
+                        <textarea value={descripcion} onChange={e => setDescripcion(e.target.value)}
+                            placeholder="Descripción opcional..." rows={2}
+                            style={{ ...inStyle, resize: 'vertical', fontFamily: 'inherit' }} />
                     </div>
 
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', backgroundColor: '#f9fafb', borderRadius: '8px' }}>
-                        <input type="checkbox" id="npv_aplica_iva" checked={aplicaIva}
-                            onChange={e => setAplicaIva(e.target.checked)}
-                            style={{ width: '16px', height: '16px', accentColor: '#16a34a', cursor: 'pointer' }} />
-                        <label htmlFor="npv_aplica_iva" style={{ fontSize: '13px', color: '#374151', cursor: 'pointer' }}>
+                    <p style={sectionStyle}>Precios y costos</p>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
+                        <div>
+                            <label style={labelStyle}>Unidad de medida</label>
+                            <select value={unidad} onChange={e => setUnidad(e.target.value)} style={inStyle}>
+                                {UNIDADES_VENTA.map(u => <option key={u} value={u}>{u}</option>)}
+                            </select>
+                        </div>
+                        <div>
+                            <label style={labelStyle}>Precio de venta ($)</label>
+                            <input type="number" min="0" step="0.01" value={precioVenta}
+                                onChange={e => setPrecioVenta(e.target.value)} placeholder="0.00" style={inStyle} />
+                        </div>
+                        <div>
+                            <label style={labelStyle}>Costo promedio ($)</label>
+                            <input type="number" min="0" step="0.01" value={costo}
+                                onChange={e => setCosto(e.target.value)} placeholder="0.00" style={inStyle} />
+                        </div>
+                    </div>
+
+                    <p style={sectionStyle}>Inventario</p>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
+                        <div>
+                            <label style={labelStyle}>Stock inicial</label>
+                            <input type="number" min="0" step="0.01" value={stockActual}
+                                onChange={e => setStockActual(e.target.value)} placeholder="0" style={inStyle} />
+                        </div>
+                        <div>
+                            <label style={labelStyle}>Stock mínimo</label>
+                            <input type="number" min="0" step="0.01" value={stockMinimo}
+                                onChange={e => setStockMinimo(e.target.value)} placeholder="0" style={inStyle} />
+                        </div>
+                        <div>
+                            <label style={labelStyle}>Vida útil (días)</label>
+                            <input type="number" min="0" step="1" value={vidaUtilDias}
+                                onChange={e => setVidaUtilDias(e.target.value)} placeholder="—" style={inStyle} />
+                        </div>
+                    </div>
+
+                    <p style={sectionStyle}>Unidad de venta secundaria</p>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                        <div>
+                            <label style={labelStyle}>Unidad 2 (ej: caja)</label>
+                            <input value={unidadVenta2} onChange={e => setUnidadVenta2(e.target.value)}
+                                placeholder="Ej: caja" style={inStyle} />
+                        </div>
+                        <div>
+                            <label style={labelStyle}>Factor de conversión</label>
+                            <input type="number" min="0" step="0.001" value={factorConversion2}
+                                onChange={e => setFactorConversion2(e.target.value)} placeholder="Ej: 12" style={inStyle} />
+                        </div>
+                    </div>
+
+                    <p style={sectionStyle}>Clasificación</p>
+
+                    <div>
+                        <label style={labelStyle}>Proveedor preferido</label>
+                        <select value={proveedorId} onChange={e => setProveedorId(e.target.value)} style={inStyle}>
+                            <option value="">— Sin proveedor —</option>
+                            {proveedores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+                        </select>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                        <div>
+                            <label style={labelStyle}>Categoría 1</label>
+                            <input value={cat1} onChange={e => setCat1(e.target.value)} placeholder="Ej: Bebidas" style={inStyle} />
+                        </div>
+                        <div>
+                            <label style={labelStyle}>Categoría 2</label>
+                            <input value={cat2} onChange={e => setCat2(e.target.value)} placeholder="Ej: Naturales" style={inStyle} />
+                        </div>
+                        <div>
+                            <label style={labelStyle}>Categoría 3</label>
+                            <input value={cat3} onChange={e => setCat3(e.target.value)} placeholder="Ej: Sin azúcar" style={inStyle} />
+                        </div>
+                        <div>
+                            <label style={labelStyle}>Categoría 4</label>
+                            <input value={cat4} onChange={e => setCat4(e.target.value)} placeholder="" style={inStyle} />
+                        </div>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '20px', padding: '10px 12px', backgroundColor: '#f9fafb', borderRadius: '8px' }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#374151', cursor: 'pointer' }}>
+                            <input type="checkbox" checked={aplicaIva} onChange={e => setAplicaIva(e.target.checked)}
+                                style={{ width: '16px', height: '16px', accentColor: '#16a34a', cursor: 'pointer' }} />
                             Aplica IVA (16%)
+                        </label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#374151', cursor: 'pointer' }}>
+                            <input type="checkbox" checked={activo} onChange={e => setActivo(e.target.checked)}
+                                style={{ width: '16px', height: '16px', accentColor: '#16a34a', cursor: 'pointer' }} />
+                            Activo
                         </label>
                     </div>
 

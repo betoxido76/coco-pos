@@ -1273,50 +1273,90 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
 
 // ─── Modal Nuevo Insumo / Producto ────────────────────────────
 const TIPOS_INSUMO = [
-    { value: 'materias_primas',    label: 'Materia Prima' },
-    { value: 'materiales_empaque', label: 'Material de Empaque' },
-    { value: 'consumibles',        label: 'Consumible' },
+    { value: 'materias_primas',      label: 'Materia Prima' },
+    { value: 'materiales_empaque',   label: 'Material de Empaque' },
+    { value: 'consumibles',          label: 'Consumible' },
     { value: 'productos_terminados', label: 'Producto Terminado (comprado)' },
 ]
-const UNIDADES_INSUMO = ['unidad', 'kg', 'g', 'litro', 'ml', 'caja', 'bolsa', 'rollo', 'metro', 'paquete']
+const TIPOS_PRODUCTO_INS = ['producido', 'comprado']
+const UNIDADES_INSUMO = ['unidad', 'kg', 'g', 'litro', 'ml', 'caja', 'bolsa', 'rollo', 'metro', 'paquete', 'par', 'juego']
 
 function ModalNuevoInsumo({ perfil, onCreado, onCerrar }) {
     const [tipo, setTipo] = useState('materias_primas')
+    const [proveedores, setProveedores] = useState([])
+
     const [nombre, setNombre] = useState('')
     const [codigo, setCodigo] = useState('')
-    const [unidad, setUnidad] = useState('unidad')
+    const [descripcion, setDescripcion] = useState('')
+    const [unidad, setUnidad] = useState('kg')
     const [costo, setCosto] = useState('')
+    const [stockActual, setStockActual] = useState('')
+    const [stockMinimo, setStockMinimo] = useState('')
+    const [proveedorId, setProveedorId] = useState('')
+    const [cat1, setCat1] = useState('')
+    const [cat2, setCat2] = useState('')
+    const [cat3, setCat3] = useState('')
+    const [cat4, setCat4] = useState('')
     const [aplicaIva, setAplicaIva] = useState(true)
+    const [activo, setActivo] = useState(true)
+
+    // MP y ME
+    const [tipoProducto, setTipoProducto] = useState('comprado')
+    const [fechaVencimiento, setFechaVencimiento] = useState('')
+
+    // PT
+    const [precioVenta, setPrecioVenta] = useState('')
+    const [vidaUtilDias, setVidaUtilDias] = useState('')
+    const [unidadVenta2, setUnidadVenta2] = useState('')
+    const [factorConversion2, setFactorConversion2] = useState('')
+
     const [guardando, setGuardando] = useState(false)
     const [error, setError] = useState('')
 
-    const esProductoTerminado = tipo === 'productos_terminados'
-    const labelCodigo = esProductoTerminado ? 'SKU *' : 'Código *'
+    const esPT = tipo === 'productos_terminados'
+    const esConsumible = tipo === 'consumibles'
+    const esMPomE = tipo === 'materias_primas' || tipo === 'materiales_empaque'
+
+    useEffect(() => {
+        supabase.from('proveedores').select('id, nombre')
+            .eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
+            .then(({ data }) => setProveedores(data || []))
+    }, [])
+
+    useEffect(() => {
+        setUnidad(esPT || esConsumible ? 'unidad' : 'kg')
+    }, [tipo])
 
     async function guardar() {
         if (!nombre.trim()) { setError('El nombre es obligatorio'); return }
-        if (!codigo.trim()) { setError(`El ${esProductoTerminado ? 'SKU' : 'código'} es obligatorio`); return }
+        if (!codigo.trim() && !esConsumible) { setError('El código es obligatorio'); return }
         setGuardando(true); setError('')
 
-        const tablasMap = {
-            materias_primas:      { campoCosto: 'costo_compra_promedio' },
-            materiales_empaque:   { campoCosto: 'costo_compra_promedio' },
-            consumibles:          { campoCosto: 'costo_compra_promedio' },
-            productos_terminados: { campoCosto: 'costo_promedio' },
-        }
-        const { campoCosto } = tablasMap[tipo]
-        const codigoNorm = codigo.trim().toUpperCase()
-
+        const codigoNorm = codigo.trim().toUpperCase() || null
         const payload = {
             empresa_id: perfil.empresa_id,
             nombre: nombre.trim(),
-            [esProductoTerminado ? 'sku' : 'codigo']: codigoNorm,
+            [esPT ? 'sku' : 'codigo']: codigoNorm,
+            descripcion: descripcion.trim() || null,
             unidad_medida: unidad,
-            [campoCosto]: costo !== '' ? Number(costo) : 0,
+            [esPT ? 'costo_promedio' : 'costo_compra_promedio']: costo !== '' ? Number(costo) : null,
+            stock_actual: stockActual !== '' ? Number(stockActual) : 0,
+            stock_minimo: stockMinimo !== '' ? Number(stockMinimo) : 0,
+            proveedor_preferido_id: proveedorId || null,
+            categoria_1: cat1 || null,
+            categoria_2: cat2 || null,
+            categoria_3: cat3 || null,
+            categoria_4: cat4 || null,
             aplica_iva: aplicaIva,
-            activo: true,
-            stock_actual: 0,
-            ...(esProductoTerminado ? { tipo_producto: 'comprado' } : {}),
+            activo,
+            ...(esMPomE ? { tipo_producto: tipoProducto, fecha_vencimiento: fechaVencimiento || null } : {}),
+            ...(esPT ? {
+                tipo_producto: 'comprado',
+                precio_venta: precioVenta !== '' ? Number(precioVenta) : null,
+                vida_util_dias: vidaUtilDias !== '' ? Number(vidaUtilDias) : null,
+                unidad_venta_2: unidadVenta2.trim() || null,
+                factor_conversion_2: factorConversion2 !== '' ? Number(factorConversion2) : null,
+            } : {}),
         }
 
         const { data, error: err } = await supabase.from(tipo).insert(payload).select('id').single()
@@ -1327,87 +1367,179 @@ function ModalNuevoInsumo({ perfil, onCreado, onCerrar }) {
         }
 
         onCreado({
-            id: data.id,
-            tipo,
+            id: data.id, tipo,
             nombre: nombre.trim(),
             codigo: codigoNorm,
             unidad_medida: unidad,
             costo: costo !== '' ? Number(costo) : 0,
             aplica_iva: aplicaIva,
-            stock_actual: 0,
+            stock_actual: stockActual !== '' ? Number(stockActual) : 0,
         })
     }
 
     const inStyle = { width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', color: '#374151', backgroundColor: '#fff', outline: 'none', boxSizing: 'border-box' }
+    const lbl = { fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }
 
     return (
         <>
             <div onClick={onCerrar} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', zIndex: 40 }} />
-            <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', backgroundColor: '#fff', borderRadius: '16px', padding: '28px', width: '480px', zIndex: 50, boxShadow: '0 20px 60px rgba(0,0,0,0.2)', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', backgroundColor: '#fff', borderRadius: '16px', padding: '28px', width: '560px', zIndex: 50, boxShadow: '0 20px 60px rgba(0,0,0,0.2)', maxHeight: '90vh', overflowY: 'auto' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                    <h2 style={{ fontSize: '17px', fontWeight: 700, color: '#1f2937', margin: 0 }}>Nuevo insumo / producto</h2>
+                    <h2 style={{ fontSize: '17px', fontWeight: 700, color: '#1f2937', margin: 0 }}>Nuevo insumo</h2>
                     <button onClick={onCerrar} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af' }}><X size={20} /></button>
                 </div>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                    <div>
-                        <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Tipo *</label>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+
+                    <div style={{ gridColumn: 'span 2' }}>
+                        <label style={lbl}>Tipo *</label>
                         <select value={tipo} onChange={e => setTipo(e.target.value)} style={inStyle}>
                             {TIPOS_INSUMO.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
                         </select>
                     </div>
 
-                    <div>
-                        <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Nombre *</label>
+                    <div style={{ gridColumn: 'span 2' }}>
+                        <label style={lbl}>Nombre *</label>
                         <input value={nombre} onChange={e => setNombre(e.target.value)}
                             placeholder="Ej: Azúcar refinada" style={inStyle} autoFocus />
                     </div>
 
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                        <div>
-                            <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>{labelCodigo}</label>
-                            <input value={codigo} onChange={e => setCodigo(e.target.value)}
-                                placeholder={esProductoTerminado ? 'Ej: ACN-500' : 'Ej: MP-001'} style={inStyle} />
-                        </div>
-                        <div>
-                            <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Unidad</label>
-                            <select value={unidad} onChange={e => setUnidad(e.target.value)} style={inStyle}>
-                                {UNIDADES_INSUMO.map(u => <option key={u} value={u}>{u}</option>)}
-                            </select>
-                        </div>
+                    <div>
+                        <label style={lbl}>{esPT ? 'SKU *' : esConsumible ? 'Código (opcional)' : 'Código *'}</label>
+                        <input value={codigo} onChange={e => setCodigo(e.target.value)}
+                            placeholder={esPT ? 'Ej: ACN-500' : 'Ej: MP-001'} style={inStyle} />
                     </div>
 
                     <div>
-                        <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Costo de compra ($)</label>
+                        <label style={lbl}>Unidad de medida</label>
+                        <select value={unidad} onChange={e => setUnidad(e.target.value)} style={inStyle}>
+                            {UNIDADES_INSUMO.map(u => <option key={u} value={u}>{u}</option>)}
+                        </select>
+                    </div>
+
+                    <div style={{ gridColumn: 'span 2' }}>
+                        <label style={lbl}>Descripción</label>
+                        <textarea value={descripcion} onChange={e => setDescripcion(e.target.value)}
+                            rows={2} placeholder="Descripción opcional..." style={{ ...inStyle, resize: 'vertical' }} />
+                    </div>
+
+                    {esMPomE && (
+                        <div>
+                            <label style={lbl}>Tipo de insumo</label>
+                            <select value={tipoProducto} onChange={e => setTipoProducto(e.target.value)} style={inStyle}>
+                                {TIPOS_PRODUCTO_INS.map(t => <option key={t} value={t}>{t}</option>)}
+                            </select>
+                        </div>
+                    )}
+
+                    {esPT && (
+                        <div>
+                            <label style={lbl}>Precio de venta ($)</label>
+                            <input type="number" min="0" step="0.01" value={precioVenta}
+                                onChange={e => setPrecioVenta(e.target.value)} placeholder="0.00" style={inStyle} />
+                        </div>
+                    )}
+
+                    <div>
+                        <label style={lbl}>Costo de compra ($)</label>
                         <input type="number" min="0" step="0.01" value={costo}
                             onChange={e => setCosto(e.target.value)} placeholder="0.00" style={inStyle} />
                     </div>
 
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', backgroundColor: '#f9fafb', borderRadius: '8px' }}>
-                        <input type="checkbox" id="nii_aplica_iva" checked={aplicaIva}
-                            onChange={e => setAplicaIva(e.target.checked)}
-                            style={{ width: '16px', height: '16px', accentColor: '#16a34a', cursor: 'pointer' }} />
-                        <label htmlFor="nii_aplica_iva" style={{ fontSize: '13px', color: '#374151', cursor: 'pointer' }}>
-                            Aplica IVA (16%)
-                        </label>
+                    <div>
+                        <label style={lbl}>Stock inicial</label>
+                        <input type="number" min="0" value={stockActual}
+                            onChange={e => setStockActual(e.target.value)} placeholder="0" style={inStyle} />
                     </div>
 
-                    {error && (
-                        <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 14px', fontSize: '13px', color: '#dc2626' }}>
-                            {error}
+                    <div>
+                        <label style={lbl}>Stock mínimo (alerta)</label>
+                        <input type="number" min="0" value={stockMinimo}
+                            onChange={e => setStockMinimo(e.target.value)} placeholder="0" style={inStyle} />
+                    </div>
+
+                    {esMPomE && (
+                        <div>
+                            <label style={lbl}>Fecha de vencimiento</label>
+                            <input type="date" value={fechaVencimiento}
+                                onChange={e => setFechaVencimiento(e.target.value)} style={inStyle} />
                         </div>
                     )}
 
-                    <div style={{ display: 'flex', gap: '10px', marginTop: '4px' }}>
-                        <button onClick={guardar} disabled={guardando}
-                            style={{ flex: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px 20px', fontSize: '14px', fontWeight: 600, cursor: guardando ? 'default' : 'pointer', opacity: guardando ? 0.7 : 1 }}>
-                            <Check size={16} /> {guardando ? 'Guardando...' : 'Crear y agregar'}
-                        </button>
-                        <button onClick={onCerrar}
-                            style={{ flex: 1, backgroundColor: '#f3f4f6', color: '#374151', border: 'none', borderRadius: '8px', padding: '10px 20px', fontSize: '14px', cursor: 'pointer' }}>
-                            Cancelar
-                        </button>
+                    {esPT && (
+                        <>
+                            <div>
+                                <label style={lbl}>Vida útil (días)</label>
+                                <input type="number" min="0" value={vidaUtilDias}
+                                    onChange={e => setVidaUtilDias(e.target.value)} placeholder="Ej: 30" style={inStyle} />
+                            </div>
+                            <div>
+                                <label style={lbl}>Unidad venta 2 (opcional)</label>
+                                <input value={unidadVenta2} onChange={e => setUnidadVenta2(e.target.value)}
+                                    placeholder="ej: caja, bulto" style={inStyle} />
+                            </div>
+                            <div>
+                                <label style={lbl}>Factor conversión</label>
+                                <input type="number" min="0.0001" step="0.0001" value={factorConversion2}
+                                    onChange={e => setFactorConversion2(e.target.value)}
+                                    placeholder="ej: 12" style={inStyle} disabled={!unidadVenta2.trim()} />
+                            </div>
+                        </>
+                    )}
+
+                    <div style={{ gridColumn: 'span 2' }}>
+                        <label style={lbl}>Proveedor preferido</label>
+                        <select value={proveedorId} onChange={e => setProveedorId(e.target.value)} style={inStyle}>
+                            <option value="">— Sin asignar —</option>
+                            {proveedores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+                        </select>
                     </div>
+
+                    <div style={{ gridColumn: 'span 2' }}>
+                        <p style={{ fontSize: '13px', fontWeight: 500, color: '#374151', margin: '0 0 8px' }}>Clasificación</p>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '10px' }}>
+                            {[{ n: 1, v: cat1, s: setCat1 }, { n: 2, v: cat2, s: setCat2 }, { n: 3, v: cat3, s: setCat3 }, { n: 4, v: cat4, s: setCat4 }].map(({ n, v, s }) => (
+                                <div key={n}>
+                                    <label style={{ fontSize: '12px', color: '#6b7280', display: 'block', marginBottom: '4px' }}>Categoría {n}</label>
+                                    <input value={v} onChange={e => s(e.target.value)} placeholder={`Nivel ${n}...`} style={inStyle} />
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div style={{ gridColumn: 'span 2', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <input type="checkbox" id="ni_activo" checked={activo} onChange={e => setActivo(e.target.checked)}
+                            style={{ width: '16px', height: '16px', accentColor: '#16a34a' }} />
+                        <label htmlFor="ni_activo" style={{ fontSize: '14px', color: '#374151', cursor: 'pointer' }}>
+                            Activo (visible en producción y compras)
+                        </label>
+                    </div>
+
+                    <div style={{ gridColumn: 'span 2', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', backgroundColor: '#f9fafb', borderRadius: '8px' }}>
+                        <div>
+                            <div style={{ fontSize: '13px', fontWeight: 500, color: '#374151' }}>Aplica IVA (16%)</div>
+                            <div style={{ fontSize: '12px', color: '#6b7280' }}>Activa si este insumo está gravado con IVA</div>
+                        </div>
+                        <input type="checkbox" id="ni_iva" checked={aplicaIva} onChange={e => setAplicaIva(e.target.checked)}
+                            style={{ width: '18px', height: '18px', accentColor: '#16a34a', cursor: 'pointer' }} />
+                    </div>
+                </div>
+
+                {error && (
+                    <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 14px', fontSize: '13px', color: '#dc2626', marginTop: '14px' }}>
+                        {error}
+                    </div>
+                )}
+
+                <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
+                    <button onClick={guardar} disabled={guardando}
+                        style={{ flex: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '11px 20px', fontSize: '14px', fontWeight: 600, cursor: guardando ? 'default' : 'pointer', opacity: guardando ? 0.7 : 1 }}>
+                        <Check size={16} /> {guardando ? 'Guardando...' : 'Crear y agregar'}
+                    </button>
+                    <button onClick={onCerrar}
+                        style={{ flex: 1, backgroundColor: '#f3f4f6', color: '#374151', border: 'none', borderRadius: '8px', padding: '11px 20px', fontSize: '14px', cursor: 'pointer' }}>
+                        Cancelar
+                    </button>
                 </div>
             </div>
         </>
