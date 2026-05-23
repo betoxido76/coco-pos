@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
-import { Plus, Search, Trash2, Check, CheckCircle, FileText, RotateCcw, AlertTriangle, ClipboardList, ChevronRight, Edit, X } from 'lucide-react'
+import { Plus, Search, Trash2, Check, CheckCircle, FileText, RotateCcw, AlertTriangle, ClipboardList, ChevronRight, Edit, X, MapPin, Star } from 'lucide-react'
 
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
@@ -709,6 +709,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
     const [notas, setNotas] = useState('')
 
     const [mostrarNuevoProducto, setMostrarNuevoProducto] = useState(false)
+    const [mostrarNuevoCliente, setMostrarNuevoCliente] = useState(false)
 
     useEffect(() => {
         supabase.from('clientes').select('id, nombre, rif, descripcion, condicion_pago, dias_credito').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
@@ -1111,7 +1112,13 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
 
                     <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px' }}>
-                        <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '8px' }}>Cliente</label>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                            <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151' }}>Cliente</label>
+                            <button type="button" onClick={() => setMostrarNuevoCliente(true)}
+                                style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', fontWeight: 500, color: '#d97706', backgroundColor: '#fffbeb', border: '1px solid #d97706', borderRadius: '6px', padding: '3px 10px', cursor: 'pointer' }}>
+                                <Plus size={12} /> Nuevo cliente
+                            </button>
+                        </div>
                         <div style={{ position: 'relative' }}>
                             {clienteSeleccionado ? (
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', border: '1px solid #16a34a', borderRadius: '8px', backgroundColor: '#f0fdf4' }}>
@@ -1628,6 +1635,18 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                 />
             )}
 
+            {mostrarNuevoCliente && (
+                <ModalNuevoCliente
+                    perfil={perfil}
+                    onCerrar={() => setMostrarNuevoCliente(false)}
+                    onCreado={nuevo => {
+                        setClientes(prev => [...prev, { id: nuevo.id, nombre: nuevo.nombre, rif: nuevo.rif, descripcion: nuevo.descripcion, condicion_pago: nuevo.condicion_pago, dias_credito: nuevo.dias_credito }].sort((a, b) => a.nombre.localeCompare(b.nombre)))
+                        elegirCliente({ id: nuevo.id, nombre: nuevo.nombre, rif: nuevo.rif, descripcion: nuevo.descripcion, condicion_pago: nuevo.condicion_pago, dias_credito: nuevo.dias_credito })
+                        setMostrarNuevoCliente(false)
+                    }}
+                />
+            )}
+
             {/* Modal de actualización de precios (solo retail) */}
             {esRetail && ventaPendiente && (
                 <>
@@ -2066,6 +2085,377 @@ function ModalNuevoProductoVenta({ perfil, onCreado, onCerrar }) {
                         </button>
                     </div>
                 </div>
+            </div>
+        </>
+    )
+}
+
+// ─── Modal Nuevo Cliente (en NuevaVenta) ────────────────────────────────────
+const VACIO_CLI = {
+    nombre: '', rif: '', telefono: '', email: '', descripcion: '',
+    condicion_pago: 'contado', dias_credito: 0, limite_credito: 0,
+    activo: true, contribuyente_especial: false, tipo_cliente_id: '',
+    direccion_fiscal: '', cat1_id: '', cat2_id: '', cat3_id: '', cat4_id: '',
+}
+const VACIO_DIR_CLI = {
+    nombre: '', direccion: '', ciudad: '', estado_region: '',
+    contacto: '', telefono: '', es_principal: false, activo: true,
+}
+const inpStyle = { width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', color: '#374151', backgroundColor: '#fff', boxSizing: 'border-box' }
+
+function ModalNuevoCliente({ perfil, onCreado, onCerrar }) {
+    const [form, setForm] = useState(VACIO_CLI)
+    const [tiposCliente, setTiposCliente] = useState([])
+    const [cats1, setCats1] = useState([])
+    const [cats2, setCats2] = useState([])
+    const [cats3, setCats3] = useState([])
+    const [cats4, setCats4] = useState([])
+    const [listasEmpresa, setListasEmpresa] = useState([])
+    const [listasSeleccionadas, setListasSeleccionadas] = useState(new Set())
+    const [listaDefaultId, setListaDefaultId] = useState('')
+    const [direcciones, setDirecciones] = useState([])
+    const [modalDir, setModalDir] = useState(null)
+    const [formDir, setFormDir] = useState(VACIO_DIR_CLI)
+    const [guardandoDir, setGuardandoDir] = useState(false)
+    const [errorDir, setErrorDir] = useState('')
+    const [guardando, setGuardando] = useState(false)
+    const [error, setError] = useState('')
+
+    useEffect(() => {
+        supabase.from('perfilamiento_clientes').select('id, nombre')
+            .eq('empresa_id', perfil.empresa_id).eq('activo', true).order('nombre')
+            .then(({ data }) => setTiposCliente(data || []))
+        supabase.from('categorias_clientes').select('id, nombre, nivel, padre_id, activo')
+            .eq('empresa_id', perfil.empresa_id).eq('activo', true).order('nivel').order('nombre')
+            .then(({ data }) => {
+                const d = data || []
+                setCats1(d.filter(c => c.nivel === 1))
+                setCats2(d.filter(c => c.nivel === 2))
+                setCats3(d.filter(c => c.nivel === 3))
+                setCats4(d.filter(c => c.nivel === 4))
+            })
+        supabase.from('listas_precio').select('id, nombre, es_default')
+            .eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
+            .then(({ data }) => setListasEmpresa(data || []))
+    }, [])
+
+    const campo = (k, v) => setForm(prev => ({ ...prev, [k]: v }))
+    const campoDir = (k, v) => setFormDir(prev => ({ ...prev, [k]: v }))
+
+    function abrirNuevaDir() {
+        setFormDir({ ...VACIO_DIR_CLI, es_principal: direcciones.length === 0 })
+        setErrorDir(''); setModalDir('nuevo')
+    }
+
+    function guardarDirLocal() {
+        if (!formDir.nombre.trim()) { setErrorDir('El nombre es obligatorio'); return }
+        if (!formDir.direccion.trim()) { setErrorDir('La dirección es obligatoria'); return }
+        const dir = {
+            nombre: formDir.nombre.trim(), direccion: formDir.direccion.trim(),
+            ciudad: formDir.ciudad.trim() || null, estado_region: formDir.estado_region.trim() || null,
+            contacto: formDir.contacto.trim() || null, telefono: formDir.telefono.trim() || null,
+            es_principal: formDir.es_principal, activo: formDir.activo,
+            id: modalDir === 'nuevo' ? `temp_${Date.now()}` : modalDir.id,
+        }
+        if (modalDir === 'nuevo') {
+            setDirecciones(prev => [...prev, dir])
+        } else {
+            setDirecciones(prev => prev.map(d => d.id === dir.id ? dir : d))
+        }
+        setModalDir(null)
+    }
+
+    async function guardar() {
+        if (!form.nombre.trim()) { setError('El nombre es obligatorio'); return }
+        setGuardando(true); setError('')
+        const payload = {
+            nombre: form.nombre.trim(),
+            rif: form.rif.trim() || null,
+            telefono: form.telefono.trim() || null,
+            email: form.email.trim() || null,
+            descripcion: form.descripcion.trim() || null,
+            condicion_pago: form.condicion_pago,
+            dias_credito: form.condicion_pago === 'credito' ? Number(form.dias_credito) : 0,
+            limite_credito: Number(form.limite_credito) || 0,
+            activo: form.activo,
+            contribuyente_especial: form.contribuyente_especial,
+            tipo_cliente_id: form.tipo_cliente_id || null,
+            direccion_fiscal: form.direccion_fiscal.trim() || null,
+            cat1_id: form.cat1_id || null,
+            cat2_id: form.cat2_id || null,
+            cat3_id: form.cat3_id || null,
+            cat4_id: form.cat4_id || null,
+            empresa_id: perfil.empresa_id,
+        }
+        const { data, error: err } = await supabase.from('clientes').insert(payload).select()
+        if (err) { setGuardando(false); setError('Error: ' + err.message); return }
+        const nuevoId = data[0].id
+        if (direcciones.length > 0) {
+            await supabase.from('direcciones_entrega').insert(
+                direcciones.map(d => ({ ...d, id: undefined, cliente_id: nuevoId, empresa_id: perfil.empresa_id }))
+            )
+        }
+        if (listasSeleccionadas.size > 0) {
+            await supabase.from('cliente_listas_precio').insert(
+                Array.from(listasSeleccionadas).map(lid => ({
+                    empresa_id: perfil.empresa_id,
+                    cliente_id: nuevoId,
+                    lista_precio_id: lid,
+                    es_default: lid === listaDefaultId,
+                }))
+            )
+        }
+        setGuardando(false)
+        onCreado({ id: nuevoId, nombre: payload.nombre, rif: payload.rif, descripcion: payload.descripcion, condicion_pago: payload.condicion_pago, dias_credito: payload.dias_credito })
+    }
+
+    const secStyle = { backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '20px', marginBottom: '16px' }
+    const secTitle = { fontSize: '13px', fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 14px' }
+
+    return (
+        <>
+            <div onClick={onCerrar} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', zIndex: 40 }} />
+            <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', backgroundColor: '#fff', borderRadius: '16px', padding: '28px', width: '620px', zIndex: 50, boxShadow: '0 20px 60px rgba(0,0,0,0.25)', maxHeight: '90vh', overflowY: 'auto', boxSizing: 'border-box' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                    <h3 style={{ fontSize: '17px', fontWeight: 700, color: '#1f2937', margin: 0 }}>Nuevo cliente</h3>
+                    <button onClick={onCerrar} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af' }}><X size={20} /></button>
+                </div>
+
+                {/* Datos generales */}
+                <div style={secStyle}>
+                    <p style={secTitle}>Datos generales</p>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+                        <div style={{ gridColumn: 'span 2' }}>
+                            <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Nombre *</label>
+                            <input value={form.nombre} onChange={e => campo('nombre', e.target.value)} style={inpStyle} />
+                        </div>
+                        <div>
+                            <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>RIF / Cédula</label>
+                            <input value={form.rif} onChange={e => campo('rif', e.target.value)} placeholder="J-12345678-9" style={inpStyle} />
+                        </div>
+                        <div>
+                            <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Teléfono</label>
+                            <input value={form.telefono} onChange={e => campo('telefono', e.target.value)} placeholder="0414-000-0000" style={inpStyle} />
+                        </div>
+                        <div style={{ gridColumn: 'span 2' }}>
+                            <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Email</label>
+                            <input type="email" value={form.email} onChange={e => campo('email', e.target.value)} placeholder="correo@empresa.com" style={inpStyle} />
+                        </div>
+                        <div style={{ gridColumn: 'span 2' }}>
+                            <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Descripción</label>
+                            <textarea value={form.descripcion} onChange={e => campo('descripcion', e.target.value)} placeholder="Breve descripción del cliente..." rows={2} style={{ ...inpStyle, resize: 'vertical', fontFamily: 'inherit' }} />
+                        </div>
+                        <div style={{ gridColumn: 'span 2' }}>
+                            <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Dirección Fiscal</label>
+                            <textarea value={form.direccion_fiscal} onChange={e => campo('direccion_fiscal', e.target.value)} placeholder="Domicilio fiscal completo..." rows={2} style={{ ...inpStyle, resize: 'vertical', fontFamily: 'inherit' }} />
+                        </div>
+                        <div>
+                            <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Condición de pago</label>
+                            <select value={form.condicion_pago} onChange={e => campo('condicion_pago', e.target.value)} style={inpStyle}>
+                                <option value="contado">Contado</option>
+                                <option value="credito">Crédito</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Días de crédito</label>
+                            <input type="number" min="0" value={form.dias_credito} onChange={e => campo('dias_credito', e.target.value)} disabled={form.condicion_pago === 'contado'} placeholder="Ej: 30" style={{ ...inpStyle, backgroundColor: form.condicion_pago === 'contado' ? '#f9fafb' : '#fff', color: form.condicion_pago === 'contado' ? '#9ca3af' : '#374151' }} />
+                        </div>
+                        <div>
+                            <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Límite de crédito (USD)</label>
+                            <input type="number" min="0" step="0.01" value={form.limite_credito} onChange={e => campo('limite_credito', e.target.value)} placeholder="Ej: 5000" style={inpStyle} />
+                        </div>
+                        <div>
+                            <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Tipo de cliente</label>
+                            <select value={form.tipo_cliente_id} onChange={e => campo('tipo_cliente_id', e.target.value)} style={inpStyle}>
+                                <option value="">— Sin clasificar —</option>
+                                {tiposCliente.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
+                            </select>
+                        </div>
+                        <div style={{ gridColumn: 'span 2', display: 'flex', gap: '20px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <input type="checkbox" id="nc_activo" checked={form.activo} onChange={e => campo('activo', e.target.checked)} style={{ width: '16px', height: '16px', accentColor: '#16a34a' }} />
+                                <label htmlFor="nc_activo" style={{ fontSize: '14px', color: '#374151', cursor: 'pointer' }}>Cliente activo</label>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <input type="checkbox" id="nc_contrib" checked={form.contribuyente_especial} onChange={e => campo('contribuyente_especial', e.target.checked)} style={{ width: '16px', height: '16px', accentColor: '#16a34a' }} />
+                                <label htmlFor="nc_contrib" style={{ fontSize: '14px', color: '#374151', cursor: 'pointer' }}>Contribuyente Especial</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Clasificación */}
+                {(cats1.length > 0 || cats2.length > 0 || cats3.length > 0 || cats4.length > 0) && (
+                    <div style={secStyle}>
+                        <p style={secTitle}>Clasificación</p>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '14px' }}>
+                            {[
+                                { label: 'Categoría 1', key: 'cat1_id', lista: cats1 },
+                                { label: 'Categoría 2', key: 'cat2_id', lista: cats2 },
+                                { label: 'Categoría 3', key: 'cat3_id', lista: cats3 },
+                                { label: 'Categoría 4', key: 'cat4_id', lista: cats4 },
+                            ].map(({ label, key, lista }) => lista.length > 0 && (
+                                <div key={key}>
+                                    <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>{label}</label>
+                                    <select value={form[key]} onChange={e => campo(key, e.target.value)} style={inpStyle}>
+                                        <option value="">— Sin categoría —</option>
+                                        {lista.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                                    </select>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {/* Listas de precio */}
+                {listasEmpresa.length > 0 && (
+                    <div style={secStyle}>
+                        <p style={{ ...secTitle, margin: '0 0 4px' }}>Listas de precio</p>
+                        <p style={{ fontSize: '12px', color: '#9ca3af', margin: '0 0 12px' }}>Marca las listas disponibles para este cliente. La marcada como default se pre-selecciona en ventas.</p>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            {listasEmpresa.map(l => {
+                                const checked = listasSeleccionadas.has(l.id)
+                                const isDefault = listaDefaultId === l.id
+                                return (
+                                    <div key={l.id} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px', borderRadius: '8px', backgroundColor: checked ? '#f0fdf4' : '#f9fafb', border: `1px solid ${checked ? '#bbf7d0' : '#e5e7eb'}` }}>
+                                        <input type="checkbox" id={`ncl_${l.id}`} checked={checked}
+                                            onChange={e => {
+                                                const next = new Set(listasSeleccionadas)
+                                                if (e.target.checked) next.add(l.id)
+                                                else { next.delete(l.id); if (listaDefaultId === l.id) setListaDefaultId('') }
+                                                setListasSeleccionadas(next)
+                                            }}
+                                            style={{ width: '16px', height: '16px', accentColor: '#16a34a', cursor: 'pointer' }} />
+                                        <label htmlFor={`ncl_${l.id}`} style={{ flex: 1, fontSize: '13px', fontWeight: 500, color: '#1f2937', cursor: 'pointer' }}>
+                                            {l.nombre}
+                                            {l.es_default && <span style={{ fontSize: '11px', color: '#9ca3af', marginLeft: '6px' }}>(global default)</span>}
+                                        </label>
+                                        {checked && (
+                                            <button type="button" onClick={() => setListaDefaultId(isDefault ? '' : l.id)}
+                                                style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '3px 10px', borderRadius: '20px', fontSize: '11px', fontWeight: 600, border: '1px solid', cursor: 'pointer', borderColor: isDefault ? '#16a34a' : '#d1d5db', backgroundColor: isDefault ? '#16a34a' : '#fff', color: isDefault ? '#fff' : '#9ca3af' }}>
+                                                {isDefault ? '★ Default' : '☆ Default'}
+                                            </button>
+                                        )}
+                                    </div>
+                                )
+                            })}
+                        </div>
+                    </div>
+                )}
+
+                {/* Direcciones de entrega */}
+                <div style={secStyle}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <MapPin size={15} style={{ color: '#6b7280' }} />
+                            <p style={secTitle}>Direcciones de entrega</p>
+                        </div>
+                        <button onClick={abrirNuevaDir}
+                            style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#f0fdf4', color: '#16a34a', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '5px 12px', fontSize: '12px', fontWeight: 500, cursor: 'pointer' }}>
+                            <Plus size={12} /> Agregar
+                        </button>
+                    </div>
+                    {direcciones.length === 0 ? (
+                        <div style={{ textAlign: 'center', padding: '16px', color: '#9ca3af', fontSize: '13px', backgroundColor: '#f9fafb', borderRadius: '8px', border: '1px dashed #d1d5db' }}>Sin direcciones — opcional, puedes agregar después</div>
+                    ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            {direcciones.map((dir, idx) => (
+                                <div key={dir.id || idx} style={{ backgroundColor: '#f9fafb', borderRadius: '10px', border: '1px solid #e5e7eb', padding: '10px 14px' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                                        <div style={{ flex: 1 }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px' }}>
+                                                <span style={{ fontSize: '14px', fontWeight: 600, color: '#1f2937' }}>{dir.nombre}</span>
+                                                {dir.es_principal && (
+                                                    <span style={{ display: 'flex', alignItems: 'center', gap: '3px', fontSize: '11px', backgroundColor: '#fef9c3', color: '#854d0e', padding: '1px 7px', borderRadius: '20px', border: '1px solid #fde68a' }}>
+                                                        <Star size={10} /> Principal
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <p style={{ fontSize: '13px', color: '#374151', margin: 0 }}>{dir.direccion}</p>
+                                            {(dir.ciudad || dir.estado_region) && <p style={{ fontSize: '12px', color: '#6b7280', margin: '2px 0 0' }}>{[dir.ciudad, dir.estado_region].filter(Boolean).join(', ')}</p>}
+                                        </div>
+                                        <div style={{ display: 'flex', gap: '6px', marginLeft: '12px' }}>
+                                            <button onClick={() => { setFormDir({ nombre: dir.nombre, direccion: dir.direccion, ciudad: dir.ciudad || '', estado_region: dir.estado_region || '', contacto: dir.contacto || '', telefono: dir.telefono || '', es_principal: dir.es_principal, activo: dir.activo }); setErrorDir(''); setModalDir(dir) }}
+                                                style={{ background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '3px 8px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
+                                                Editar
+                                            </button>
+                                            <button onClick={() => setDirecciones(prev => prev.filter((_, i) => i !== idx))}
+                                                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', padding: '3px 4px' }}>
+                                                <Trash2 size={13} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+
+                {error && <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 14px', fontSize: '13px', color: '#dc2626', marginBottom: '14px' }}>{error}</div>}
+                <div style={{ display: 'flex', gap: '10px' }}>
+                    <button onClick={guardar} disabled={guardando}
+                        style={{ flex: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '11px', fontSize: '14px', fontWeight: 600, cursor: 'pointer', opacity: guardando ? 0.6 : 1 }}>
+                        <Check size={16} /> {guardando ? 'Guardando...' : 'Crear cliente'}
+                    </button>
+                    <button onClick={onCerrar} style={{ flex: 1, backgroundColor: '#f3f4f6', color: '#374151', border: 'none', borderRadius: '8px', padding: '11px', fontSize: '14px', cursor: 'pointer' }}>Cancelar</button>
+                </div>
+
+                {/* Modal de dirección anidado */}
+                {modalDir && (
+                    <>
+                        <div onClick={() => setModalDir(null)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', zIndex: 60 }} />
+                        <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', backgroundColor: '#fff', borderRadius: '16px', padding: '28px', width: '500px', zIndex: 70, boxShadow: '0 20px 60px rgba(0,0,0,0.3)', maxHeight: '90vh', overflowY: 'auto', boxSizing: 'border-box' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                                <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#1f2937', margin: 0 }}>{modalDir === 'nuevo' ? 'Nueva dirección' : 'Editar dirección'}</h3>
+                                <button onClick={() => setModalDir(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af' }}><X size={20} /></button>
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+                                <div style={{ gridColumn: 'span 2' }}>
+                                    <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Nombre del punto *</label>
+                                    <input value={formDir.nombre} onChange={e => campoDir('nombre', e.target.value)} placeholder="Ej: Sede Principal" style={inpStyle} />
+                                </div>
+                                <div style={{ gridColumn: 'span 2' }}>
+                                    <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Dirección *</label>
+                                    <textarea value={formDir.direccion} onChange={e => campoDir('direccion', e.target.value)} placeholder="Dirección completa" rows={2} style={{ ...inpStyle, resize: 'vertical', fontFamily: 'inherit' }} />
+                                </div>
+                                <div>
+                                    <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Ciudad</label>
+                                    <input value={formDir.ciudad} onChange={e => campoDir('ciudad', e.target.value)} placeholder="Caracas" style={inpStyle} />
+                                </div>
+                                <div>
+                                    <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Estado</label>
+                                    <input value={formDir.estado_region} onChange={e => campoDir('estado_region', e.target.value)} placeholder="Miranda" style={inpStyle} />
+                                </div>
+                                <div>
+                                    <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Persona de contacto</label>
+                                    <input value={formDir.contacto} onChange={e => campoDir('contacto', e.target.value)} placeholder="Nombre del receptor" style={inpStyle} />
+                                </div>
+                                <div>
+                                    <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Teléfono de contacto</label>
+                                    <input value={formDir.telefono} onChange={e => campoDir('telefono', e.target.value)} placeholder="0414-000-0000" style={inpStyle} />
+                                </div>
+                                <div style={{ gridColumn: 'span 2', display: 'flex', gap: '20px' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        <input type="checkbox" id="dir_nc_princ" checked={formDir.es_principal} onChange={e => campoDir('es_principal', e.target.checked)} style={{ width: '16px', height: '16px', accentColor: '#16a34a' }} />
+                                        <label htmlFor="dir_nc_princ" style={{ fontSize: '14px', color: '#374151', cursor: 'pointer' }}>Dirección principal</label>
+                                    </div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        <input type="checkbox" id="dir_nc_activa" checked={formDir.activo} onChange={e => campoDir('activo', e.target.checked)} style={{ width: '16px', height: '16px', accentColor: '#16a34a' }} />
+                                        <label htmlFor="dir_nc_activa" style={{ fontSize: '14px', color: '#374151', cursor: 'pointer' }}>Activa</label>
+                                    </div>
+                                </div>
+                            </div>
+                            {errorDir && <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px', fontSize: '13px', color: '#dc2626', marginTop: '14px' }}>{errorDir}</div>}
+                            <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
+                                <button onClick={guardarDirLocal} disabled={guardandoDir}
+                                    style={{ flex: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '11px', fontSize: '14px', fontWeight: 600, cursor: 'pointer' }}>
+                                    <Check size={16} /> Guardar dirección
+                                </button>
+                                <button onClick={() => setModalDir(null)} style={{ flex: 1, backgroundColor: '#f3f4f6', color: '#374151', border: 'none', borderRadius: '8px', padding: '11px', fontSize: '14px', cursor: 'pointer' }}>Cancelar</button>
+                            </div>
+                        </div>
+                    </>
+                )}
             </div>
         </>
     )
