@@ -965,6 +965,20 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
         setItems(prev => prev.map(i => i.producto_id === id ? { ...i, precio_unitario: parseFloat(valor) || 0 } : i))
     }
 
+    async function aplicarActualizacionPrecios(actualizar) {
+        if (actualizar) {
+            for (const item of ventaPendiente.cambiados) {
+                await supabase.from('productos_terminados')
+                    .update({ precio_venta: Number(item.precio_unitario) })
+                    .eq('id', item.producto_id)
+                    .eq('empresa_id', perfil.empresa_id)
+            }
+        }
+        const ventaObj = ventaPendiente.ventaObj
+        setVentaPendiente(null)
+        onVentaCreada(ventaObj)
+    }
+
     function setDescItem(id, val) {
         setItems(prev => prev.map(i => i.producto_id === id ? { ...i, descuento_item: val } : i))
     }
