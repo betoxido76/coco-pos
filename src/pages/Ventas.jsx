@@ -21,8 +21,6 @@ const OPCIONES_TASA = [
 ]
 
 // ─── Componente principal ──────────────────────────────────────
-const PAGE_SIZE = 50
-
 export default function Ventas() {
     const { perfil } = useAuth()
     // flujo_ventas: 'retail' → venta directa | 'manufactura' (default) → pedido → alistamiento → factura
@@ -37,21 +35,21 @@ export default function Ventas() {
     const [loadingPedidos, setLoadingPedidos] = useState(false)
     const [pedidoActual, setPedidoActual] = useState(null)
     const [pagina, setPagina] = useState(0)
-    const [totalVentas, setTotalVentas] = useState(0)
+    const [pageSize, setPageSize] = useState(50)
+    const [sortCol, setSortCol] = useState('fecha')
+    const [sortDir, setSortDir] = useState('desc')
 
-    useEffect(() => { cargarVentas() }, [pagina])
+    useEffect(() => { cargarVentas() }, [])
     useEffect(() => { if (tabActiva === 'pedidos') cargarPedidosAprobados() }, [tabActiva])
 
     async function cargarVentas() {
         setLoading(true)
-        const { data, count } = await supabase
+        const { data } = await supabase
             .from('ventas')
-            .select(`*, clientes(nombre), devoluciones(id)`, { count: 'exact' })
+            .select(`*, clientes(nombre), devoluciones(id)`)
             .eq('empresa_id', perfil.empresa_id)
-            .order('created_at', { ascending: false })
-            .range(pagina * PAGE_SIZE, (pagina + 1) * PAGE_SIZE - 1)
+            .limit(5000)
         if (data) setVentas(data)
-        if (count !== null) setTotalVentas(count)
         setLoading(false)
     }
 
@@ -92,6 +90,27 @@ export default function Ventas() {
             onFacturado={() => { cargarVentas(); cargarPedidosAprobados(); setVista('lista'); setTabActiva('ventas') }}
             onCancelar={() => setVista('lista')}
         />
+
+    function handleSort(col) {
+        if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+        else { setSortCol(col); setSortDir('asc') }
+        setPagina(0)
+    }
+
+    const ventasOrdenadas = [...ventas].sort((a, b) => {
+        let va, vb
+        if (sortCol === 'numero_factura') { va = a.numero_factura || ''; vb = b.numero_factura || '' }
+        else if (sortCol === 'nro_referencia') { va = a.nro_referencia || ''; vb = b.nro_referencia || '' }
+        else if (sortCol === 'cliente') { va = a.clientes?.nombre || ''; vb = b.clientes?.nombre || '' }
+        else if (sortCol === 'fecha') { va = new Date(a.fecha_venta || a.created_at); vb = new Date(b.fecha_venta || b.created_at) }
+        else if (sortCol === 'total') { va = Number(a.total || 0); vb = Number(b.total || 0) }
+        else if (sortCol === 'estado') { va = a.estado_cobro || ''; vb = b.estado_cobro || '' }
+        else { va = ''; vb = '' }
+        if (typeof va === 'string') return sortDir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va)
+        return sortDir === 'asc' ? va - vb : vb - va
+    })
+    const totalVentas = ventasOrdenadas.length
+    const ventasPaginadas = ventasOrdenadas.slice(pagina * pageSize, (pagina + 1) * pageSize)
 
     return (
         <div style={{ padding: '24px' }}>
@@ -154,13 +173,24 @@ export default function Ventas() {
                         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                             <thead>
                                 <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                    {['Nota de Entrega', 'Referencia', 'Cliente', 'Fecha', 'Total', 'Estado', ''].map((h, i) => (
-                                        <th key={i} style={{ padding: '10px 16px', textAlign: i === 4 ? 'right' : 'left', fontSize: '12px', fontWeight: 500, color: '#6b7280' }}>{h}</th>
+                                    {[
+                                        { label: 'Nota de Entrega', col: 'numero_factura' },
+                                        { label: 'Referencia', col: 'nro_referencia' },
+                                        { label: 'Cliente', col: 'cliente' },
+                                        { label: 'Fecha', col: 'fecha' },
+                                        { label: 'Total', col: 'total', right: true },
+                                        { label: 'Estado', col: 'estado' },
+                                        { label: '', col: null },
+                                    ].map(({ label, col, right }) => (
+                                        <th key={label || 'acc'} onClick={col ? () => handleSort(col) : undefined}
+                                            style={{ padding: '10px 16px', textAlign: right ? 'right' : 'left', fontSize: '12px', fontWeight: 500, color: col && sortCol === col ? '#16a34a' : '#6b7280', cursor: col ? 'pointer' : 'default', userSelect: 'none', whiteSpace: 'nowrap' }}>
+                                            {label}{col && <span style={{ marginLeft: '4px', fontSize: '10px' }}>{sortCol === col ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}</span>}
+                                        </th>
                                     ))}
                                 </tr>
                             </thead>
                             <tbody>
-                                {ventas.map(v => (
+                                {ventasPaginadas.map(v => (
                                     <tr key={v.id} style={{ borderBottom: '1px solid #f3f4f6' }}
                                         onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
                                         onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
@@ -192,19 +222,28 @@ export default function Ventas() {
                             </tbody>
                         </table>
                     )}
-                    {totalVentas > PAGE_SIZE && (
+                    {totalVentas > 0 && (
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderTop: '1px solid #e5e7eb', backgroundColor: '#f9fafb' }}>
-                            <span style={{ fontSize: '13px', color: '#6b7280' }}>
-                                Mostrando {pagina * PAGE_SIZE + 1}–{Math.min((pagina + 1) * PAGE_SIZE, totalVentas)} de {totalVentas}
-                            </span>
-                            <div style={{ display: 'flex', gap: '8px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                <span style={{ fontSize: '13px', color: '#6b7280' }}>
+                                    {pagina * pageSize + 1}–{Math.min((pagina + 1) * pageSize, totalVentas)} de {totalVentas}
+                                </span>
+                                <select value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setPagina(0) }}
+                                    style={{ fontSize: '13px', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 8px', color: '#374151', backgroundColor: '#fff', cursor: 'pointer' }}>
+                                    <option value={25}>25 / pág</option>
+                                    <option value={50}>50 / pág</option>
+                                    <option value={100}>100 / pág</option>
+                                </select>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                 <button onClick={() => setPagina(p => p - 1)} disabled={pagina === 0}
                                     style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: pagina === 0 ? '#d1d5db' : '#374151', cursor: pagina === 0 ? 'default' : 'pointer' }}>
-                                    ← Anterior
+                                    ←
                                 </button>
-                                <button onClick={() => setPagina(p => p + 1)} disabled={(pagina + 1) * PAGE_SIZE >= totalVentas}
-                                    style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: (pagina + 1) * PAGE_SIZE >= totalVentas ? '#d1d5db' : '#374151', cursor: (pagina + 1) * PAGE_SIZE >= totalVentas ? 'default' : 'pointer' }}>
-                                    Siguiente →
+                                <span style={{ fontSize: '13px', color: '#6b7280' }}>Pág {pagina + 1} / {Math.ceil(totalVentas / pageSize)}</span>
+                                <button onClick={() => setPagina(p => p + 1)} disabled={(pagina + 1) * pageSize >= totalVentas}
+                                    style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: (pagina + 1) * pageSize >= totalVentas ? '#d1d5db' : '#374151', cursor: (pagina + 1) * pageSize >= totalVentas ? 'default' : 'pointer' }}>
+                                    →
                                 </button>
                             </div>
                         </div>
