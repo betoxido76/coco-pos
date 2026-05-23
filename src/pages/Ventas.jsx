@@ -1695,10 +1695,27 @@ function ModalNuevoProductoVenta({ perfil, onCreado, onCerrar }) {
     const [activo, setActivo] = useState(true)
     const [guardando, setGuardando] = useState(false)
     const [error, setError] = useState('')
+    const esAutopartes = perfil?.empresas?.perfil_negocio === 'autopartes'
+    const [formAuto, setFormAuto] = useState({ marca: '', nro_parte: '', tipo: '', barras_2: '', barras_3: '' })
+    const [compats, setCompats] = useState([])
+    const [nuevoCompat, setNuevoCompat] = useState({ marca_vehiculo: '', modelo: '', anio_desde: '', anio_hasta: '', posicion: '' })
+    const [editandoCompatIdx, setEditandoCompatIdx] = useState(null)
+    const [vehiculosData, setVehiculosData] = useState([])
+
+    const marcasDisp = [...new Set(vehiculosData.map(v => v.marca))].sort()
+    const modelosDisp = vehiculosData
+        .filter(v => v.marca === nuevoCompat.marca_vehiculo)
+        .map(v => v.modelo)
+        .filter((m, i, a) => a.indexOf(m) === i)
+        .sort()
 
     useEffect(() => {
         supabase.from('proveedores').select('id, nombre').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('nombre')
             .then(({ data }) => { if (data) setProveedores(data) })
+        if (esAutopartes) {
+            supabase.from('vehiculos').select('marca, modelo').eq('empresa_id', perfil.empresa_id).order('marca').order('modelo')
+                .then(({ data }) => setVehiculosData(data || []))
+        }
     }, [perfil.empresa_id])
 
     async function guardar() {
@@ -1735,6 +1752,33 @@ function ModalNuevoProductoVenta({ perfil, onCreado, onCerrar }) {
             setGuardando(false)
             setError(err.code === '23505' ? `El SKU "${skuNorm}" ya existe. Elige otro.` : 'Error: ' + err.message)
             return
+        }
+
+        if (esAutopartes) {
+            await supabase.from('productos_autopartes').insert({
+                producto_id: data.id, empresa_id: perfil.empresa_id,
+                marca: formAuto.marca.trim() || null, nro_parte: formAuto.nro_parte.trim() || null,
+                tipo: formAuto.tipo.trim() || null, barras_2: formAuto.barras_2.trim() || null,
+                barras_3: formAuto.barras_3.trim() || null,
+            })
+            for (const c of compats) {
+                if (!c.marca_vehiculo.trim() || !c.modelo.trim()) continue
+                const { data: existing } = await supabase.from('vehiculos').select('id')
+                    .eq('empresa_id', perfil.empresa_id).eq('marca', c.marca_vehiculo.trim()).eq('modelo', c.modelo.trim()).maybeSingle()
+                let vehiculoId = existing?.id
+                if (!vehiculoId) {
+                    const { data: newV } = await supabase.from('vehiculos').insert({
+                        empresa_id: perfil.empresa_id, marca: c.marca_vehiculo.trim(), modelo: c.modelo.trim(),
+                    }).select('id').single()
+                    vehiculoId = newV?.id
+                }
+                if (!vehiculoId) continue
+                await supabase.from('producto_vehiculo').insert({
+                    empresa_id: perfil.empresa_id, producto_id: data.id, vehiculo_id: vehiculoId,
+                    año_inicio: parseInt(c.anio_desde) || 0, año_fin: parseInt(c.anio_hasta) || 9999,
+                    posicion: c.posicion?.trim() || null,
+                })
+            }
         }
 
         onCreado({
@@ -1890,6 +1934,120 @@ function ModalNuevoProductoVenta({ perfil, onCreado, onCerrar }) {
                             Activo
                         </label>
                     </div>
+
+                    {esAutopartes && (
+                        <>
+                            <p style={sectionStyle}>Datos de autoparte</p>
+                            <div style={{ padding: '14px 16px', backgroundColor: '#eff6ff', borderRadius: '10px', border: '1px solid #bfdbfe' }}>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                                    {[
+                                        { key: 'marca', label: 'Marca', placeholder: 'Ej: Bosch' },
+                                        { key: 'nro_parte', label: 'N° de parte', placeholder: 'Ej: 0001-234-567' },
+                                        { key: 'tipo', label: 'Tipo', placeholder: 'Ej: Original, Aftermarket...' },
+                                        { key: 'barras_2', label: 'Código barras 2', placeholder: 'Opcional' },
+                                        { key: 'barras_3', label: 'Código barras 3', placeholder: 'Opcional' },
+                                    ].map(f => (
+                                        <div key={f.key}>
+                                            <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>{f.label}</label>
+                                            <input value={formAuto[f.key]} onChange={e => setFormAuto(p => ({ ...p, [f.key]: e.target.value }))}
+                                                placeholder={f.placeholder} style={inStyle} />
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div style={{ padding: '14px 16px', backgroundColor: '#f9fafb', borderRadius: '10px', border: '1px solid #e5e7eb' }}>
+                                <p style={{ fontSize: '13px', fontWeight: 600, color: '#374151', margin: '0 0 12px' }}>Compatibilidades de vehículos</p>
+                                {marcasDisp.length === 0 && (
+                                    <p style={{ fontSize: '12px', color: '#d97706', margin: '0 0 10px', padding: '8px 10px', backgroundColor: '#fffbeb', borderRadius: '6px', border: '1px solid #fde68a' }}>
+                                        Sin vehículos en catálogo — agrégalos en Administración → Vehículos primero.
+                                    </p>
+                                )}
+                                {compats.length > 0 && (
+                                    <div style={{ marginBottom: '12px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                        {compats.map((c, i) => (
+                                            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 10px', backgroundColor: editandoCompatIdx === i ? '#eff6ff' : '#fff', borderRadius: '8px', border: `1px solid ${editandoCompatIdx === i ? '#93c5fd' : '#e5e7eb'}` }}>
+                                                <span style={{ flex: 1, fontSize: '13px', color: '#374151' }}>
+                                                    {c.marca_vehiculo} {c.modelo}
+                                                    {(c.anio_desde || c.anio_hasta) && ` (${c.anio_desde || ''}${c.anio_hasta ? ' – ' + c.anio_hasta : ''})`}
+                                                    {c.posicion && <span style={{ marginLeft: '6px', fontSize: '11px', backgroundColor: '#dbeafe', color: '#1e40af', padding: '1px 6px', borderRadius: '10px' }}>{c.posicion}</span>}
+                                                </span>
+                                                <button onClick={() => { setNuevoCompat({ ...c }); setEditandoCompatIdx(i) }}
+                                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#2563eb', padding: '2px' }}>
+                                                    <Edit size={14} />
+                                                </button>
+                                                <button onClick={() => { setCompats(prev => prev.filter((_, j) => j !== i)); if (editandoCompatIdx === i) { setEditandoCompatIdx(null); setNuevoCompat({ marca_vehiculo: '', modelo: '', anio_desde: '', anio_hasta: '', posicion: '' }) } }}
+                                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', padding: '2px' }}>
+                                                    <Trash2 size={14} />
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 60px 60px 1fr auto', gap: '8px', alignItems: 'end' }}>
+                                    <div>
+                                        <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '4px' }}>Marca *</label>
+                                        <select value={nuevoCompat.marca_vehiculo} onChange={e => setNuevoCompat(p => ({ ...p, marca_vehiculo: e.target.value, modelo: '' }))}
+                                            style={{ ...inStyle, fontSize: '13px', padding: '6px 8px' }}>
+                                            <option value="">— Marca —</option>
+                                            {marcasDisp.map(m => <option key={m} value={m}>{m}</option>)}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '4px' }}>Modelo *</label>
+                                        <select value={nuevoCompat.modelo} onChange={e => setNuevoCompat(p => ({ ...p, modelo: e.target.value }))}
+                                            disabled={!nuevoCompat.marca_vehiculo}
+                                            style={{ ...inStyle, fontSize: '13px', padding: '6px 8px', opacity: !nuevoCompat.marca_vehiculo ? 0.5 : 1 }}>
+                                            <option value="">— Modelo —</option>
+                                            {modelosDisp.map(m => <option key={m} value={m}>{m}</option>)}
+                                        </select>
+                                    </div>
+                                    {[{ key: 'anio_desde', label: 'Desde', ph: '2010' }, { key: 'anio_hasta', label: 'Hasta', ph: '2024' }].map(f => (
+                                        <div key={f.key}>
+                                            <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '4px' }}>{f.label}</label>
+                                            <input type="number" value={nuevoCompat[f.key]} onChange={e => setNuevoCompat(p => ({ ...p, [f.key]: e.target.value }))}
+                                                placeholder={f.ph} style={{ ...inStyle, fontSize: '13px', padding: '6px 8px' }} />
+                                        </div>
+                                    ))}
+                                    <div>
+                                        <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '4px' }}>Posición</label>
+                                        <select value={nuevoCompat.posicion} onChange={e => setNuevoCompat(p => ({ ...p, posicion: e.target.value }))}
+                                            style={{ ...inStyle, fontSize: '13px', padding: '6px 8px' }}>
+                                            <option value="">— Todas —</option>
+                                            <option value="delantera">Delantera</option>
+                                            <option value="trasera">Trasera</option>
+                                            <option value="delantera izquierda">Del. Izq.</option>
+                                            <option value="delantera derecha">Del. Der.</option>
+                                            <option value="trasera izquierda">Tras. Izq.</option>
+                                            <option value="trasera derecha">Tras. Der.</option>
+                                            <option value="izquierda">Izquierda</option>
+                                            <option value="derecha">Derecha</option>
+                                        </select>
+                                    </div>
+                                    <button onClick={() => {
+                                        if (!nuevoCompat.marca_vehiculo.trim() || !nuevoCompat.modelo.trim()) return
+                                        if (editandoCompatIdx !== null) {
+                                            setCompats(prev => prev.map((c, j) => j === editandoCompatIdx ? { ...nuevoCompat } : c))
+                                            setEditandoCompatIdx(null)
+                                        } else {
+                                            setCompats(prev => [...prev, { ...nuevoCompat }])
+                                        }
+                                        setNuevoCompat({ marca_vehiculo: '', modelo: '', anio_desde: '', anio_hasta: '', posicion: '' })
+                                    }} style={{ backgroundColor: editandoCompatIdx !== null ? '#d97706' : '#1d4ed8', color: '#fff', border: 'none', borderRadius: '8px', padding: '6px 12px', fontSize: '13px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                        {editandoCompatIdx !== null ? 'Actualizar' : '+ Agregar'}
+                                    </button>
+                                </div>
+                                {editandoCompatIdx !== null && (
+                                    <div style={{ marginTop: '6px', textAlign: 'right' }}>
+                                        <button onClick={() => { setEditandoCompatIdx(null); setNuevoCompat({ marca_vehiculo: '', modelo: '', anio_desde: '', anio_hasta: '', posicion: '' }) }}
+                                            style={{ background: 'none', border: 'none', color: '#6b7280', fontSize: '12px', cursor: 'pointer', textDecoration: 'underline' }}>
+                                            Cancelar edición
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        </>
+                    )}
 
                     {error && (
                         <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 14px', fontSize: '13px', color: '#dc2626' }}>
