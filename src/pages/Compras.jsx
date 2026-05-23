@@ -5,6 +5,13 @@ import { useAuth } from '../contexts/AuthContext'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 
+const tiempoDesde = (ts) => {
+    const mins = Math.floor((Date.now() - ts) / 60000)
+    if (mins < 1) return 'hace un momento'
+    if (mins < 60) return `hace ${mins} min`
+    return `hace ${Math.floor(mins / 60)}h`
+}
+
 // ─── Componente principal ──────────────────────────────────────
 const PAGE_SIZE = 50
 
@@ -475,6 +482,39 @@ function NuevaOrden({ onCreada, onCancelar }) {
     const [modoAvanzadoOC, setModoAvanzadoOC] = useState(false)
     const [mostrarNuevoInsumo, setMostrarNuevoInsumo] = useState(false)
     const [mostrarNuevoProveedor, setMostrarNuevoProveedor] = useState(false)
+    const [borradorGuardado, setBorradorGuardado] = useState(null)
+
+    const DRAFT_KEY = `mipos_borrador_oc_${perfil.empresa_id}`
+
+    useEffect(() => {
+        const raw = localStorage.getItem(DRAFT_KEY)
+        if (!raw) return
+        try {
+            const d = JSON.parse(raw)
+            if ((d.items?.length > 0 || d.proveedorId) && d.ts > Date.now() - 86400000)
+                setBorradorGuardado(d)
+            else
+                localStorage.removeItem(DRAFT_KEY)
+        } catch { localStorage.removeItem(DRAFT_KEY) }
+    }, [])
+
+    useEffect(() => {
+        if (items.length === 0 && !proveedorId) return
+        localStorage.setItem(DRAFT_KEY, JSON.stringify({ proveedorId, items, fechaEntrega, ts: Date.now() }))
+    }, [items, proveedorId, fechaEntrega])
+
+    function limpiarBorrador() {
+        localStorage.removeItem(DRAFT_KEY)
+        setBorradorGuardado(null)
+    }
+
+    function restaurarBorrador() {
+        const d = borradorGuardado
+        setBorradorGuardado(null)
+        if (d.proveedorId) setProveedorId(d.proveedorId)
+        if (d.fechaEntrega) setFechaEntrega(d.fechaEntrega)
+        if (d.items?.length) setItems(d.items)
+    }
 
     useEffect(() => {
         supabase.from('proveedores').select('id, nombre').eq('activo', true).order('nombre')
@@ -583,6 +623,7 @@ function NuevaOrden({ onCreada, onCancelar }) {
                 return
             }
             setGuardando(false)
+            limpiarBorrador()
             onCreada({ ...oc, proveedores: { nombre: proveedores.find(p => p.id === proveedorId)?.nombre } })
         } catch (e) {
             setError('Error inesperado: ' + e.message)
@@ -611,6 +652,7 @@ function NuevaOrden({ onCreada, onCancelar }) {
         }
         const datos = ocPendiente.ocObj
         setOcPendiente(null)
+        limpiarBorrador()
         onCreada(datos)
     }
 
@@ -620,6 +662,23 @@ function NuevaOrden({ onCreada, onCancelar }) {
                 <button onClick={onCancelar} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', fontSize: '13px' }}>← Volver</button>
                 <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Nueva Orden de Compra</h1>
             </div>
+
+            {borradorGuardado && (
+                <div style={{ backgroundColor: '#fffbeb', border: '1px solid #d97706', borderRadius: '10px', padding: '12px 16px', marginBottom: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+                    <div style={{ fontSize: '13px', color: '#92400e' }}>
+                        <span style={{ fontWeight: 600 }}>Borrador guardado</span>
+                        <span style={{ marginLeft: '8px' }}>
+                            {tiempoDesde(borradorGuardado.ts)}
+                            {borradorGuardado.items?.length > 0 && ` · ${borradorGuardado.items.length} insumo${borradorGuardado.items.length !== 1 ? 's' : ''}`}
+                            {borradorGuardado.proveedorId && proveedores.find(p => p.id === borradorGuardado.proveedorId) && ` · ${proveedores.find(p => p.id === borradorGuardado.proveedorId).nombre}`}
+                        </span>
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
+                        <button onClick={restaurarBorrador} style={{ fontSize: '13px', fontWeight: 600, color: '#d97706', backgroundColor: '#fff', border: '1px solid #d97706', borderRadius: '6px', padding: '5px 12px', cursor: 'pointer' }}>Restaurar</button>
+                        <button onClick={limpiarBorrador} style={{ fontSize: '13px', color: '#6b7280', background: 'none', border: 'none', cursor: 'pointer', padding: '5px 8px' }}>Descartar ×</button>
+                    </div>
+                </div>
+            )}
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: '20px' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -833,6 +892,41 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
     // Almacén destino
     const [almacenes, setAlmacenes] = useState([])
     const [almacenId, setAlmacenId] = useState('')
+
+    const [borradorGuardado, setBorradorGuardado] = useState(null)
+    const DRAFT_KEY = `mipos_borrador_recepcion_${perfil.empresa_id}`
+
+    useEffect(() => {
+        const raw = localStorage.getItem(DRAFT_KEY)
+        if (!raw) return
+        try {
+            const d = JSON.parse(raw)
+            if ((d.items?.length > 0 || d.proveedorLibreId) && d.ts > Date.now() - 86400000)
+                setBorradorGuardado(d)
+            else
+                localStorage.removeItem(DRAFT_KEY)
+        } catch { localStorage.removeItem(DRAFT_KEY) }
+    }, [])
+
+    useEffect(() => {
+        if (items.length === 0 && !proveedorLibreId) return
+        localStorage.setItem(DRAFT_KEY, JSON.stringify({ proveedorLibreId, modo, items, almacenId, nroDocProveedor, ts: Date.now() }))
+    }, [items, proveedorLibreId, modo, almacenId, nroDocProveedor])
+
+    function limpiarBorrador() {
+        localStorage.removeItem(DRAFT_KEY)
+        setBorradorGuardado(null)
+    }
+
+    function restaurarBorrador() {
+        const d = borradorGuardado
+        setBorradorGuardado(null)
+        if (d.modo) setModo(d.modo)
+        if (d.proveedorLibreId) setProveedorLibreId(d.proveedorLibreId)
+        if (d.almacenId) setAlmacenId(d.almacenId)
+        if (d.nroDocProveedor) setNroDocProveedor(d.nroDocProveedor)
+        if (d.items?.length) setItems(d.items)
+    }
 
     useEffect(() => {
         supabase.from('almacenes').select('id, nombre, es_default')
@@ -1058,6 +1152,7 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
         const provNombre = modo === 'contra_oc'
             ? ocsPendientes.find(o => o.id === ocSeleccionada)?.proveedores?.nombre
             : proveedores.find(p => p.id === proveedorLibreId)?.nombre || 'Recepción Libre'
+        limpiarBorrador()
         onCreada({ ...rec, proveedores: { nombre: provNombre } })
     }
 
@@ -1074,6 +1169,23 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
                 <button onClick={onCancelar} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', fontSize: '13px' }}>← Volver</button>
                 <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Nueva Recepción</h1>
             </div>
+
+            {borradorGuardado && (
+                <div style={{ backgroundColor: '#fffbeb', border: '1px solid #d97706', borderRadius: '10px', padding: '12px 16px', marginBottom: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+                    <div style={{ fontSize: '13px', color: '#92400e' }}>
+                        <span style={{ fontWeight: 600 }}>Borrador guardado</span>
+                        <span style={{ marginLeft: '8px' }}>
+                            {tiempoDesde(borradorGuardado.ts)}
+                            {borradorGuardado.items?.length > 0 && ` · ${borradorGuardado.items.length} insumo${borradorGuardado.items.length !== 1 ? 's' : ''}`}
+                            {borradorGuardado.proveedorLibreId && proveedores.find(p => p.id === borradorGuardado.proveedorLibreId) && ` · ${proveedores.find(p => p.id === borradorGuardado.proveedorLibreId).nombre}`}
+                        </span>
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
+                        <button onClick={restaurarBorrador} style={{ fontSize: '13px', fontWeight: 600, color: '#d97706', backgroundColor: '#fff', border: '1px solid #d97706', borderRadius: '6px', padding: '5px 12px', cursor: 'pointer' }}>Restaurar</button>
+                        <button onClick={limpiarBorrador} style={{ fontSize: '13px', color: '#6b7280', background: 'none', border: 'none', cursor: 'pointer', padding: '5px 8px' }}>Descartar ×</button>
+                    </div>
+                </div>
+            )}
 
             <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
                 {['libre', 'contra_oc'].map(m => (
