@@ -688,6 +688,13 @@ function BadgeCobro({ estado }) {
     )
 }
 
+function tiempoDesde(ts) {
+    const mins = Math.floor((Date.now() - ts) / 60000)
+    if (mins < 1) return 'hace un momento'
+    if (mins < 60) return `hace ${mins} min`
+    return `hace ${Math.floor(mins / 60)}h`
+}
+
 // ─── Nueva Venta (flujo dual: retail = venta directa | manufactura = pedido) ──
 function NuevaVenta({ onVentaCreada, onCancelar }) {
     const { perfil } = useAuth()
@@ -749,6 +756,9 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
 
     const [mostrarNuevoProducto, setMostrarNuevoProducto] = useState(false)
     const [mostrarNuevoCliente, setMostrarNuevoCliente] = useState(false)
+    const [borradorGuardado, setBorradorGuardado] = useState(null)
+
+    const DRAFT_KEY = `mipos_borrador_venta_${perfil.empresa_id}`
 
     useEffect(() => {
         supabase.from('clientes').select('id, nombre, rif, descripcion, condicion_pago, dias_credito').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
@@ -801,6 +811,27 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
             .eq('empresa_id', perfil.empresa_id).eq('marca', marcaV).order('modelo')
             .then(({ data }) => { setModelosV([...new Set((data || []).map(v => v.modelo))].sort()); setModeloV('') })
     }, [marcaV, perfil.empresa_id])
+
+    // Leer borrador al montar (máx 24h de antigüedad)
+    useEffect(() => {
+        const raw = localStorage.getItem(DRAFT_KEY)
+        if (!raw) return
+        try {
+            const d = JSON.parse(raw)
+            if ((d.items?.length > 0 || d.clienteId) && d.ts > Date.now() - 86400000)
+                setBorradorGuardado(d)
+            else
+                localStorage.removeItem(DRAFT_KEY)
+        } catch { localStorage.removeItem(DRAFT_KEY) }
+    }, [])
+
+    // Auto-guardar borrador cuando el carrito o el cliente cambian
+    useEffect(() => {
+        if (items.length === 0 && !clienteId) return
+        localStorage.setItem(DRAFT_KEY, JSON.stringify({
+            clienteId, items, listaId, descuentoGlobal, notas, nroReferencia, diasCredito, ts: Date.now()
+        }))
+    }, [items, clienteId, descuentoGlobal, notas, nroReferencia])
 
     async function seleccionarCliente(id) {
         setClienteId(id)
@@ -961,6 +992,23 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
         setItems(prev => prev.filter(i => i.producto_id !== id))
     }
 
+    function limpiarBorrador() {
+        localStorage.removeItem(DRAFT_KEY)
+        setBorradorGuardado(null)
+    }
+
+    async function restaurarBorrador() {
+        const d = borradorGuardado
+        setBorradorGuardado(null)
+        if (d.descuentoGlobal) setDescuentoGlobal(d.descuentoGlobal)
+        if (d.notas) setNotas(d.notas)
+        if (d.nroReferencia) setNroReferencia(d.nroReferencia)
+        if (d.clienteId) await seleccionarCliente(d.clienteId)
+        if (d.listaId) setListaId(d.listaId)
+        if (d.diasCredito) setDiasCredito(Number(d.diasCredito))
+        if (d.items?.length) setItems(d.items)
+    }
+
     function cambiarPrecio(id, valor) {
         setItems(prev => prev.map(i => i.producto_id === id ? { ...i, precio_unitario: parseFloat(valor) || 0 } : i))
     }
@@ -976,6 +1024,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
         }
         const ventaObj = ventaPendiente.ventaObj
         setVentaPendiente(null)
+        limpiarBorrador()
         onVentaCreada(ventaObj)
     }
 
@@ -1089,6 +1138,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                 setGuardando(false)
                 return
             }
+            limpiarBorrador()
             onVentaCreada({ ...venta, clientes: { nombre: clientes.find(c => c.id === clienteId)?.nombre }, items })
 
         } else {
@@ -1128,6 +1178,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
             )
 
             setGuardando(false)
+            limpiarBorrador()
             onVentaCreada({ numero_pedido: pedido.numero_pedido, cliente: clientes.find(c => c.id === clienteId)?.nombre })
         }
     }
@@ -1160,6 +1211,29 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                     {esRetail ? 'Nueva venta' : 'Nuevo pedido'}
                 </h1>
             </div>
+
+            {borradorGuardado && (
+                <div style={{ backgroundColor: '#fffbeb', border: '1px solid #d97706', borderRadius: '10px', padding: '12px 16px', marginBottom: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+                    <div style={{ fontSize: '13px', color: '#92400e' }}>
+                        <span style={{ fontWeight: 600 }}>Borrador guardado</span>
+                        <span style={{ marginLeft: '8px' }}>
+                            {tiempoDesde(borradorGuardado.ts)}
+                            {borradorGuardado.items?.length > 0 && ` · ${borradorGuardado.items.length} producto${borradorGuardado.items.length !== 1 ? 's' : ''}`}
+                            {borradorGuardado.clienteId && clientes.find(c => c.id === borradorGuardado.clienteId) && ` · ${clientes.find(c => c.id === borradorGuardado.clienteId).nombre}`}
+                        </span>
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
+                        <button onClick={restaurarBorrador}
+                            style={{ fontSize: '13px', fontWeight: 600, color: '#d97706', backgroundColor: '#fff', border: '1px solid #d97706', borderRadius: '6px', padding: '5px 12px', cursor: 'pointer' }}>
+                            Restaurar
+                        </button>
+                        <button onClick={limpiarBorrador}
+                            style={{ fontSize: '13px', color: '#6b7280', background: 'none', border: 'none', cursor: 'pointer', padding: '5px 8px' }}>
+                            Descartar ×
+                        </button>
+                    </div>
+                </div>
+            )}
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: '20px' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
