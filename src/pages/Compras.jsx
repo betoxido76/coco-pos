@@ -474,6 +474,7 @@ function NuevaOrden({ onCreada, onCancelar }) {
     const [ocPendiente, setOcPendiente] = useState(null)
     const [modoAvanzadoOC, setModoAvanzadoOC] = useState(false)
     const [mostrarNuevoInsumo, setMostrarNuevoInsumo] = useState(false)
+    const [mostrarNuevoProveedor, setMostrarNuevoProveedor] = useState(false)
 
     useEffect(() => {
         supabase.from('proveedores').select('id, nombre').eq('activo', true).order('nombre')
@@ -623,7 +624,13 @@ function NuevaOrden({ onCreada, onCancelar }) {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: '20px' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                     <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px' }}>
-                        <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '8px' }}>Proveedor</label>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                            <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151' }}>Proveedor</label>
+                            <button onClick={() => setMostrarNuevoProveedor(true)}
+                                style={{ fontSize: '12px', padding: '4px 10px', borderRadius: '6px', border: '1px solid #d97706', cursor: 'pointer', backgroundColor: '#fffbeb', color: '#d97706', fontWeight: 500 }}>
+                                + Nuevo proveedor
+                            </button>
+                        </div>
                         <select value={proveedorId} onChange={e => setProveedorId(e.target.value)} style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', backgroundColor: '#fff' }}>
                             <option value="">Seleccionar proveedor...</option>
                             {proveedores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
@@ -747,6 +754,17 @@ function NuevaOrden({ onCreada, onCancelar }) {
                     onCreado={insumo => { setInsumos(prev => [...prev, insumo]); agregarInsumo(insumo); setMostrarNuevoInsumo(false) }}
                 />
             )}
+            {mostrarNuevoProveedor && (
+                <ModalNuevoProveedor
+                    perfil={perfil}
+                    onCerrar={() => setMostrarNuevoProveedor(false)}
+                    onCreado={prov => {
+                        setProveedores(prev => [...prev, { id: prov.id, nombre: prov.nombre }].sort((a, b) => a.nombre.localeCompare(b.nombre)))
+                        setProveedorId(prov.id)
+                        setMostrarNuevoProveedor(false)
+                    }}
+                />
+            )}
 
             {ocPendiente && (
                 <>
@@ -810,6 +828,7 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
     const [proveedorLibreId, setProveedorLibreId] = useState('')
     const [modoAvanzadoRec, setModoAvanzadoRec] = useState(false)
     const [mostrarNuevoInsumo, setMostrarNuevoInsumo] = useState(false)
+    const [mostrarNuevoProveedor, setMostrarNuevoProveedor] = useState(false)
 
     // Almacén destino
     const [almacenes, setAlmacenes] = useState([])
@@ -1100,7 +1119,13 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
             {modo === 'libre' && (
                 <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px', marginBottom: '16px' }}>
                     <div style={{ marginBottom: '12px' }}>
-                        <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Proveedor <span style={{ color: '#9ca3af', fontWeight: 400 }}>(opcional)</span></label>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                            <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151' }}>Proveedor <span style={{ color: '#9ca3af', fontWeight: 400 }}>(opcional)</span></label>
+                            <button onClick={() => setMostrarNuevoProveedor(true)}
+                                style={{ fontSize: '12px', padding: '4px 10px', borderRadius: '6px', border: '1px solid #d97706', cursor: 'pointer', backgroundColor: '#fffbeb', color: '#d97706', fontWeight: 500 }}>
+                                + Nuevo proveedor
+                            </button>
+                        </div>
                         <select value={proveedorLibreId} onChange={e => {
                             const pid = e.target.value
                             setProveedorLibreId(pid)
@@ -1263,6 +1288,19 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
                     perfil={perfil}
                     onCerrar={() => setMostrarNuevoInsumo(false)}
                     onCreado={insumo => { setInsumos(prev => [...prev, insumo]); agregarInsumoLibre(insumo); setMostrarNuevoInsumo(false) }}
+                />
+            )}
+            {mostrarNuevoProveedor && (
+                <ModalNuevoProveedor
+                    perfil={perfil}
+                    onCerrar={() => setMostrarNuevoProveedor(false)}
+                    onCreado={prov => {
+                        setProveedores(prev => [...prev, { id: prov.id, nombre: prov.nombre }].sort((a, b) => a.nombre.localeCompare(b.nombre)))
+                        setProveedorLibreId(prov.id)
+                        setCondicionProveedorInicial(prov.condicion_pago || 'contado')
+                        setDiasCreditoProveedorInicial(prov.dias_credito || 0)
+                        setMostrarNuevoProveedor(false)
+                    }}
                 />
             )}
 
@@ -1697,6 +1735,143 @@ function ModalNuevoInsumo({ perfil, onCreado, onCerrar }) {
                         style={{ flex: 1, backgroundColor: '#f3f4f6', color: '#374151', border: 'none', borderRadius: '8px', padding: '11px 20px', fontSize: '14px', cursor: 'pointer' }}>
                         Cancelar
                     </button>
+                </div>
+            </div>
+        </>
+    )
+}
+
+// ─── Modal Nuevo Proveedor ─────────────────────────────────────
+function ModalNuevoProveedor({ perfil, onCreado, onCerrar }) {
+    const [nombre, setNombre] = useState('')
+    const [rif, setRif] = useState('')
+    const [telefono, setTelefono] = useState('')
+    const [contacto, setContacto] = useState('')
+    const [direccionFiscal, setDireccionFiscal] = useState('')
+    const [tipo, setTipo] = useState('')
+    const [condicionPago, setCondicionPago] = useState('contado')
+    const [diasCredito, setDiasCredito] = useState(30)
+    const [activo, setActivo] = useState(true)
+    const [guardando, setGuardando] = useState(false)
+    const [error, setError] = useState('')
+
+    async function guardar() {
+        if (!nombre.trim()) { setError('El nombre es obligatorio'); return }
+        setGuardando(true); setError('')
+        const payload = {
+            empresa_id: perfil.empresa_id,
+            nombre: nombre.trim(),
+            rif: rif.trim() || null,
+            telefono: telefono.trim() || null,
+            contacto: contacto.trim() || null,
+            direccion_fiscal: direccionFiscal.trim() || null,
+            tipo: tipo || null,
+            condicion_pago: condicionPago,
+            dias_credito: condicionPago === 'credito' ? (diasCredito || 0) : 0,
+            activo,
+        }
+        const { data, error: err } = await supabase.from('proveedores').insert(payload).select('id').single()
+        setGuardando(false)
+        if (err) { setError('Error: ' + err.message); return }
+        onCreado({ id: data.id, nombre: nombre.trim(), condicion_pago: condicionPago, dias_credito: condicionPago === 'credito' ? (diasCredito || 0) : 0 })
+    }
+
+    const inStyle = { width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', color: '#374151', backgroundColor: '#fff', outline: 'none', boxSizing: 'border-box' }
+    const lbl = { fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }
+    const sct = { fontSize: '11px', fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '4px 0 10px', borderBottom: '1px solid #e5e7eb', paddingBottom: '4px' }
+
+    return (
+        <>
+            <div onClick={onCerrar} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', zIndex: 40 }} />
+            <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', backgroundColor: '#fff', borderRadius: '16px', padding: '28px', width: '520px', maxHeight: '90vh', overflowY: 'auto', zIndex: 50, boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                    <h2 style={{ fontSize: '17px', fontWeight: 700, color: '#1f2937', margin: 0 }}>Nuevo proveedor</h2>
+                    <button onClick={onCerrar} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af' }}><X size={20} /></button>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                    <p style={sct}>Información básica</p>
+
+                    <div>
+                        <label style={lbl}>Nombre *</label>
+                        <input value={nombre} onChange={e => setNombre(e.target.value)} placeholder="Ej: Distribuidora ABC" style={inStyle} autoFocus />
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                        <div>
+                            <label style={lbl}>RIF / Cédula</label>
+                            <input value={rif} onChange={e => setRif(e.target.value)} placeholder="J-12345678-9" style={inStyle} />
+                        </div>
+                        <div>
+                            <label style={lbl}>Teléfono</label>
+                            <input value={telefono} onChange={e => setTelefono(e.target.value)} placeholder="0212-000-0000" style={inStyle} />
+                        </div>
+                    </div>
+
+                    <div>
+                        <label style={lbl}>Persona de contacto</label>
+                        <input value={contacto} onChange={e => setContacto(e.target.value)} placeholder="Nombre del contacto" style={inStyle} />
+                    </div>
+
+                    <div>
+                        <label style={lbl}>Dirección fiscal</label>
+                        <textarea value={direccionFiscal} onChange={e => setDireccionFiscal(e.target.value)}
+                            placeholder="Dirección completa para facturación..." rows={2}
+                            style={{ ...inStyle, resize: 'vertical', fontFamily: 'inherit' }} />
+                    </div>
+
+                    <div>
+                        <label style={lbl}>Tipo de proveedor</label>
+                        <select value={tipo} onChange={e => setTipo(e.target.value)} style={inStyle}>
+                            <option value="">— Sin clasificar —</option>
+                            <option value="producto_terminado">Producto terminado</option>
+                            <option value="materia_prima">Materia prima</option>
+                            <option value="material_empaque">Material de empaque</option>
+                            <option value="consumibles">Consumibles</option>
+                            <option value="servicios">Servicios</option>
+                        </select>
+                    </div>
+
+                    <p style={sct}>Condición de pago</p>
+
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                        {['contado', 'credito'].map(c => (
+                            <button key={c} type="button" onClick={() => setCondicionPago(c)}
+                                style={{ flex: 1, padding: '8px', borderRadius: '8px', fontSize: '13px', fontWeight: 500, border: '1px solid', cursor: 'pointer', borderColor: condicionPago === c ? '#16a34a' : '#e5e7eb', backgroundColor: condicionPago === c ? '#f0fdf4' : '#fff', color: condicionPago === c ? '#16a34a' : '#6b7280' }}>
+                                {c.charAt(0).toUpperCase() + c.slice(1)}
+                            </button>
+                        ))}
+                    </div>
+
+                    {condicionPago === 'credito' && (
+                        <div>
+                            <label style={lbl}>Días de crédito</label>
+                            <input type="number" min="1" value={diasCredito} onChange={e => setDiasCredito(Number(e.target.value))} style={inStyle} />
+                        </div>
+                    )}
+
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#374151', cursor: 'pointer', padding: '10px 12px', backgroundColor: '#f9fafb', borderRadius: '8px' }}>
+                        <input type="checkbox" checked={activo} onChange={e => setActivo(e.target.checked)}
+                            style={{ width: '16px', height: '16px', accentColor: '#16a34a', cursor: 'pointer' }} />
+                        Proveedor activo
+                    </label>
+
+                    {error && (
+                        <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 14px', fontSize: '13px', color: '#dc2626' }}>
+                            {error}
+                        </div>
+                    )}
+
+                    <div style={{ display: 'flex', gap: '10px' }}>
+                        <button onClick={guardar} disabled={guardando}
+                            style={{ flex: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px 20px', fontSize: '14px', fontWeight: 600, cursor: guardando ? 'default' : 'pointer', opacity: guardando ? 0.7 : 1 }}>
+                            <Check size={16} /> {guardando ? 'Guardando...' : 'Crear y seleccionar'}
+                        </button>
+                        <button onClick={onCerrar}
+                            style={{ flex: 1, backgroundColor: '#f3f4f6', color: '#374151', border: 'none', borderRadius: '8px', padding: '10px 20px', fontSize: '14px', cursor: 'pointer' }}>
+                            Cancelar
+                        </button>
+                    </div>
                 </div>
             </div>
         </>
