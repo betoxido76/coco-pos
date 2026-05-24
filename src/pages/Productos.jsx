@@ -41,6 +41,8 @@ export default function Productos() {
     const [vehiculosData, setVehiculosData] = useState([])
     const [sortCol, setSortCol] = useState('nombre')
     const [sortDir, setSortDir] = useState('asc')
+    const [pagina, setPagina] = useState(0)
+    const [pageSize, setPageSize] = useState(50)
 
     const marcasDisp = [...new Set(vehiculosData.map(v => v.marca))].sort()
     const modelosDisp = vehiculosData
@@ -48,6 +50,8 @@ export default function Productos() {
         .map(v => v.modelo)
         .filter((m, i, a) => a.indexOf(m) === i)
         .sort()
+
+    useEffect(() => { setPagina(0) }, [busqueda, filtrocat, pageSize])
 
     useEffect(() => {
         cargar()
@@ -557,6 +561,8 @@ export default function Productos() {
             : String(av).localeCompare(String(bv), 'es', { sensitivity: 'base' })
         return sortDir === 'asc' ? cmp : -cmp
     })
+    const totalPaginas = Math.ceil(filtrados.length / pageSize)
+    const paginados = ordenados.slice(pagina * pageSize, (pagina + 1) * pageSize)
 
     // ── LISTA ────────────────────────────────────────────────────
     return (
@@ -639,7 +645,7 @@ export default function Productos() {
                             </tr>
                         </thead>
                         <tbody>
-                            {ordenados.map(p => (
+                            {paginados.map(p => (
                                 <tr key={p.id} style={{ borderBottom: '1px solid #f3f4f6' }}
                                     onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
                                     onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
@@ -689,6 +695,26 @@ export default function Productos() {
                     </table>
                 )}
             </div>
+
+            {filtrados.length > 0 && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', marginTop: '12px', fontSize: '13px', color: '#6b7280' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span>Filas por página:</span>
+                        <select value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setPagina(0) }}
+                            style={{ border: '1px solid #d1d5db', borderRadius: '6px', padding: '4px 8px', fontSize: '13px', color: '#374151', backgroundColor: '#fff', cursor: 'pointer' }}>
+                            {[25, 50, 100].map(n => <option key={n} value={n}>{n}</option>)}
+                        </select>
+                    </div>
+                    <span>{pagina * pageSize + 1}–{Math.min((pagina + 1) * pageSize, filtrados.length)} de {filtrados.length}</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <button onClick={() => setPagina(p => Math.max(0, p - 1))} disabled={pagina === 0}
+                            style={{ padding: '4px 12px', borderRadius: '6px', border: '1px solid #d1d5db', backgroundColor: '#fff', cursor: pagina === 0 ? 'default' : 'pointer', opacity: pagina === 0 ? 0.4 : 1, fontSize: '13px' }}>←</button>
+                        <span style={{ padding: '0 12px' }}>Pág. {pagina + 1} / {totalPaginas}</span>
+                        <button onClick={() => setPagina(p => p + 1)} disabled={pagina + 1 >= totalPaginas}
+                            style={{ padding: '4px 12px', borderRadius: '6px', border: '1px solid #d1d5db', backgroundColor: '#fff', cursor: pagina + 1 >= totalPaginas ? 'default' : 'pointer', opacity: pagina + 1 >= totalPaginas ? 0.4 : 1, fontSize: '13px' }}>→</button>
+                    </div>
+                </div>
+            )}
         </div>
     )
 }
