@@ -320,7 +320,7 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
 
     useEffect(() => {
         supabase.from('pedido_items')
-            .select('*, productos_terminados(nombre, sku, stock_actual, aplica_iva)')
+            .select('*, productos_terminados(nombre, sku, stock_actual, aplica_iva, tipo_producto)')
             .eq('pedido_id', pedido.id)
             .then(({ data }) => {
                 if (data) {
@@ -445,7 +445,7 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
 
         for (const item of items) {
             const prod = item.productos_terminados
-            if (prod) {
+            if (prod && prod.tipo_producto !== 'servicio') {
                 // item.cantidad fue remapeado a cantidad_alistada al cargar los items
                 const cantPrimaria = Number(item.cantidad)
                 const nuevoStock = prod.stock_actual - cantPrimaria
@@ -793,12 +793,12 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
     useEffect(() => {
         if (!perfil?.empresa_id) return
         if (!listaId) {
-            supabase.from('productos_terminados').select('id, nombre, sku, precio_venta, stock_actual, unidad_medida, aplica_iva, unidad_venta_2, factor_conversion_2').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
+            supabase.from('productos_terminados').select('id, nombre, sku, precio_venta, stock_actual, unidad_medida, aplica_iva, tipo_producto, unidad_venta_2, factor_conversion_2').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
                 .then(({ data }) => setProductos(data || []))
             return
         }
         supabase.from('producto_precios')
-            .select('precio, productos_terminados(id, nombre, sku, stock_actual, unidad_medida, aplica_iva, unidad_venta_2, factor_conversion_2)')
+            .select('precio, productos_terminados(id, nombre, sku, stock_actual, unidad_medida, aplica_iva, tipo_producto, unidad_venta_2, factor_conversion_2)')
             .eq('lista_id', listaId).eq('empresa_id', perfil.empresa_id)
             .then(({ data }) => {
                 if (data) setProductos(data.filter(p => p.productos_terminados).map(p => ({ ...p.productos_terminados, precio_venta: p.precio })))
@@ -902,7 +902,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
 
         if (tieneAutoparteFilter || tieneVehiculoFilter) {
             let apQ = supabase.from('productos_autopartes')
-                .select('nro_parte, marca, tipo, producto_id, productos_terminados!inner(id, nombre, sku, precio_venta, stock_actual, categoria_1, aplica_iva, unidad_venta_2, factor_conversion_2)')
+                .select('nro_parte, marca, tipo, producto_id, productos_terminados!inner(id, nombre, sku, precio_venta, stock_actual, categoria_1, aplica_iva, tipo_producto, unidad_venta_2, factor_conversion_2)')
                 .eq('empresa_id', perfil.empresa_id)
                 .eq('productos_terminados.activo', true)
             if (tieneNroParte) apQ = apQ.ilike('nro_parte', `%${tieneNroParte}%`)
@@ -921,7 +921,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
             })))
         } else {
             let ptQ = supabase.from('productos_terminados')
-                .select('id, nombre, sku, precio_venta, stock_actual, categoria_1, aplica_iva, unidad_venta_2, factor_conversion_2')
+                .select('id, nombre, sku, precio_venta, stock_actual, categoria_1, aplica_iva, tipo_producto, unidad_venta_2, factor_conversion_2')
                 .eq('empresa_id', perfil.empresa_id).eq('activo', true)
             if (filtroCat) ptQ = ptQ.eq('categoria_1', filtroCat)
             if (busqueda.trim()) ptQ = ptQ.or(`nombre.ilike.%${busqueda.trim()}%,sku.ilike.%${busqueda.trim()}%,descripcion.ilike.%${busqueda.trim()}%`)
@@ -960,6 +960,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                 producto_id: producto.id, nombre: producto.nombre, sku: producto.sku,
                 cantidad: 1, precio_unitario: precioLista, precio_original: precioLista,
                 stock: producto.stock_actual, aplica_iva: producto.aplica_iva, descuento_item: '',
+                tipo_producto: producto.tipo_producto,
                 unidad_medida: producto.unidad_medida || 'unidad',
                 unidad_venta_2: producto.unidad_venta_2 || null,
                 factor_conversion_2: producto.factor_conversion_2 || 1,
@@ -1111,6 +1112,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
 
             // Descuento inmediato de inventario
             for (const item of items) {
+                if (item.tipo_producto === 'servicio') continue
                 const prod = productos.find(p => p.id === item.producto_id)
                 const cantPrimaria = item.unidadVenta === '2' ? item.cantidad * (item.factor_conversion_2 || 1) : item.cantidad
                 const nuevoStock = prod.stock_actual - cantPrimaria

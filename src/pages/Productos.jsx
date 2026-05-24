@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabaseClient'
 import { Plus, Search, Pencil, X, Check, AlertTriangle, Trash2 } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 
-const TIPOS = ['producido', 'comprado']
+const TIPOS = ['producido', 'comprado', 'servicio']
 const UNIDADES = ['unidad', 'kg', 'g', 'litro', 'ml', 'caja', 'bolsa']
 
 const VACIO = {

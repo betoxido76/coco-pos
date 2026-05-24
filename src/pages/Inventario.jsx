@@ -86,7 +86,7 @@ function VistaStock() {
         const sinIVA = (val) => Number(val || 0) / 1.16
 
         if (tipoFiltro === 'todos' || tipoFiltro === 'pt') {
-            const { data } = await supabase.from('productos_terminados').select('*').eq('activo', true).eq('empresa_id', perfil.empresa_id).limit(5000)
+            const { data } = await supabase.from('productos_terminados').select('*').eq('activo', true).eq('empresa_id', perfil.empresa_id).neq('tipo_producto', 'servicio').limit(5000)
             if (data) datos = [...datos, ...data.map(p => ({ ...p, tipo: 'Producto Terminado', codigo: p.sku, precio: p.aplica_iva ? sinIVA(p.costo_promedio) : Number(p.costo_promedio || 0), vencimiento: null }))]
         }
         if (tipoFiltro === 'todos' || tipoFiltro === 'mp') {
