@@ -135,7 +135,7 @@ export default function Despacho() {
                 ) : tabActiva === 'porregistrar' ? (
                     <TablaPorRegistrar pedidos={pedidos} onVer={p => setPedidoVer(p)} />
                 ) : (
-                    <TablaDespacho pedidos={pedidos} onDespachado={() => { cargar(); cargarConteos() }} empresaId={perfil.empresa_id} />
+                    <TablaDespacho pedidos={pedidos} onVer={p => setPedidoVer(p)} onDespachado={() => { cargar(); cargarConteos() }} empresaId={perfil.empresa_id} />
                 )}
             </div>
         </div>
@@ -241,7 +241,7 @@ function TablaPorRegistrar({ pedidos, onVer }) {
 }
 
 // ── Tabla Despacho ─────────────────────────────────────────────
-function TablaDespacho({ pedidos, onDespachado, empresaId }) {
+function TablaDespacho({ pedidos, onVer, onDespachado, empresaId }) {
     const [procesando, setProcesando] = useState(null)
     const [confirmando, setConfirmando] = useState(null)
     const [error, setError] = useState('')
@@ -267,7 +267,7 @@ function TablaDespacho({ pedidos, onDespachado, empresaId }) {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                     <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                        {['Pedido', 'Cliente', 'Vendedor', 'F. Prometida', 'F. Programada', ''].map((h, i) => (
+                        {['Pedido', 'Cliente', 'Vendedor', 'F. Prometida', 'F. Programada', '', ''].map((h, i) => (
                             <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left' }}>{h}</th>
                         ))}
                     </tr>
@@ -288,6 +288,12 @@ function TablaDespacho({ pedidos, onDespachado, empresaId }) {
                             </td>
                             <td style={{ padding: '12px 16px', fontSize: '13px', whiteSpace: 'nowrap', color: p.fecha_despacho ? '#1f2937' : '#d1d5db', fontWeight: p.fecha_despacho ? 500 : 400 }}>
                                 {p.fecha_despacho ? new Date(p.fecha_despacho + 'T00:00:00').toLocaleDateString('es-VE') : '—'}
+                            </td>
+                            <td style={{ padding: '12px 16px' }}>
+                                <button onClick={() => onVer(p)}
+                                    style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
+                                    <FileText size={13} /> Ver
+                                </button>
                             </td>
                             <td style={{ padding: '12px 16px' }}>
                                 <button onClick={() => setConfirmando(p)}
