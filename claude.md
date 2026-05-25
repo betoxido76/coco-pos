@@ -165,10 +165,14 @@ Después de cada ajuste, transferencia o recepción se llama `sincronizarStockAc
 ### Ventas y cobros
 ```
 ventas                -- Facturas
+                      --   oc_cliente text (opcional, O/C del cliente)
+                      --   direccion_entrega_id uuid, direccion_entrega_texto text
 venta_items           -- Detalle de facturas
 pedidos               -- Pedidos de venta (Realtime habilitado: supabase_realtime publication)
                       --   estado CHECK IN ('pendiente','aprobado','alistado','rechazado','facturado','despachado')
                       --   origen text ('oficina' | 'campo')
+                      --   oc_cliente text (opcional, O/C del cliente)
+                      --   direccion_entrega_id uuid, direccion_entrega_texto text
 pedido_items          -- Detalle de pedidos
                       --   cantidad_alistada numeric (NULL = no alistado aún, 0 = cancelado, >0 = alistado)
 cobros                -- Cobros parciales/totales en multimoneda
@@ -435,6 +439,26 @@ ON CONFLICT DO NOTHING;
 | Auditoría inventario — CambiosManoMano.jsx | **Bug**: `ModalSalida` con `accion='reprocesar'` podía confirmar sin `almacenDestino`. `stock_actual` aumentaba pero `stock_ubicacion` no se tocaba → invariante rota. Corregido con estado `error` en `ModalSalida` y validación en `confirmar()` |
 | Auditoría inventario — Mermas.jsx | **Bug crítico**: función `anular` revertía `stock_actual` pero NO `stock_ubicacion`. Corregido: agregar reverso de `stock_ubicacion` cuando `merma.almacen_id` está presente (solo mermas de inventario); usa `tipoItemMap` (`empaque→material_empaque`); crea registro si no existe. También agregados `stock_anterior` y `almacen_id` que faltaban en el insert de `movimientos_inventario` |
 | Auditoría inventario — Compras.jsx | **Bug crítico**: `cargarItemsDeOC` asignaba `tipo: i.tipo_insumo` (forma singular: `'materia_prima'`, `'empaque'`…) pero `confirmarRecepcion` compara contra nombres de tabla en plural. Todas las condiciones fallaban → 100% de los items OC actualizaban stock en `productos_terminados` en lugar de su tabla correcta. Corregido con `tipoToPlural` map en `cargarItemsDeOC`. **Bug menor**: insert de `compra_items` no tenía caso `'productos_terminados'→'producto_terminado'`, caía a `'materia_prima'`. Corregido |
+
+### Completados (sesión 2026-05-24)
+
+| Item | Notas |
+|---|---|
+| Despacho.jsx — tab "Por Registrar" | Nuevo tab entre Alistamiento y Despacho. Muestra pedidos `estado='alistado'` (listos para facturar). Incluye contador de documentos al lado del nombre del tab. **Solo lectura**: botón "Ver" abre `VerPedido` (nuevo sub-componente sin botones de acción); NO tiene "Convertir en Factura". Orientado al equipo logístico para saber qué está pendiente de ser facturado |
+| Despacho.jsx — botón "Ver" en tab Despacho | El tab "Despacho" (estado=facturado) también tiene botón "Ver" que abre `VerPedido` para inspección sin acción |
+| Dirección de entrega en vistas de detalle | Todos los módulos que muestran pedidos/facturas al hacer clic en "Ver" ahora muestran la dirección de entrega. Lógica: `pedido.direccion_entrega_texto || cliente.direccion_fiscal || '—'`. Aplica a: **Ventas** (`Factura` y `FacturarPedido`), **Pedidos** (`DetallePedido`), **Despacho** (`VerPedido`). `cargarVentas` y `cargarPedidosAprobados` actualizados para incluir `direccion_fiscal` en el join de clientes |
+| Fix `convertirEnFactura` — `fecha_vencimiento_pago` | En Pedidos.jsx, `convertirEnFactura` nunca calculaba ni guardaba la fecha de vencimiento. Corregido: consulta `clientes.condicion_pago` y `dias_credito`; si es crédito calcula `fecha_vencimiento_pago = hoy + dias_credito`; si es contado setea `estado_cobro='pagado'`. Mismo patrón que `FacturarPedido` en Ventas.jsx |
+| Fix pedido→factura — `direccion_entrega_texto` | Ambas rutas de conversión (`FacturarPedido` en Ventas y `convertirEnFactura` en Pedidos) no copiaban `direccion_entrega_id` ni `direccion_entrega_texto` del pedido a la venta. Corregido en ambos flujos |
+| Campo O/C del Cliente | Nuevo campo opcional `oc_cliente text` en pedidos y ventas. Agregado en: **NuevoPedido.jsx** (paso 3, card entre fecha entrega y notas), **NuevaVenta** manufactura y retail, **FacturarPedido** y **convertirEnFactura** (se copia del pedido). Mostrado en columnas de tablas en Ventas, Pedidos, Despacho (todos los tabs). En vistas de detalle aparece solo si tiene valor. **Requiere SQL**: `ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS oc_cliente text;` y `ALTER TABLE ventas ADD COLUMN IF NOT EXISTS oc_cliente text;` |
+| CuentasPagar — cálculo bidireccional USD↔Bs | `ModalPago`: al cambiar USD se recalcula Bs automáticamente (`complemento = (saldo - usd) * tasa`); al cambiar Bs se recalcula USD (`complemento = saldo - bs / tasa`). `useEffect([tipoTasa])` recalcula Bs al cambiar tasa. Mismo comportamiento que CuentasCobrar |
+| CuentasPagar — selector de tasa con pills | Reemplaza `<select>` por 3 botones pill (USD·BCV, EUR·BCV, USD·Binance) con valor de tasa debajo. La opción activa se resalta en verde. Idéntico visualmente al selector de CuentasCobrar |
+
+### Supabase — cambios aplicados en sesión 2026-05-24
+```sql
+-- Campo O/C del Cliente en pedidos y ventas
+ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS oc_cliente text;
+ALTER TABLE ventas ADD COLUMN IF NOT EXISTS oc_cliente text;
+```
 
 ### Backlog estratégico (capacidades de plataforma SaaS)
 
