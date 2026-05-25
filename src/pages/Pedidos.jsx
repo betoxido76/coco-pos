@@ -400,6 +400,21 @@ function DetallePedido({ pedido, onVolver }) {
         const numero = numeroConsecutivo || 'NE-000001'
         const { data: { user } } = await supabase.auth.getUser()
 
+        const { data: clienteData } = await supabase
+            .from('clientes')
+            .select('condicion_pago, dias_credito')
+            .eq('id', pedido.cliente_id)
+            .single()
+
+        const condicion = clienteData?.condicion_pago || 'credito'
+        const diasCredito = Number(clienteData?.dias_credito) || 0
+        let fechaVencimiento = null
+        if (condicion === 'credito' && diasCredito > 0) {
+            const d = new Date()
+            d.setDate(d.getDate() + diasCredito)
+            fechaVencimiento = d.toISOString().split('T')[0]
+        }
+
         const { data: venta, error: errVenta } = await supabase
             .from('ventas')
             .insert({
@@ -408,8 +423,9 @@ function DetallePedido({ pedido, onVolver }) {
                 numero_factura: numero,
                 subtotal: subtotalFinal,
                 total,
-                estado_cobro: 'pendiente',
+                estado_cobro: condicion === 'contado' ? 'pagado' : 'pendiente',
                 empresa_id: perfil.empresa_id,
+                fecha_vencimiento_pago: fechaVencimiento,
                 direccion_entrega_id: pedido.direccion_entrega_id || null,
                 direccion_entrega_texto: pedido.direccion_entrega_texto || null,
             })
