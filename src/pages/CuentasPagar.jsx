@@ -286,7 +286,27 @@ function ModalPago({ compra, saldo, tasas, onCerrar, onPagado }) {
     }, [perfil?.empresa_id])
 
     const tasa = Number(tasas[tipoTasa] || 1)
-    const totalEnBs = Number(montoUsd || 0) * tasa
+
+    // Recalcular Bs cuando cambia la tasa (mantiene USD como base)
+    useEffect(() => {
+        const usd = Number(montoUsd) || 0
+        const complemento = (saldo - usd) * tasa
+        setMontoBs(complemento > 0 ? complemento.toFixed(2) : '0')
+    }, [tipoTasa])
+
+    function handleUsdChange(val) {
+        setMontoUsd(val)
+        const usd = Number(val) || 0
+        const complemento = (saldo - usd) * tasa
+        setMontoBs(complemento > 0 ? complemento.toFixed(2) : '0')
+    }
+
+    function handleBsChange(val) {
+        setMontoBs(val)
+        const bs = Number(val) || 0
+        const complemento = saldo - bs / tasa
+        setMontoUsd(complemento > 0 ? complemento.toFixed(2) : '0')
+    }
 
     async function confirmar() {
         if (!montoUsd || Number(montoUsd) <= 0) { setError('Ingresa un monto válido'); return }
@@ -345,7 +365,7 @@ function ModalPago({ compra, saldo, tasas, onCerrar, onPagado }) {
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                         <div>
                             <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Monto USD</label>
-                            <input type="number" value={montoUsd} onChange={e => setMontoUsd(e.target.value)} step="0.01"
+                            <input type="number" value={montoUsd} onChange={e => handleUsdChange(e.target.value)} step="0.01"
                                 style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', boxSizing: 'border-box' }} />
                         </div>
                         <div>
@@ -367,7 +387,7 @@ function ModalPago({ compra, saldo, tasas, onCerrar, onPagado }) {
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                         <div>
                             <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Monto Bs. (opcional)</label>
-                            <input type="number" value={montoBs} onChange={e => setMontoBs(e.target.value)} placeholder="0.00"
+                            <input type="number" value={montoBs} onChange={e => handleBsChange(e.target.value)} placeholder="0.00"
                                 style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', boxSizing: 'border-box' }} />
                         </div>
                         <div>
