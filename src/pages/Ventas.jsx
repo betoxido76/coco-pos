@@ -46,7 +46,7 @@ export default function Ventas() {
         setLoading(true)
         const { data } = await supabase
             .from('ventas')
-            .select(`*, clientes(nombre), devoluciones(id)`)
+            .select(`*, clientes(nombre, direccion_fiscal), devoluciones(id)`)
             .eq('empresa_id', perfil.empresa_id)
             .limit(5000)
         if (data) setVentas(data)
@@ -410,6 +410,8 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
                 empresa_id: perfil.empresa_id,
                 nro_referencia: nroReferencia.trim() || null,
                 fecha_vencimiento_pago: fechaVencimiento,
+                direccion_entrega_id: pedido.direccion_entrega_id || null,
+                direccion_entrega_texto: pedido.direccion_entrega_texto || null,
             })
             .select().single()
 
@@ -2737,9 +2739,17 @@ function Factura({ venta, onVolver, onDevolucionCreada }) {
                     </div>
                 </div>
 
-                <div style={{ backgroundColor: '#f9fafb', borderRadius: '8px', padding: '12px 16px', marginBottom: '24px' }}>
-                    <div style={{ fontSize: '11px', color: '#9ca3af', marginBottom: '2px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Cliente</div>
-                    <div style={{ fontSize: '15px', fontWeight: 600, color: '#1f2937' }}>{venta.clientes?.nombre || '—'}</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '24px' }}>
+                    <div style={{ backgroundColor: '#f9fafb', borderRadius: '8px', padding: '12px 16px' }}>
+                        <div style={{ fontSize: '11px', color: '#9ca3af', marginBottom: '2px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Cliente</div>
+                        <div style={{ fontSize: '15px', fontWeight: 600, color: '#1f2937' }}>{venta.clientes?.nombre || '—'}</div>
+                    </div>
+                    <div style={{ backgroundColor: '#f9fafb', borderRadius: '8px', padding: '12px 16px' }}>
+                        <div style={{ fontSize: '11px', color: '#9ca3af', marginBottom: '2px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Dirección de entrega</div>
+                        <div style={{ fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>
+                            {venta.direccion_entrega_texto || venta.clientes?.direccion_fiscal || '—'}
+                        </div>
+                    </div>
                 </div>
 
                 {loadingItems ? (

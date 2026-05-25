@@ -410,6 +410,8 @@ function DetallePedido({ pedido, onVolver }) {
                 total,
                 estado_cobro: 'pendiente',
                 empresa_id: perfil.empresa_id,
+                direccion_entrega_id: pedido.direccion_entrega_id || null,
+                direccion_entrega_texto: pedido.direccion_entrega_texto || null,
             })
             .select()
             .single()
