@@ -267,6 +267,11 @@ export default function CuentasPagar() {
 // ─── Modal de Pago ─────────────────────────────────────────────
 function ModalPago({ compra, saldo, tasas, onCerrar, onPagado }) {
     const { perfil } = useAuth()
+    const OPCIONES_TASA = [
+        { key: 'tasa_bcv', label: 'USD · BCV' },
+        { key: 'tasa_euro', label: 'EUR · BCV' },
+        { key: 'tasa_binance', label: 'USD · Binance' },
+    ]
     const [tipoTasa, setTipoTasa] = useState('tasa_bcv')
     const [montoUsd, setMontoUsd] = useState(saldo.toFixed(2))
     const [montoBs, setMontoBs] = useState('')
@@ -354,12 +359,15 @@ function ModalPago({ compra, saldo, tasas, onCerrar, onPagado }) {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
                     <div>
                         <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Tasa de cambio</label>
-                        <select value={tipoTasa} onChange={e => setTipoTasa(e.target.value)}
-                            style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', backgroundColor: '#fff' }}>
-                            <option value="tasa_bcv">BCV — {Number(tasas.tasa_bcv || 0).toFixed(2)} Bs/$</option>
-                            <option value="tasa_euro">Euro — {Number(tasas.tasa_euro || 0).toFixed(2)} Bs/€</option>
-                            <option value="tasa_binance">Binance — {Number(tasas.tasa_binance || 0).toFixed(2)} Bs/$</option>
-                        </select>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                            {OPCIONES_TASA.map(op => (
+                                <button key={op.key} onClick={() => setTipoTasa(op.key)}
+                                    style={{ flex: 1, padding: '8px 4px', borderRadius: '8px', fontSize: '12px', fontWeight: 500, border: '1px solid', cursor: 'pointer', borderColor: tipoTasa === op.key ? '#16a34a' : '#e5e7eb', backgroundColor: tipoTasa === op.key ? '#f0fdf4' : '#fff', color: tipoTasa === op.key ? '#16a34a' : '#6b7280' }}>
+                                    <div>{op.label}</div>
+                                    <div style={{ fontSize: '11px', marginTop: '2px', fontWeight: 400 }}>{Number(tasas[op.key] || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.</div>
+                                </button>
+                            ))}
+                        </div>
                     </div>
 
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
