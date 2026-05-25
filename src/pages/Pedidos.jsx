@@ -93,7 +93,7 @@ export default function Pedidos() {
             .from('pedidos')
             .select(`
                 *,
-                clientes(nombre, rif, descripcion),
+                clientes(nombre, rif, descripcion, direccion_fiscal),
                 usuarios(nombre)
             `)
             .eq('empresa_id', perfil.empresa_id)
@@ -498,6 +498,14 @@ function DetallePedido({ pedido, onVolver }) {
                         <p style={{ fontSize: '14px', fontWeight: 500, color: '#1f2937', margin: 0 }}>{f.valor}</p>
                     </div>
                 ))}
+            </div>
+
+            {/* Dirección de entrega */}
+            <div style={{ backgroundColor: '#f9fafb', borderRadius: '10px', border: '1px solid #e5e7eb', padding: '12px 16px', marginBottom: '20px' }}>
+                <p style={{ fontSize: '11px', color: '#9ca3af', margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Dirección de entrega</p>
+                <p style={{ fontSize: '14px', fontWeight: 500, color: '#1f2937', margin: 0 }}>
+                    {pedido.direccion_entrega_texto || pedido.clientes?.direccion_fiscal || '—'}
+                </p>
             </div>
 
             {/* Notas */}
