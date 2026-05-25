@@ -738,6 +738,8 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
     const [busquedaCliente, setBusquedaCliente] = useState('')
     const [direcciones, setDirecciones] = useState([])
     const [direccionId, setDireccionId] = useState('')
+    const [busquedaDireccion, setBusquedaDireccion] = useState('')
+    const [showDirDropdown, setShowDirDropdown] = useState(false)
     const [busqueda, setBusqueda] = useState('')
     const [items, setItems] = useState([])
     const [guardando, setGuardando] = useState(false)
@@ -1227,6 +1229,13 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                 (c.descripcion || '').toLowerCase().includes(q)
         }).slice(0, 20)
         : []
+    const dirFiltradas = !direccionId
+        ? (busquedaDireccion.trim()
+            ? direcciones.filter(d =>
+                d.nombre.toLowerCase().includes(busquedaDireccion.toLowerCase()) ||
+                d.direccion.toLowerCase().includes(busquedaDireccion.toLowerCase()))
+            : direcciones)
+        : []
 
     function elegirCliente(c) {
         setBusquedaCliente('')
@@ -1235,6 +1244,8 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
 
     function limpiarCliente() {
         setBusquedaCliente('')
+        setBusquedaDireccion('')
+        setShowDirDropdown(false)
         seleccionarCliente('')
     }
 
@@ -1324,15 +1335,55 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                         {direcciones.length > 1 && (
                             <div style={{ marginTop: '12px' }}>
                                 <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '8px' }}>Dirección de entrega</label>
-                                <select value={direccionId} onChange={e => setDireccionId(e.target.value)}
-                                    style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', color: '#374151', backgroundColor: '#fff' }}>
-                                    <option value="">— Sin dirección específica —</option>
-                                    {direcciones.map(d => (
-                                        <option key={d.id} value={d.id}>
-                                            {d.nombre}{d.es_principal ? ' ★' : ''} — {d.direccion}
-                                        </option>
-                                    ))}
-                                </select>
+                                <div style={{ position: 'relative' }}>
+                                    {direccionId ? (
+                                        (() => {
+                                            const d = direcciones.find(x => x.id === direccionId)
+                                            return (
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', border: '1px solid #16a34a', borderRadius: '8px', backgroundColor: '#f0fdf4' }}>
+                                                    <div style={{ flex: 1, fontSize: '13px', color: '#1f2937' }}>
+                                                        📍 <span style={{ fontWeight: 500 }}>{d?.nombre}{d?.es_principal ? ' ★' : ''}</span>
+                                                        <span style={{ color: '#6b7280', marginLeft: '6px' }}>— {d?.direccion}</span>
+                                                    </div>
+                                                    <button onClick={() => { setDireccionId(''); setBusquedaDireccion('') }}
+                                                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', fontSize: '18px', lineHeight: 1, padding: '0 2px' }}>×</button>
+                                                </div>
+                                            )
+                                        })()
+                                    ) : (
+                                        <>
+                                            <input
+                                                value={busquedaDireccion}
+                                                onChange={e => setBusquedaDireccion(e.target.value)}
+                                                onFocus={() => setShowDirDropdown(true)}
+                                                onBlur={() => setTimeout(() => setShowDirDropdown(false), 150)}
+                                                placeholder="Buscar dirección de entrega..."
+                                                style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', color: '#374151', boxSizing: 'border-box' }} />
+                                            {showDirDropdown && (
+                                                <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50, backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', marginTop: '4px', maxHeight: '200px', overflowY: 'auto' }}>
+                                                    <div onClick={() => { setDireccionId(''); setShowDirDropdown(false) }}
+                                                        style={{ padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid #f3f4f6', fontSize: '13px', color: '#9ca3af', fontStyle: 'italic' }}
+                                                        onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
+                                                        onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                                                        — Sin dirección específica —
+                                                    </div>
+                                                    {dirFiltradas.map(d => (
+                                                        <div key={d.id} onClick={() => { setDireccionId(d.id); setBusquedaDireccion(''); setShowDirDropdown(false) }}
+                                                            style={{ padding: '9px 12px', cursor: 'pointer', borderBottom: '1px solid #f3f4f6', fontSize: '13px' }}
+                                                            onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f0fdf4'}
+                                                            onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                                                            <span style={{ fontWeight: 500, color: '#1f2937' }}>📍 {d.nombre}{d.es_principal ? ' ★' : ''}</span>
+                                                            <span style={{ color: '#6b7280', marginLeft: '8px', fontSize: '12px' }}>{d.direccion}</span>
+                                                        </div>
+                                                    ))}
+                                                    {dirFiltradas.length === 0 && (
+                                                        <div style={{ padding: '10px 12px', fontSize: '13px', color: '#9ca3af' }}>Sin resultados</div>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </>
+                                    )}
+                                </div>
                             </div>
                         )}
                         {direcciones.length === 1 && (
