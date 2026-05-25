@@ -148,7 +148,7 @@ function TablaAlistamiento({ pedidos, onAlistar }) {
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
                 <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                    {['Pedido', 'Cliente', 'Vendedor', 'Origen', 'Fecha Prometida', ''].map((h, i) => (
+                    {['Pedido', 'O/C Cliente', 'Cliente', 'Vendedor', 'Origen', 'Fecha Prometida', ''].map((h, i) => (
                         <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left' }}>{h}</th>
                     ))}
                 </tr>
@@ -159,6 +159,7 @@ function TablaAlistamiento({ pedidos, onAlistar }) {
                         onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
                         onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
                         <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', fontWeight: 600, color: '#374151' }}>{p.numero_pedido || '—'}</td>
+                        <td style={{ padding: '12px 16px', fontSize: '12px', fontFamily: 'monospace', color: p.oc_cliente ? '#374151' : '#d1d5db' }}>{p.oc_cliente || '—'}</td>
                         <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>
                             {p.clientes?.nombre || '—'}
                             {p.clientes?.rif && <div style={{ fontSize: '11px', color: '#9ca3af', fontFamily: 'monospace' }}>{p.clientes.rif}</div>}
@@ -195,7 +196,7 @@ function TablaPorRegistrar({ pedidos, onVer }) {
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
                 <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                    {['Pedido', 'Cliente', 'Vendedor', 'Fecha pedido', 'F. Prometida', 'F. Programada', 'Total', 'Estado', ''].map((h, i) => (
+                    {['Pedido', 'O/C Cliente', 'Cliente', 'Vendedor', 'Fecha pedido', 'F. Prometida', 'F. Programada', 'Total', 'Estado', ''].map((h, i) => (
                         <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
                     ))}
                 </tr>
@@ -208,6 +209,7 @@ function TablaPorRegistrar({ pedidos, onVer }) {
                         <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', color: '#374151', fontWeight: 600 }}>
                             {p.numero_pedido || '—'}
                         </td>
+                        <td style={{ padding: '12px 16px', fontSize: '12px', fontFamily: 'monospace', color: p.oc_cliente ? '#374151' : '#d1d5db' }}>{p.oc_cliente || '—'}</td>
                         <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>
                             {p.clientes?.nombre || '—'}
                             {p.clientes?.descripcion && <span style={{ fontWeight: 400, color: '#9ca3af', marginLeft: '6px', fontSize: '12px' }}>— {p.clientes.descripcion}</span>}
@@ -267,7 +269,7 @@ function TablaDespacho({ pedidos, onVer, onDespachado, empresaId }) {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                     <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                        {['Pedido', 'Cliente', 'Vendedor', 'F. Prometida', 'F. Programada', '', ''].map((h, i) => (
+                        {['Pedido', 'O/C Cliente', 'Cliente', 'Vendedor', 'F. Prometida', 'F. Programada', '', ''].map((h, i) => (
                             <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left' }}>{h}</th>
                         ))}
                     </tr>
@@ -278,6 +280,7 @@ function TablaDespacho({ pedidos, onVer, onDespachado, empresaId }) {
                             onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
                             onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
                             <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', fontWeight: 600, color: '#374151' }}>{p.numero_pedido || '—'}</td>
+                            <td style={{ padding: '12px 16px', fontSize: '12px', fontFamily: 'monospace', color: p.oc_cliente ? '#374151' : '#d1d5db' }}>{p.oc_cliente || '—'}</td>
                             <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>
                                 {p.clientes?.nombre || '—'}
                                 {p.clientes?.rif && <div style={{ fontSize: '11px', color: '#9ca3af', fontFamily: 'monospace' }}>{p.clientes.rif}</div>}
@@ -432,6 +435,7 @@ function VerPedido({ pedido, onVolver }) {
                     { label: 'Vendedor', valor: pedido.usuarios?.nombre || '—' },
                     { label: 'Fecha pedido', valor: new Date(pedido.fecha_pedido).toLocaleDateString('es-VE') },
                     { label: 'Entrega prometida', valor: pedido.fecha_entrega ? new Date(pedido.fecha_entrega + 'T00:00:00').toLocaleDateString('es-VE') : '—' },
+                    ...(pedido.oc_cliente ? [{ label: 'O/C del Cliente', valor: pedido.oc_cliente }] : []),
                 ].map(f => (
                     <div key={f.label} style={{ backgroundColor: '#f9fafb', borderRadius: '10px', border: '1px solid #e5e7eb', padding: '12px 16px' }}>
                         <p style={{ fontSize: '11px', color: '#9ca3af', margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{f.label}</p>

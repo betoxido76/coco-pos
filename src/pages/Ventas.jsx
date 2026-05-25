@@ -176,6 +176,7 @@ export default function Ventas() {
                                     {[
                                         { label: 'Nota de Entrega', col: 'numero_factura' },
                                         { label: 'Referencia', col: 'nro_referencia' },
+                                        { label: 'O/C Cliente', col: null },
                                         { label: 'Cliente', col: 'cliente' },
                                         { label: 'Fecha', col: 'fecha' },
                                         { label: 'Total', col: 'total', right: true },
@@ -206,6 +207,9 @@ export default function Ventas() {
                                         </td>
                                         <td style={{ padding: '12px 16px', fontSize: '12px', fontFamily: 'monospace', color: v.nro_referencia ? '#374151' : '#d1d5db' }}>
                                             {v.nro_referencia || '—'}
+                                        </td>
+                                        <td style={{ padding: '12px 16px', fontSize: '12px', fontFamily: 'monospace', color: v.oc_cliente ? '#374151' : '#d1d5db' }}>
+                                            {v.oc_cliente || '—'}
                                         </td>
                                         <td style={{ padding: '12px 16px', fontSize: '13px', color: '#374151' }}>{v.clientes?.nombre || '—'}</td>
                                         <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{new Date(v.fecha_venta || v.created_at).toLocaleDateString('es-VE')}</td>
@@ -262,7 +266,7 @@ export default function Ventas() {
                         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                             <thead>
                                 <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                    {['Pedido', 'Cliente', 'Vendedor', 'Entrega', ''].map((h, i) => (
+                                    {['Pedido', 'O/C Cliente', 'Cliente', 'Vendedor', 'Entrega', ''].map((h, i) => (
                                         <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left' }}>{h}</th>
                                     ))}
                                 </tr>
@@ -273,6 +277,7 @@ export default function Ventas() {
                                         onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
                                         onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
                                         <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', fontWeight: 600, color: '#374151' }}>{p.numero_pedido || '—'}</td>
+                                        <td style={{ padding: '12px 16px', fontSize: '12px', fontFamily: 'monospace', color: p.oc_cliente ? '#374151' : '#d1d5db' }}>{p.oc_cliente || '—'}</td>
                                         <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>
                                             {p.clientes?.nombre || '—'}
                                             {p.clientes?.rif && <div style={{ fontSize: '11px', color: '#9ca3af', fontFamily: 'monospace' }}>{p.clientes.rif}</div>}
@@ -409,6 +414,7 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
                 estado_cobro: condicion === 'contado' ? 'pagado' : 'pendiente',
                 empresa_id: perfil.empresa_id,
                 nro_referencia: nroReferencia.trim() || null,
+                oc_cliente: pedido.oc_cliente || null,
                 fecha_vencimiento_pago: fechaVencimiento,
                 direccion_entrega_id: pedido.direccion_entrega_id || null,
                 direccion_entrega_texto: pedido.direccion_entrega_texto || null,
@@ -591,6 +597,19 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
                 />
             </div>
 
+            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px', marginBottom: '20px' }}>
+                <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>
+                    O/C del Cliente <span style={{ color: '#9ca3af', fontWeight: 400 }}>(opcional)</span>
+                </label>
+                <input
+                    type="text"
+                    value={ocCliente}
+                    onChange={e => setOcCliente(e.target.value)}
+                    placeholder="Número de orden de compra del cliente..."
+                    style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', color: '#374151', backgroundColor: '#fff', boxSizing: 'border-box' }}
+                />
+            </div>
+
             {/* Condición de pago */}
             <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px', marginBottom: '20px' }}>
                 <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '10px' }}>Condición de pago</label>
@@ -763,6 +782,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
 
     // ── Estados exclusivos flujo MANUFACTURA ──
     const [notas, setNotas] = useState('')
+    const [ocCliente, setOcCliente] = useState('')
 
     const [mostrarNuevoProducto, setMostrarNuevoProducto] = useState(false)
     const [mostrarNuevoCliente, setMostrarNuevoCliente] = useState(false)
@@ -839,9 +859,9 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
     useEffect(() => {
         if (items.length === 0 && !clienteId) return
         localStorage.setItem(DRAFT_KEY, JSON.stringify({
-            clienteId, items, listaId, descuentoGlobal, notas, nroReferencia, diasCredito, ts: Date.now()
+            clienteId, items, listaId, descuentoGlobal, notas, ocCliente, nroReferencia, diasCredito, ts: Date.now()
         }))
-    }, [items, clienteId, descuentoGlobal, notas, nroReferencia])
+    }, [items, clienteId, descuentoGlobal, notas, ocCliente, nroReferencia])
 
     async function seleccionarCliente(id) {
         setClienteId(id)
@@ -1013,6 +1033,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
         setBorradorGuardado(null)
         if (d.descuentoGlobal) setDescuentoGlobal(d.descuentoGlobal)
         if (d.notas) setNotas(d.notas)
+        if (d.ocCliente) setOcCliente(d.ocCliente)
         if (d.nroReferencia) setNroReferencia(d.nroReferencia)
         if (d.clienteId) await seleccionarCliente(d.clienteId)
         if (d.listaId) setListaId(d.listaId)
@@ -1081,6 +1102,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                     estado_cobro: condicion === 'contado' ? 'pagado' : 'pendiente',
                     empresa_id: perfil.empresa_id,
                     nro_referencia: nroReferencia.trim() || null,
+                    oc_cliente: ocCliente.trim() || null,
                     fecha_vencimiento_pago: fechaVencimiento,
                     direccion_entrega_id: direccionId || null,
                     direccion_entrega_texto: direccionId
@@ -1170,6 +1192,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                 fecha_pedido: new Date().toISOString(),
                 numero_pedido: numero,
                 notas: notas.trim() || null,
+                oc_cliente: ocCliente.trim() || null,
                 direccion_entrega_id: direccionId || null,
                 direccion_entrega_texto: direccionId ? direcciones.find(d => d.id === direccionId)?.direccion || null : null,
             }).select().single()
@@ -1726,9 +1749,15 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                         </div>
                     )}
 
-                    {/* ── PANEL MANUFACTURA: solo notas ── */}
+                    {/* ── PANEL MANUFACTURA: O/C cliente + notas ── */}
                     {!esRetail && (
                         <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: '14px', marginBottom: '14px' }}>
+                            <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>
+                                O/C del Cliente <span style={{ color: '#9ca3af', fontWeight: 400 }}>(opcional)</span>
+                            </label>
+                            <input type="text" value={ocCliente} onChange={e => setOcCliente(e.target.value)}
+                                placeholder="Número de orden de compra del cliente..."
+                                style={{ width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '12px', boxSizing: 'border-box', color: '#374151', marginBottom: '10px' }} />
                             <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>
                                 Notas <span style={{ color: '#9ca3af', fontWeight: 400 }}>(opcional)</span>
                             </label>

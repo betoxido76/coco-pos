@@ -1188,6 +1188,7 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
 
     // Paso 3 — Confirmar
     const [fechaEntrega, setFechaEntrega] = useState('')
+    const [ocCliente, setOcCliente] = useState('')
     const [notas, setNotas] = useState('')
     const [guardando, setGuardando] = useState(false)
     const [error, setError] = useState('')
@@ -1408,6 +1409,7 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
                 origen: 'campo',
                 fecha_pedido: new Date().toISOString(),
                 fecha_entrega: fechaEntrega || null,
+                oc_cliente: ocCliente.trim() || null,
                 notas: notas.trim() || null,
                 direccion_entrega_id: direccionId || null,
                 direccion_entrega_texto: direccionId ? direcciones.find(d => d.id === direccionId)?.direccion || null : null,
@@ -1439,6 +1441,7 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
             origen: 'campo',
             fecha_pedido: new Date().toISOString(),
             fecha_entrega: fechaEntrega || null,
+            oc_cliente: ocCliente.trim() || null,
             notas: notas.trim() || null,
             numero_pedido: numero,
             direccion_entrega_id: direccionId || null,
@@ -1840,6 +1843,13 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
                     <label style={s.label}>Fecha de entrega prometida</label>
                     <input type="date" value={fechaEntrega} onChange={e => setFechaEntrega(e.target.value)}
                         style={s.input} min={new Date().toISOString().split('T')[0]} />
+                </div>
+
+                <div style={s.card}>
+                    <label style={s.label}>O/C del Cliente <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>(opcional)</span></label>
+                    <input type="text" value={ocCliente} onChange={e => setOcCliente(e.target.value)}
+                        placeholder="Número de orden de compra del cliente..."
+                        style={s.input} />
                 </div>
 
                 <div style={s.card}>
