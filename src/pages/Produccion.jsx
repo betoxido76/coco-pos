@@ -903,8 +903,9 @@ function DetalleOrden({ orden, onVolver, onActualizada }) {
     const puedeAnular = ['confirmada', 'en_proceso'].includes(orden.estado)
 
     return (
-        <div style={{ padding: '24px', maxWidth: '820px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
+        <div className="print-target" style={{ padding: '24px', maxWidth: '820px' }}>
+            <style>{`@media print { body * { visibility: hidden; } .print-target, .print-target * { visibility: visible; } .print-target { position: fixed; top: 0; left: 0; width: 100% !important; max-width: none !important; margin: 0; padding: 20px !important; border: none !important; box-shadow: none !important; background: white !important; } .no-print { display: none !important; } }`}</style>
+            <div className="no-print" style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
                 <button onClick={onVolver} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', fontSize: '13px' }}>← Volver</button>
                 <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Orden {orden.numero_orden}</h1>
                 <BadgeEstado estado={orden.estado} />
@@ -913,6 +914,7 @@ function DetalleOrden({ orden, onVolver, onActualizada }) {
                         <AlertTriangle size={12} /> Sin número de lote
                     </span>
                 )}
+                <button onClick={() => window.print()} style={{ marginLeft: 'auto', marginRight: '8px', display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '8px 14px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}>🖨️ Imprimir</button>
             </div>
 
             {/* Info cabecera */}
