@@ -243,7 +243,7 @@ export default function Gastos() {
                             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                                 <thead>
                                     <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                        {['', 'N°', 'Fecha', 'Nombre', 'Tipo', 'Vencimiento', 'Monto USD', 'Monto Bs.', 'Método', 'Usuario', ''].map((h, i) => (
+                                        {['', 'Documento', 'Fecha', 'Nombre', 'Tipo', 'Vencimiento', 'Monto USD', 'Monto Bs.', 'Método', 'Usuario', ''].map((h, i) => (
                                             <th key={i} style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
                                         ))}
                                     </tr>
