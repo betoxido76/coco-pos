@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
-import { Plus, X, Check, Pencil, Trash2, AlertTriangle, DollarSign } from 'lucide-react'
+import { Plus, X, Check, Pencil, Trash2, AlertTriangle, DollarSign, FileText } from 'lucide-react'
 
 const fmt = n => `$${Number(n || 0).toFixed(2)}`
 const fmtBs = n => `${Number(n || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`
@@ -45,6 +45,7 @@ export default function Gastos() {
     const [tasas, setTasas] = useState({ tasa_bcv: 1, tasa_euro: 1, tasa_binance: 1 })
     const [tipos, setTipos] = useState([])
     const [gastoPagando, setGastoPagando] = useState(null)
+    const [gastoVer, setGastoVer] = useState(null)
     const [pagina, setPagina] = useState(0)
     const [totalRegistros, setTotalRegistros] = useState(0)
 
@@ -128,6 +129,10 @@ export default function Gastos() {
             onGuardado={() => { cargarGastos(); setVista('lista') }}
             onCancelar={() => setVista('lista')}
         />
+    )
+
+    if (gastoVer) return (
+        <DetalleGasto gasto={gastoVer} tasas={tasas} onVolver={() => setGastoVer(null)} />
     )
 
     return (
@@ -305,12 +310,18 @@ export default function Gastos() {
                                                     {g.usuarios?.nombre || '—'}
                                                 </td>
                                                 <td style={{ padding: '12px 14px' }}>
-                                                    {estado === 'pendiente' && (
-                                                        <button onClick={() => setGastoPagando(g)}
-                                                            style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', padding: '5px 10px', fontSize: '12px', fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                                                            <DollarSign size={12} /> Pagar
+                                                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                                                        {estado === 'pendiente' && (
+                                                            <button onClick={() => setGastoPagando(g)}
+                                                                style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', padding: '5px 10px', fontSize: '12px', fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                                                <DollarSign size={12} /> Pagar
+                                                            </button>
+                                                        )}
+                                                        <button onClick={() => setGastoVer(g)}
+                                                            style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                                            <FileText size={13} /> Ver
                                                         </button>
-                                                    )}
+                                                    </div>
                                                 </td>
                                             </tr>
                                         )
@@ -869,6 +880,110 @@ function TiposGasto({ tipos, onActualizado }) {
             <p style={{ fontSize: '12px', color: '#9ca3af', marginTop: '12px' }}>
                 Los tipos con gastos asociados no pueden eliminarse — solo renombrarse.
             </p>
+        </div>
+    )
+}
+
+// ─── Detalle de Gasto ──────────────────────────────────────────
+function DetalleGasto({ gasto: g, tasas, onVolver }) {
+    const estado = g.estado || 'pagado'
+    const sem = estado === 'pendiente' ? semaforo(g.fecha_vencimiento) : null
+    const tasa = Number(tasas[g.tipo_tasa] || tasas.tasa_bcv || 1)
+    const totalUsd = Number(g.monto_usd || 0) + Number(g.monto_bs || 0) / tasa
+
+    const card = { backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '12px', padding: '20px 24px', marginBottom: '16px' }
+    const label = { fontSize: '11px', fontWeight: 500, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 4px' }
+    const value = { fontSize: '14px', fontWeight: 500, color: '#1f2937', margin: 0 }
+
+    return (
+        <div style={{ padding: '24px', maxWidth: '720px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
+                <button onClick={onVolver} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', fontSize: '13px' }}>← Volver</button>
+                <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>
+                    Detalle de Gasto
+                </h1>
+                <span style={{ marginLeft: 'auto', padding: '4px 12px', borderRadius: '20px', fontSize: '12px', fontWeight: 600,
+                    backgroundColor: estado === 'pagado' ? '#f0fdf4' : (sem?.bg || '#fffbeb'),
+                    color: estado === 'pagado' ? '#16a34a' : (sem?.color || '#d97706') }}>
+                    {estado === 'pagado' ? 'Pagado' : 'Pendiente'}
+                </span>
+            </div>
+
+            {/* Encabezado */}
+            <div style={card}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px' }}>
+                    <div>
+                        <p style={label}>Documento</p>
+                        <p style={{ ...value, fontFamily: 'monospace', fontSize: '15px' }}>{g.numero_gasto || '—'}</p>
+                    </div>
+                    <div>
+                        <p style={label}>Fecha</p>
+                        <p style={value}>{new Date(g.fecha + 'T00:00:00').toLocaleDateString('es-VE', { day: '2-digit', month: 'long', year: 'numeric' })}</p>
+                    </div>
+                    <div>
+                        <p style={label}>Tipo de gasto</p>
+                        <p style={value}>{g.tipos_gastos?.nombre || g.categoria || '—'}</p>
+                    </div>
+                </div>
+            </div>
+
+            {/* Descripción */}
+            <div style={card}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                    <div>
+                        <p style={label}>Nombre</p>
+                        <p style={value}>{g.nombre}</p>
+                        {g.descripcion && <p style={{ fontSize: '13px', color: '#6b7280', margin: '6px 0 0' }}>{g.descripcion}</p>}
+                    </div>
+                    <div>
+                        <p style={label}>Proveedor</p>
+                        <p style={value}>{g.proveedores?.nombre || '—'}</p>
+                    </div>
+                </div>
+            </div>
+
+            {/* Montos */}
+            <div style={card}>
+                <p style={{ ...label, marginBottom: '16px' }}>Montos</p>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '20px' }}>
+                    <div>
+                        <p style={label}>Monto USD</p>
+                        <p style={{ ...value, color: '#dc2626', fontSize: '16px' }}>{Number(g.monto_usd) > 0 ? fmt(g.monto_usd) : '—'}</p>
+                    </div>
+                    <div>
+                        <p style={label}>Monto Bs.</p>
+                        <p style={{ ...value, color: '#d97706', fontSize: '16px' }}>{Number(g.monto_bs) > 0 ? fmtBs(g.monto_bs) : '—'}</p>
+                    </div>
+                    <div>
+                        <p style={label}>Tasa aplicada</p>
+                        <p style={value}>{g.tipo_tasa === 'tasa_bcv' ? 'BCV' : g.tipo_tasa === 'tasa_euro' ? 'EUR·BCV' : 'Binance'} — {tasa.toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.</p>
+                    </div>
+                    <div>
+                        <p style={label}>Total USD equiv.</p>
+                        <p style={{ ...value, fontSize: '16px' }}>{fmt(totalUsd)}</p>
+                    </div>
+                </div>
+            </div>
+
+            {/* Pago */}
+            <div style={card}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '20px' }}>
+                    <div>
+                        <p style={label}>Método de pago</p>
+                        <p style={value}>{g.metodo_pago || '—'}</p>
+                    </div>
+                    <div>
+                        <p style={label}>{estado === 'pendiente' ? 'Fecha vencimiento' : 'Estado'}</p>
+                        {estado === 'pendiente' && sem
+                            ? <p style={{ ...value, color: sem.color }}>{sem.dot} {sem.label}</p>
+                            : <p style={{ ...value, color: '#16a34a' }}>Pagado</p>}
+                    </div>
+                    <div>
+                        <p style={label}>Registrado por</p>
+                        <p style={value}>{g.usuarios?.nombre || '—'}</p>
+                    </div>
+                </div>
+            </div>
         </div>
     )
 }
