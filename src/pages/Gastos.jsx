@@ -243,7 +243,7 @@ export default function Gastos() {
                             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                                 <thead>
                                     <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                        {['', 'Fecha', 'Nombre', 'Tipo', 'Vencimiento', 'Monto USD', 'Monto Bs.', 'Método', 'Usuario', ''].map((h, i) => (
+                                        {['', 'N°', 'Fecha', 'Nombre', 'Tipo', 'Vencimiento', 'Monto USD', 'Monto Bs.', 'Método', 'Usuario', ''].map((h, i) => (
                                             <th key={i} style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
                                         ))}
                                     </tr>
@@ -260,6 +260,9 @@ export default function Gastos() {
                                                 {/* Dot semáforo */}
                                                 <td style={{ padding: '12px 8px 12px 14px', fontSize: '16px' }}>
                                                     {estado === 'pendiente' ? (sem?.dot || '⚪') : ''}
+                                                </td>
+                                                <td style={{ padding: '12px 14px', fontSize: '12px', fontFamily: 'monospace', color: '#374151', whiteSpace: 'nowrap' }}>
+                                                    {g.numero_gasto || '—'}
                                                 </td>
                                                 <td style={{ padding: '12px 14px', fontSize: '13px', color: '#6b7280', whiteSpace: 'nowrap' }}>
                                                     {new Date(g.fecha + 'T00:00:00').toLocaleDateString('es-VE')}
@@ -540,9 +543,11 @@ function NuevoGasto({ tasas, tipos, onGuardado, onCancelar }) {
         setGuardando(true); setError('')
 
         const { data: { user } } = await supabase.auth.getUser()
+        const { data: numeroConsecutivo } = await supabase.rpc('obtener_siguiente_gastos_numero', { p_empresa_id: perfil.empresa_id })
 
         const payload = {
             empresa_id: perfil.empresa_id,
+            numero_gasto: numeroConsecutivo || 'GTO-00001',
             nombre: nombre.trim(),
             descripcion: descripcion.trim() || null,
             tipo_gasto_id: tipoGastoId,
