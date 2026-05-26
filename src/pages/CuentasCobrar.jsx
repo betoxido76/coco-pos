@@ -32,6 +32,11 @@ export default function CuentasCobrar() {
     const [seleccionadas, setSeleccionadas] = useState([]) // ids seleccionados
     const [pagina, setPagina] = useState(0)
     const [totalRegistros, setTotalRegistros] = useState(0)
+    const [vista, setVista] = useState('cxc')
+    const [ncs, setNcs] = useState([])
+    const [loadingNcs, setLoadingNcs] = useState(false)
+    const [filtroNcEstado, setFiltroNcEstado] = useState('todas')
+    const [modalNc, setModalNc] = useState(null)
 
     useEffect(() => { setPagina(0) }, [filtro, filtroCliente])
     useEffect(() => { cargar() }, [filtro, filtroCliente, pagina])
@@ -80,6 +85,20 @@ export default function CuentasCobrar() {
         setLoading(false)
     }
 
+    async function cargarNcs() {
+        setLoadingNcs(true)
+        let q = supabase.from('devoluciones')
+            .select('id, numero_nc, monto_devuelto, estado_nc, tipo_devolucion, motivo, created_at, cliente_id, venta_id, clientes(nombre), ventas(numero_factura)')
+            .eq('empresa_id', perfil.empresa_id)
+            .not('numero_nc', 'is', null)
+            .order('created_at', { ascending: false })
+        if (filtroNcEstado !== 'todas') q = q.eq('estado_nc', filtroNcEstado)
+        const { data } = await q
+        setNcs(data || [])
+        setLoadingNcs(false)
+    }
+    useEffect(() => { if (vista === 'nc') cargarNcs() }, [vista, filtroNcEstado])
+
     // Lógica de selección múltiple
     const ventasSeleccionables = ventas.filter(v => v.estado_cobro !== 'pagado')
     const clienteSeleccionado = seleccionadas.length > 0
@@ -106,167 +125,209 @@ export default function CuentasCobrar() {
 
     return (
         <div style={{ padding: '24px' }}>
-            <div style={{ marginBottom: '24px' }}>
-                <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Cuentas por cobrar</h1>
-                <p style={{ fontSize: '13px', color: '#6b7280', margin: '4px 0 0' }}>Seguimiento de facturas a crédito</p>
-            </div>
-
-            {/* KPI */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '24px' }}>
-                {[
-                    { label: 'Total pendiente', valor: fmt(totalPendiente), sub: fmtBs(totalPendiente * tasas.tasa_bcv), color: '#1f2937' },
-                    { label: 'Facturas vencidas', valor: kpiData.filter(v => v.fecha_vencimiento_pago && new Date(v.fecha_vencimiento_pago) < new Date() && v.estado_cobro !== 'pagado').length, sub: 'requieren atención', color: '#ef4444' },
-                    { label: 'Facturas al día', valor: kpiData.filter(v => v.estado_cobro !== 'pagado' && (!v.fecha_vencimiento_pago || new Date(v.fecha_vencimiento_pago) >= new Date())).length, sub: 'dentro del plazo', color: '#16a34a' },
-                ].map(k => (
-                    <div key={k.label} style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px 20px' }}>
-                        <p style={{ fontSize: '12px', color: '#6b7280', margin: '0 0 4px' }}>{k.label}</p>
-                        <p style={{ fontSize: '22px', fontWeight: 700, color: k.color, margin: 0 }}>{k.valor}</p>
-                        <p style={{ fontSize: '12px', color: '#9ca3af', margin: '2px 0 0' }}>{k.sub}</p>
-                    </div>
-                ))}
-            </div>
-
-            {/* Filtros */}
-            <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
-                {[['pendiente', 'Pendientes'], ['parcial', 'Parciales'], ['pagado', 'Pagadas'], ['todos', 'Todas']].map(([val, lbl]) => (
-                    <button key={val} onClick={() => setFiltro(val)}
-                        style={{
-                            padding: '7px 16px', borderRadius: '8px', fontSize: '13px', border: '1px solid', cursor: 'pointer',
-                            borderColor: filtro === val ? '#16a34a' : '#e5e7eb',
-                            backgroundColor: filtro === val ? '#16a34a' : '#fff',
-                            color: filtro === val ? '#fff' : '#6b7280'
-                        }}>
-                        {lbl}
-                    </button>
-                ))}
-                <select value={filtroCliente} onChange={e => setFiltroCliente(e.target.value)}
-                    style={{ padding: '7px 12px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', color: '#374151', backgroundColor: '#fff', cursor: 'pointer' }}>
-                    <option value="">Todos los clientes</option>
-                    {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-                </select>
-            </div>
-
-            {/* Barra de cobro múltiple */}
-            {seleccionadas.length > 1 && (
-                <div style={{ backgroundColor: '#1d4ed8', borderRadius: '10px', padding: '12px 20px', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div style={{ color: '#fff' }}>
-                        <span style={{ fontWeight: 700, fontSize: '15px' }}>{seleccionadas.length} facturas seleccionadas</span>
-                        <span style={{ fontSize: '13px', marginLeft: '12px', opacity: 0.85 }}>
-                            {ventasSeleccionadasObj[0]?.clientes?.nombre} · Total: {fmt(totalSeleccionado)}
-                        </span>
-                    </div>
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                        <button onClick={() => setSeleccionadas([])}
-                            style={{ padding: '7px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid rgba(255,255,255,0.3)', backgroundColor: 'transparent', color: '#fff', cursor: 'pointer' }}>
-                            Cancelar
-                        </button>
-                        <button onClick={() => setModalMultiple(true)}
-                            style={{ padding: '7px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 600, border: 'none', backgroundColor: '#fff', color: '#1d4ed8', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            <DollarSign size={14} /> Cobrar {fmt(totalSeleccionado)}
-                        </button>
-                    </div>
+            {/* Header con tabs de vista */}
+            <div style={{ marginBottom: '24px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+                <div>
+                    <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Cuentas por cobrar</h1>
+                    <p style={{ fontSize: '13px', color: '#6b7280', margin: '4px 0 0' }}>
+                        {vista === 'cxc' ? 'Seguimiento de facturas a crédito' : 'Historial de notas de crédito emitidas'}
+                    </p>
                 </div>
-            )}
+                <div style={{ display: 'flex', gap: '4px', backgroundColor: '#f3f4f6', borderRadius: '10px', padding: '4px' }}>
+                    {[['cxc', 'Facturas CxC'], ['nc', 'Notas de Crédito']].map(([v, lbl]) => (
+                        <button key={v} onClick={() => setVista(v)}
+                            style={{ padding: '7px 18px', borderRadius: '8px', fontSize: '13px', fontWeight: 500, border: 'none', cursor: 'pointer', transition: 'all 0.15s', backgroundColor: vista === v ? '#fff' : 'transparent', color: vista === v ? '#1f2937' : '#6b7280', boxShadow: vista === v ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}>
+                            {lbl}
+                        </button>
+                    ))}
+                </div>
+            </div>
 
-            {/* Tabla */}
-            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
-                {loading ? <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
-                    : ventas.length === 0 ? <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>No hay facturas en este estado</div>
-                        : (
-                            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                                <thead>
-                                    <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                        {[mostrarCheckboxes ? '☑' : '', '', 'Factura', 'Cliente', 'Emisión', 'Vencimiento', 'Total', 'Cobrado', 'Saldo', 'Estado', ''].map((h, i) => (
-                                            <th key={i} style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
-                                        ))}
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {ventas.map(v => {
-                                        const sem = semaforo(v.fecha_vencimiento_pago)
-                                        const seleccionada = seleccionadas.includes(v.id)
-                                        const deshabilitada = v.estado_cobro === 'pagado' ||
-                                            (clienteSeleccionado && v.cliente_id !== clienteSeleccionado && !seleccionada)
-                                        return (
-                                            <tr key={v.id} style={{
-                                                borderBottom: '1px solid #f3f4f6',
-                                                backgroundColor: seleccionada ? '#eff6ff' : sem?.bg || 'transparent',
-                                                opacity: deshabilitada && mostrarCheckboxes ? 0.45 : 1,
-                                                outline: seleccionada ? '2px solid #1d4ed8' : 'none',
-                                                outlineOffset: '-2px',
-                                            }}>
-                                                {/* Checkbox */}
-                                                <td style={{ padding: '12px 8px 12px 14px' }}>
-                                                    {mostrarCheckboxes && v.estado_cobro !== 'pagado' && (
-                                                        <input type="checkbox" checked={seleccionada}
-                                                            disabled={deshabilitada && !seleccionada}
-                                                            onChange={() => toggleSeleccion(v)}
-                                                            style={{ width: '16px', height: '16px', cursor: deshabilitada && !seleccionada ? 'not-allowed' : 'pointer', accentColor: '#1d4ed8' }} />
-                                                    )}
-                                                </td>
-                                                <td style={{ padding: '12px 8px 12px 0', fontSize: '18px' }}>{sem?.dot || '⚪'}</td>
-                                                <td style={{ padding: '12px 14px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>{v.numero_factura}</td>
-                                                <td style={{ padding: '12px 14px', fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>{v.clientes?.nombre || '—'}</td>
-                                                <td style={{ padding: '12px 14px', fontSize: '13px', color: '#6b7280' }}>
-                                                    {new Date(v.created_at).toLocaleDateString('es-VE')}
-                                                </td>
+            {/* ─── Vista CxC ─── */}
+            {vista === 'cxc' && (<>
+                {/* KPI */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '24px' }}>
+                    {[
+                        { label: 'Total pendiente', valor: fmt(totalPendiente), sub: fmtBs(totalPendiente * tasas.tasa_bcv), color: '#1f2937' },
+                        { label: 'Facturas vencidas', valor: kpiData.filter(v => v.fecha_vencimiento_pago && new Date(v.fecha_vencimiento_pago) < new Date() && v.estado_cobro !== 'pagado').length, sub: 'requieren atención', color: '#ef4444' },
+                        { label: 'Facturas al día', valor: kpiData.filter(v => v.estado_cobro !== 'pagado' && (!v.fecha_vencimiento_pago || new Date(v.fecha_vencimiento_pago) >= new Date())).length, sub: 'dentro del plazo', color: '#16a34a' },
+                    ].map(k => (
+                        <div key={k.label} style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px 20px' }}>
+                            <p style={{ fontSize: '12px', color: '#6b7280', margin: '0 0 4px' }}>{k.label}</p>
+                            <p style={{ fontSize: '22px', fontWeight: 700, color: k.color, margin: 0 }}>{k.valor}</p>
+                            <p style={{ fontSize: '12px', color: '#9ca3af', margin: '2px 0 0' }}>{k.sub}</p>
+                        </div>
+                    ))}
+                </div>
+
+                {/* Filtros */}
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
+                    {[['pendiente', 'Pendientes'], ['parcial', 'Parciales'], ['pagado', 'Pagadas'], ['todos', 'Todas']].map(([val, lbl]) => (
+                        <button key={val} onClick={() => setFiltro(val)}
+                            style={{ padding: '7px 16px', borderRadius: '8px', fontSize: '13px', border: '1px solid', cursor: 'pointer', borderColor: filtro === val ? '#16a34a' : '#e5e7eb', backgroundColor: filtro === val ? '#16a34a' : '#fff', color: filtro === val ? '#fff' : '#6b7280' }}>
+                            {lbl}
+                        </button>
+                    ))}
+                    <select value={filtroCliente} onChange={e => setFiltroCliente(e.target.value)}
+                        style={{ padding: '7px 12px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', color: '#374151', backgroundColor: '#fff', cursor: 'pointer' }}>
+                        <option value="">Todos los clientes</option>
+                        {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                    </select>
+                </div>
+
+                {/* Barra de cobro múltiple */}
+                {seleccionadas.length > 1 && (
+                    <div style={{ backgroundColor: '#1d4ed8', borderRadius: '10px', padding: '12px 20px', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ color: '#fff' }}>
+                            <span style={{ fontWeight: 700, fontSize: '15px' }}>{seleccionadas.length} facturas seleccionadas</span>
+                            <span style={{ fontSize: '13px', marginLeft: '12px', opacity: 0.85 }}>
+                                {ventasSeleccionadasObj[0]?.clientes?.nombre} · Total: {fmt(totalSeleccionado)}
+                            </span>
+                        </div>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                            <button onClick={() => setSeleccionadas([])}
+                                style={{ padding: '7px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid rgba(255,255,255,0.3)', backgroundColor: 'transparent', color: '#fff', cursor: 'pointer' }}>
+                                Cancelar
+                            </button>
+                            <button onClick={() => setModalMultiple(true)}
+                                style={{ padding: '7px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 600, border: 'none', backgroundColor: '#fff', color: '#1d4ed8', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <DollarSign size={14} /> Cobrar {fmt(totalSeleccionado)}
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* Tabla facturas */}
+                <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                    {loading ? <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
+                        : ventas.length === 0 ? <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>No hay facturas en este estado</div>
+                            : (
+                                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                    <thead>
+                                        <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                                            {[mostrarCheckboxes ? '☑' : '', '', 'Factura', 'Cliente', 'Emisión', 'Vencimiento', 'Total', 'Cobrado', 'Saldo', 'Estado', ''].map((h, i) => (
+                                                <th key={i} style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
+                                            ))}
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {ventas.map(v => {
+                                            const sem = semaforo(v.fecha_vencimiento_pago)
+                                            const seleccionada = seleccionadas.includes(v.id)
+                                            const deshabilitada = v.estado_cobro === 'pagado' ||
+                                                (clienteSeleccionado && v.cliente_id !== clienteSeleccionado && !seleccionada)
+                                            return (
+                                                <tr key={v.id} style={{ borderBottom: '1px solid #f3f4f6', backgroundColor: seleccionada ? '#eff6ff' : sem?.bg || 'transparent', opacity: deshabilitada && mostrarCheckboxes ? 0.45 : 1, outline: seleccionada ? '2px solid #1d4ed8' : 'none', outlineOffset: '-2px' }}>
+                                                    <td style={{ padding: '12px 8px 12px 14px' }}>
+                                                        {mostrarCheckboxes && v.estado_cobro !== 'pagado' && (
+                                                            <input type="checkbox" checked={seleccionada}
+                                                                disabled={deshabilitada && !seleccionada}
+                                                                onChange={() => toggleSeleccion(v)}
+                                                                style={{ width: '16px', height: '16px', cursor: deshabilitada && !seleccionada ? 'not-allowed' : 'pointer', accentColor: '#1d4ed8' }} />
+                                                        )}
+                                                    </td>
+                                                    <td style={{ padding: '12px 8px 12px 0', fontSize: '18px' }}>{sem?.dot || '⚪'}</td>
+                                                    <td style={{ padding: '12px 14px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>{v.numero_factura}</td>
+                                                    <td style={{ padding: '12px 14px', fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>{v.clientes?.nombre || '—'}</td>
+                                                    <td style={{ padding: '12px 14px', fontSize: '13px', color: '#6b7280' }}>{new Date(v.created_at).toLocaleDateString('es-VE')}</td>
+                                                    <td style={{ padding: '12px 14px' }}>
+                                                        {sem ? <span style={{ fontSize: '12px', fontWeight: 500, color: sem.color }}>{sem.label}</span>
+                                                            : <span style={{ fontSize: '12px', color: '#9ca3af' }}>—</span>}
+                                                    </td>
+                                                    <td style={{ padding: '12px 14px', fontSize: '13px', fontWeight: 600, color: '#1f2937' }}>{fmt(v.total)}</td>
+                                                    <td style={{ padding: '12px 14px', fontSize: '13px', color: '#16a34a' }}><MontoCobrado ventaId={v.id} /></td>
+                                                    <td style={{ padding: '12px 14px', fontSize: '13px', fontWeight: 600, color: '#ef4444' }}><SaldoPendiente ventaId={v.id} total={v.total} /></td>
+                                                    <td style={{ padding: '12px 14px' }}><BadgeCobro estado={v.estado_cobro} /></td>
+                                                    <td style={{ padding: '12px 14px' }}>
+                                                        {v.estado_cobro !== 'pagado' && (
+                                                            <button onClick={() => setModalVenta(v)}
+                                                                style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', padding: '5px 12px', fontSize: '12px', fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                                                <DollarSign size={12} /> Cobrar
+                                                            </button>
+                                                        )}
+                                                    </td>
+                                                </tr>
+                                            )
+                                        })}
+                                    </tbody>
+                                </table>
+                            )}
+                </div>
+
+                {totalRegistros > PAGE_SIZE && (
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', marginTop: '8px' }}>
+                        <span style={{ fontSize: '13px', color: '#6b7280' }}>
+                            Mostrando {pagina * PAGE_SIZE + 1}–{Math.min((pagina + 1) * PAGE_SIZE, totalRegistros)} de {totalRegistros}
+                        </span>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                            <button onClick={() => setPagina(p => p - 1)} disabled={pagina === 0}
+                                style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: pagina === 0 ? '#d1d5db' : '#374151', cursor: pagina === 0 ? 'default' : 'pointer' }}>
+                                ← Anterior
+                            </button>
+                            <button onClick={() => setPagina(p => p + 1)} disabled={(pagina + 1) * PAGE_SIZE >= totalRegistros}
+                                style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: (pagina + 1) * PAGE_SIZE >= totalRegistros ? '#d1d5db' : '#374151', cursor: (pagina + 1) * PAGE_SIZE >= totalRegistros ? 'default' : 'pointer' }}>
+                                Siguiente →
+                            </button>
+                        </div>
+                    </div>
+                )}
+            </>)}
+
+            {/* ─── Vista NC ─── */}
+            {vista === 'nc' && (<>
+                {/* Filtro estado */}
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+                    {[['todas', 'Todas'], ['pendiente', 'Pendientes'], ['aplicada', 'Aplicadas']].map(([val, lbl]) => (
+                        <button key={val} onClick={() => setFiltroNcEstado(val)}
+                            style={{ padding: '7px 16px', borderRadius: '8px', fontSize: '13px', border: '1px solid', cursor: 'pointer', borderColor: filtroNcEstado === val ? '#d97706' : '#e5e7eb', backgroundColor: filtroNcEstado === val ? '#d97706' : '#fff', color: filtroNcEstado === val ? '#fff' : '#6b7280' }}>
+                            {lbl}
+                        </button>
+                    ))}
+                </div>
+
+                {/* Tabla NC */}
+                <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                    {loadingNcs ? <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
+                        : ncs.length === 0 ? <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>No hay notas de crédito</div>
+                            : (
+                                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                    <thead>
+                                        <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                                            {['N° NC', 'Cliente', 'Factura origen', 'Tipo', 'Fecha', 'Monto', 'Estado', ''].map((h, i) => (
+                                                <th key={i} style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: i === 5 ? 'right' : 'left', whiteSpace: 'nowrap' }}>{h}</th>
+                                            ))}
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {ncs.map(nc => (
+                                            <tr key={nc.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                                                <td style={{ padding: '12px 14px', fontSize: '13px', fontFamily: 'monospace', fontWeight: 600, color: '#374151' }}>{nc.numero_nc || '—'}</td>
+                                                <td style={{ padding: '12px 14px', fontSize: '13px', color: '#1f2937' }}>{nc.clientes?.nombre || '—'}</td>
+                                                <td style={{ padding: '12px 14px', fontSize: '13px', fontFamily: 'monospace', color: '#6b7280' }}>{nc.ventas?.numero_factura || '—'}</td>
+                                                <td style={{ padding: '12px 14px', fontSize: '12px', color: '#6b7280' }}>{nc.tipo_devolucion === 'total' ? 'Total' : 'Parcial'}</td>
+                                                <td style={{ padding: '12px 14px', fontSize: '13px', color: '#6b7280' }}>{new Date(nc.created_at).toLocaleDateString('es-VE')}</td>
+                                                <td style={{ padding: '12px 14px', fontSize: '13px', fontWeight: 700, color: '#1f2937', textAlign: 'right' }}>{fmt(nc.monto_devuelto)}</td>
+                                                <td style={{ padding: '12px 14px' }}><BadgeNC estado={nc.estado_nc} /></td>
                                                 <td style={{ padding: '12px 14px' }}>
-                                                    {sem
-                                                        ? <span style={{ fontSize: '12px', fontWeight: 500, color: sem.color }}>{sem.label}</span>
-                                                        : <span style={{ fontSize: '12px', color: '#9ca3af' }}>—</span>}
-                                                </td>
-                                                <td style={{ padding: '12px 14px', fontSize: '13px', fontWeight: 600, color: '#1f2937' }}>{fmt(v.total)}</td>
-                                                <td style={{ padding: '12px 14px', fontSize: '13px', color: '#16a34a' }}>
-                                                    <MontoCobrado ventaId={v.id} />
-                                                </td>
-                                                <td style={{ padding: '12px 14px', fontSize: '13px', fontWeight: 600, color: '#ef4444' }}>
-                                                    <SaldoPendiente ventaId={v.id} total={v.total} />
-                                                </td>
-                                                <td style={{ padding: '12px 14px' }}>
-                                                    <BadgeCobro estado={v.estado_cobro} />
-                                                </td>
-                                                <td style={{ padding: '12px 14px' }}>
-                                                    {v.estado_cobro !== 'pagado' && (
-                                                        <button onClick={() => setModalVenta(v)}
-                                                            style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', padding: '5px 12px', fontSize: '12px', fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                                                            <DollarSign size={12} /> Cobrar
-                                                        </button>
-                                                    )}
+                                                    <button onClick={() => setModalNc(nc)}
+                                                        style={{ padding: '5px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 500, border: '1px solid #e5e7eb', backgroundColor: '#fff', color: '#374151', cursor: 'pointer' }}>
+                                                        Ver
+                                                    </button>
                                                 </td>
                                             </tr>
-                                        )
-                                    })}
-                                </tbody>
-                            </table>
-                        )}
-            </div>
-
-            {totalRegistros > PAGE_SIZE && (
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', marginTop: '8px' }}>
-                    <span style={{ fontSize: '13px', color: '#6b7280' }}>
-                        Mostrando {pagina * PAGE_SIZE + 1}–{Math.min((pagina + 1) * PAGE_SIZE, totalRegistros)} de {totalRegistros}
-                    </span>
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                        <button onClick={() => setPagina(p => p - 1)} disabled={pagina === 0}
-                            style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: pagina === 0 ? '#d1d5db' : '#374151', cursor: pagina === 0 ? 'default' : 'pointer' }}>
-                            ← Anterior
-                        </button>
-                        <button onClick={() => setPagina(p => p + 1)} disabled={(pagina + 1) * PAGE_SIZE >= totalRegistros}
-                            style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: (pagina + 1) * PAGE_SIZE >= totalRegistros ? '#d1d5db' : '#374151', cursor: (pagina + 1) * PAGE_SIZE >= totalRegistros ? 'default' : 'pointer' }}>
-                            Siguiente →
-                        </button>
-                    </div>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            )}
                 </div>
-            )}
+            </>)}
 
-            {/* Modal cobro individual */}
+            {/* Modals */}
             {modalVenta && (
                 <ModalCobro venta={modalVenta} tasas={tasas}
                     onCerrar={() => setModalVenta(null)}
                     onCobrado={() => { setModalVenta(null); cargar() }} />
             )}
-
-            {/* Modal cobro múltiple */}
             {modalMultiple && (
                 <ModalCobroMultiple
                     ventas={ventasSeleccionadasObj}
@@ -274,6 +335,7 @@ export default function CuentasCobrar() {
                     onCerrar={() => setModalMultiple(false)}
                     onCobrado={() => { setModalMultiple(false); setSeleccionadas([]); cargar() }} />
             )}
+            {modalNc && <DetalleNC nc={modalNc} onCerrar={() => setModalNc(null)} />}
         </div>
     )
 }
@@ -800,4 +862,119 @@ function BadgeCobro({ estado }) {
     const e = { pendiente: ['#fef9c3', '#854d0e'], parcial: ['#dbeafe', '#1e40af'], pagado: ['#dcfce7', '#166534'] }
     const [bg, color] = e[estado] || e.pendiente
     return <span style={{ backgroundColor: bg, color, padding: '2px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 500 }}>{estado}</span>
+}
+
+function BadgeNC({ estado }) {
+    const cfg = { pendiente: { bg: '#fffbeb', color: '#854d0e', label: 'Pendiente' }, aplicada: { bg: '#dcfce7', color: '#166534', label: 'Aplicada' } }
+    const { bg, color, label } = cfg[estado] || cfg.pendiente
+    return <span style={{ backgroundColor: bg, color, padding: '2px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 500 }}>{label}</span>
+}
+
+// ── Detalle de Nota de Crédito ─────────────────────────────────
+function DetalleNC({ nc, onCerrar }) {
+    const [items, setItems] = useState([])
+    const [facturaAplicada, setFacturaAplicada] = useState(null)
+    const [loading, setLoading] = useState(true)
+
+    useEffect(() => {
+        async function cargar() {
+            const [{ data: itemsData }, { data: cobroData }] = await Promise.all([
+                supabase.from('devolucion_items')
+                    .select('cantidad_devuelta, precio_unitario, productos_terminados(nombre, sku)')
+                    .eq('devolucion_id', nc.id),
+                nc.estado_nc === 'aplicada'
+                    ? supabase.from('cobros').select('venta_id, ventas(numero_factura)').eq('devolucion_id', nc.id).maybeSingle()
+                    : Promise.resolve({ data: null }),
+            ])
+            setItems(itemsData || [])
+            if (cobroData?.ventas?.numero_factura) setFacturaAplicada(cobroData.ventas.numero_factura)
+            setLoading(false)
+        }
+        cargar()
+    }, [nc.id])
+
+    const Row = ({ label, value, mono, bold }) => (
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
+            <span style={{ color: '#6b7280' }}>{label}</span>
+            <span style={{ color: '#1f2937', fontWeight: bold ? 700 : 500, fontFamily: mono ? 'monospace' : 'inherit' }}>{value}</span>
+        </div>
+    )
+
+    return (
+        <>
+            <style>{`@media print { .no-print { display: none !important; } .print-target { max-width: none !important; box-shadow: none !important; position: static !important; transform: none !important; border-radius: 0 !important; } }`}</style>
+            <div className="no-print" onClick={onCerrar} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', zIndex: 40 }} />
+            <div className="print-target" style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', backgroundColor: '#fff', borderRadius: '16px', padding: '28px', width: '540px', zIndex: 50, boxShadow: '0 20px 60px rgba(0,0,0,0.2)', maxHeight: '90vh', overflowY: 'auto' }}>
+
+                {/* Header */}
+                <div className="no-print" style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
+                    <h2 style={{ fontSize: '17px', fontWeight: 700, color: '#1f2937', margin: 0 }}>{nc.numero_nc || 'Nota de Crédito'}</h2>
+                    <BadgeNC estado={nc.estado_nc} />
+                    <button onClick={() => window.print()}
+                        style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: '#374151', cursor: 'pointer' }}>
+                        🖨️ Imprimir
+                    </button>
+                    <button onClick={onCerrar} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af' }}><X size={20} /></button>
+                </div>
+
+                {/* Info general */}
+                <div style={{ backgroundColor: '#f9fafb', borderRadius: '10px', padding: '14px 16px', marginBottom: '20px', display: 'flex', flexDirection: 'column', gap: '7px' }}>
+                    <Row label="N° Nota de Crédito" value={nc.numero_nc || '—'} mono />
+                    <Row label="Cliente" value={nc.clientes?.nombre || '—'} />
+                    <Row label="Factura origen" value={nc.ventas?.numero_factura || '—'} mono />
+                    <Row label="Fecha emisión" value={new Date(nc.created_at).toLocaleDateString('es-VE')} />
+                    <Row label="Tipo devolución" value={nc.tipo_devolucion === 'total' ? 'Total' : 'Parcial'} />
+                    {nc.motivo && <Row label="Motivo" value={nc.motivo} />}
+                    <div style={{ height: '1px', backgroundColor: '#e5e7eb', margin: '2px 0' }} />
+                    <Row label="Monto NC" value={fmt(nc.monto_devuelto)} bold />
+                    {nc.estado_nc === 'aplicada' && facturaAplicada && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginTop: '2px' }}>
+                            <span style={{ color: '#6b7280' }}>Aplicada a factura</span>
+                            <span style={{ color: '#16a34a', fontWeight: 600, fontFamily: 'monospace' }}>{facturaAplicada}</span>
+                        </div>
+                    )}
+                </div>
+
+                {/* Productos incluidos */}
+                {loading
+                    ? <div style={{ textAlign: 'center', color: '#9ca3af', padding: '20px', fontSize: '13px' }}>Cargando...</div>
+                    : items.length > 0 && (
+                        <div>
+                            <p style={{ fontSize: '12px', fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 10px' }}>Productos devueltos</p>
+                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                                <thead>
+                                    <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                                        <th style={{ padding: '8px 12px', textAlign: 'left', color: '#6b7280', fontWeight: 500 }}>Producto</th>
+                                        <th style={{ padding: '8px 12px', textAlign: 'right', color: '#6b7280', fontWeight: 500 }}>Cant.</th>
+                                        <th style={{ padding: '8px 12px', textAlign: 'right', color: '#6b7280', fontWeight: 500 }}>P. Unit.</th>
+                                        <th style={{ padding: '8px 12px', textAlign: 'right', color: '#6b7280', fontWeight: 500 }}>Subtotal</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {items.map((it, i) => (
+                                        <tr key={i} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                                            <td style={{ padding: '10px 12px', color: '#1f2937' }}>
+                                                {it.productos_terminados?.nombre || '—'}
+                                                {it.productos_terminados?.sku && (
+                                                    <span style={{ display: 'block', fontSize: '11px', color: '#9ca3af', fontFamily: 'monospace' }}>{it.productos_terminados.sku}</span>
+                                                )}
+                                            </td>
+                                            <td style={{ padding: '10px 12px', textAlign: 'right', color: '#374151' }}>{it.cantidad_devuelta}</td>
+                                            <td style={{ padding: '10px 12px', textAlign: 'right', color: '#374151' }}>{fmt(it.precio_unitario)}</td>
+                                            <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 600, color: '#1f2937' }}>{fmt((it.cantidad_devuelta || 0) * (it.precio_unitario || 0))}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+
+                {nc.estado_nc === 'pendiente' && (
+                    <div style={{ marginTop: '16px', backgroundColor: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '8px', padding: '10px 14px', fontSize: '13px', color: '#854d0e' }}>
+                        Esta NC está pendiente de aplicar. Aparecerá disponible al cobrar cualquier factura de este cliente.
+                    </div>
+                )}
+            </div>
+        </>
+    )
 }
