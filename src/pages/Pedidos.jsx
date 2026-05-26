@@ -354,6 +354,20 @@ function DetallePedido({ pedido, onVolver }) {
         const factor = Number(item.productos_terminados?.factor_conversion_2 || 1)
         return (esUM2(item) && factor > 1) ? cantAlistada / factor : cantAlistada
     }
+    // cantidad en unidades primarias para mostrar en columna principal
+    const cantPrimaria = (item) => {
+        if (esAlistado) return Number(item.cantidad_alistada ?? item.cantidad)
+        if (item.cantidad_primaria != null) return Number(item.cantidad_primaria)
+        const factor = Number(item.productos_terminados?.factor_conversion_2 || 1)
+        return (esUM2(item) && factor > 1) ? Number(item.cantidad) * factor : Number(item.cantidad)
+    }
+    // cantidad en unidades secundarias (null si el item no tiene UM2)
+    const cantSecundaria = (item) => {
+        const factor = Number(item.productos_terminados?.factor_conversion_2 || 0)
+        if (factor <= 1 || !item.productos_terminados?.unidad_venta_2) return null
+        return cantPrimaria(item) / factor
+    }
+    const tieneUM2 = items.some(i => Number(i.productos_terminados?.factor_conversion_2 || 0) > 1 && i.productos_terminados?.unidad_venta_2)
     // precio_unitario ya incluye IVA para items con aplica_iva=true → extraer base
     const subtotalConDescItems = items.reduce((s, i) => {
         const desc = Number(i.descuento_item || 0)
@@ -564,8 +578,8 @@ function DetallePedido({ pedido, onVolver }) {
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
                             <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                {['Producto', 'Cant. pedida', esAlistado ? 'Cant. alistada' : null, 'UM', 'Precio lista', 'Desc. item', 'Subtotal'].filter(Boolean).map((h, i) => (
-                                    <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: (i === 0 || h === 'UM') ? 'left' : 'right' }}>{h}</th>
+                                {['Producto', esAlistado ? 'Cant. alistada' : 'Cant. pedida', tieneUM2 ? 'Cant. (2)' : null, 'Precio lista', 'Desc. item', 'Subtotal'].filter(Boolean).map((h, i) => (
+                                    <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: i === 0 ? 'left' : 'right' }}>{h}</th>
                                 ))}
                             </tr>
                         </thead>
@@ -584,17 +598,14 @@ function DetallePedido({ pedido, onVolver }) {
                                             )}
                                             {cancelado && <span style={{ fontSize: '11px', color: '#dc2626', marginLeft: '8px', fontWeight: 600 }}>CANCELADO</span>}
                                         </td>
-                                        <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{Number(item.cantidad).toLocaleString('es-VE')}</td>
-                                        {esAlistado && (
-                                            <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, textAlign: 'right', color: cancelado ? '#dc2626' : '#16a34a' }}>
-                                                {item.cantidad_alistada != null ? Number(item.cantidad_alistada).toLocaleString('es-VE') : '—'}
+                                        <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: esAlistado ? 600 : 400, textAlign: 'right', color: cancelado ? '#dc2626' : esAlistado ? '#16a34a' : '#6b7280' }}>
+                                            {cantPrimaria(item).toLocaleString('es-VE')}
+                                        </td>
+                                        {tieneUM2 && (
+                                            <td style={{ padding: '12px 16px', fontSize: '13px', textAlign: 'right', color: '#6b7280' }}>
+                                                {(() => { const c2 = cantSecundaria(item); return c2 != null ? c2.toLocaleString('es-VE', { maximumFractionDigits: 2 }) : '—' })()}
                                             </td>
                                         )}
-                                        <td style={{ padding: '12px 16px', fontSize: '12px', color: '#6b7280' }}>
-                                            {esUM2(item)
-                                                ? (item.productos_terminados?.unidad_venta_2 || item.unidad_venta || '—')
-                                                : (item.productos_terminados?.unidad_medida || item.unidad_venta || '—')}
-                                        </td>
                                         <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{fmt(item.precio_unitario)}</td>
                                         <td style={{ padding: '12px 16px', fontSize: '13px', textAlign: 'right' }}>
                                             {Number(item.descuento_item || 0) > 0
