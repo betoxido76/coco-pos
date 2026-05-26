@@ -2924,10 +2924,24 @@ function FormDevolucion({ venta, items, onCancelar, onConfirmada }) {
     const [seleccion, setSeleccion] = useState(
         items.map(i => ({ ...i, devolver: false, cantidad_devuelta: 1 }))
     )
+    const [almacenes, setAlmacenes] = useState([])
+    const [almacenId, setAlmacenId] = useState('')
     const [motivo, setMotivo] = useState('')
     const [tipoDevolucion, setTipoDevolucion] = useState('reposicion_stock')
     const [guardando, setGuardando] = useState(false)
     const [error, setError] = useState('')
+
+    useEffect(() => {
+        supabase.from('almacenes').select('id, nombre, es_default')
+            .eq('empresa_id', perfil.empresa_id).eq('activo', true).order('nombre')
+            .then(({ data }) => {
+                if (data) {
+                    setAlmacenes(data)
+                    const def = data.find(a => a.es_default) || data[0]
+                    if (def) setAlmacenId(def.id)
+                }
+            })
+    }, [])
 
     function toggleItem(idx) {
         setSeleccion(prev => prev.map((i, j) => j === idx ? { ...i, devolver: !i.devolver } : i))
@@ -2947,6 +2961,7 @@ function FormDevolucion({ venta, items, onCancelar, onConfirmada }) {
 
     async function confirmar() {
         if (itemsADevolver.length === 0) { setError('Selecciona al menos un producto a devolver'); return }
+        if (!almacenId) { setError('Selecciona el almacén destino de la devolución'); return }
         if (!motivo.trim()) { setError('Ingresa el motivo de la devolución'); return }
         setGuardando(true)
         setError('')
@@ -2971,31 +2986,60 @@ function FormDevolucion({ venta, items, onCancelar, onConfirmada }) {
             }))
         )
 
-        // Reponer stock
+        // Reponer stock — 4 pasos de la invariante por producto
         for (const item of itemsADevolver) {
             const prodId = item.producto_id || item.productos_terminados?.id
-            const { data: prod } = await supabase.from('productos_terminados').select('stock_actual').eq('id', prodId).single()
+            const { data: prod } = await supabase.from('productos_terminados')
+                .select('stock_actual').eq('id', prodId).single()
+            if (!prod) continue
 
-            if (prod) {
-                const nuevoStock = prod.stock_actual + item.cantidad_devuelta
+            const stockAnterior = prod.stock_actual
+            const nuevoStock = stockAnterior + item.cantidad_devuelta
 
-                await supabase.from('productos_terminados')
-                    .update({ stock_actual: nuevoStock })
-                    .eq('id', prodId)
+            // 1. stock_actual
+            await supabase.from('productos_terminados')
+                .update({ stock_actual: nuevoStock })
+                .eq('id', prodId)
 
-                await supabase.from('movimientos_inventario').insert({
-                    empresa_id: perfil.empresa_id,
+            // 2. stock_ubicacion (SELECT + UPDATE/INSERT, nunca UPSERT con NULL)
+            const { data: su } = await supabase
+                .from('stock_ubicacion')
+                .select('id, cantidad')
+                .eq('tipo_item', 'producto_terminado')
+                .eq('item_id', prodId)
+                .eq('almacen_id', almacenId)
+                .is('almacen_ubicacion_id', null)
+                .maybeSingle()
+
+            if (su) {
+                await supabase.from('stock_ubicacion')
+                    .update({ cantidad: Number(su.cantidad) + item.cantidad_devuelta })
+                    .eq('id', su.id)
+            } else {
+                await supabase.from('stock_ubicacion').insert({
                     tipo_item: 'producto_terminado',
                     item_id: prodId,
-                    item_nombre: item.productos_terminados?.nombre || item.nombre,
-                    item_codigo: item.productos_terminados?.sku || item.sku || '',
-                    tipo_movimiento: 'entrada',
+                    almacen_id: almacenId,
                     cantidad: item.cantidad_devuelta,
-                    stock_actual: nuevoStock,
-                    origen: 'devolucion',
-                    fecha: new Date().toISOString()
+                    empresa_id: perfil.empresa_id,
                 })
             }
+
+            // 3. movimiento
+            await supabase.from('movimientos_inventario').insert({
+                empresa_id: perfil.empresa_id,
+                tipo_item: 'producto_terminado',
+                item_id: prodId,
+                item_nombre: item.productos_terminados?.nombre || item.nombre,
+                item_codigo: item.productos_terminados?.sku || item.sku || '',
+                tipo_movimiento: 'entrada',
+                cantidad: item.cantidad_devuelta,
+                stock_anterior: stockAnterior,
+                stock_actual: nuevoStock,
+                almacen_id: almacenId,
+                origen: 'devolucion',
+                fecha: new Date().toISOString()
+            })
         }
 
         const nuevoEstado = esTotal ? 'anulado' : venta.estado_cobro
@@ -3053,6 +3097,14 @@ function FormDevolucion({ venta, items, onCancelar, onConfirmada }) {
                         <option value="reposicion_stock">Reposición a inventario</option>
                         <option value="nota_credito">Nota de crédito</option>
                         <option value="reembolso">Reembolso al cliente</option>
+                    </select>
+                </div>
+                <div>
+                    <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Almacén destino</label>
+                    <select value={almacenId} onChange={e => setAlmacenId(e.target.value)}
+                        style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', color: '#374151', backgroundColor: '#fff' }}>
+                        <option value="">— Selecciona almacén —</option>
+                        {almacenes.map(a => <option key={a.id} value={a.id}>{a.nombre}</option>)}
                     </select>
                 </div>
                 <div>
