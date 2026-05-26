@@ -878,11 +878,9 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
             setListasClienteIds(null)
             return
         }
-        if (esRetail) {
-            const cliente = clientes.find(c => c.id === id)
-            setCondicion(cliente?.condicion_pago || 'credito')
-            setDiasCredito(Number(cliente?.dias_credito) || 0)
-        }
+        const cliente = clientes.find(c => c.id === id)
+        setCondicion(cliente?.condicion_pago || 'credito')
+        setDiasCredito(Number(cliente?.dias_credito) || 0)
         const [{ data: dirs }, { data: listasCli }] = await Promise.all([
             supabase.from('direcciones_entrega')
                 .select('*').eq('cliente_id', id).eq('empresa_id', perfil.empresa_id)
@@ -2968,9 +2966,11 @@ function FormDevolucion({ venta, items, onCancelar, onConfirmada }) {
 
         const { data: { user } } = await supabase.auth.getUser()
 
+        const { data: ncNum } = await supabase.rpc('obtener_siguiente_nc_numero', { p_empresa_id: perfil.empresa_id })
+
         const { data: dev, error: errDev } = await supabase
             .from('devoluciones')
-            .insert({ venta_id: venta.id, usuario_id: user.id, motivo, tipo_devolucion: tipoDevolucion, monto_devuelto: montoDevuelto, es_total: esTotal, empresa_id: perfil.empresa_id })
+            .insert({ venta_id: venta.id, usuario_id: user.id, motivo, tipo_devolucion: tipoDevolucion, monto_devuelto: montoDevuelto, es_total: esTotal, empresa_id: perfil.empresa_id, numero_nc: ncNum, estado_nc: 'pendiente', cliente_id: venta.cliente_id })
             .select()
             .single()
 
