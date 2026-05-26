@@ -460,6 +460,25 @@ ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS oc_cliente text;
 ALTER TABLE ventas ADD COLUMN IF NOT EXISTS oc_cliente text;
 ```
 
+### Supabase — cambios aplicados en sesión 2026-05-26
+```sql
+-- Notas de Crédito (CuentasCobrar)
+ALTER TABLE devoluciones ADD COLUMN IF NOT EXISTS numero_nc text;
+ALTER TABLE devoluciones ADD COLUMN IF NOT EXISTS cliente_id uuid REFERENCES clientes(id);
+ALTER TABLE devoluciones ADD COLUMN IF NOT EXISTS nota_liquidacion text;
+ALTER TABLE devoluciones ADD COLUMN IF NOT EXISTS fecha_liquidacion timestamptz;
+ALTER TABLE devoluciones ADD COLUMN IF NOT EXISTS estado_nc text DEFAULT 'pendiente';
+-- CHECK: estado_nc IN ('pendiente', 'aplicada', 'reembolsada', 'anulada')
+ALTER TABLE cobros ADD COLUMN IF NOT EXISTS devolucion_id uuid REFERENCES devoluciones(id);
+-- Function: obtener_siguiente_nc_numero(p_empresa_id uuid) → 'NC-XXXXXX'
+
+-- Devoluciones a Proveedor / Notas de Débito (Compras + CuentasPagar)
+-- Tablas: devoluciones_proveedor, devolucion_proveedor_items
+-- FK: pagos_proveedor.devolucion_proveedor_id → devoluciones_proveedor
+-- Function: obtener_siguiente_nd_numero(p_empresa_id uuid) → 'ND-XXXXXX'
+-- estados ND: 'pendiente' | 'aplicada' | 'reembolsada' | 'anulada'
+```
+
 ### Backlog estratégico (capacidades de plataforma SaaS)
 
 Estos ítems no son mejoras funcionales al producto sino capacidades de la plataforma que se necesitan para escalar comercialmente.
