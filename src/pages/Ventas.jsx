@@ -389,6 +389,10 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
     const descGlobalMonto = discountFactor < 1 ? total / discountFactor - total : 0
 
     async function facturar() {
+        if (condicion === 'credito' && Number(diasCredito) <= 0) {
+            setError('El cliente tiene condición de crédito pero no tiene días de crédito configurados. Corrígelo en Administración → Clientes antes de facturar.')
+            return
+        }
         setProcesando(true); setError('')
         const { data: numeroConsecutivo } = await supabase.rpc('obtener_siguiente_ventas_numero', {
             p_empresa_id: perfil.empresa_id
@@ -1078,6 +1082,10 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
     async function procesar() {
         if (!clienteId) { setError('Selecciona un cliente'); return }
         if (items.length === 0) { setError('Agrega al menos un producto'); return }
+        if (condicion === 'credito' && Number(diasCredito) <= 0) {
+            setError('El cliente tiene condición de crédito pero no tiene días de crédito configurados. Corrígelo en Administración → Clientes antes de facturar.')
+            return
+        }
         setGuardando(true); setError('')
 
         const { data: { user } } = await supabase.auth.getUser()

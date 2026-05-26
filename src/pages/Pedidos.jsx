@@ -411,6 +411,13 @@ function DetallePedido({ pedido, onVolver }) {
 
         const condicion = clienteData?.condicion_pago || 'credito'
         const diasCredito = Number(clienteData?.dias_credito) || 0
+
+        if (condicion === 'credito' && diasCredito <= 0) {
+            setProcesando(false)
+            setError('El cliente tiene condición de crédito pero no tiene días de crédito configurados. Corrígelo en Administración → Clientes antes de facturar.')
+            return
+        }
+
         let fechaVencimiento = null
         if (condicion === 'credito' && diasCredito > 0) {
             const d = new Date()
