@@ -37,6 +37,7 @@ export default function CuentasCobrar() {
     const [loadingNcs, setLoadingNcs] = useState(false)
     const [filtroNcEstado, setFiltroNcEstado] = useState('todas')
     const [modalNc, setModalNc] = useState(null)
+    const [modalLiquidar, setModalLiquidar] = useState(null)
 
     useEffect(() => { setPagina(0) }, [filtro, filtroCliente])
     useEffect(() => { cargar() }, [filtro, filtroCliente, pagina])
@@ -88,11 +89,12 @@ export default function CuentasCobrar() {
     async function cargarNcs() {
         setLoadingNcs(true)
         let q = supabase.from('devoluciones')
-            .select('id, numero_nc, monto_devuelto, estado_nc, tipo_devolucion, motivo, created_at, cliente_id, venta_id, clientes(nombre), ventas(numero_factura)')
+            .select('id, numero_nc, monto_devuelto, estado_nc, tipo_devolucion, motivo, created_at, cliente_id, venta_id, nota_liquidacion, fecha_liquidacion, clientes(nombre), ventas(numero_factura)')
             .eq('empresa_id', perfil.empresa_id)
             .not('numero_nc', 'is', null)
             .order('created_at', { ascending: false })
-        if (filtroNcEstado !== 'todas') q = q.eq('estado_nc', filtroNcEstado)
+        if (filtroNcEstado === 'liquidada') q = q.in('estado_nc', ['reembolsada', 'anulada'])
+        else if (filtroNcEstado !== 'todas') q = q.eq('estado_nc', filtroNcEstado)
         const { data } = await q
         setNcs(data || [])
         setLoadingNcs(false)
@@ -277,7 +279,7 @@ export default function CuentasCobrar() {
             {vista === 'nc' && (<>
                 {/* Filtro estado */}
                 <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
-                    {[['todas', 'Todas'], ['pendiente', 'Pendientes'], ['aplicada', 'Aplicadas']].map(([val, lbl]) => (
+                    {[['todas', 'Todas'], ['pendiente', 'Pendientes'], ['aplicada', 'Aplicadas'], ['liquidada', 'Liquidadas']].map(([val, lbl]) => (
                         <button key={val} onClick={() => setFiltroNcEstado(val)}
                             style={{ padding: '7px 16px', borderRadius: '8px', fontSize: '13px', border: '1px solid', cursor: 'pointer', borderColor: filtroNcEstado === val ? '#d97706' : '#e5e7eb', backgroundColor: filtroNcEstado === val ? '#d97706' : '#fff', color: filtroNcEstado === val ? '#fff' : '#6b7280' }}>
                             {lbl}
@@ -309,10 +311,18 @@ export default function CuentasCobrar() {
                                                 <td style={{ padding: '12px 14px', fontSize: '13px', fontWeight: 700, color: '#1f2937', textAlign: 'right' }}>{fmt(nc.monto_devuelto)}</td>
                                                 <td style={{ padding: '12px 14px' }}><BadgeNC estado={nc.estado_nc} /></td>
                                                 <td style={{ padding: '12px 14px' }}>
-                                                    <button onClick={() => setModalNc(nc)}
-                                                        style={{ padding: '5px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 500, border: '1px solid #e5e7eb', backgroundColor: '#fff', color: '#374151', cursor: 'pointer' }}>
-                                                        Ver
-                                                    </button>
+                                                    <div style={{ display: 'flex', gap: '6px' }}>
+                                                        <button onClick={() => setModalNc(nc)}
+                                                            style={{ padding: '5px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 500, border: '1px solid #e5e7eb', backgroundColor: '#fff', color: '#374151', cursor: 'pointer' }}>
+                                                            Ver
+                                                        </button>
+                                                        {nc.estado_nc === 'pendiente' && (
+                                                            <button onClick={() => setModalLiquidar(nc)}
+                                                                style={{ padding: '5px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 500, border: '1px solid #bfdbfe', backgroundColor: '#eff6ff', color: '#1d4ed8', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                                                Liquidar
+                                                            </button>
+                                                        )}
+                                                    </div>
                                                 </td>
                                             </tr>
                                         ))}
@@ -336,6 +346,10 @@ export default function CuentasCobrar() {
                     onCobrado={() => { setModalMultiple(false); setSeleccionadas([]); cargar() }} />
             )}
             {modalNc && <DetalleNC nc={modalNc} onCerrar={() => setModalNc(null)} />}
+            {modalLiquidar && (
+                <ModalLiquidarNC nc={modalLiquidar} onCerrar={() => setModalLiquidar(null)}
+                    onLiquidado={() => { setModalLiquidar(null); cargarNcs() }} />
+            )}
         </div>
     )
 }
@@ -865,7 +879,12 @@ function BadgeCobro({ estado }) {
 }
 
 function BadgeNC({ estado }) {
-    const cfg = { pendiente: { bg: '#fffbeb', color: '#854d0e', label: 'Pendiente' }, aplicada: { bg: '#dcfce7', color: '#166534', label: 'Aplicada' } }
+    const cfg = {
+        pendiente:   { bg: '#fffbeb', color: '#854d0e', label: 'Pendiente' },
+        aplicada:    { bg: '#dcfce7', color: '#166534', label: 'Aplicada' },
+        reembolsada: { bg: '#dbeafe', color: '#1e40af', label: 'Reembolsada' },
+        anulada:     { bg: '#f3f4f6', color: '#6b7280', label: 'Anulada' },
+    }
     const { bg, color, label } = cfg[estado] || cfg.pendiente
     return <span style={{ backgroundColor: bg, color, padding: '2px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 500 }}>{label}</span>
 }
@@ -933,6 +952,12 @@ function DetalleNC({ nc, onCerrar }) {
                             <span style={{ color: '#16a34a', fontWeight: 600, fontFamily: 'monospace' }}>{facturaAplicada}</span>
                         </div>
                     )}
+                    {(nc.estado_nc === 'reembolsada' || nc.estado_nc === 'anulada') && nc.fecha_liquidacion && (
+                        <Row label="Fecha liquidación" value={new Date(nc.fecha_liquidacion).toLocaleDateString('es-VE')} />
+                    )}
+                    {(nc.estado_nc === 'reembolsada' || nc.estado_nc === 'anulada') && nc.nota_liquidacion && (
+                        <Row label="Detalle" value={nc.nota_liquidacion} />
+                    )}
                 </div>
 
                 {/* Productos incluidos */}
@@ -971,9 +996,124 @@ function DetalleNC({ nc, onCerrar }) {
 
                 {nc.estado_nc === 'pendiente' && (
                     <div style={{ marginTop: '16px', backgroundColor: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '8px', padding: '10px 14px', fontSize: '13px', color: '#854d0e' }}>
-                        Esta NC está pendiente de aplicar. Aparecerá disponible al cobrar cualquier factura de este cliente.
+                        Esta NC está pendiente. Aparecerá disponible al cobrar cualquier factura del cliente, o puede liquidarse directamente desde la lista.
                     </div>
                 )}
+                {nc.estado_nc === 'reembolsada' && (
+                    <div style={{ marginTop: '16px', backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '8px', padding: '10px 14px', fontSize: '13px', color: '#1e40af' }}>
+                        Se reembolsó el monto directamente al cliente sin aplicarse a una factura.
+                    </div>
+                )}
+                {nc.estado_nc === 'anulada' && (
+                    <div style={{ marginTop: '16px', backgroundColor: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '10px 14px', fontSize: '13px', color: '#6b7280' }}>
+                        Esta NC fue anulada sin reembolso.
+                    </div>
+                )}
+            </div>
+        </>
+    )
+}
+
+// ── Modal liquidar NC ──────────────────────────────────────────
+function ModalLiquidarNC({ nc, onCerrar, onLiquidado }) {
+    const METODOS = ['Efectivo', 'Transferencia', 'Pago Móvil', 'Zelle', 'Otros']
+    const [tipo, setTipo] = useState('reembolso')
+    const [metodo, setMetodo] = useState('Efectivo')
+    const [nota, setNota] = useState('')
+    const [guardando, setGuardando] = useState(false)
+    const [error, setError] = useState('')
+
+    async function confirmar() {
+        setGuardando(true); setError('')
+        const nuevoEstado = tipo === 'reembolso' ? 'reembolsada' : 'anulada'
+        const notaFinal = tipo === 'reembolso'
+            ? `Reembolso vía ${metodo}${nota ? ' — ' + nota : ''}`
+            : (nota || 'Anulada sin reembolso')
+        const { error: err } = await supabase.from('devoluciones').update({
+            estado_nc: nuevoEstado,
+            nota_liquidacion: notaFinal,
+            fecha_liquidacion: new Date().toISOString(),
+        }).eq('id', nc.id)
+        setGuardando(false)
+        if (err) { setError(err.message); return }
+        onLiquidado()
+    }
+
+    return (
+        <>
+            <div onClick={onCerrar} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', zIndex: 40 }} />
+            <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', backgroundColor: '#fff', borderRadius: '16px', padding: '28px', width: '420px', zIndex: 50, boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                    <h2 style={{ fontSize: '17px', fontWeight: 700, color: '#1f2937', margin: 0 }}>Liquidar nota de crédito</h2>
+                    <button onClick={onCerrar} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af' }}><X size={20} /></button>
+                </div>
+
+                {/* Resumen NC */}
+                <div style={{ backgroundColor: '#f9fafb', borderRadius: '10px', padding: '12px 16px', marginBottom: '20px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '4px' }}>
+                        <span style={{ color: '#6b7280' }}>N° NC</span>
+                        <span style={{ fontFamily: 'monospace', fontWeight: 600, color: '#1f2937' }}>{nc.numero_nc}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '4px' }}>
+                        <span style={{ color: '#6b7280' }}>Cliente</span>
+                        <span style={{ fontWeight: 500, color: '#1f2937' }}>{nc.clientes?.nombre || '—'}</span>
+                    </div>
+                    <div style={{ height: '1px', backgroundColor: '#e5e7eb', margin: '8px 0' }} />
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '15px', fontWeight: 700 }}>
+                        <span style={{ color: '#6b7280' }}>Monto</span>
+                        <span style={{ color: '#1f2937' }}>{fmt(nc.monto_devuelto)}</span>
+                    </div>
+                </div>
+
+                {/* Tipo */}
+                <div style={{ marginBottom: '16px' }}>
+                    <label style={{ fontSize: '12px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tipo de liquidación</label>
+                    <div style={{ display: 'flex', gap: '10px' }}>
+                        <button onClick={() => setTipo('reembolso')}
+                            style={{ flex: 1, padding: '12px 8px', borderRadius: '10px', fontSize: '13px', fontWeight: 500, border: '2px solid', cursor: 'pointer', textAlign: 'center', borderColor: tipo === 'reembolso' ? '#1d4ed8' : '#e5e7eb', backgroundColor: tipo === 'reembolso' ? '#eff6ff' : '#fff', color: tipo === 'reembolso' ? '#1d4ed8' : '#6b7280' }}>
+                            <div style={{ fontSize: '20px', marginBottom: '4px' }}>💸</div>
+                            <div style={{ fontWeight: 600 }}>Reembolso</div>
+                            <div style={{ fontSize: '11px', opacity: 0.75, marginTop: '2px' }}>Se devuelve el dinero</div>
+                        </button>
+                        <button onClick={() => setTipo('anular')}
+                            style={{ flex: 1, padding: '12px 8px', borderRadius: '10px', fontSize: '13px', fontWeight: 500, border: '2px solid', cursor: 'pointer', textAlign: 'center', borderColor: tipo === 'anular' ? '#6b7280' : '#e5e7eb', backgroundColor: tipo === 'anular' ? '#f9fafb' : '#fff', color: tipo === 'anular' ? '#374151' : '#6b7280' }}>
+                            <div style={{ fontSize: '20px', marginBottom: '4px' }}>✕</div>
+                            <div style={{ fontWeight: 600 }}>Anular</div>
+                            <div style={{ fontSize: '11px', opacity: 0.75, marginTop: '2px' }}>Sin reembolso</div>
+                        </button>
+                    </div>
+                </div>
+
+                {/* Método (solo reembolso) */}
+                {tipo === 'reembolso' && (
+                    <div style={{ marginBottom: '16px' }}>
+                        <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '8px' }}>Método de reembolso</label>
+                        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                            {METODOS.map(m => (
+                                <button key={m} onClick={() => setMetodo(m)}
+                                    style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid', cursor: 'pointer', borderColor: metodo === m ? '#16a34a' : '#e5e7eb', backgroundColor: metodo === m ? '#f0fdf4' : '#fff', color: metodo === m ? '#16a34a' : '#6b7280', fontWeight: metodo === m ? 600 : 400 }}>
+                                    {m}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {/* Nota */}
+                <div style={{ marginBottom: '20px' }}>
+                    <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Nota (opcional)</label>
+                    <input value={nota} onChange={e => setNota(e.target.value)}
+                        placeholder={tipo === 'reembolso' ? 'Ej: Transferencia ref. 12345' : 'Ej: Cliente no reclamará el crédito'}
+                        style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', boxSizing: 'border-box' }} />
+                </div>
+
+                {error && <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px', fontSize: '13px', color: '#dc2626', marginBottom: '12px' }}>{error}</div>}
+
+                <button onClick={confirmar} disabled={guardando}
+                    style={{ width: '100%', backgroundColor: tipo === 'reembolso' ? '#1d4ed8' : '#6b7280', color: '#fff', border: 'none', borderRadius: '10px', padding: '13px', fontSize: '15px', fontWeight: 700, cursor: guardando ? 'default' : 'pointer', opacity: guardando ? 0.7 : 1 }}>
+                    {guardando ? 'Guardando...' : tipo === 'reembolso' ? `Confirmar reembolso de ${fmt(nc.monto_devuelto)}` : 'Confirmar anulación'}
+                </button>
             </div>
         </>
     )
