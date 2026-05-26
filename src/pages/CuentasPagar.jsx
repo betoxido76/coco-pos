@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
-import { AlertTriangle, CheckCircle, Clock, DollarSign } from 'lucide-react'
+import { AlertTriangle, CheckCircle, Clock, DollarSign, FileText } from 'lucide-react'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 const fmtBs = (n, tasa) => `${(Number(n || 0) * Number(tasa || 1)).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`
@@ -52,6 +52,8 @@ export default function CuentasPagar() {
     const [gastosPend, setGastosPend] = useState([])
     const [loadingGastos, setLoadingGastos] = useState(false)
     const [gastoPagando, setGastoPagando] = useState(null)
+    const [compraVer, setCompraVer] = useState(null)
+    const [gastoVerCxp, setGastoVerCxp] = useState(null)
 
     useEffect(() => { setPagina(0) }, [filtro, filtroProveedor])
     useEffect(() => { cargarDatos() }, [filtro, filtroProveedor, pagina])
@@ -76,7 +78,7 @@ export default function CuentasPagar() {
 
         let tablaQ = supabase
             .from('compras')
-            .select('*, proveedores(nombre)', { count: 'exact' })
+            .select('*, proveedores(nombre), ordenes_compra(numero_oc)', { count: 'exact' })
             .eq('empresa_id', perfil.empresa_id)
             .eq('condicion_pago', 'credito')
             .order('fecha_vencimiento_pago', { ascending: true })
@@ -163,6 +165,13 @@ export default function CuentasPagar() {
         setMostrarModal(true)
     }
 
+    if (compraVer) return (
+        <DetalleRecepcionCxP compra={compraVer} onVolver={() => setCompraVer(null)} />
+    )
+    if (gastoVerCxp) return (
+        <DetalleGastoCxP gasto={gastoVerCxp} tasas={tasas} onVolver={() => setGastoVerCxp(null)} />
+    )
+
     return (
         <div style={{ padding: '24px' }}>
             <div style={{ marginBottom: '24px' }}>
@@ -248,12 +257,18 @@ export default function CuentasPagar() {
                                         <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: saldo > 0 ? '#dc2626' : '#16a34a', textAlign: 'right' }}>{fmt(saldo)}</td>
                                         <td style={{ padding: '12px 16px' }}><BadgeEstado estado={c.estado_cobro} /></td>
                                         <td style={{ padding: '12px 16px' }}>
-                                            {c.estado_cobro !== 'pagado' && c.estado_cobro !== 'anulado' && (
-                                                <button onClick={() => abrirModal(c)}
-                                                    style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', padding: '5px 10px', fontSize: '12px', cursor: 'pointer' }}>
-                                                    <DollarSign size={12} /> Pagar
+                                            <div style={{ display: 'flex', gap: '6px' }}>
+                                                {c.estado_cobro !== 'pagado' && c.estado_cobro !== 'anulado' && (
+                                                    <button onClick={() => abrirModal(c)}
+                                                        style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', padding: '5px 10px', fontSize: '12px', cursor: 'pointer' }}>
+                                                        <DollarSign size={12} /> Pagar
+                                                    </button>
+                                                )}
+                                                <button onClick={() => setCompraVer(c)}
+                                                    style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
+                                                    <FileText size={13} /> Ver
                                                 </button>
-                                            )}
+                                            </div>
                                         </td>
                                     </tr>
                                 )
@@ -318,10 +333,16 @@ export default function CuentasPagar() {
                                             <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#dc2626', textAlign: 'right' }}>{Number(g.monto_usd) > 0 ? fmt(g.monto_usd) : '—'}</td>
                                             <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#d97706', textAlign: 'right' }}>{Number(g.monto_bs) > 0 ? fmtBs(g.monto_bs, 1) : '—'}</td>
                                             <td style={{ padding: '12px 16px' }}>
-                                                <button onClick={() => setGastoPagando(g)}
-                                                    style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', padding: '5px 10px', fontSize: '12px', cursor: 'pointer' }}>
-                                                    <DollarSign size={12} /> Pagar
-                                                </button>
+                                                <div style={{ display: 'flex', gap: '6px' }}>
+                                                    <button onClick={() => setGastoPagando(g)}
+                                                        style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', padding: '5px 10px', fontSize: '12px', cursor: 'pointer' }}>
+                                                        <DollarSign size={12} /> Pagar
+                                                    </button>
+                                                    <button onClick={() => setGastoVerCxp(g)}
+                                                        style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
+                                                        <FileText size={13} /> Ver
+                                                    </button>
+                                                </div>
                                             </td>
                                         </tr>
                                     )
@@ -666,5 +687,159 @@ function ModalPagoGasto({ gasto, tasas, onCerrar, onPagado }) {
                 </div>
             </div>
         </>
+    )
+}
+
+// ─── Detalle Recepción (desde CxP) ─────────────────────────────
+function DetalleRecepcionCxP({ compra, onVolver }) {
+    const { perfil } = useAuth()
+    const [items, setItems] = useState([])
+    const [loading, setLoading] = useState(true)
+    const [mapaNombres, setMapaNombres] = useState({})
+
+    useEffect(() => {
+        if (!perfil?.empresa_id) return
+        Promise.all([
+            supabase.from('materias_primas').select('id, nombre').eq('empresa_id', perfil.empresa_id),
+            supabase.from('materiales_empaque').select('id, nombre').eq('empresa_id', perfil.empresa_id),
+            supabase.from('productos_terminados').select('id, nombre').eq('empresa_id', perfil.empresa_id),
+            supabase.from('consumibles').select('id, nombre').eq('empresa_id', perfil.empresa_id),
+        ]).then(([mp, me, pt, con]) => {
+            const mapa = {}
+            ;[...(mp.data||[]), ...(me.data||[]), ...(pt.data||[]), ...(con.data||[])]
+                .forEach(i => { mapa[i.id] = i.nombre })
+            setMapaNombres(mapa)
+        })
+        supabase.from('compra_items').select('*')
+            .eq('compra_id', compra.id).eq('empresa_id', perfil.empresa_id)
+            .then(({ data }) => { if (data) setItems(data); setLoading(false) })
+    }, [compra.id, perfil?.empresa_id])
+
+    return (
+        <div style={{ padding: '24px', maxWidth: '680px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
+                <button onClick={onVolver} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', fontSize: '13px' }}>← Volver</button>
+                <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Detalle de Recepción</h1>
+            </div>
+            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '32px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
+                    <div>
+                        <div style={{ fontSize: '16px', fontWeight: 700, color: '#1f2937' }}>Recepción</div>
+                        <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px', fontFamily: 'monospace' }}>{compra.numero_doc || '—'}</div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontSize: '12px', color: '#6b7280' }}>{new Date(compra.fecha_compra).toLocaleDateString('es-VE')}</div>
+                        <div style={{ marginTop: '6px' }}><BadgeEstado estado={compra.estado_cobro || 'pendiente'} /></div>
+                    </div>
+                </div>
+                {compra.ordenes_compra?.numero_oc && (
+                    <div style={{ backgroundColor: '#f0fdf4', borderRadius: '8px', padding: '10px 14px', marginBottom: '16px', fontSize: '13px', color: '#166534' }}>
+                        Vinculada a OC: <strong>{compra.ordenes_compra.numero_oc}</strong>
+                    </div>
+                )}
+                <div style={{ backgroundColor: '#f9fafb', borderRadius: '8px', padding: '12px 16px', marginBottom: '24px' }}>
+                    <div style={{ fontSize: '11px', color: '#9ca3af', marginBottom: '2px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Proveedor</div>
+                    <div style={{ fontSize: '15px', fontWeight: 600, color: '#1f2937' }}>{compra.proveedores?.nombre || '—'}</div>
+                </div>
+                {loading ? (
+                    <div style={{ padding: '20px', textAlign: 'center', color: '#9ca3af' }}>Cargando items...</div>
+                ) : items.length === 0 ? (
+                    <div style={{ padding: '20px', textAlign: 'center', color: '#9ca3af', fontStyle: 'italic' }}>Sin items registrados</div>
+                ) : (
+                    <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '24px' }}>
+                        <thead>
+                            <tr style={{ borderBottom: '2px solid #e5e7eb' }}>
+                                {['Insumo', 'Tipo', 'Cant.', 'Precio unit.', 'Total'].map((h, i) => (
+                                    <th key={i} style={{ padding: '8px 0', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: i > 1 ? 'right' : 'left' }}>{h}</th>
+                                ))}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {items.map((item, idx) => (
+                                <tr key={idx} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                                    <td style={{ padding: '10px 0', fontSize: '13px', color: '#1f2937' }}>{mapaNombres[item.insumo_id] || '—'}</td>
+                                    <td style={{ padding: '10px 0', fontSize: '11px', color: '#6b7280', textTransform: 'uppercase' }}>{item.tipo_insumo?.replace(/_/g, ' ') || '—'}</td>
+                                    <td style={{ padding: '10px 0', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{item.cantidad}</td>
+                                    <td style={{ padding: '10px 0', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{fmt(item.precio_unitario)}</td>
+                                    <td style={{ padding: '10px 0', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(item.cantidad * item.precio_unitario)}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                )}
+                <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: '16px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '18px', fontWeight: 700, color: '#1f2937' }}>
+                        <span>Total</span>
+                        <span style={{ color: '#16a34a' }}>{fmt(compra.total)}</span>
+                    </div>
+                    {compra.fecha_vencimiento_pago && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#6b7280', marginTop: '8px' }}>
+                            <span>Vencimiento</span>
+                            <span>{new Date(compra.fecha_vencimiento_pago).toLocaleDateString('es-VE')}</span>
+                        </div>
+                    )}
+                </div>
+            </div>
+        </div>
+    )
+}
+
+// ─── Detalle Gasto (desde CxP) ──────────────────────────────────
+function semáforoGasto(fechaVenc) {
+    if (!fechaVenc) return null
+    const hoy = new Date(); hoy.setHours(0,0,0,0)
+    const venc = new Date(fechaVenc + 'T00:00:00')
+    const dias = Math.ceil((venc - hoy) / 86400000)
+    if (dias < 0) return { color: '#ef4444', label: `Vencido hace ${Math.abs(dias)}d` }
+    if (dias <= 3) return { color: '#d97706', label: `Vence en ${dias}d` }
+    return { color: '#16a34a', label: `Vence en ${dias}d` }
+}
+
+function DetalleGastoCxP({ gasto: g, tasas, onVolver }) {
+    const tasa = Number(tasas[g.tipo_tasa] || tasas.tasa_bcv || 1)
+    const totalUsd = Number(g.monto_usd || 0) + Number(g.monto_bs || 0) / tasa
+    const sem = semáforoGasto(g.fecha_vencimiento)
+
+    const card = { backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '12px', padding: '20px 24px', marginBottom: '16px' }
+    const lbl = { fontSize: '11px', fontWeight: 500, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 4px' }
+    const val = { fontSize: '14px', fontWeight: 500, color: '#1f2937', margin: 0 }
+
+    return (
+        <div style={{ padding: '24px', maxWidth: '720px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
+                <button onClick={onVolver} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', fontSize: '13px' }}>← Volver</button>
+                <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Detalle de Gasto</h1>
+                <span style={{ marginLeft: 'auto', padding: '4px 12px', borderRadius: '20px', fontSize: '12px', fontWeight: 600,
+                    backgroundColor: '#fffbeb', color: sem?.color || '#d97706' }}>
+                    {sem ? sem.label : 'Pendiente'}
+                </span>
+            </div>
+            <div style={card}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px' }}>
+                    <div><p style={lbl}>Documento</p><p style={{ ...val, fontFamily: 'monospace', fontSize: '15px' }}>{g.numero_gasto || '—'}</p></div>
+                    <div><p style={lbl}>Vencimiento</p><p style={{ ...val, color: sem?.color || '#374151' }}>{g.fecha_vencimiento ? new Date(g.fecha_vencimiento + 'T00:00:00').toLocaleDateString('es-VE', { day: '2-digit', month: 'long', year: 'numeric' }) : '—'}</p></div>
+                    <div><p style={lbl}>Tipo de gasto</p><p style={val}>{g.tipos_gastos?.nombre || g.categoria || '—'}</p></div>
+                </div>
+            </div>
+            <div style={card}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                    <div>
+                        <p style={lbl}>Nombre</p>
+                        <p style={val}>{g.nombre}</p>
+                        {g.descripcion && <p style={{ fontSize: '13px', color: '#6b7280', margin: '6px 0 0' }}>{g.descripcion}</p>}
+                    </div>
+                    <div><p style={lbl}>Proveedor</p><p style={val}>{g.proveedores?.nombre || '—'}</p></div>
+                </div>
+            </div>
+            <div style={card}>
+                <p style={{ ...lbl, marginBottom: '16px' }}>Montos</p>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '20px' }}>
+                    <div><p style={lbl}>Monto USD</p><p style={{ ...val, color: '#dc2626', fontSize: '16px' }}>{Number(g.monto_usd) > 0 ? fmt(g.monto_usd) : '—'}</p></div>
+                    <div><p style={lbl}>Monto Bs.</p><p style={{ ...val, color: '#d97706', fontSize: '16px' }}>{Number(g.monto_bs) > 0 ? `${Number(g.monto_bs).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.` : '—'}</p></div>
+                    <div><p style={lbl}>Tasa</p><p style={val}>{g.tipo_tasa === 'tasa_bcv' ? 'BCV' : g.tipo_tasa === 'tasa_euro' ? 'EUR·BCV' : 'Binance'} — {tasa.toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.</p></div>
+                    <div><p style={lbl}>Total USD equiv.</p><p style={{ ...val, fontSize: '16px' }}>{fmt(totalUsd)}</p></div>
+                </div>
+            </div>
+        </div>
     )
 }
