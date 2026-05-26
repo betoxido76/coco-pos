@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
-import { X, DollarSign, CheckSquare } from 'lucide-react'
+import { X, DollarSign, CheckSquare, FileText } from 'lucide-react'
 
 const fmt = n => `$${Number(n).toFixed(2)}`
 const fmtBs = n => `${Number(n).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`
@@ -325,10 +325,13 @@ function ModalCobro({ venta, tasas, onCerrar, onCobrado }) {
     const [error, setError] = useState('')
     const [cuentasBancarias, setCuentasBancarias] = useState([])
     const [cuentaBancariaId, setCuentaBancariaId] = useState('')
+    const [ncsDisponibles, setNcsDisponibles] = useState([])
+    const [ncsSeleccionadas, setNcsSeleccionadas] = useState(new Set())
 
     useEffect(() => {
         if (perfil?.empresa_id) {
-            supabase.from('cuentas_bancarias').select('id, nombre, banco, moneda').eq('empresa_id', perfil.empresa_id).eq('activa', true)
+            supabase.from('cuentas_bancarias').select('id, nombre, banco, moneda')
+                .eq('empresa_id', perfil.empresa_id).eq('activa', true)
                 .then(({ data }) => setCuentasBancarias(data || []))
         }
     }, [perfil?.empresa_id])
@@ -344,22 +347,52 @@ function ModalCobro({ venta, tasas, onCerrar, onCobrado }) {
             })
     }, [venta.id])
 
+    useEffect(() => {
+        if (venta.cliente_id && perfil?.empresa_id) {
+            supabase.from('devoluciones')
+                .select('id, numero_nc, monto_devuelto, created_at')
+                .eq('empresa_id', perfil.empresa_id)
+                .eq('cliente_id', venta.cliente_id)
+                .eq('estado_nc', 'pendiente')
+                .order('created_at', { ascending: false })
+                .then(({ data }) => setNcsDisponibles(data || []))
+        }
+    }, [venta.cliente_id, perfil?.empresa_id])
+
     const tasa = tasas[tipoTasa] || 1
     const saldo = venta.total - cobradoPrev
-    const abonoEnUsd = pagoUsd + (pagoBs / tasa)
+    const montoNCs = ncsDisponibles
+        .filter(nc => ncsSeleccionadas.has(nc.id))
+        .reduce((s, nc) => s + (nc.monto_devuelto || 0), 0)
+    const saldoEfectivo = Math.max(0, saldo - montoNCs)
+    const abonoEnUsd = pagoUsd + (pagoBs / tasa) + montoNCs
     const excede = abonoEnUsd > saldo + 0.01
     const sinAbono = abonoEnUsd < 0.01
+
+    function toggleNc(ncId) {
+        setNcsSeleccionadas(prev => {
+            const next = new Set(prev)
+            if (next.has(ncId)) next.delete(ncId); else next.add(ncId)
+            const nuevoMontoNCs = ncsDisponibles
+                .filter(nc => next.has(nc.id))
+                .reduce((s, nc) => s + (nc.monto_devuelto || 0), 0)
+            const nuevoSaldoEfectivo = Math.max(0, saldo - nuevoMontoNCs)
+            setPagoUsd(parseFloat(nuevoSaldoEfectivo.toFixed(2)))
+            setPagoBs(0)
+            return next
+        })
+    }
 
     function handleUsdChange(val) {
         const n = Math.max(0, Number(val))
         setPagoUsd(n)
-        setPagoBs(parseFloat((Math.max(0, saldo - n) * tasa).toFixed(2)))
+        setPagoBs(parseFloat((Math.max(0, saldoEfectivo - n) * tasa).toFixed(2)))
     }
 
     function handleTasaChange(nuevaTasa) {
         setTipoTasa(nuevaTasa)
         const t = tasas[nuevaTasa] || 1
-        setPagoBs(parseFloat((Math.max(0, saldo - pagoUsd) * t).toFixed(2)))
+        setPagoBs(parseFloat((Math.max(0, saldoEfectivo - pagoUsd) * t).toFixed(2)))
     }
 
     async function confirmar() {
@@ -367,19 +400,42 @@ function ModalCobro({ venta, tasas, onCerrar, onCobrado }) {
         if (excede) { setError('El abono supera el saldo pendiente'); return }
         setGuardando(true); setError('')
 
-        await supabase.from('cobros').insert({
-            venta_id: venta.id,
-            monto_usd: pagoUsd,
-            monto_bs: pagoBs,
-            tasa_cambio: tasa,
-            tipo_tasa: tipoTasa,
-            metodo_usd: metodoUsd,
-            metodo_bs: metodoBs,
-            nota: nota || null,
-            cuenta_bancaria_id: cuentaBancariaId || null,
-            usuario_id: (await supabase.auth.getUser()).data.user.id,
-            empresa_id: perfil.empresa_id,
-        })
+        const { data: { user } } = await supabase.auth.getUser()
+
+        // Aplicar NCs seleccionadas como cobros
+        for (const nc of ncsDisponibles.filter(nc => ncsSeleccionadas.has(nc.id))) {
+            await supabase.from('cobros').insert({
+                venta_id: venta.id,
+                monto_usd: nc.monto_devuelto,
+                monto_bs: 0,
+                tasa_cambio: tasa,
+                tipo_tasa: tipoTasa,
+                metodo_usd: 'Nota de Crédito',
+                metodo_bs: null,
+                nota: `NC ${nc.numero_nc || nc.id.slice(0, 8)}`,
+                devolucion_id: nc.id,
+                usuario_id: user.id,
+                empresa_id: perfil.empresa_id,
+            })
+            await supabase.from('devoluciones').update({ estado_nc: 'aplicada' }).eq('id', nc.id)
+        }
+
+        // Cobro en efectivo/transferencia (si hay monto)
+        if (pagoUsd > 0.001 || pagoBs > 0.001) {
+            await supabase.from('cobros').insert({
+                venta_id: venta.id,
+                monto_usd: pagoUsd,
+                monto_bs: pagoBs,
+                tasa_cambio: tasa,
+                tipo_tasa: tipoTasa,
+                metodo_usd: metodoUsd,
+                metodo_bs: metodoBs,
+                nota: nota || null,
+                cuenta_bancaria_id: cuentaBancariaId || null,
+                usuario_id: user.id,
+                empresa_id: perfil.empresa_id,
+            })
+        }
 
         const nuevoCobrado = cobradoPrev + abonoEnUsd
         const nuevoEstado = nuevoCobrado >= venta.total - 0.01 ? 'pagado' : 'parcial'
@@ -399,6 +455,7 @@ function ModalCobro({ venta, tasas, onCerrar, onCobrado }) {
                     <button onClick={onCerrar} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af' }}><X size={20} /></button>
                 </div>
 
+                {/* Resumen de factura */}
                 <div style={{ backgroundColor: '#f9fafb', borderRadius: '10px', padding: '12px 16px', marginBottom: '20px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '4px' }}>
                         <span style={{ color: '#6b7280' }}>Factura</span>
@@ -419,73 +476,114 @@ function ModalCobro({ venta, tasas, onCerrar, onCobrado }) {
                     </div>
                 </div>
 
-                <div style={{ marginBottom: '16px' }}>
-                    <label style={{ fontSize: '12px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tasa de cambio</label>
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                        {OPCIONES_TASA.map(op => (
-                            <button key={op.key} onClick={() => handleTasaChange(op.key)}
-                                style={{ flex: 1, padding: '8px 4px', borderRadius: '8px', fontSize: '12px', fontWeight: 500, border: '1px solid', cursor: 'pointer', borderColor: tipoTasa === op.key ? '#16a34a' : '#e5e7eb', backgroundColor: tipoTasa === op.key ? '#f0fdf4' : '#fff', color: tipoTasa === op.key ? '#16a34a' : '#6b7280' }}>
-                                <div>{op.label}</div>
-                                <div style={{ fontSize: '11px', marginTop: '2px', fontWeight: 400 }}>{tasas[op.key].toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.</div>
-                            </button>
+                {/* Notas de crédito disponibles */}
+                {ncsDisponibles.length > 0 && (
+                    <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '10px', padding: '12px 16px', marginBottom: '16px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
+                            <FileText size={14} color="#d97706" />
+                            <span style={{ fontSize: '12px', fontWeight: 600, color: '#d97706', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                Notas de crédito disponibles
+                            </span>
+                        </div>
+                        {ncsDisponibles.map((nc, i) => (
+                            <label key={nc.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '6px 0', cursor: 'pointer', borderBottom: i < ncsDisponibles.length - 1 ? '1px solid #fde68a' : 'none' }}>
+                                <input type="checkbox" checked={ncsSeleccionadas.has(nc.id)} onChange={() => toggleNc(nc.id)}
+                                    style={{ width: '15px', height: '15px', accentColor: '#d97706', cursor: 'pointer', flexShrink: 0 }} />
+                                <span style={{ fontSize: '13px', color: '#92400e', fontFamily: 'monospace' }}>
+                                    {nc.numero_nc || `NC-${nc.id.slice(0, 8)}`}
+                                </span>
+                                <span style={{ marginLeft: 'auto', fontSize: '13px', fontWeight: 700, color: '#92400e' }}>{fmt(nc.monto_devuelto)}</span>
+                            </label>
                         ))}
-                    </div>
-                </div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
-                    <div>
-                        <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Pago en USD ($)</label>
-                        <input type="number" min="0" step="0.01" value={pagoUsd} onChange={e => handleUsdChange(e.target.value)}
-                            style={{ width: '100%', padding: '9px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '15px', fontWeight: 600, boxSizing: 'border-box' }} />
-                    </div>
-                    <div>
-                        <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Vía USD</label>
-                        <select value={metodoUsd} onChange={e => setMetodoUsd(e.target.value)}
-                            style={{ width: '100%', padding: '9px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', backgroundColor: '#fff' }}>
-                            {METODOS_USD.map(m => <option key={m}>{m}</option>)}
-                        </select>
-                    </div>
-                    <div>
-                        <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Pago en Bs.</label>
-                        <input type="number" min="0" step="1" value={pagoBs} onChange={e => setPagoBs(Math.max(0, Number(e.target.value)))}
-                            style={{ width: '100%', padding: '9px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '15px', fontWeight: 600, boxSizing: 'border-box' }} />
-                    </div>
-                    <div>
-                        <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Vía Bs.</label>
-                        <select value={metodoBs} onChange={e => setMetodoBs(e.target.value)}
-                            style={{ width: '100%', padding: '9px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', backgroundColor: '#fff' }}>
-                            {METODOS_BS.map(m => <option key={m}>{m}</option>)}
-                        </select>
-                    </div>
-                </div>
-
-                {pagoUsd > 0 && (
-                    <div style={{ backgroundColor: '#f9fafb', borderRadius: '8px', padding: '8px 12px', marginBottom: '12px', fontSize: '12px', color: '#6b7280' }}>
-                        ${pagoUsd.toFixed(2)} × {tasa.toLocaleString('es-VE', { minimumFractionDigits: 2 })} = <strong style={{ color: '#374151' }}>{(pagoUsd * tasa).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.</strong>
+                        {ncsSeleccionadas.size > 0 && (
+                            <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '8px', marginTop: '4px', fontSize: '13px', fontWeight: 700, borderTop: '1px solid #fcd34d' }}>
+                                <span style={{ color: '#d97706' }}>Total NCs aplicadas</span>
+                                <span style={{ color: '#d97706' }}>{fmt(montoNCs)}</span>
+                            </div>
+                        )}
                     </div>
                 )}
 
-                {cuentasBancarias.length > 0 && (
-                    <div style={{ marginBottom: '16px' }}>
-                        <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Cuenta bancaria (opcional)</label>
-                        <select value={cuentaBancariaId} onChange={e => setCuentaBancariaId(e.target.value)}
-                            style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', backgroundColor: '#fff' }}>
-                            <option value="">— Efectivo / sin cuenta —</option>
-                            {cuentasBancarias
-                                .filter(c => pagoUsd > 0 && pagoBs > 0 ? true : pagoUsd > 0 ? c.moneda !== 'Bs' : c.moneda === 'Bs')
-                                .map(c => <option key={c.id} value={c.id}>{c.nombre} ({c.banco} · {c.moneda})</option>)}
-                        </select>
+                {/* Sección de pago en efectivo/transferencia — ocultar si NCs cubren todo */}
+                {saldoEfectivo > 0.001 ? (
+                    <>
+                        <div style={{ marginBottom: '16px' }}>
+                            <label style={{ fontSize: '12px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tasa de cambio</label>
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                                {OPCIONES_TASA.map(op => (
+                                    <button key={op.key} onClick={() => handleTasaChange(op.key)}
+                                        style={{ flex: 1, padding: '8px 4px', borderRadius: '8px', fontSize: '12px', fontWeight: 500, border: '1px solid', cursor: 'pointer', borderColor: tipoTasa === op.key ? '#16a34a' : '#e5e7eb', backgroundColor: tipoTasa === op.key ? '#f0fdf4' : '#fff', color: tipoTasa === op.key ? '#16a34a' : '#6b7280' }}>
+                                        <div>{op.label}</div>
+                                        <div style={{ fontSize: '11px', marginTop: '2px', fontWeight: 400 }}>{tasas[op.key].toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.</div>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
+                            <div>
+                                <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Pago en USD ($)</label>
+                                <input type="number" min="0" step="0.01" value={pagoUsd} onChange={e => handleUsdChange(e.target.value)}
+                                    style={{ width: '100%', padding: '9px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '15px', fontWeight: 600, boxSizing: 'border-box' }} />
+                            </div>
+                            <div>
+                                <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Vía USD</label>
+                                <select value={metodoUsd} onChange={e => setMetodoUsd(e.target.value)}
+                                    style={{ width: '100%', padding: '9px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', backgroundColor: '#fff' }}>
+                                    {METODOS_USD.map(m => <option key={m}>{m}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Pago en Bs.</label>
+                                <input type="number" min="0" step="1" value={pagoBs} onChange={e => setPagoBs(Math.max(0, Number(e.target.value)))}
+                                    style={{ width: '100%', padding: '9px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '15px', fontWeight: 600, boxSizing: 'border-box' }} />
+                            </div>
+                            <div>
+                                <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Vía Bs.</label>
+                                <select value={metodoBs} onChange={e => setMetodoBs(e.target.value)}
+                                    style={{ width: '100%', padding: '9px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', backgroundColor: '#fff' }}>
+                                    {METODOS_BS.map(m => <option key={m}>{m}</option>)}
+                                </select>
+                            </div>
+                        </div>
+
+                        {pagoUsd > 0 && (
+                            <div style={{ backgroundColor: '#f9fafb', borderRadius: '8px', padding: '8px 12px', marginBottom: '12px', fontSize: '12px', color: '#6b7280' }}>
+                                ${pagoUsd.toFixed(2)} × {tasa.toLocaleString('es-VE', { minimumFractionDigits: 2 })} = <strong style={{ color: '#374151' }}>{(pagoUsd * tasa).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.</strong>
+                            </div>
+                        )}
+
+                        {cuentasBancarias.length > 0 && (
+                            <div style={{ marginBottom: '16px' }}>
+                                <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Cuenta bancaria (opcional)</label>
+                                <select value={cuentaBancariaId} onChange={e => setCuentaBancariaId(e.target.value)}
+                                    style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', backgroundColor: '#fff' }}>
+                                    <option value="">— Efectivo / sin cuenta —</option>
+                                    {cuentasBancarias
+                                        .filter(c => pagoUsd > 0 && pagoBs > 0 ? true : pagoUsd > 0 ? c.moneda !== 'Bs' : c.moneda === 'Bs')
+                                        .map(c => <option key={c.id} value={c.id}>{c.nombre} ({c.banco} · {c.moneda})</option>)}
+                                </select>
+                            </div>
+                        )}
+
+                        <div style={{ marginBottom: '16px' }}>
+                            <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Nota (opcional)</label>
+                            <input value={nota} onChange={e => setNota(e.target.value)} placeholder="Ej: Transferencia ref. 12345"
+                                style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', boxSizing: 'border-box' }} />
+                        </div>
+                    </>
+                ) : ncsSeleccionadas.size > 0 && (
+                    <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '12px', marginBottom: '16px', fontSize: '13px', textAlign: 'center', color: '#166534', fontWeight: 500 }}>
+                        Las notas de crédito seleccionadas cubren el saldo completo
                     </div>
                 )}
-
-                <div style={{ marginBottom: '16px' }}>
-                    <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Nota (opcional)</label>
-                    <input value={nota} onChange={e => setNota(e.target.value)} placeholder="Ej: Transferencia ref. 12345"
-                        style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', boxSizing: 'border-box' }} />
-                </div>
 
                 <div style={{ borderRadius: '8px', padding: '10px 14px', marginBottom: '16px', fontSize: '13px', textAlign: 'center', fontWeight: 500, backgroundColor: excede ? '#fef2f2' : sinAbono ? '#f9fafb' : '#f0fdf4', color: excede ? '#dc2626' : sinAbono ? '#9ca3af' : '#166534', border: `1px solid ${excede ? '#fecaca' : sinAbono ? '#e5e7eb' : '#bbf7d0'}` }}>
-                    {excede ? '⚠️ El abono supera el saldo pendiente' : sinAbono ? 'Ingresa el monto a cobrar' : `Abono: ${fmt(abonoEnUsd)} · Quedará pendiente: ${fmt(Math.max(0, saldo - abonoEnUsd))}`}
+                    {excede ? '⚠️ El abono supera el saldo pendiente'
+                        : sinAbono ? 'Ingresa el monto a cobrar'
+                        : montoNCs > 0 && saldoEfectivo <= 0.001
+                        ? `NC: ${fmt(montoNCs)} · Saldo cubierto completamente`
+                        : `Abono: ${fmt(abonoEnUsd)} · Quedará pendiente: ${fmt(Math.max(0, saldo - abonoEnUsd))}`}
                 </div>
 
                 {error && <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px', fontSize: '13px', color: '#dc2626', marginBottom: '12px' }}>{error}</div>}
