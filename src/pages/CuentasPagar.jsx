@@ -65,10 +65,16 @@ export default function CuentasPagar() {
     const [gastoPagando, setGastoPagando] = useState(null)
     const [compraVer, setCompraVer] = useState(null)
     const [gastoVerCxp, setGastoVerCxp] = useState(null)
+    const [nds, setNds] = useState([])
+    const [loadingNds, setLoadingNds] = useState(false)
+    const [filtroNdEstado, setFiltroNdEstado] = useState('pendiente')
+    const [ndVer, setNdVer] = useState(null)
+    const [modalLiquidarNd, setModalLiquidarNd] = useState(null)
 
     useEffect(() => { setPagina(0) }, [filtro, filtroProveedor])
     useEffect(() => { cargarDatos() }, [filtro, filtroProveedor, pagina])
     useEffect(() => { if (tabSeccion === 'gastos') cargarGastosPendientes() }, [tabSeccion])
+    useEffect(() => { if (tabSeccion === 'nd') cargarNds() }, [tabSeccion, filtroNdEstado])
 
     useEffect(() => {
         supabase.from('proveedores').select('id, nombre')
@@ -159,6 +165,19 @@ export default function CuentasPagar() {
     const vencidas = kpiData.filter(c => c.fecha_vencimiento_pago && new Date(c.fecha_vencimiento_pago) < new Date()).length
     const alDia = kpiData.filter(c => c.fecha_vencimiento_pago && new Date(c.fecha_vencimiento_pago) >= new Date()).length
 
+    async function cargarNds() {
+        setLoadingNds(true)
+        let q = supabase.from('devoluciones_proveedor')
+            .select('id, numero_nd, monto_total, estado_nd, motivo, created_at, proveedor_id, compra_id, nota_liquidacion, fecha_liquidacion, proveedores(nombre), compras(numero_doc)')
+            .eq('empresa_id', perfil.empresa_id)
+            .order('created_at', { ascending: false })
+        if (filtroNdEstado === 'liquidada') q = q.in('estado_nd', ['reembolsada', 'anulada'])
+        else if (filtroNdEstado !== 'todas') q = q.eq('estado_nd', filtroNdEstado)
+        const { data } = await q
+        setNds(data || [])
+        setLoadingNds(false)
+    }
+
     async function cargarGastosPendientes() {
         setLoadingGastos(true)
         const { data } = await supabase
@@ -181,6 +200,9 @@ export default function CuentasPagar() {
     )
     if (gastoVerCxp) return (
         <DetalleGastoCxP gasto={gastoVerCxp} tasas={tasas} onVolver={() => setGastoVerCxp(null)} />
+    )
+    if (ndVer) return (
+        <DetalleND nd={ndVer} onVolver={() => setNdVer(null)} />
     )
 
     return (
@@ -208,7 +230,7 @@ export default function CuentasPagar() {
 
             {/* Tabs de sección */}
             <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
-                {[['compras', 'Compras a crédito'], ['gastos', 'Gastos programados']].map(([key, label]) => (
+                {[['compras', 'Compras a crédito'], ['gastos', 'Gastos programados'], ['nd', `Notas de Débito${nds.length && filtroNdEstado === 'pendiente' ? ` (${nds.length})` : ''}`]].map(([key, label]) => (
                     <button key={key} onClick={() => setTabSeccion(key)}
                         style={{ padding: '8px 18px', borderRadius: '8px', fontSize: '13px', fontWeight: 500, border: '1px solid', cursor: 'pointer',
                             borderColor: tabSeccion === key ? '#16a34a' : '#e5e7eb',
@@ -372,6 +394,65 @@ export default function CuentasPagar() {
                 </div>
             )}
 
+            {/* Tab Notas de Débito */}
+            {tabSeccion === 'nd' && (
+                <div>
+                    <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
+                        {[['pendiente', 'Pendientes'], ['aplicada', 'Aplicadas'], ['liquidada', 'Liquidadas'], ['todas', 'Todas']].map(([val, label]) => (
+                            <button key={val} onClick={() => setFiltroNdEstado(val)}
+                                style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', cursor: 'pointer', backgroundColor: filtroNdEstado === val ? '#dc2626' : '#fff', color: filtroNdEstado === val ? '#fff' : '#374151', fontWeight: filtroNdEstado === val ? 500 : 400 }}>
+                                {label}
+                            </button>
+                        ))}
+                    </div>
+                    <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                        {loadingNds ? (
+                            <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
+                        ) : nds.length === 0 ? (
+                            <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>No hay notas de débito {filtroNdEstado !== 'todas' ? `con estado "${filtroNdEstado}"` : ''}</div>
+                        ) : (
+                            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                <thead>
+                                    <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                                        {['N° ND', 'Proveedor', 'Recepción origen', 'Fecha', 'Monto', 'Estado', 'Acciones'].map((h, i) => (
+                                            <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: i === 4 ? 'right' : 'left' }}>{h}</th>
+                                        ))}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {nds.map(nd => (
+                                        <tr key={nd.id} style={{ borderBottom: '1px solid #f3f4f6' }}
+                                            onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
+                                            onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                                            <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>{nd.numero_nd || '—'}</td>
+                                            <td style={{ padding: '12px 16px', fontSize: '13px', color: '#374151' }}>{nd.proveedores?.nombre || '—'}</td>
+                                            <td style={{ padding: '12px 16px', fontSize: '12px', color: '#6b7280', fontFamily: 'monospace' }}>{nd.compras?.numero_doc || '—'}</td>
+                                            <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{new Date(nd.created_at).toLocaleDateString('es-VE')}</td>
+                                            <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#dc2626', textAlign: 'right' }}>{fmt(nd.monto_total)}</td>
+                                            <td style={{ padding: '12px 16px' }}><BadgeND estado={nd.estado_nd} /></td>
+                                            <td style={{ padding: '12px 16px' }}>
+                                                <div style={{ display: 'flex', gap: '6px' }}>
+                                                    <button onClick={() => setNdVer(nd)}
+                                                        style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
+                                                        <FileText size={13} /> Ver
+                                                    </button>
+                                                    {nd.estado_nd === 'pendiente' && (
+                                                        <button onClick={() => setModalLiquidarNd(nd)}
+                                                            style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#dc2626', cursor: 'pointer', fontWeight: 500 }}>
+                                                            Liquidar
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        )}
+                    </div>
+                </div>
+            )}
+
             {mostrarModal && compraSeleccionada && (
                 <ModalPago
                     compra={compraSeleccionada}
@@ -387,6 +468,13 @@ export default function CuentasPagar() {
                     tasas={tasas}
                     onCerrar={() => setGastoPagando(null)}
                     onPagado={() => { setGastoPagando(null); cargarGastosPendientes() }}
+                />
+            )}
+            {modalLiquidarNd && (
+                <ModalLiquidarND
+                    nd={modalLiquidarNd}
+                    onCerrar={() => setModalLiquidarNd(null)}
+                    onLiquidado={() => { setModalLiquidarNd(null); cargarNds() }}
                 />
             )}
         </div>
@@ -411,6 +499,8 @@ function ModalPago({ compra, saldo, tasas, onCerrar, onPagado }) {
     const [error, setError] = useState('')
     const [cuentasBancarias, setCuentasBancarias] = useState([])
     const [cuentaBancariaId, setCuentaBancariaId] = useState('')
+    const [ndsDisponibles, setNdsDisponibles] = useState([])
+    const [ndsSeleccionadas, setNdsSeleccionadas] = useState(new Set())
 
     useEffect(() => {
         if (perfil?.empresa_id) {
@@ -419,47 +509,92 @@ function ModalPago({ compra, saldo, tasas, onCerrar, onPagado }) {
         }
     }, [perfil?.empresa_id])
 
+    useEffect(() => {
+        if (perfil?.empresa_id && compra.proveedor_id) {
+            supabase.from('devoluciones_proveedor')
+                .select('id, numero_nd, monto_total, motivo')
+                .eq('empresa_id', perfil.empresa_id)
+                .eq('proveedor_id', compra.proveedor_id)
+                .eq('estado_nd', 'pendiente')
+                .then(({ data }) => setNdsDisponibles(data || []))
+        }
+    }, [perfil?.empresa_id, compra.proveedor_id])
+
+    const montoNDs = [...ndsSeleccionadas].reduce((s, id) => {
+        const nd = ndsDisponibles.find(n => n.id === id)
+        return s + Number(nd?.monto_total || 0)
+    }, 0)
+    const saldoEfectivo = Math.max(0, saldo - montoNDs)
+
+    function toggleNd(ndId) {
+        setNdsSeleccionadas(prev => {
+            const next = new Set(prev)
+            if (next.has(ndId)) next.delete(ndId)
+            else next.add(ndId)
+            return next
+        })
+    }
+
     const tasa = Number(tasas[tipoTasa] || 1)
 
-    // Recalcular Bs cuando cambia la tasa (mantiene USD como base)
+    useEffect(() => {
+        setMontoUsd(saldoEfectivo.toFixed(2))
+        setMontoBs('0')
+    }, [ndsSeleccionadas.size])
+
     useEffect(() => {
         const usd = Number(montoUsd) || 0
-        const complemento = (saldo - usd) * tasa
+        const complemento = (saldoEfectivo - usd) * tasa
         setMontoBs(complemento > 0 ? complemento.toFixed(2) : '0')
     }, [tipoTasa])
 
     function handleUsdChange(val) {
         setMontoUsd(val)
         const usd = Number(val) || 0
-        const complemento = (saldo - usd) * tasa
+        const complemento = (saldoEfectivo - usd) * tasa
         setMontoBs(complemento > 0 ? complemento.toFixed(2) : '0')
     }
 
     function handleBsChange(val) {
         setMontoBs(val)
         const bs = Number(val) || 0
-        const complemento = saldo - bs / tasa
+        const complemento = saldoEfectivo - bs / tasa
         setMontoUsd(complemento > 0 ? complemento.toFixed(2) : '0')
     }
 
     async function confirmar() {
-        if (!montoUsd || Number(montoUsd) <= 0) { setError('Ingresa un monto válido'); return }
-        if (Number(montoUsd) > saldo + 0.01) { setError(`El monto no puede superar el saldo de ${fmt(saldo)}`); return }
+        if (saldoEfectivo > 0.001 && (!montoUsd || Number(montoUsd) <= 0)) { setError('Ingresa un monto válido'); return }
+        if (Number(montoUsd) > saldoEfectivo + 0.01) { setError(`El monto no puede superar el saldo efectivo de ${fmt(saldoEfectivo)}`); return }
         setGuardando(true); setError('')
 
         const { data: { user } } = await supabase.auth.getUser()
 
-        const { error: errPago } = await supabase.from('pagos_proveedor').insert({
-            compra_id: compra.id, usuario_id: user.id,
-            monto_usd: Number(montoUsd), monto_bs: Number(montoBs || 0),
-            tasa_cambio: tasa, tipo_tasa: tipoTasa,
-            metodo_usd: metodoUsd, metodo_bs: metodoBs || null,
-            nota: nota || null,
-            cuenta_bancaria_id: cuentaBancariaId || null,
-            empresa_id: perfil.empresa_id,
-        })
+        for (const ndId of ndsSeleccionadas) {
+            const nd = ndsDisponibles.find(n => n.id === ndId)
+            if (!nd) continue
+            await supabase.from('pagos_proveedor').insert({
+                compra_id: compra.id, usuario_id: user.id,
+                monto_usd: Number(nd.monto_total), monto_bs: 0,
+                tasa_cambio: tasa, tipo_tasa: tipoTasa,
+                metodo_usd: 'Nota de Débito', metodo_bs: null,
+                nota: `ND ${nd.numero_nd}`, devolucion_proveedor_id: nd.id,
+                empresa_id: perfil.empresa_id,
+            })
+            await supabase.from('devoluciones_proveedor').update({ estado_nd: 'aplicada' }).eq('id', nd.id)
+        }
 
-        if (errPago) { setError('Error: ' + errPago.message); setGuardando(false); return }
+        if (saldoEfectivo > 0.001) {
+            const { error: errPago } = await supabase.from('pagos_proveedor').insert({
+                compra_id: compra.id, usuario_id: user.id,
+                monto_usd: Number(montoUsd), monto_bs: Number(montoBs || 0),
+                tasa_cambio: tasa, tipo_tasa: tipoTasa,
+                metodo_usd: metodoUsd, metodo_bs: metodoBs || null,
+                nota: nota || null,
+                cuenta_bancaria_id: cuentaBancariaId || null,
+                empresa_id: perfil.empresa_id,
+            })
+            if (errPago) { setError('Error: ' + errPago.message); setGuardando(false); return }
+        }
 
         const { data: todosPagos } = await supabase
             .from('pagos_proveedor').select('monto_usd').eq('compra_id', compra.id)
@@ -480,12 +615,39 @@ function ModalPago({ compra, saldo, tasas, onCerrar, onPagado }) {
                     <p style={{ fontSize: '13px', color: '#6b7280', margin: 0 }}>{compra.numero_doc} · {compra.proveedores?.nombre}</p>
                 </div>
 
-                <div style={{ backgroundColor: '#eff6ff', borderRadius: '8px', padding: '12px 16px', marginBottom: '20px', display: 'flex', justifyContent: 'space-between' }}>
+                <div style={{ backgroundColor: '#eff6ff', borderRadius: '8px', padding: '12px 16px', marginBottom: ndsDisponibles.length > 0 ? '12px' : '20px', display: 'flex', justifyContent: 'space-between' }}>
                     <span style={{ fontSize: '13px', color: '#16a34a' }}>Saldo pendiente</span>
                     <span style={{ fontSize: '15px', fontWeight: 700, color: '#16a34a' }}>{fmt(saldo)}</span>
                 </div>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                {ndsDisponibles.length > 0 && (
+                    <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: '10px', padding: '12px 16px', marginBottom: '20px' }}>
+                        <p style={{ fontSize: '12px', fontWeight: 600, color: '#92400e', margin: '0 0 8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Notas de Débito disponibles</p>
+                        {ndsDisponibles.map(nd => (
+                            <label key={nd.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', padding: '6px 0', cursor: 'pointer', borderBottom: '1px solid #fde68a' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <input type="checkbox" checked={ndsSeleccionadas.has(nd.id)} onChange={() => toggleNd(nd.id)} />
+                                    <span style={{ fontSize: '13px', color: '#78350f', fontFamily: 'monospace' }}>{nd.numero_nd}</span>
+                                    {nd.motivo && <span style={{ fontSize: '11px', color: '#92400e' }}>{nd.motivo}</span>}
+                                </div>
+                                <span style={{ fontSize: '13px', fontWeight: 600, color: '#dc2626' }}>{fmt(nd.monto_total)}</span>
+                            </label>
+                        ))}
+                        {montoNDs > 0 && (
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px', fontSize: '13px' }}>
+                                <span style={{ color: '#92400e' }}>Crédito aplicado:</span>
+                                <span style={{ fontWeight: 600, color: '#dc2626' }}>-{fmt(montoNDs)}</span>
+                            </div>
+                        )}
+                        {saldoEfectivo <= 0.001 && (
+                            <div style={{ marginTop: '8px', backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '6px', padding: '8px 12px', fontSize: '13px', color: '#166534', fontWeight: 500 }}>
+                                ✓ Saldo cubierto completamente por notas de débito
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {saldoEfectivo > 0.001 && <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
                     <div>
                         <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Tasa de cambio</label>
                         <div style={{ display: 'flex', gap: '8px' }}>
@@ -555,7 +717,7 @@ function ModalPago({ compra, saldo, tasas, onCerrar, onPagado }) {
                         <input type="text" value={nota} onChange={e => setNota(e.target.value)} placeholder="Referencia, observación..."
                             style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', boxSizing: 'border-box' }} />
                     </div>
-                </div>
+                </div>}
 
                 {error && (
                     <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', color: '#dc2626', marginTop: '14px' }}>
@@ -864,5 +1026,186 @@ function DetalleGastoCxP({ gasto: g, tasas, onVolver }) {
                 </div>
             </div>
         </div>
+    )
+}
+
+// ─── BadgeND ────────────��──────────────────────────────────────
+function BadgeND({ estado }) {
+    const cfg = {
+        pendiente:   { bg: '#fffbeb', color: '#854d0e', label: 'Pendiente' },
+        aplicada:    { bg: '#dcfce7', color: '#166534', label: 'Aplicada' },
+        reembolsada: { bg: '#dbeafe', color: '#1e40af', label: 'Reembolsada' },
+        anulada:     { bg: '#f3f4f6', color: '#6b7280', label: 'Anulada' },
+    }
+    const { bg, color, label } = cfg[estado] || cfg.pendiente
+    return <span style={{ backgroundColor: bg, color, padding: '2px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 500 }}>{label}</span>
+}
+
+// ─── Detalle ND ──────────��─────────────────────────────────────
+function DetalleND({ nd, onVolver }) {
+    const { perfil } = useAuth()
+    const [items, setItems] = useState([])
+    const [loading, setLoading] = useState(true)
+
+    useEffect(() => {
+        supabase.from('devolucion_proveedor_items').select('*')
+            .eq('devolucion_proveedor_id', nd.id).eq('empresa_id', perfil.empresa_id)
+            .then(({ data }) => { setItems(data || []); setLoading(false) })
+    }, [nd.id])
+
+    const card = { backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '12px', padding: '20px 24px', marginBottom: '16px' }
+    const lbl = { fontSize: '11px', fontWeight: 500, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 4px' }
+    const val = { fontSize: '14px', fontWeight: 500, color: '#1f2937', margin: 0 }
+
+    return (
+        <div className="print-target" style={{ padding: '24px', maxWidth: '680px' }}>
+            <style>{`@media print { body * { visibility: hidden; } .print-target, .print-target * { visibility: visible; } .print-target { position: fixed; top: 0; left: 0; width: 100% !important; max-width: none !important; margin: 0; padding: 20px !important; } .no-print { display: none !important; } }`}</style>
+            <div className="no-print" style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
+                <button onClick={onVolver} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', fontSize: '13px' }}>← Volver</button>
+                <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Nota de Débito</h1>
+                <BadgeND estado={nd.estado_nd} />
+                <button onClick={() => window.print()} style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '8px 14px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}>🖨️ Imprimir</button>
+            </div>
+
+            <div style={card}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
+                    <div><p style={lbl}>N° ND</p><p style={{ ...val, fontFamily: 'monospace', fontSize: '15px' }}>{nd.numero_nd || '—'}</p></div>
+                    <div><p style={lbl}>Fecha</p><p style={val}>{new Date(nd.created_at).toLocaleDateString('es-VE', { day: '2-digit', month: 'long', year: 'numeric' })}</p></div>
+                    <div><p style={lbl}>Monto</p><p style={{ ...val, color: '#dc2626', fontSize: '16px', fontWeight: 700 }}>{fmt(nd.monto_total)}</p></div>
+                </div>
+            </div>
+
+            <div style={card}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                    <div><p style={lbl}>Proveedor</p><p style={val}>{nd.proveedores?.nombre || '—'}</p></div>
+                    <div><p style={lbl}>Recepción origen</p><p style={{ ...val, fontFamily: 'monospace' }}>{nd.compras?.numero_doc || '—'}</p></div>
+                </div>
+                {nd.motivo && <div style={{ marginTop: '12px' }}><p style={lbl}>Motivo</p><p style={{ ...val, color: '#6b7280' }}>{nd.motivo}</p></div>}
+            </div>
+
+            <div style={{ ...card, overflow: 'hidden', padding: 0 }}>
+                {loading ? <div style={{ padding: '20px', textAlign: 'center', color: '#9ca3af' }}>Cargando...</div> : (
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead>
+                            <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                                {['Ítem', 'Tipo', 'Cantidad', 'Precio unit.', 'Subtotal'].map((h, i) => (
+                                    <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: i > 1 ? 'right' : 'left' }}>{h}</th>
+                                ))}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {items.map((item, idx) => (
+                                <tr key={idx} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                                    <td style={{ padding: '10px 16px', fontSize: '13px', color: '#1f2937', fontWeight: 500 }}>{item.nombre_insumo || '—'}</td>
+                                    <td style={{ padding: '10px 16px', fontSize: '11px', color: '#6b7280', textTransform: 'uppercase' }}>{item.tipo_insumo?.replace(/_/g, ' ') || '—'}</td>
+                                    <td style={{ padding: '10px 16px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{Number(item.cantidad).toLocaleString('es-VE')}</td>
+                                    <td style={{ padding: '10px 16px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{fmt(item.precio_unitario)}</td>
+                                    <td style={{ padding: '10px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(Number(item.cantidad) * Number(item.precio_unitario))}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                )}
+            </div>
+
+            {nd.estado_nd === 'aplicada' && (
+                <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '10px', padding: '12px 16px', marginTop: '8px' }}>
+                    <p style={{ fontSize: '13px', color: '#166534', fontWeight: 500, margin: 0 }}>✓ Esta ND fue aplicada como crédito al pagar una factura de {nd.proveedores?.nombre || 'este proveedor'}.</p>
+                </div>
+            )}
+            {(nd.estado_nd === 'reembolsada' || nd.estado_nd === 'anulada') && (
+                <div style={{ backgroundColor: '#dbeafe', border: '1px solid #bfdbfe', borderRadius: '10px', padding: '12px 16px', marginTop: '8px' }}>
+                    <p style={{ fontSize: '12px', color: '#1e40af', margin: '0 0 4px', fontWeight: 600, textTransform: 'uppercase' }}>Liquidada — {nd.estado_nd}</p>
+                    {nd.nota_liquidacion && <p style={{ fontSize: '13px', color: '#1e3a8a', margin: 0 }}>{nd.nota_liquidacion}</p>}
+                    {nd.fecha_liquidacion && <p style={{ fontSize: '11px', color: '#3b82f6', margin: '4px 0 0' }}>{new Date(nd.fecha_liquidacion).toLocaleDateString('es-VE')}</p>}
+                </div>
+            )}
+        </div>
+    )
+}
+
+// ─── Modal Liquidar ND ─────────────���───────────────────────────
+function ModalLiquidarND({ nd, onCerrar, onLiquidado }) {
+    const [opcion, setOpcion] = useState('')
+    const [metodo, setMetodo] = useState('Efectivo USD')
+    const [nota, setNota] = useState('')
+    const [guardando, setGuardando] = useState(false)
+    const [error, setError] = useState('')
+
+    const METODOS = ['Efectivo USD', 'Efectivo Bs.', 'Zelle', 'Transferencia', 'Pago Móvil', 'Cheque']
+
+    async function confirmar() {
+        if (!opcion) { setError('Selecciona una opción'); return }
+        setGuardando(true); setError('')
+        const estado_nd = opcion === 'reembolso' ? 'reembolsada' : 'anulada'
+        const { error: err } = await supabase.from('devoluciones_proveedor').update({
+            estado_nd,
+            nota_liquidacion: nota.trim() || null,
+            fecha_liquidacion: new Date().toISOString(),
+        }).eq('id', nd.id)
+        if (err) { setError('Error: ' + err.message); setGuardando(false); return }
+        onLiquidado()
+    }
+
+    return (
+        <>
+            <div onClick={onCerrar} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', zIndex: 40 }} />
+            <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', backgroundColor: '#fff', borderRadius: '16px', padding: '28px', width: '440px', zIndex: 50, boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+                <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#1f2937', margin: '0 0 4px' }}>Liquidar Nota de Débito</h3>
+                <p style={{ fontSize: '13px', color: '#6b7280', margin: '0 0 20px' }}>
+                    <span style={{ fontFamily: 'monospace', marginRight: '8px' }}>{nd.numero_nd}</span>
+                    {nd.proveedores?.nombre || ''} · <strong style={{ color: '#dc2626' }}>{fmt(nd.monto_total)}</strong>
+                </p>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '20px' }}>
+                    {[
+                        { key: 'reembolso', icon: '💸', label: 'Reembolso', desc: 'El proveedor te devuelve el dinero' },
+                        { key: 'anular', icon: '���', label: 'Anular', desc: 'La ND se cancela sin cobro' },
+                    ].map(o => (
+                        <button key={o.key} onClick={() => setOpcion(o.key)}
+                            style={{ padding: '14px', borderRadius: '10px', border: '2px solid', cursor: 'pointer', textAlign: 'left',
+                                borderColor: opcion === o.key ? '#dc2626' : '#e5e7eb',
+                                backgroundColor: opcion === o.key ? '#fef2f2' : '#fff' }}>
+                            <div style={{ fontSize: '20px', marginBottom: '4px' }}>{o.icon}</div>
+                            <div style={{ fontSize: '13px', fontWeight: 600, color: '#1f2937' }}>{o.label}</div>
+                            <div style={{ fontSize: '11px', color: '#6b7280', marginTop: '2px' }}>{o.desc}</div>
+                        </button>
+                    ))}
+                </div>
+
+                {opcion === 'reembolso' && (
+                    <div style={{ marginBottom: '16px' }}>
+                        <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Método de reembolso</label>
+                        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                            {METODOS.map(m => (
+                                <button key={m} onClick={() => setMetodo(m)}
+                                    style={{ padding: '5px 12px', borderRadius: '20px', fontSize: '12px', border: '1px solid', cursor: 'pointer',
+                                        borderColor: metodo === m ? '#dc2626' : '#e5e7eb',
+                                        backgroundColor: metodo === m ? '#fef2f2' : '#fff',
+                                        color: metodo === m ? '#dc2626' : '#374151', fontWeight: metodo === m ? 500 : 400 }}>
+                                    {m}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                <div style={{ marginBottom: '16px' }}>
+                    <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Nota (opcional)</label>
+                    <input type="text" value={nota} onChange={e => setNota(e.target.value)} placeholder="Observación..."
+                        style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', boxSizing: 'border-box' }} />
+                </div>
+
+                {error && <p style={{ color: '#dc2626', fontSize: '13px', margin: '0 0 12px' }}>{error}</p>}
+
+                <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                    <button onClick={onCerrar} style={{ padding: '9px 18px', borderRadius: '8px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: '#374151', fontSize: '13px', cursor: 'pointer' }}>Cancelar</button>
+                    <button onClick={confirmar} disabled={guardando}
+                        style={{ padding: '9px 18px', borderRadius: '8px', border: 'none', backgroundColor: '#dc2626', color: '#fff', fontSize: '13px', fontWeight: 500, cursor: guardando ? 'default' : 'pointer', opacity: guardando ? 0.7 : 1 }}>
+                        {guardando ? 'Guardando...' : 'Confirmar'}
+                    </button>
+                </div>
+            </div>
+        </>
     )
 }

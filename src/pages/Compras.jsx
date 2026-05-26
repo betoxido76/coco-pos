@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
-import { Plus, Search, Trash2, Check, CheckCircle, FileText, X, AlertTriangle, Truck, ClipboardList, ArrowRight } from 'lucide-react'
+import { Plus, Search, Trash2, Check, CheckCircle, FileText, X, AlertTriangle, Truck, ClipboardList, ArrowRight, RotateCcw } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
@@ -30,11 +30,16 @@ export default function Compras() {
     const [totalOrdenes, setTotalOrdenes] = useState(0)
     const [paginaRecepciones, setPaginaRecepciones] = useState(0)
     const [totalRecepciones, setTotalRecepciones] = useState(0)
+    const [devoluciones, setDevoluciones] = useState([])
+    const [totalDevoluciones, setTotalDevoluciones] = useState(0)
+    const [paginaDevoluciones, setPaginaDevoluciones] = useState(0)
+    const [devolucionActual, setDevolucionActual] = useState(null)
 
     useEffect(() => {
         if (tabActiva === 'ordenes') cargarOrdenes()
-        else cargarRecepciones()
-    }, [tabActiva, paginaOrdenes, paginaRecepciones])
+        else if (tabActiva === 'recepciones') cargarRecepciones()
+        else cargarDevoluciones()
+    }, [tabActiva, paginaOrdenes, paginaRecepciones, paginaDevoluciones])
 
     async function cargarOrdenes() {
         setLoading(true)
@@ -60,8 +65,22 @@ export default function Compras() {
         setLoading(false)
     }
 
+    async function cargarDevoluciones() {
+        setLoading(true)
+        const { data, count } = await supabase
+            .from('devoluciones_proveedor')
+            .select(`*, proveedores(nombre), compras(numero_doc)`, { count: 'exact' })
+            .eq('empresa_id', perfil.empresa_id)
+            .order('created_at', { ascending: false })
+            .range(paginaDevoluciones * PAGE_SIZE, (paginaDevoluciones + 1) * PAGE_SIZE - 1)
+        if (data) setDevoluciones(data)
+        if (count !== null) setTotalDevoluciones(count)
+        setLoading(false)
+    }
+
     function abrirDetalleOC(oc) { setOrdenActual(oc); setVista('detalle_oc') }
     function abrirDetalleRecepcion(rec) { setRecepcionActual(rec); setVista('detalle_recepcion') }
+    function abrirDetalleDevolucion(dev) { setDevolucionActual(dev); setVista('detalle_devolucion') }
 
     if (vista === 'nueva_oc')
         return <NuevaOrden onCreada={(oc) => { cargarOrdenes(); setOrdenActual(oc); setVista('detalle_oc') }} onCancelar={() => setVista('lista')} />
@@ -78,6 +97,15 @@ export default function Compras() {
     if (vista === 'detalle_recepcion')
         return <DetalleRecepcion recepcion={recepcionActual} onVolver={() => { cargarRecepciones(); setVista('lista') }} />
 
+    if (vista === 'nueva_devolucion')
+        return <NuevaDevolucion
+            onCreada={(dev) => { cargarDevoluciones(); setDevolucionActual(dev); setVista('detalle_devolucion') }}
+            onCancelar={() => setVista('lista')}
+        />
+
+    if (vista === 'detalle_devolucion')
+        return <DetalleDevolucion devolucion={devolucionActual} onVolver={() => { cargarDevoluciones(); setVista('lista') }} />
+
     return (
         <div style={{ padding: '24px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
@@ -90,7 +118,8 @@ export default function Compras() {
             <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
                 {[
                     { key: 'ordenes', label: 'Órdenes de Compra', icon: ClipboardList },
-                    { key: 'recepciones', label: 'Recepciones', icon: Truck }
+                    { key: 'recepciones', label: 'Recepciones', icon: Truck },
+                    { key: 'devoluciones', label: 'Devoluciones', icon: RotateCcw },
                 ].map(tab => (
                     <button key={tab.key} onClick={() => { setTabActiva(tab.key); setVista('lista') }}
                         style={{
@@ -107,9 +136,9 @@ export default function Compras() {
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '16px' }}>
-                <button onClick={() => setVista(tabActiva === 'ordenes' ? 'nueva_oc' : 'nueva_recepcion')}
+                <button onClick={() => setVista(tabActiva === 'ordenes' ? 'nueva_oc' : tabActiva === 'recepciones' ? 'nueva_recepcion' : 'nueva_devolucion')}
                     style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px 16px', fontSize: '14px', fontWeight: 500, cursor: 'pointer' }}>
-                    <Plus size={16} /> {tabActiva === 'ordenes' ? 'Nueva Orden' : 'Nueva Recepción'}
+                    <Plus size={16} /> {tabActiva === 'ordenes' ? 'Nueva Orden' : tabActiva === 'recepciones' ? 'Nueva Recepción' : 'Nueva Devolución'}
                 </button>
             </div>
 
@@ -150,6 +179,28 @@ export default function Compras() {
                                 </button>
                                 <button onClick={() => setPaginaRecepciones(p => p + 1)} disabled={(paginaRecepciones + 1) * PAGE_SIZE >= totalRecepciones}
                                     style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: (paginaRecepciones + 1) * PAGE_SIZE >= totalRecepciones ? '#d1d5db' : '#374151', cursor: (paginaRecepciones + 1) * PAGE_SIZE >= totalRecepciones ? 'default' : 'pointer' }}>
+                                    Siguiente →
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </>
+            )}
+            {tabActiva === 'devoluciones' && (
+                <>
+                    <TablaDevoluciones devoluciones={devoluciones} loading={loading} onVer={abrirDetalleDevolucion} />
+                    {totalDevoluciones > PAGE_SIZE && (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', marginTop: '8px' }}>
+                            <span style={{ fontSize: '13px', color: '#6b7280' }}>
+                                Mostrando {paginaDevoluciones * PAGE_SIZE + 1}–{Math.min((paginaDevoluciones + 1) * PAGE_SIZE, totalDevoluciones)} de {totalDevoluciones}
+                            </span>
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                                <button onClick={() => setPaginaDevoluciones(p => p - 1)} disabled={paginaDevoluciones === 0}
+                                    style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: paginaDevoluciones === 0 ? '#d1d5db' : '#374151', cursor: paginaDevoluciones === 0 ? 'default' : 'pointer' }}>
+                                    ← Anterior
+                                </button>
+                                <button onClick={() => setPaginaDevoluciones(p => p + 1)} disabled={(paginaDevoluciones + 1) * PAGE_SIZE >= totalDevoluciones}
+                                    style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: (paginaDevoluciones + 1) * PAGE_SIZE >= totalDevoluciones ? '#d1d5db' : '#374151', cursor: (paginaDevoluciones + 1) * PAGE_SIZE >= totalDevoluciones ? 'default' : 'pointer' }}>
                                     Siguiente →
                                 </button>
                             </div>
@@ -231,6 +282,55 @@ function TablaRecepciones({ recepciones, loading, onVer }) {
                                     </td>
                                 </tr>
                             ))}
+                        </tbody>
+                    </table>
+                )}
+        </div>
+    )
+}
+
+function TablaDevoluciones({ devoluciones, loading, onVer }) {
+    const ND_ESTADOS = {
+        pendiente:   { bg: '#fffbeb', color: '#854d0e', label: 'Pendiente' },
+        aplicada:    { bg: '#dcfce7', color: '#166534', label: 'Aplicada' },
+        reembolsada: { bg: '#dbeafe', color: '#1e40af', label: 'Reembolsada' },
+        anulada:     { bg: '#f3f4f6', color: '#6b7280', label: 'Anulada' },
+    }
+    return (
+        <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+            {loading ? <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af' }}>Cargando...</div> : devoluciones.length === 0 ?
+                <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af' }}>No hay devoluciones registradas.</div> : (
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead>
+                            <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                                {['N° ND', 'Proveedor', 'Fecha', 'Recepción origen', 'Monto', 'Estado', ''].map((h, i) => (
+                                    <th key={i} style={{ padding: '10px 16px', textAlign: i === 4 ? 'right' : 'left', fontSize: '12px', fontWeight: 500, color: '#6b7280' }}>{h}</th>
+                                ))}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {devoluciones.map(d => {
+                                const cfg = ND_ESTADOS[d.estado_nd] || ND_ESTADOS.pendiente
+                                return (
+                                    <tr key={d.id} style={{ borderBottom: '1px solid #f3f4f6' }}
+                                        onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
+                                        onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                                        <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>{d.numero_nd || '—'}</td>
+                                        <td style={{ padding: '12px 16px', fontSize: '13px', color: '#374151' }}>{d.proveedores?.nombre || '—'}</td>
+                                        <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{new Date(d.created_at).toLocaleDateString('es-VE')}</td>
+                                        <td style={{ padding: '12px 16px', fontSize: '12px', color: '#6b7280', fontFamily: 'monospace' }}>{d.compras?.numero_doc || '—'}</td>
+                                        <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(d.monto_total)}</td>
+                                        <td style={{ padding: '12px 16px' }}>
+                                            <span style={{ backgroundColor: cfg.bg, color: cfg.color, padding: '2px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 500 }}>{cfg.label}</span>
+                                        </td>
+                                        <td style={{ padding: '12px 16px' }}>
+                                            <button onClick={() => onVer(d)} style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
+                                                <FileText size={13} /> Ver
+                                            </button>
+                                        </td>
+                                    </tr>
+                                )
+                            })}
                         </tbody>
                     </table>
                 )}
@@ -2346,6 +2446,363 @@ function DetalleRecepcion({ recepcion, onVolver }) {
                     </div>
                 </div>
             </div>
+        </div>
+    )
+}
+
+// ─── Nueva Devolución a Proveedor ──────────────────────────────
+function NuevaDevolucion({ onCreada, onCancelar }) {
+    const { perfil } = useAuth()
+    const [proveedorId, setProveedorId] = useState('')
+    const [compraOrigenId, setCompraOrigenId] = useState('')
+    const [proveedores, setProveedores] = useState([])
+    const [comprasProveedor, setComprasProveedor] = useState([])
+    const [insumos, setInsumos] = useState([])
+    const [mapaNombres, setMapaNombres] = useState({})
+    const [busquedaInsumo, setBusquedaInsumo] = useState('')
+    const [items, setItems] = useState([])
+    const [almacenId, setAlmacenId] = useState('')
+    const [almacenes, setAlmacenes] = useState([])
+    const [motivo, setMotivo] = useState('')
+    const [guardando, setGuardando] = useState(false)
+    const [error, setError] = useState('')
+
+    useEffect(() => {
+        Promise.all([
+            supabase.from('proveedores').select('id, nombre').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('nombre'),
+            supabase.from('almacenes').select('id, nombre, es_default').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('nombre'),
+            supabase.from('materias_primas').select('id, nombre, codigo, stock_actual, costo_compra_promedio, aplica_iva').eq('empresa_id', perfil.empresa_id).eq('activo', true),
+            supabase.from('materiales_empaque').select('id, nombre, codigo, stock_actual, costo_compra_promedio, aplica_iva').eq('empresa_id', perfil.empresa_id).eq('activo', true),
+            supabase.from('consumibles').select('id, nombre, codigo, stock_actual, costo_promedio, aplica_iva').eq('empresa_id', perfil.empresa_id).eq('activo', true),
+            supabase.from('productos_terminados').select('id, nombre, sku, stock_actual, costo_promedio, aplica_iva').eq('empresa_id', perfil.empresa_id).eq('activo', true),
+        ]).then(([provs, alms, mp, me, cons, pt]) => {
+            setProveedores(provs.data || [])
+            setAlmacenes(alms.data || [])
+            const def = alms.data?.find(a => a.es_default) || alms.data?.[0]
+            if (def) setAlmacenId(def.id)
+            const todos = [
+                ...(mp.data || []).map(i => ({ ...i, tipo: 'materias_primas', costo: i.costo_compra_promedio })),
+                ...(me.data || []).map(i => ({ ...i, tipo: 'materiales_empaque', costo: i.costo_compra_promedio })),
+                ...(cons.data || []).map(i => ({ ...i, tipo: 'consumibles', costo: i.costo_promedio })),
+                ...(pt.data || []).map(i => ({ ...i, tipo: 'productos_terminados', costo: i.costo_promedio })),
+            ]
+            setInsumos(todos)
+            const mapa = {}
+            todos.forEach(i => { mapa[i.id] = i.nombre })
+            setMapaNombres(mapa)
+        })
+    }, [])
+
+    useEffect(() => {
+        if (!proveedorId) { setComprasProveedor([]); setCompraOrigenId(''); return }
+        supabase.from('compras').select('id, numero_doc, fecha_compra, total')
+            .eq('empresa_id', perfil.empresa_id).eq('proveedor_id', proveedorId)
+            .order('fecha_compra', { ascending: false }).limit(30)
+            .then(({ data }) => setComprasProveedor(data || []))
+    }, [proveedorId])
+
+    async function cargarItemsCompra(compId) {
+        setCompraOrigenId(compId)
+        if (!compId) { setItems([]); return }
+        const { data } = await supabase.from('compra_items').select('*').eq('compra_id', compId).eq('empresa_id', perfil.empresa_id)
+        if (!data) return
+        const tipoToPlural = { materia_prima: 'materias_primas', empaque: 'materiales_empaque', material_empaque: 'materiales_empaque', consumible: 'consumibles', producto_terminado: 'productos_terminados' }
+        setItems(data.map(i => ({
+            id: i.insumo_id,
+            tipo: tipoToPlural[i.tipo_insumo] || 'materias_primas',
+            nombre: mapaNombres[i.insumo_id] || '—',
+            cantidad: i.cantidad,
+            precio_unitario: i.precio_unitario,
+        })))
+    }
+
+    function agregarInsumo(insumo) {
+        setItems(prev => {
+            if (prev.find(i => i.id === insumo.id)) return prev
+            return [...prev, { id: insumo.id, tipo: insumo.tipo, nombre: insumo.nombre, cantidad: 1, precio_unitario: insumo.costo || 0 }]
+        })
+        setBusquedaInsumo('')
+    }
+
+    const insumosFiltrados = busquedaInsumo.length >= 2
+        ? insumos.filter(i => i.nombre.toLowerCase().includes(busquedaInsumo.toLowerCase()) || (i.codigo || i.sku || '').toLowerCase().includes(busquedaInsumo.toLowerCase())).slice(0, 8)
+        : []
+
+    const total = items.reduce((s, i) => s + Number(i.cantidad) * Number(i.precio_unitario), 0)
+    const tipoItemMap = { materias_primas: 'materia_prima', materiales_empaque: 'material_empaque', consumibles: 'consumible', productos_terminados: 'producto_terminado' }
+
+    async function confirmar() {
+        if (!proveedorId) { setError('Selecciona un proveedor'); return }
+        if (items.length === 0) { setError('Agrega al menos un ítem'); return }
+        if (!almacenId) { setError('Selecciona el almacén de origen'); return }
+        if (!motivo.trim()) { setError('Ingresa el motivo de la devolución'); return }
+        setGuardando(true); setError('')
+
+        const { data: { user } } = await supabase.auth.getUser()
+        const { data: ndNum } = await supabase.rpc('obtener_siguiente_nd_numero', { p_empresa_id: perfil.empresa_id })
+
+        const { data: devDoc, error: errDev } = await supabase.from('devoluciones_proveedor').insert({
+            empresa_id: perfil.empresa_id,
+            numero_nd: ndNum || 'ND-000001',
+            proveedor_id: proveedorId,
+            compra_id: compraOrigenId || null,
+            motivo: motivo.trim(),
+            estado_nd: 'pendiente',
+            monto_total: total,
+        }).select().single()
+
+        if (errDev) { setError('Error: ' + errDev.message); setGuardando(false); return }
+
+        await supabase.from('devolucion_proveedor_items').insert(
+            items.map(i => ({
+                empresa_id: perfil.empresa_id,
+                devolucion_proveedor_id: devDoc.id,
+                insumo_id: i.id,
+                tipo_insumo: tipoItemMap[i.tipo] || 'materia_prima',
+                nombre_insumo: i.nombre,
+                cantidad: Number(i.cantidad),
+                precio_unitario: Number(i.precio_unitario),
+            }))
+        )
+
+        for (const item of items) {
+            const tabla = item.tipo
+            const tipoItem = tipoItemMap[item.tipo] || 'materia_prima'
+            const cant = Number(item.cantidad)
+            const { data: actual } = await supabase.from(tabla).select('stock_actual').eq('id', item.id).single()
+            const nuevoStock = Math.max(0, (actual?.stock_actual || 0) - cant)
+            await supabase.from(tabla).update({ stock_actual: nuevoStock }).eq('id', item.id)
+
+            const { data: stockEx } = await supabase.from('stock_ubicacion')
+                .select('id, cantidad').eq('almacen_id', almacenId).eq('tipo_item', tipoItem)
+                .eq('item_id', item.id).eq('empresa_id', perfil.empresa_id).is('almacen_ubicacion_id', null).maybeSingle()
+
+            if (stockEx) {
+                await supabase.from('stock_ubicacion').update({ cantidad: Math.max(0, Number(stockEx.cantidad) - cant), updated_at: new Date().toISOString() }).eq('id', stockEx.id)
+            } else {
+                await supabase.from('stock_ubicacion').insert({ almacen_id: almacenId, almacen_ubicacion_id: null, tipo_item: tipoItem, item_id: item.id, cantidad: 0, empresa_id: perfil.empresa_id, updated_at: new Date().toISOString() })
+            }
+
+            await supabase.from('movimientos_inventario').insert({
+                empresa_id: perfil.empresa_id, tipo_item: tipoItem, item_id: item.id,
+                item_nombre: item.nombre, item_codigo: item.codigo || item.sku || '',
+                tipo_movimiento: 'salida', cantidad: cant,
+                stock_anterior: actual?.stock_actual || 0, stock_actual: nuevoStock,
+                origen: 'devolucion_proveedor', almacen_id: almacenId, fecha: new Date().toISOString()
+            })
+        }
+
+        setGuardando(false)
+        onCreada({ ...devDoc, proveedores: { nombre: proveedores.find(p => p.id === proveedorId)?.nombre || '' } })
+    }
+
+    const inp = { width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', color: '#374151', backgroundColor: '#fff', boxSizing: 'border-box' }
+    const lbl = { fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }
+
+    return (
+        <div style={{ padding: '24px', maxWidth: '860px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
+                <button onClick={onCancelar} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', fontSize: '13px' }}>← Volver</button>
+                <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Nueva Devolución a Proveedor</h1>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '20px' }}>
+                <div>
+                    <label style={lbl}>Proveedor *</label>
+                    <select value={proveedorId} onChange={e => setProveedorId(e.target.value)} style={inp}>
+                        <option value="">— Selecciona proveedor —</option>
+                        {proveedores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+                    </select>
+                </div>
+                <div>
+                    <label style={lbl}>Recepción de origen (opcional)</label>
+                    <select value={compraOrigenId} onChange={e => cargarItemsCompra(e.target.value)} style={inp} disabled={!proveedorId}>
+                        <option value="">— Sin recepción vinculada —</option>
+                        {comprasProveedor.map(c => <option key={c.id} value={c.id}>{c.numero_doc || 'S/N'} — {new Date(c.fecha_compra).toLocaleDateString('es-VE')} — {fmt(c.total)}</option>)}
+                    </select>
+                </div>
+                <div>
+                    <label style={lbl}>Almacén de origen *</label>
+                    <select value={almacenId} onChange={e => setAlmacenId(e.target.value)} style={inp}>
+                        <option value="">— Selecciona almacén —</option>
+                        {almacenes.map(a => <option key={a.id} value={a.id}>{a.nombre}</option>)}
+                    </select>
+                </div>
+                <div>
+                    <label style={lbl}>Motivo *</label>
+                    <input type="text" value={motivo} onChange={e => setMotivo(e.target.value)} placeholder="Ej: Producto defectuoso, exceso de inventario..." style={inp} />
+                </div>
+            </div>
+
+            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px', marginBottom: '16px' }}>
+                <p style={{ fontSize: '13px', fontWeight: 500, color: '#374151', margin: '0 0 10px' }}>Agregar ítem manualmente</p>
+                <div style={{ position: 'relative' }}>
+                    <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
+                    <input type="text" value={busquedaInsumo} onChange={e => setBusquedaInsumo(e.target.value)}
+                        placeholder="Buscar por nombre o código (mín. 2 caracteres)..."
+                        style={{ ...inp, paddingLeft: '32px' }} />
+                </div>
+                {insumosFiltrados.length > 0 && (
+                    <div style={{ border: '1px solid #e5e7eb', borderRadius: '8px', marginTop: '6px', overflow: 'hidden' }}>
+                        {insumosFiltrados.map(ins => (
+                            <div key={ins.id} onClick={() => agregarInsumo(ins)}
+                                style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 14px', cursor: 'pointer', borderBottom: '1px solid #f3f4f6', fontSize: '13px', backgroundColor: '#fff' }}
+                                onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f0fdf4'}
+                                onMouseLeave={e => e.currentTarget.style.backgroundColor = '#fff'}>
+                                <span>{ins.nombre} <span style={{ fontSize: '11px', color: '#9ca3af', fontFamily: 'monospace' }}>{ins.codigo || ins.sku || ''}</span></span>
+                                <span style={{ color: '#6b7280', fontSize: '12px' }}>{ins.tipo.replace(/_/g, ' ')} · Stock: {ins.stock_actual ?? '—'}</span>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
+
+            {items.length > 0 && (
+                <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden', marginBottom: '20px' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead>
+                            <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                                {['Ítem', 'Tipo', 'Cantidad', 'Precio unit.', 'Subtotal', ''].map((h, i) => (
+                                    <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: [2, 3, 4].includes(i) ? 'right' : 'left' }}>{h}</th>
+                                ))}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {items.map((item, idx) => (
+                                <tr key={idx} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                                    <td style={{ padding: '10px 16px', fontSize: '13px', color: '#1f2937', fontWeight: 500 }}>{item.nombre}</td>
+                                    <td style={{ padding: '10px 16px', fontSize: '11px', color: '#6b7280', textTransform: 'uppercase' }}>{item.tipo.replace(/_/g, ' ')}</td>
+                                    <td style={{ padding: '10px 16px', textAlign: 'right' }}>
+                                        <input type="number" value={item.cantidad} min="0.01" step="0.01"
+                                            onChange={e => setItems(prev => prev.map((i, j) => j === idx ? { ...i, cantidad: e.target.value } : i))}
+                                            style={{ width: '80px', padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px', textAlign: 'right' }} />
+                                    </td>
+                                    <td style={{ padding: '10px 16px', textAlign: 'right' }}>
+                                        <input type="number" value={item.precio_unitario} min="0" step="0.01"
+                                            onChange={e => setItems(prev => prev.map((i, j) => j === idx ? { ...i, precio_unitario: e.target.value } : i))}
+                                            style={{ width: '90px', padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px', textAlign: 'right' }} />
+                                    </td>
+                                    <td style={{ padding: '10px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>
+                                        {fmt(Number(item.cantidad) * Number(item.precio_unitario))}
+                                    </td>
+                                    <td style={{ padding: '10px 16px' }}>
+                                        <button onClick={() => setItems(prev => prev.filter((_, j) => j !== idx))}
+                                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', padding: '4px' }}>
+                                            <Trash2 size={14} />
+                                        </button>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '12px 16px', backgroundColor: '#f9fafb', borderTop: '1px solid #e5e7eb' }}>
+                        <span style={{ fontSize: '15px', fontWeight: 700, color: '#1f2937' }}>Total ND: <span style={{ color: '#dc2626' }}>{fmt(total)}</span></span>
+                    </div>
+                </div>
+            )}
+
+            {error && <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 14px', fontSize: '13px', color: '#dc2626', marginBottom: '16px' }}>{error}</div>}
+
+            <div style={{ display: 'flex', gap: '10px' }}>
+                <button onClick={onCancelar} style={{ padding: '10px 20px', border: '1px solid #e5e7eb', borderRadius: '8px', fontSize: '14px', color: '#374151', backgroundColor: '#fff', cursor: 'pointer' }}>Cancelar</button>
+                <button onClick={confirmar} disabled={guardando}
+                    style={{ padding: '10px 24px', border: 'none', borderRadius: '8px', fontSize: '14px', fontWeight: 600, color: '#fff', backgroundColor: '#dc2626', cursor: 'pointer', opacity: guardando ? 0.6 : 1 }}>
+                    {guardando ? 'Procesando...' : 'Confirmar Devolución'}
+                </button>
+            </div>
+        </div>
+    )
+}
+
+// ─── Detalle de Devolución a Proveedor ─────────────────────────
+function DetalleDevolucion({ devolucion: dev, onVolver }) {
+    const { perfil } = useAuth()
+    const [items, setItems] = useState([])
+    const [loading, setLoading] = useState(true)
+
+    const ND_ESTADOS = {
+        pendiente:   { bg: '#fffbeb', color: '#854d0e', label: 'Pendiente' },
+        aplicada:    { bg: '#dcfce7', color: '#166534', label: 'Aplicada' },
+        reembolsada: { bg: '#dbeafe', color: '#1e40af', label: 'Reembolsada' },
+        anulada:     { bg: '#f3f4f6', color: '#6b7280', label: 'Anulada' },
+    }
+
+    useEffect(() => {
+        supabase.from('devolucion_proveedor_items').select('*')
+            .eq('devolucion_proveedor_id', dev.id).eq('empresa_id', perfil.empresa_id)
+            .then(({ data }) => { setItems(data || []); setLoading(false) })
+    }, [dev.id])
+
+    const cfg = ND_ESTADOS[dev.estado_nd] || ND_ESTADOS.pendiente
+
+    return (
+        <div className="print-target" style={{ padding: '24px', maxWidth: '680px' }}>
+            <style>{`@media print { body * { visibility: hidden; } .print-target, .print-target * { visibility: visible; } .print-target { position: fixed; top: 0; left: 0; width: 100% !important; max-width: none !important; margin: 0; padding: 20px !important; } .no-print { display: none !important; } }`}</style>
+            <div className="no-print" style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
+                <button onClick={onVolver} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', fontSize: '13px' }}>← Volver</button>
+                <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Devolución a Proveedor</h1>
+                <span style={{ backgroundColor: cfg.bg, color: cfg.color, padding: '2px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 500 }}>{cfg.label}</span>
+                <button onClick={() => window.print()} style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '8px 14px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}>🖨️ Imprimir</button>
+            </div>
+
+            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '24px', marginBottom: '16px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+                    {[
+                        { label: 'N° ND', valor: dev.numero_nd || '—' },
+                        { label: 'Proveedor', valor: dev.proveedores?.nombre || '—' },
+                        { label: 'Fecha', valor: new Date(dev.created_at).toLocaleDateString('es-VE') },
+                        { label: 'Recepción origen', valor: dev.compras?.numero_doc || '—' },
+                    ].map(f => (
+                        <div key={f.label}>
+                            <p style={{ fontSize: '11px', color: '#9ca3af', margin: '0 0 2px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{f.label}</p>
+                            <p style={{ fontSize: '14px', fontWeight: 500, color: '#1f2937', margin: 0, fontFamily: f.label === 'N° ND' || f.label === 'Recepción origen' ? 'monospace' : 'inherit' }}>{f.valor}</p>
+                        </div>
+                    ))}
+                </div>
+                {dev.motivo && (
+                    <div style={{ backgroundColor: '#fef9c3', borderRadius: '8px', padding: '10px 14px' }}>
+                        <p style={{ fontSize: '11px', color: '#854d0e', margin: '0 0 2px', textTransform: 'uppercase', fontWeight: 600 }}>Motivo</p>
+                        <p style={{ fontSize: '13px', color: '#78350f', margin: 0 }}>{dev.motivo}</p>
+                    </div>
+                )}
+            </div>
+
+            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden', marginBottom: '16px' }}>
+                {loading ? <div style={{ padding: '20px', textAlign: 'center', color: '#9ca3af' }}>Cargando...</div> : (
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead>
+                            <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                                {['Ítem', 'Tipo', 'Cantidad', 'Precio unit.', 'Subtotal'].map((h, i) => (
+                                    <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: i > 1 ? 'right' : 'left' }}>{h}</th>
+                                ))}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {items.map((item, idx) => (
+                                <tr key={idx} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                                    <td style={{ padding: '10px 16px', fontSize: '13px', color: '#1f2937', fontWeight: 500 }}>{item.nombre_insumo || '—'}</td>
+                                    <td style={{ padding: '10px 16px', fontSize: '11px', color: '#6b7280', textTransform: 'uppercase' }}>{item.tipo_insumo?.replace(/_/g, ' ') || '—'}</td>
+                                    <td style={{ padding: '10px 16px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{Number(item.cantidad).toLocaleString('es-VE')}</td>
+                                    <td style={{ padding: '10px 16px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{fmt(item.precio_unitario)}</td>
+                                    <td style={{ padding: '10px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(Number(item.cantidad) * Number(item.precio_unitario))}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 16px', backgroundColor: '#f9fafb', borderTop: '1px solid #e5e7eb' }}>
+                    <span style={{ fontSize: '14px', fontWeight: 600, color: '#1f2937' }}>Total ND</span>
+                    <span style={{ fontSize: '16px', fontWeight: 700, color: '#dc2626' }}>{fmt(dev.monto_total)}</span>
+                </div>
+            </div>
+
+            {(dev.estado_nd === 'reembolsada' || dev.estado_nd === 'anulada') && dev.nota_liquidacion && (
+                <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '10px', padding: '12px 16px' }}>
+                    <p style={{ fontSize: '11px', color: '#166534', margin: '0 0 4px', textTransform: 'uppercase', fontWeight: 600 }}>Nota de liquidación</p>
+                    <p style={{ fontSize: '13px', color: '#166534', margin: 0 }}>{dev.nota_liquidacion}</p>
+                    {dev.fecha_liquidacion && <p style={{ fontSize: '11px', color: '#16a34a', margin: '4px 0 0' }}>{new Date(dev.fecha_liquidacion).toLocaleDateString('es-VE')}</p>}
+                </div>
+            )}
         </div>
     )
 }
