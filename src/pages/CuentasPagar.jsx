@@ -932,25 +932,36 @@ function DetalleRecepcionCxP({ compra, onVolver }) {
                     <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '24px' }}>
                         <thead>
                             <tr style={{ borderBottom: '2px solid #e5e7eb' }}>
-                                {['Insumo', 'Tipo', 'Cant.', 'Precio unit.', 'Total'].map((h, i) => (
+                                {['Insumo', 'Tipo', 'Cant.', 'Precio unit.', 'Desc. %', 'Total'].map((h, i) => (
                                     <th key={i} style={{ padding: '8px 0', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: i > 1 ? 'right' : 'left' }}>{h}</th>
                                 ))}
                             </tr>
                         </thead>
                         <tbody>
-                            {items.map((item, idx) => (
+                            {items.map((item, idx) => {
+                                const desc = item.descuento_item || 0
+                                const lineaTotal = item.cantidad * item.precio_unitario * (1 - desc / 100)
+                                return (
                                 <tr key={idx} style={{ borderBottom: '1px solid #f3f4f6' }}>
                                     <td style={{ padding: '10px 0', fontSize: '13px', color: '#1f2937' }}>{mapaNombres[item.insumo_id] || '—'}</td>
                                     <td style={{ padding: '10px 0', fontSize: '11px', color: '#6b7280', textTransform: 'uppercase' }}>{item.tipo_insumo?.replace(/_/g, ' ') || '—'}</td>
                                     <td style={{ padding: '10px 0', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{item.cantidad}</td>
                                     <td style={{ padding: '10px 0', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{fmt(item.precio_unitario)}</td>
-                                    <td style={{ padding: '10px 0', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(item.cantidad * item.precio_unitario)}</td>
+                                    <td style={{ padding: '10px 0', fontSize: '13px', color: desc > 0 ? '#dc2626' : '#6b7280', textAlign: 'right' }}>{desc > 0 ? `${desc}%` : '—'}</td>
+                                    <td style={{ padding: '10px 0', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(lineaTotal)}</td>
                                 </tr>
-                            ))}
+                                )
+                            })}
                         </tbody>
                     </table>
                 )}
-                <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: '16px' }}>
+                <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: '16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {compra.descuento_global > 0 && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#dc2626' }}>
+                            <span>Descuento global ({compra.descuento_global}%)</span>
+                            <span>-{fmt(items.reduce((s, i) => s + i.cantidad * i.precio_unitario * (1 - (i.descuento_item || 0) / 100), 0) * compra.descuento_global / 100)}</span>
+                        </div>
+                    )}
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '18px', fontWeight: 700, color: '#1f2937' }}>
                         <span>Total</span>
                         <span style={{ color: '#16a34a' }}>{fmt(compra.total)}</span>

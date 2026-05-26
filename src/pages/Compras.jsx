@@ -994,6 +994,7 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
     const [almacenId, setAlmacenId] = useState('')
 
     const [borradorGuardado, setBorradorGuardado] = useState(null)
+    const [descGlobal, setDescGlobal] = useState(0)
     const DRAFT_KEY = `mipos_borrador_recepcion_${perfil.empresa_id}`
 
     useEffect(() => {
@@ -1010,7 +1011,7 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
 
     useEffect(() => {
         if (items.length === 0 && !proveedorLibreId) return
-        localStorage.setItem(DRAFT_KEY, JSON.stringify({ proveedorLibreId, modo, items, almacenId, nroDocProveedor, ts: Date.now() }))
+        localStorage.setItem(DRAFT_KEY, JSON.stringify({ proveedorLibreId, modo, items, almacenId, nroDocProveedor, descGlobal, ts: Date.now() }))
     }, [items, proveedorLibreId, modo, almacenId, nroDocProveedor])
 
     function limpiarBorrador() {
@@ -1026,6 +1027,7 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
         if (d.almacenId) setAlmacenId(d.almacenId)
         if (d.nroDocProveedor) setNroDocProveedor(d.nroDocProveedor)
         if (d.items?.length) setItems(d.items)
+        if (d.descGlobal) setDescGlobal(d.descGlobal)
     }
 
     useEffect(() => {
@@ -1097,6 +1099,7 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
                 pendiente: i.cantidad_solicitada - i.cantidad_recibida,
                 orden_item_id: i.id,
                 aplica_iva: insumo?.aplica_iva ?? true,
+                descuento_item: 0,
             }
         }))
     }
@@ -1112,6 +1115,7 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
                 cantidad: 1,
                 precio_unitario: insumo.costo || 0,
                 aplica_iva: insumo.aplica_iva ?? true,
+                descuento_item: 0,
             }]
         })
         setBusquedaInsumo('')
@@ -1122,9 +1126,13 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
         i.codigo?.toLowerCase().includes(busquedaInsumo.toLowerCase())
     )
 
-    const total = items.reduce((s, i) => s + i.cantidad * i.precio_unitario, 0)
+    const lineaConDesc = (item) => item.cantidad * item.precio_unitario * (1 - (item.descuento_item || 0) / 100)
+    const totalBruto = items.reduce((s, i) => s + lineaConDesc(i), 0)
+    const descGlobalMonto = totalBruto * (descGlobal || 0) / 100
+    const total = totalBruto - descGlobalMonto
+    const factorGlobal = totalBruto > 0 ? total / totalBruto : 1
     const subtotal = items.reduce((s, i) => {
-        const linea = i.cantidad * i.precio_unitario
+        const linea = lineaConDesc(i) * factorGlobal
         return s + ((i.aplica_iva ?? true) ? linea / 1.16 : linea)
     }, 0)
     const iva = total - subtotal
@@ -1149,7 +1157,7 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
 
         const payload = {
             proveedor_id: proveedorId, usuario_id: user.id, numero_doc: nroDocProveedor.trim() || numero,
-            subtotal, total, estado: 'recibida', fecha_compra: new Date().toISOString(),
+            subtotal, total, descuento_global: descGlobal || 0, estado: 'recibida', fecha_compra: new Date().toISOString(),
             orden_compra_id: modo === 'contra_oc' ? ocSeleccionada : null,
             ...datosPago
         }
@@ -1168,7 +1176,8 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
                                 : 'materia_prima',
                 insumo_id: i.id,
                 cantidad: i.cantidad,
-                precio_unitario: i.precio_unitario
+                precio_unitario: i.precio_unitario,
+                descuento_item: i.descuento_item || 0,
             }))
         )
 
@@ -1434,7 +1443,7 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
                         <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
                             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                                 <thead><tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                    {['Insumo', 'Tipo', 'Precio', 'Cant.', 'Subtotal', ''].map((h, i) => (<th key={i} style={{ padding: '10px 12px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left' }}>{h}</th>))}
+                                    {['Insumo', 'Tipo', 'Precio', 'Desc. %', 'Cant.', 'Subtotal', ''].map((h, i) => (<th key={i} style={{ padding: '10px 12px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left' }}>{h}</th>))}
                                 </tr></thead>
                                 <tbody>
                                     {items.map((item, idx) => (
@@ -1451,11 +1460,16 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
                                                     style={{ width: '80px', padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px', textAlign: 'right' }} />
                                             </td>
                                             <td style={{ padding: '10px 12px' }}>
+                                                <input type="number" min="0" max="100" step="0.1" value={item.descuento_item || 0}
+                                                    onChange={e => setItems(prev => prev.map((it, j) => j === idx ? { ...it, descuento_item: Number(e.target.value) } : it))}
+                                                    style={{ width: '60px', padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px', textAlign: 'right' }} />
+                                            </td>
+                                            <td style={{ padding: '10px 12px' }}>
                                                 <input type="number" min="1" max={item.pendiente || undefined} value={item.cantidad}
                                                     onChange={e => { const n = parseInt(e.target.value); if (n > 0) setItems(prev => prev.map((it, j) => j === idx ? { ...it, cantidad: n } : it)) }}
                                                     style={{ width: '60px', padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px', textAlign: 'center' }} />
                                             </td>
-                                            <td style={{ padding: '10px 12px', fontSize: '13px', fontWeight: 600, color: '#1f2937' }}>{fmt(item.cantidad * item.precio_unitario)}</td>
+                                            <td style={{ padding: '10px 12px', fontSize: '13px', fontWeight: 600, color: '#1f2937' }}>{fmt(lineaConDesc(item))}</td>
                                             <td style={{ padding: '10px 12px' }}><button onClick={() => setItems(prev => prev.filter((_, j) => j !== idx))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', padding: '4px' }}><Trash2 size={14} /></button></td>
                                         </tr>
                                     ))}
@@ -1472,9 +1486,17 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
 
                 <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '20px', height: 'fit-content', position: 'sticky', top: '24px' }}>
                     <h2 style={{ fontSize: '15px', fontWeight: 600, color: '#1f2937', margin: '0 0 16px' }}>Resumen</h2>
+                    <div style={{ marginBottom: '12px' }}>
+                        <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Descuento global (%)</label>
+                        <input type="number" min="0" max="100" step="0.1" value={descGlobal}
+                            onChange={e => setDescGlobal(Number(e.target.value))}
+                            style={{ width: '100%', padding: '7px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', boxSizing: 'border-box' }} />
+                    </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#6b7280' }}> <span>Subtotal</span> <span>{fmt(subtotal)}</span> </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#6b7280' }}> <span>IVA (16%)</span> <span>{fmt(iva)}</span> </div>                        <div style={{ height: '1px', backgroundColor: '#e5e7eb', margin: '4px 0' }} />
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#6b7280' }}> <span>Subtotal (sin IVA)</span> <span>{fmt(subtotal)}</span> </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#6b7280' }}> <span>IVA (16%)</span> <span>{fmt(iva)}</span> </div>
+                        {descGlobalMonto > 0 && <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#dc2626' }}> <span>Descuento ({descGlobal}%)</span> <span>-{fmt(descGlobalMonto)}</span> </div>}
+                        <div style={{ height: '1px', backgroundColor: '#e5e7eb', margin: '4px 0' }} />
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '16px', fontWeight: 700, color: '#1f2937' }}><span>Total</span><span style={{ color: '#16a34a' }}>{fmt(total)}</span></div>
                     </div>
                     <div style={{ marginBottom: '12px' }}>
@@ -2409,7 +2431,7 @@ function DetalleRecepcion({ recepcion, onVolver }) {
                     <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '24px' }}>
                         <thead>
                             <tr style={{ borderBottom: '2px solid #e5e7eb' }}>
-                                {['Insumo', 'Tipo', 'Cant.', 'Precio unit.', 'Total'].map((h, i) => (
+                                {['Insumo', 'Tipo', 'Cant.', 'Precio unit.', 'Desc. %', 'Total'].map((h, i) => (
                                     <th key={i} style={{ padding: '8px 0', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: i > 1 ? 'right' : 'left' }}>
                                         {h}
                                     </th>
@@ -2417,7 +2439,10 @@ function DetalleRecepcion({ recepcion, onVolver }) {
                             </tr>
                         </thead>
                         <tbody>
-                            {items.map((item, idx) => (
+                            {items.map((item, idx) => {
+                                const desc = item.descuento_item || 0
+                                const lineaTotal = item.cantidad * item.precio_unitario * (1 - desc / 100)
+                                return (
                                 <tr key={idx} style={{ borderBottom: '1px solid #f3f4f6' }}>
                                     <td style={{ padding: '10px 0', fontSize: '13px', color: '#1f2937' }}>
                                         {mapaNombres[item.insumo_id] || item.insumo_id}
@@ -2431,15 +2456,25 @@ function DetalleRecepcion({ recepcion, onVolver }) {
                                     <td style={{ padding: '10px 0', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>
                                         {fmt(item.precio_unitario)}
                                     </td>
+                                    <td style={{ padding: '10px 0', fontSize: '13px', color: desc > 0 ? '#dc2626' : '#6b7280', textAlign: 'right' }}>
+                                        {desc > 0 ? `${desc}%` : '—'}
+                                    </td>
                                     <td style={{ padding: '10px 0', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>
-                                        {fmt(item.cantidad * item.precio_unitario)}
+                                        {fmt(lineaTotal)}
                                     </td>
                                 </tr>
-                            ))}
+                                )
+                            })}
                         </tbody>
                     </table>
                 )}
-                <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: '16px' }}>
+                <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: '16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {recepcion.descuento_global > 0 && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#dc2626' }}>
+                            <span>Descuento global ({recepcion.descuento_global}%)</span>
+                            <span>-{fmt(items.reduce((s, i) => s + i.cantidad * i.precio_unitario * (1 - (i.descuento_item || 0) / 100), 0) * recepcion.descuento_global / 100)}</span>
+                        </div>
+                    )}
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '18px', fontWeight: 700, color: '#1f2937' }}>
                         <span>Total</span>
                         <span style={{ color: '#16a34a' }}>{fmt(recepcion.total)}</span>
