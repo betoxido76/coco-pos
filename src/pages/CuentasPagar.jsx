@@ -48,9 +48,14 @@ export default function CuentasPagar() {
     const [filtroProveedor, setFiltroProveedor] = useState('')
     const [pagina, setPagina] = useState(0)
     const [totalRegistros, setTotalRegistros] = useState(0)
+    const [tabSeccion, setTabSeccion] = useState('compras')
+    const [gastosPend, setGastosPend] = useState([])
+    const [loadingGastos, setLoadingGastos] = useState(false)
+    const [gastoPagando, setGastoPagando] = useState(null)
 
     useEffect(() => { setPagina(0) }, [filtro, filtroProveedor])
     useEffect(() => { cargarDatos() }, [filtro, filtroProveedor, pagina])
+    useEffect(() => { if (tabSeccion === 'gastos') cargarGastosPendientes() }, [tabSeccion])
 
     useEffect(() => {
         supabase.from('proveedores').select('id, nombre')
@@ -141,6 +146,18 @@ export default function CuentasPagar() {
     const vencidas = kpiData.filter(c => c.fecha_vencimiento_pago && new Date(c.fecha_vencimiento_pago) < new Date()).length
     const alDia = kpiData.filter(c => c.fecha_vencimiento_pago && new Date(c.fecha_vencimiento_pago) >= new Date()).length
 
+    async function cargarGastosPendientes() {
+        setLoadingGastos(true)
+        const { data } = await supabase
+            .from('gastos')
+            .select('*, tipos_gastos(nombre)')
+            .eq('empresa_id', perfil.empresa_id)
+            .eq('estado', 'pendiente')
+            .order('fecha_vencimiento', { ascending: true })
+        setGastosPend(data || [])
+        setLoadingGastos(false)
+    }
+
     function abrirModal(compra) {
         setCompraSeleccionada(compra)
         setMostrarModal(true)
@@ -169,8 +186,21 @@ export default function CuentasPagar() {
                 </div>
             </div>
 
-            {/* Filtros */}
-            <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
+            {/* Tabs de sección */}
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
+                {[['compras', 'Compras a crédito'], ['gastos', 'Gastos programados']].map(([key, label]) => (
+                    <button key={key} onClick={() => setTabSeccion(key)}
+                        style={{ padding: '8px 18px', borderRadius: '8px', fontSize: '13px', fontWeight: 500, border: '1px solid', cursor: 'pointer',
+                            borderColor: tabSeccion === key ? '#16a34a' : '#e5e7eb',
+                            backgroundColor: tabSeccion === key ? '#f0fdf4' : '#fff',
+                            color: tabSeccion === key ? '#16a34a' : '#6b7280' }}>
+                        {label}
+                    </button>
+                ))}
+            </div>
+
+            {/* Filtros (solo para compras) */}
+            {tabSeccion === 'compras' && <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
                 {[['pendiente', 'Pendientes'], ['parcial', 'Parciales'], ['pagado', 'Pagadas'], ['todos', 'Todas']].map(([val, label]) => (
                     <button key={val} onClick={() => setFiltro(val)}
                         style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', cursor: 'pointer', backgroundColor: filtro === val ? '#16a34a' : '#fff', color: filtro === val ? '#fff' : '#374151', fontWeight: filtro === val ? 500 : 400 }}>
@@ -184,8 +214,8 @@ export default function CuentasPagar() {
                 </select>
             </div>
 
-            {/* Tabla */}
-            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+            {/* Tabla compras */}
+            {tabSeccion === 'compras' && <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
                 {loading ? (
                     <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
                 ) : compras.length === 0 ? (
@@ -233,7 +263,7 @@ export default function CuentasPagar() {
                 )}
             </div>
 
-            {totalRegistros > PAGE_SIZE && (
+            {tabSeccion === 'compras' && totalRegistros > PAGE_SIZE && (
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', marginTop: '8px' }}>
                     <span style={{ fontSize: '13px', color: '#6b7280' }}>
                         Mostrando {pagina * PAGE_SIZE + 1}–{Math.min((pagina + 1) * PAGE_SIZE, totalRegistros)} de {totalRegistros}
@@ -251,6 +281,57 @@ export default function CuentasPagar() {
                 </div>
             )}
 
+            {/* Tabla gastos programados */}
+            {tabSeccion === 'gastos' && (
+                <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                    {loadingGastos ? (
+                        <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
+                    ) : gastosPend.length === 0 ? (
+                        <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>No hay gastos programados pendientes</div>
+                    ) : (
+                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                            <thead>
+                                <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                                    {['Documento', 'Nombre', 'Tipo', 'Vencimiento', 'Monto USD', 'Monto Bs.', ''].map((h, i) => (
+                                        <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: [4, 5].includes(i) ? 'right' : 'left' }}>{h}</th>
+                                    ))}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {gastosPend.map(g => {
+                                    const tasa = Number(tasas[g.tipo_tasa] || tasas.tasa_bcv || 1)
+                                    const totalUsd = Number(g.monto_usd || 0) + Number(g.monto_bs || 0) / tasa
+                                    return (
+                                        <tr key={g.id} style={{ borderBottom: '1px solid #f3f4f6' }}
+                                            onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
+                                            onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                                            <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>{g.numero_gasto || '—'}</td>
+                                            <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1f2937', fontWeight: 500 }}>
+                                                {g.nombre}
+                                                {g.descripcion && <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '2px' }}>{g.descripcion}</div>}
+                                            </td>
+                                            <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{g.tipos_gastos?.nombre || g.categoria || '—'}</td>
+                                            <td style={{ padding: '12px 16px', fontSize: '13px' }}>
+                                                <div style={{ marginBottom: '2px' }}>{g.fecha_vencimiento ? new Date(g.fecha_vencimiento + 'T00:00:00').toLocaleDateString('es-VE') : '—'}</div>
+                                                <BadgeVencimiento fecha={g.fecha_vencimiento ? g.fecha_vencimiento + 'T00:00:00' : null} />
+                                            </td>
+                                            <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#dc2626', textAlign: 'right' }}>{Number(g.monto_usd) > 0 ? fmt(g.monto_usd) : '—'}</td>
+                                            <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#d97706', textAlign: 'right' }}>{Number(g.monto_bs) > 0 ? fmtBs(g.monto_bs, 1) : '—'}</td>
+                                            <td style={{ padding: '12px 16px' }}>
+                                                <button onClick={() => setGastoPagando(g)}
+                                                    style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', padding: '5px 10px', fontSize: '12px', cursor: 'pointer' }}>
+                                                    <DollarSign size={12} /> Pagar
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    )
+                                })}
+                            </tbody>
+                        </table>
+                    )}
+                </div>
+            )}
+
             {mostrarModal && compraSeleccionada && (
                 <ModalPago
                     compra={compraSeleccionada}
@@ -258,6 +339,14 @@ export default function CuentasPagar() {
                     tasas={tasas}
                     onCerrar={() => { setMostrarModal(false); setCompraSeleccionada(null) }}
                     onPagado={() => { setMostrarModal(false); setCompraSeleccionada(null); cargarDatos() }}
+                />
+            )}
+            {gastoPagando && (
+                <ModalPagoGasto
+                    gasto={gastoPagando}
+                    tasas={tasas}
+                    onCerrar={() => setGastoPagando(null)}
+                    onPagado={() => { setGastoPagando(null); cargarGastosPendientes() }}
                 />
             )}
         </div>
@@ -446,5 +535,136 @@ function ModalPago({ compra, saldo, tasas, onCerrar, onPagado }) {
                 </div>
             </div>
         </div>
+    )
+}
+
+// ─── Modal Pago de Gasto ────────────────────────────────────────
+const METODOS_PAGO_GASTO = ['Efectivo USD', 'Efectivo Bs.', 'Zelle', 'Transferencia', 'Pago Móvil', 'Punto de Venta', 'Otro']
+
+function ModalPagoGasto({ gasto, tasas, onCerrar, onPagado }) {
+    const { perfil } = useAuth()
+    const OPCIONES_TASA = [
+        { key: 'tasa_bcv', label: 'USD · BCV' },
+        { key: 'tasa_euro', label: 'EUR · BCV' },
+        { key: 'tasa_binance', label: 'USD · Binance' },
+    ]
+    const [fecha, setFecha] = useState(new Date().toISOString().split('T')[0])
+    const [tipoTasa, setTipoTasa] = useState(gasto.tipo_tasa || 'tasa_bcv')
+    const [montoUsd, setMontoUsd] = useState(gasto.monto_usd > 0 ? String(gasto.monto_usd) : '')
+    const [montoBs, setMontoBs] = useState(gasto.monto_bs > 0 ? String(gasto.monto_bs) : '')
+    const [metodoPago, setMetodoPago] = useState(gasto.metodo_pago || 'Efectivo USD')
+    const [cuentaBancariaId, setCuentaBancariaId] = useState(gasto.cuenta_bancaria_id || '')
+    const [cuentasBancarias, setCuentasBancarias] = useState([])
+    const [guardando, setGuardando] = useState(false)
+    const [error, setError] = useState('')
+
+    useEffect(() => {
+        if (perfil?.empresa_id)
+            supabase.from('cuentas_bancarias').select('id, nombre, banco, moneda')
+                .eq('empresa_id', perfil.empresa_id).eq('activa', true)
+                .then(({ data }) => setCuentasBancarias(data || []))
+    }, [perfil?.empresa_id])
+
+    const tasa = Number(tasas[tipoTasa] || 1)
+    const totalEnUsd = Number(montoUsd || 0) + Number(montoBs || 0) / tasa
+    const inputS = { width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', color: '#374151', backgroundColor: '#fff', boxSizing: 'border-box' }
+
+    async function confirmar() {
+        if (Number(montoUsd) <= 0 && Number(montoBs) <= 0) { setError('Ingresa al menos un monto'); return }
+        setGuardando(true); setError('')
+        const { error: err } = await supabase.from('gastos').update({
+            estado: 'pagado',
+            fecha,
+            monto_usd: Number(montoUsd || 0),
+            monto_bs: Number(montoBs || 0),
+            tasa_cambio: tasa,
+            tipo_tasa: tipoTasa,
+            metodo_pago: metodoPago,
+            cuenta_bancaria_id: cuentaBancariaId || null,
+            monto: totalEnUsd,
+        }).eq('id', gasto.id)
+        if (err) { setError('Error: ' + err.message); setGuardando(false); return }
+        onPagado()
+    }
+
+    return (
+        <>
+            <div onClick={onCerrar} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', zIndex: 40 }} />
+            <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', backgroundColor: '#fff', borderRadius: '16px', padding: '28px', width: '460px', zIndex: 50, boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+                <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#1f2937', margin: '0 0 4px' }}>Registrar pago de gasto</h3>
+                <p style={{ fontSize: '13px', color: '#6b7280', margin: '0 0 20px' }}>
+                    {gasto.numero_gasto && <span style={{ fontFamily: 'monospace', marginRight: '8px' }}>{gasto.numero_gasto}</span>}
+                    {gasto.nombre}
+                </p>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                        <div>
+                            <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Fecha de pago</label>
+                            <input type="date" value={fecha} onChange={e => setFecha(e.target.value)} style={inputS} />
+                        </div>
+                        <div>
+                            <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Método de pago</label>
+                            <select value={metodoPago} onChange={e => setMetodoPago(e.target.value)} style={inputS}>
+                                {METODOS_PAGO_GASTO.map(m => <option key={m} value={m}>{m}</option>)}
+                            </select>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Tasa de cambio</label>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                            {OPCIONES_TASA.map(op => (
+                                <button key={op.key} onClick={() => setTipoTasa(op.key)}
+                                    style={{ flex: 1, padding: '8px 4px', borderRadius: '8px', fontSize: '12px', fontWeight: 500, border: '1px solid', cursor: 'pointer',
+                                        borderColor: tipoTasa === op.key ? '#16a34a' : '#e5e7eb',
+                                        backgroundColor: tipoTasa === op.key ? '#f0fdf4' : '#fff',
+                                        color: tipoTasa === op.key ? '#16a34a' : '#6b7280' }}>
+                                    <div>{op.label}</div>
+                                    <div style={{ fontSize: '11px', marginTop: '2px', fontWeight: 400 }}>{Number(tasas[op.key] || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.</div>
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                        <div>
+                            <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Monto USD</label>
+                            <input type="number" value={montoUsd} onChange={e => setMontoUsd(e.target.value)} step="0.01" placeholder="0.00" style={inputS} />
+                        </div>
+                        <div>
+                            <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Monto Bs. (opcional)</label>
+                            <input type="number" value={montoBs} onChange={e => setMontoBs(e.target.value)} step="1" placeholder="0.00" style={inputS} />
+                        </div>
+                    </div>
+
+                    {cuentasBancarias.length > 0 && (
+                        <div>
+                            <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Cuenta bancaria</label>
+                            <select value={cuentaBancariaId} onChange={e => setCuentaBancariaId(e.target.value)} style={inputS}>
+                                <option value="">— Sin especificar —</option>
+                                {cuentasBancarias.map(c => <option key={c.id} value={c.id}>{c.banco} · {c.nombre} ({c.moneda})</option>)}
+                            </select>
+                        </div>
+                    )}
+
+                    {(Number(montoUsd) > 0 || Number(montoBs) > 0) && (
+                        <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '10px 14px', fontSize: '13px', color: '#166534', fontWeight: 600 }}>
+                            Total equivalente: {fmt(totalEnUsd)}
+                        </div>
+                    )}
+
+                    {error && <p style={{ color: '#dc2626', fontSize: '13px', margin: 0 }}>{error}</p>}
+
+                    <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '4px' }}>
+                        <button onClick={onCerrar} style={{ padding: '9px 18px', borderRadius: '8px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: '#374151', fontSize: '13px', cursor: 'pointer' }}>Cancelar</button>
+                        <button onClick={confirmar} disabled={guardando}
+                            style={{ padding: '9px 18px', borderRadius: '8px', border: 'none', backgroundColor: '#16a34a', color: '#fff', fontSize: '13px', fontWeight: 500, cursor: guardando ? 'default' : 'pointer', opacity: guardando ? 0.7 : 1 }}>
+                            {guardando ? 'Guardando...' : 'Confirmar pago'}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </>
     )
 }
