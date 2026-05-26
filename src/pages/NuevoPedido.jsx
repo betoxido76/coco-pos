@@ -585,6 +585,7 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
             { data: config },
             { data: visitasData },
             { count: visitasTotal },
+            { data: ncsData },
         ] = await Promise.all([
             supabase.from('ventas')
                 .select('id, numero_factura, fecha_venta, total, pago_usd, pago_bs, tasa_cambio, estado_cobro, fecha_vencimiento_pago')
@@ -623,6 +624,13 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
                 .select('*', { count: 'exact', head: true })
                 .eq('cliente_id', cliente.id)
                 .eq('empresa_id', perfil.empresa_id),
+
+            supabase.from('devoluciones')
+                .select('id, numero_nc, monto_devuelto, estado_nc, tipo_devolucion, motivo, created_at, ventas(numero_factura)')
+                .eq('cliente_id', cliente.id)
+                .eq('empresa_id', perfil.empresa_id)
+                .not('numero_nc', 'is', null)
+                .order('created_at', { ascending: false }),
         ])
 
         setPaginaVisitas(0)
@@ -641,6 +649,7 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
             pedidos: pedidos || [],
             tasa: config?.tasa_bcv || null,
             visitas: visitasData || [],
+            ncs: ncsData || [],
         })
         setLoading(false)
     }
@@ -687,6 +696,7 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
         { key: 'resumen', label: 'Resumen' },
         { key: 'cxc', label: `CxC${datos?.cxc?.length ? ` (${datos.cxc.length})` : ''}` },
         { key: 'pedidos', label: 'Pedidos' },
+        { key: 'nc', label: `NC${datos?.ncs?.length ? ` (${datos.ncs.length})` : ''}` },
         { key: 'visitas', label: `Visitas${totalVisitas > 0 ? ` (${totalVisitas})` : ''}` },
     ]
 
@@ -990,6 +1000,47 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
                             <button onClick={() => onNuevoPedido()} style={s.btnPrimary}>
                                 <Plus size={18} /> Tomar nuevo pedido
                             </button>
+                        </>
+                    )}
+
+                    {/* ── TAB NC ── */}
+                    {tabActiva === 'nc' && (
+                        <>
+                            {!datos.ncs || datos.ncs.length === 0 ? (
+                                <div style={{ ...s.card, textAlign: 'center', padding: '40px' }}>
+                                    <FileText size={36} color="#d1d5db" style={{ marginBottom: '10px' }} />
+                                    <p style={{ fontSize: '14px', color: '#9ca3af', margin: 0 }}>Sin notas de crédito</p>
+                                </div>
+                            ) : (
+                                <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                                    {datos.ncs.map(nc => (
+                                        <div key={nc.id} style={{ padding: '14px 16px', borderBottom: '1px solid #f3f4f6', borderLeft: `4px solid ${nc.estado_nc === 'aplicada' ? '#16a34a' : '#d97706'}` }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                                                <p style={{ fontSize: '14px', fontWeight: 600, color: '#1f2937', margin: 0, fontFamily: 'monospace' }}>{nc.numero_nc}</p>
+                                                <p style={{ fontSize: '15px', fontWeight: 700, color: '#1f2937', margin: 0 }}>{fmt(nc.monto_devuelto)}</p>
+                                            </div>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                <div>
+                                                    <p style={{ fontSize: '12px', color: '#9ca3af', margin: 0 }}>
+                                                        {fmtFecha(nc.created_at)} · {nc.tipo_devolucion === 'total' ? 'Total' : 'Parcial'}
+                                                    </p>
+                                                    {nc.ventas?.numero_factura && (
+                                                        <p style={{ fontSize: '11px', color: '#9ca3af', margin: '2px 0 0', fontFamily: 'monospace' }}>
+                                                            Factura: {nc.ventas.numero_factura}
+                                                        </p>
+                                                    )}
+                                                </div>
+                                                <span style={{ backgroundColor: nc.estado_nc === 'aplicada' ? '#dcfce7' : '#fffbeb', color: nc.estado_nc === 'aplicada' ? '#166534' : '#854d0e', padding: '2px 10px', borderRadius: '20px', fontSize: '11px', fontWeight: 600, flexShrink: 0 }}>
+                                                    {nc.estado_nc === 'aplicada' ? 'Aplicada' : 'Pendiente'}
+                                                </span>
+                                            </div>
+                                            {nc.motivo && (
+                                                <p style={{ fontSize: '11px', color: '#9ca3af', margin: '5px 0 0', fontStyle: 'italic' }}>"{nc.motivo}"</p>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
                         </>
                     )}
 
