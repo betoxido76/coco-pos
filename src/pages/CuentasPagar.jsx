@@ -212,7 +212,7 @@ export default function CuentasPagar() {
                     <option value="">Todos los proveedores</option>
                     {proveedores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
                 </select>
-            </div>
+            </div>}
 
             {/* Tabla compras */}
             {tabSeccion === 'compras' && <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
@@ -261,7 +261,7 @@ export default function CuentasPagar() {
                         </tbody>
                     </table>
                 )}
-            </div>
+            </div>}
 
             {tabSeccion === 'compras' && totalRegistros > PAGE_SIZE && (
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', marginTop: '8px' }}>
