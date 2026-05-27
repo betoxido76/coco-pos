@@ -147,6 +147,16 @@ export default function Productos() {
         setGuardando(true)
         setError('')
 
+        const esServicio = form.tipo_producto === 'servicio'
+
+        // Leer stock anterior ANTES de actualizar (necesario para calcular diff en edición)
+        let stockAnterior = 0
+        if (editando && !esServicio) {
+            const { data: prodViejo } = await supabase.from('productos_terminados')
+                .select('stock_actual').eq('id', editando).single()
+            stockAnterior = Number(prodViejo?.stock_actual || 0)
+        }
+
         const payload = {
             nombre: form.nombre.trim(),
             sku: form.sku.trim().toUpperCase(),
@@ -179,6 +189,77 @@ export default function Productos() {
         }
 
         if (err) { setGuardando(false); setError(err.code === '23505' ? `El SKU "${payload.sku}" ya existe en el catálogo. Por favor elige otro código.` : 'Error al guardar: ' + err.message); return }
+
+        // Sincronizar stock_ubicacion y movimientos_inventario
+        const stockNuevo = payload.stock_actual
+        if (!esServicio && productoId && stockNuevo !== stockAnterior) {
+            const { data: { user } } = await supabase.auth.getUser()
+            const { data: almDefault } = await supabase.from('almacenes')
+                .select('id').eq('empresa_id', perfil.empresa_id).eq('es_default', true).maybeSingle()
+            const almId = almDefault?.id
+
+            if (!editando) {
+                // CREAR: insertar fila en stock_ubicacion si stock > 0
+                if (stockNuevo > 0 && almId) {
+                    await supabase.from('stock_ubicacion').insert({
+                        tipo_item: 'producto_terminado', item_id: productoId,
+                        almacen_id: almId, almacen_ubicacion_id: null,
+                        cantidad: stockNuevo, empresa_id: perfil.empresa_id,
+                        updated_at: new Date().toISOString(),
+                    })
+                    await supabase.from('movimientos_inventario').insert({
+                        empresa_id: perfil.empresa_id, tipo_item: 'producto_terminado',
+                        item_id: productoId, item_nombre: payload.nombre, item_codigo: payload.sku,
+                        tipo_movimiento: 'entrada', cantidad: stockNuevo,
+                        stock_anterior: 0, stock_actual: stockNuevo,
+                        almacen_id: almId, origen: 'inventario_inicial',
+                        notas: 'Stock inicial al crear producto',
+                        usuario_id: user.id, fecha: new Date().toISOString(),
+                    })
+                }
+            } else {
+                // EDITAR: aplicar diff al almacén con más stock (o al default si no hay filas)
+                const diff = stockNuevo - stockAnterior
+                const { data: filas } = await supabase.from('stock_ubicacion')
+                    .select('id, cantidad, almacen_id')
+                    .eq('tipo_item', 'producto_terminado').eq('item_id', editando)
+                    .eq('empresa_id', perfil.empresa_id)
+                    .order('cantidad', { ascending: false })
+
+                if (filas && filas.length > 0) {
+                    const fila = filas[0]
+                    const nuevaCantidad = Math.max(0, Number(fila.cantidad) + diff)
+                    await supabase.from('stock_ubicacion')
+                        .update({ cantidad: nuevaCantidad, updated_at: new Date().toISOString() })
+                        .eq('id', fila.id)
+                    await supabase.from('movimientos_inventario').insert({
+                        empresa_id: perfil.empresa_id, tipo_item: 'producto_terminado',
+                        item_id: editando, item_nombre: payload.nombre, item_codigo: payload.sku,
+                        tipo_movimiento: diff > 0 ? 'entrada' : 'ajuste',
+                        cantidad: Math.abs(diff), stock_anterior: stockAnterior, stock_actual: stockNuevo,
+                        almacen_id: fila.almacen_id, origen: 'ajuste_manual',
+                        notas: 'Ajuste desde ficha de producto',
+                        usuario_id: user.id, fecha: new Date().toISOString(),
+                    })
+                } else if (stockNuevo > 0 && almId) {
+                    await supabase.from('stock_ubicacion').insert({
+                        tipo_item: 'producto_terminado', item_id: editando,
+                        almacen_id: almId, almacen_ubicacion_id: null,
+                        cantidad: stockNuevo, empresa_id: perfil.empresa_id,
+                        updated_at: new Date().toISOString(),
+                    })
+                    await supabase.from('movimientos_inventario').insert({
+                        empresa_id: perfil.empresa_id, tipo_item: 'producto_terminado',
+                        item_id: editando, item_nombre: payload.nombre, item_codigo: payload.sku,
+                        tipo_movimiento: 'ajuste', cantidad: stockNuevo,
+                        stock_anterior: stockAnterior, stock_actual: stockNuevo,
+                        almacen_id: almId, origen: 'ajuste_manual',
+                        notas: 'Ajuste desde ficha de producto',
+                        usuario_id: user.id, fecha: new Date().toISOString(),
+                    })
+                }
+            }
+        }
 
         if (esAutopartes && productoId) {
             await supabase.from('productos_autopartes').upsert({
