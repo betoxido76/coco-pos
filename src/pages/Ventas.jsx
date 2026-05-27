@@ -465,6 +465,21 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
                     .update({ stock_actual: nuevoStock })
                     .eq('id', item.producto_id)
 
+                // Decrementar stock_ubicacion (greedy: toma del almacén con más stock)
+                let restante = cantPrimaria
+                const { data: filasStock } = await supabase.from('stock_ubicacion')
+                    .select('id, cantidad').eq('tipo_item', 'producto_terminado')
+                    .eq('item_id', item.producto_id).eq('empresa_id', perfil.empresa_id)
+                    .gt('cantidad', 0).order('cantidad', { ascending: false })
+                for (const fila of (filasStock || [])) {
+                    if (restante <= 0) break
+                    const desc = Math.min(restante, Number(fila.cantidad))
+                    await supabase.from('stock_ubicacion')
+                        .update({ cantidad: Number(fila.cantidad) - desc })
+                        .eq('id', fila.id)
+                    restante -= desc
+                }
+
                 await supabase.from('movimientos_inventario').insert({
                     empresa_id: perfil.empresa_id,
                     tipo_item: 'producto_terminado',
@@ -473,6 +488,7 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
                     item_codigo: prod.sku,
                     tipo_movimiento: 'salida',
                     cantidad: cantPrimaria,
+                    stock_anterior: prod.stock_actual,
                     stock_actual: nuevoStock,
                     origen: 'pedido_facturado',
                     fecha: new Date().toISOString()
@@ -1160,6 +1176,21 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                     .update({ stock_actual: nuevoStock })
                     .eq('id', item.producto_id)
 
+                // Decrementar stock_ubicacion (greedy: toma del almacén con más stock)
+                let restante = cantPrimaria
+                const { data: filasStock } = await supabase.from('stock_ubicacion')
+                    .select('id, cantidad').eq('tipo_item', 'producto_terminado')
+                    .eq('item_id', item.producto_id).eq('empresa_id', perfil.empresa_id)
+                    .gt('cantidad', 0).order('cantidad', { ascending: false })
+                for (const fila of (filasStock || [])) {
+                    if (restante <= 0) break
+                    const desc = Math.min(restante, Number(fila.cantidad))
+                    await supabase.from('stock_ubicacion')
+                        .update({ cantidad: Number(fila.cantidad) - desc })
+                        .eq('id', fila.id)
+                    restante -= desc
+                }
+
                 await supabase.from('movimientos_inventario').insert({
                     empresa_id: perfil.empresa_id,
                     tipo_item: 'producto_terminado',
@@ -1168,6 +1199,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                     item_codigo: item.sku,
                     tipo_movimiento: 'salida',
                     cantidad: cantPrimaria,
+                    stock_anterior: prod.stock_actual,
                     stock_actual: nuevoStock,
                     origen: 'venta',
                     fecha: new Date().toISOString()

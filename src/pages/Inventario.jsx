@@ -401,31 +401,53 @@ function VistaPorAlmacen() {
         setGuardandoNuevo(true); setErrorNuevo('')
         const { data: { user } } = await supabase.auth.getUser()
         const cant = Number(cantNuevo)
+        const ubicId = ubicNuevo || null
 
-        const { error } = await supabase.from('stock_ubicacion').upsert({
-            almacen_id: almacenId,
-            almacen_ubicacion_id: ubicNuevo || null,
-            tipo_item: itemNuevo.tipo_item,
-            item_id: itemNuevo.id,
-            cantidad: cant,
-            empresa_id: perfil.empresa_id,
-            updated_at: new Date().toISOString(),
-        }, { onConflict: 'almacen_id,almacen_ubicacion_id,tipo_item,item_id' })
+        // SELECT + UPDATE/INSERT — evita el bug del upsert con ON CONFLICT cuando almacen_ubicacion_id=NULL
+        let qExistente = supabase.from('stock_ubicacion')
+            .select('id, cantidad')
+            .eq('almacen_id', almacenId)
+            .eq('tipo_item', itemNuevo.tipo_item)
+            .eq('item_id', itemNuevo.id)
+            .eq('empresa_id', perfil.empresa_id)
+        qExistente = ubicId
+            ? qExistente.eq('almacen_ubicacion_id', ubicId)
+            : qExistente.is('almacen_ubicacion_id', null)
+        const { data: existente } = await qExistente.maybeSingle()
+
+        let error, cantAnterior
+        if (existente) {
+            cantAnterior = Number(existente.cantidad)
+            ;({ error } = await supabase.from('stock_ubicacion')
+                .update({ cantidad: cant, updated_at: new Date().toISOString() })
+                .eq('id', existente.id))
+        } else {
+            cantAnterior = 0
+            ;({ error } = await supabase.from('stock_ubicacion').insert({
+                almacen_id: almacenId,
+                almacen_ubicacion_id: ubicId,
+                tipo_item: itemNuevo.tipo_item,
+                item_id: itemNuevo.id,
+                cantidad: cant,
+                empresa_id: perfil.empresa_id,
+                updated_at: new Date().toISOString(),
+            }))
+        }
 
         if (error) { setErrorNuevo('Error: ' + error.message); setGuardandoNuevo(false); return }
 
         await supabase.from('movimientos_inventario').insert({
-            tipo_movimiento: 'entrada',
+            tipo_movimiento: 'ajuste',
             tipo_item: itemNuevo.tipo_item,
             item_id: itemNuevo.id,
             item_nombre: itemNuevo.nombre,
             item_codigo: itemNuevo.codigo || '',
             cantidad: cant,
-            stock_anterior: 0,
+            stock_anterior: cantAnterior,
             stock_actual: cant,
             origen: 'ajuste_manual',
             almacen_id: almacenId,
-            almacen_ubicacion_id: ubicNuevo || null,
+            almacen_ubicacion_id: ubicId,
             notas: notaNuevo || 'Inventario inicial',
             usuario_id: user.id,
             empresa_id: perfil.empresa_id,
