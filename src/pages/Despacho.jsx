@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
-import { PackageCheck, ChevronRight, Check, AlertTriangle, Truck, FileText } from 'lucide-react'
+import { PackageCheck, ChevronRight, Check, AlertTriangle, Truck, FileText, Ban } from 'lucide-react'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 
@@ -12,6 +12,7 @@ const ESTADOS = {
     rechazado:  { bg: '#fee2e2', color: '#991b1b', label: 'Rechazado' },
     facturado:  { bg: '#dcfce7', color: '#166534', label: 'Facturado' },
     despachado: { bg: '#d1fae5', color: '#065f46', label: 'Despachado' },
+    anulado:    { bg: '#f3f4f6', color: '#6b7280', label: 'Anulado' },
 }
 
 function BadgeEstado({ estado }) {
@@ -31,6 +32,10 @@ export default function Despacho() {
     const [pedidoActual, setPedidoActual] = useState(null)
     const [pedidoVer, setPedidoVer] = useState(null)
     const [conteos, setConteos] = useState({ alistamiento: 0, porregistrar: 0, despacho: 0 })
+    const [modalAnulacion, setModalAnulacion] = useState(null)
+    const [motivoAnulacion, setMotivoAnulacion] = useState('')
+    const [anulando, setAnulando] = useState(false)
+    const [errorAnulacion, setErrorAnulacion] = useState('')
 
     useEffect(() => { cargar(); cargarConteos() }, [tabActiva])
 
@@ -49,7 +54,8 @@ export default function Despacho() {
         let estado
         if (tabActiva === 'alistamiento') estado = 'aprobado'
         else if (tabActiva === 'porregistrar') estado = 'alistado'
-        else estado = 'facturado'
+        else if (tabActiva === 'despacho') estado = 'facturado'
+        else estado = 'anulado'
 
         const { data } = await supabase
             .from('pedidos')
@@ -59,6 +65,20 @@ export default function Despacho() {
             .order('created_at', { ascending: false })
         if (data) setPedidos(data)
         setLoading(false)
+    }
+
+    async function anularPedido() {
+        if (!motivoAnulacion.trim()) { setErrorAnulacion('El motivo de anulación es obligatorio'); return }
+        setAnulando(true); setErrorAnulacion('')
+        const { error } = await supabase.from('pedidos')
+            .update({ estado: 'anulado', motivo_anulacion: motivoAnulacion.trim() })
+            .eq('id', modalAnulacion.id)
+        setAnulando(false)
+        if (error) { setErrorAnulacion('Error: ' + error.message); return }
+        setModalAnulacion(null)
+        setMotivoAnulacion('')
+        cargar()
+        cargarConteos()
     }
 
     if (pedidoVer)
@@ -87,6 +107,7 @@ export default function Despacho() {
                     { key: 'alistamiento', label: 'Alistamiento',  count: conteos.alistamiento, badgeBg: '#fff7ed', badgeColor: '#c2410c' },
                     { key: 'porregistrar', label: 'Por Registrar', count: conteos.porregistrar, badgeBg: '#fef9c3', badgeColor: '#854d0e' },
                     { key: 'despacho',     label: 'Despacho',      count: conteos.despacho,     badgeBg: '#dcfce7', badgeColor: '#166534' },
+                    { key: 'anulados',     label: 'Anulados',      count: 0,                    badgeBg: '#f3f4f6', badgeColor: '#6b7280' },
                 ].map(tab => {
                     const isActive = tabActiva === tab.key
                     return (
@@ -131,19 +152,64 @@ export default function Despacho() {
                         </p>
                     </div>
                 ) : tabActiva === 'alistamiento' ? (
-                    <TablaAlistamiento pedidos={pedidos} onAlistar={p => setPedidoActual(p)} />
+                    <TablaAlistamiento pedidos={pedidos} onAlistar={p => setPedidoActual(p)} onAnular={p => { setModalAnulacion(p); setMotivoAnulacion(''); setErrorAnulacion('') }} />
                 ) : tabActiva === 'porregistrar' ? (
-                    <TablaPorRegistrar pedidos={pedidos} onVer={p => setPedidoVer(p)} />
-                ) : (
+                    <TablaPorRegistrar pedidos={pedidos} onVer={p => setPedidoVer(p)} onAnular={p => { setModalAnulacion(p); setMotivoAnulacion(''); setErrorAnulacion('') }} />
+                ) : tabActiva === 'despacho' ? (
                     <TablaDespacho pedidos={pedidos} onVer={p => setPedidoVer(p)} onDespachado={() => { cargar(); cargarConteos() }} empresaId={perfil.empresa_id} />
+                ) : (
+                    <TablaAnulados pedidos={pedidos} onVer={p => setPedidoVer(p)} />
                 )}
             </div>
+
+            {/* Modal Anulación */}
+            {modalAnulacion && (
+                <>
+                    <div onClick={() => setModalAnulacion(null)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', zIndex: 40 }} />
+                    <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', backgroundColor: '#fff', borderRadius: '16px', padding: '28px', width: '440px', zIndex: 50, boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '48px', height: '48px', backgroundColor: '#fef2f2', borderRadius: '12px', margin: '0 auto 16px' }}>
+                            <Ban size={22} color="#dc2626" />
+                        </div>
+                        <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#1f2937', margin: '0 0 6px', textAlign: 'center' }}>Anular pedido</h3>
+                        <p style={{ fontSize: '13px', color: '#6b7280', margin: '0 0 2px', textAlign: 'center' }}>
+                            Pedido <strong style={{ fontFamily: 'monospace', color: '#374151' }}>{modalAnulacion.numero_pedido}</strong>
+                        </p>
+                        <p style={{ fontSize: '13px', color: '#6b7280', margin: '0 0 20px', textAlign: 'center' }}>{modalAnulacion.clientes?.nombre}</p>
+                        <label style={{ fontSize: '12px', fontWeight: 600, color: '#374151', display: 'block', marginBottom: '6px' }}>
+                            Motivo de anulación <span style={{ color: '#dc2626' }}>*</span>
+                        </label>
+                        <textarea
+                            value={motivoAnulacion}
+                            onChange={e => setMotivoAnulacion(e.target.value)}
+                            placeholder="Describe el motivo por el cual se anula este pedido..."
+                            rows={3}
+                            style={{ width: '100%', padding: '10px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', color: '#374151', resize: 'vertical', boxSizing: 'border-box', fontFamily: 'inherit' }}
+                            autoFocus
+                        />
+                        {errorAnulacion && (
+                            <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '8px 12px', fontSize: '13px', color: '#dc2626', marginTop: '10px' }}>
+                                {errorAnulacion}
+                            </div>
+                        )}
+                        <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
+                            <button onClick={() => setModalAnulacion(null)}
+                                style={{ flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: '#374151', fontSize: '14px', cursor: 'pointer' }}>
+                                Cancelar
+                            </button>
+                            <button onClick={anularPedido} disabled={anulando}
+                                style={{ flex: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '10px', borderRadius: '8px', border: 'none', backgroundColor: '#dc2626', color: '#fff', fontSize: '14px', fontWeight: 600, cursor: 'pointer', opacity: anulando ? 0.6 : 1 }}>
+                                <Ban size={15} /> {anulando ? 'Anulando...' : 'Confirmar anulación'}
+                            </button>
+                        </div>
+                    </div>
+                </>
+            )}
         </div>
     )
 }
 
 // ── Tabla Alistamiento ─────────────────────────────────────────
-function TablaAlistamiento({ pedidos, onAlistar }) {
+function TablaAlistamiento({ pedidos, onAlistar, onAnular }) {
     return (
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
@@ -178,10 +244,16 @@ function TablaAlistamiento({ pedidos, onAlistar }) {
                             {p.fecha_entrega ? new Date(p.fecha_entrega + 'T00:00:00').toLocaleDateString('es-VE') : '—'}
                         </td>
                         <td style={{ padding: '12px 16px' }}>
-                            <button onClick={() => onAlistar(p)}
-                                style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#d97706', color: '#fff', border: 'none', borderRadius: '6px', padding: '6px 12px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>
-                                <ChevronRight size={13} /> Alistar
-                            </button>
+                            <div style={{ display: 'flex', gap: '6px' }}>
+                                <button onClick={() => onAlistar(p)}
+                                    style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#d97706', color: '#fff', border: 'none', borderRadius: '6px', padding: '6px 12px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>
+                                    <ChevronRight size={13} /> Alistar
+                                </button>
+                                <button onClick={() => onAnular(p)}
+                                    style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #fca5a5', borderRadius: '6px', padding: '6px 10px', fontSize: '12px', color: '#dc2626', cursor: 'pointer' }}>
+                                    <Ban size={12} /> Anular
+                                </button>
+                            </div>
                         </td>
                     </tr>
                 ))}
@@ -191,7 +263,7 @@ function TablaAlistamiento({ pedidos, onAlistar }) {
 }
 
 // ── Tabla Por Registrar ────────────────────────────────────────
-function TablaPorRegistrar({ pedidos, onVer }) {
+function TablaPorRegistrar({ pedidos, onVer, onAnular }) {
     return (
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
@@ -230,10 +302,16 @@ function TablaPorRegistrar({ pedidos, onVer }) {
                         </td>
                         <td style={{ padding: '12px 16px' }}><BadgeEstado estado={p.estado} /></td>
                         <td style={{ padding: '12px 16px' }}>
-                            <button onClick={() => onVer(p)}
-                                style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
-                                <FileText size={13} /> Ver
-                            </button>
+                            <div style={{ display: 'flex', gap: '6px' }}>
+                                <button onClick={() => onVer(p)}
+                                    style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
+                                    <FileText size={13} /> Ver
+                                </button>
+                                <button onClick={() => onAnular(p)}
+                                    style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #fca5a5', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#dc2626', cursor: 'pointer' }}>
+                                    <Ban size={12} /> Anular
+                                </button>
+                            </div>
                         </td>
                     </tr>
                 ))}
@@ -343,6 +421,55 @@ function TablaDespacho({ pedidos, onVer, onDespachado, empresaId }) {
                 </>
             )}
         </>
+    )
+}
+
+// ── Tabla Anulados ─────────────────────────────────────────────
+function TablaAnulados({ pedidos, onVer }) {
+    if (pedidos.length === 0)
+        return (
+            <div style={{ padding: '48px', textAlign: 'center' }}>
+                <Ban size={32} style={{ color: '#d1d5db', marginBottom: '12px' }} />
+                <p style={{ color: '#9ca3af', fontSize: '14px', margin: 0 }}>No hay pedidos anulados</p>
+            </div>
+        )
+    return (
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+                <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                    {['Pedido', 'O/C Cliente', 'Cliente', 'Vendedor', 'Fecha pedido', 'Motivo anulación', ''].map((h, i) => (
+                        <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left' }}>{h}</th>
+                    ))}
+                </tr>
+            </thead>
+            <tbody>
+                {pedidos.map(p => (
+                    <tr key={p.id} style={{ borderBottom: '1px solid #f3f4f6' }}
+                        onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
+                        onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                        <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', fontWeight: 600, color: '#9ca3af' }}>{p.numero_pedido || '—'}</td>
+                        <td style={{ padding: '12px 16px', fontSize: '12px', fontFamily: 'monospace', color: p.oc_cliente ? '#9ca3af' : '#d1d5db' }}>{p.oc_cliente || '—'}</td>
+                        <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>
+                            {p.clientes?.nombre || '—'}
+                            {p.clientes?.rif && <div style={{ fontSize: '11px', color: '#9ca3af', fontFamily: 'monospace' }}>{p.clientes.rif}</div>}
+                        </td>
+                        <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{p.usuarios?.nombre || '—'}</td>
+                        <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280', whiteSpace: 'nowrap' }}>
+                            {new Date(p.fecha_pedido).toLocaleDateString('es-VE')}
+                        </td>
+                        <td style={{ padding: '12px 16px', fontSize: '13px', color: '#dc2626', maxWidth: '260px' }}>
+                            {p.motivo_anulacion || '—'}
+                        </td>
+                        <td style={{ padding: '12px 16px' }}>
+                            <button onClick={() => onVer(p)}
+                                style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
+                                <FileText size={13} /> Ver
+                            </button>
+                        </td>
+                    </tr>
+                ))}
+            </tbody>
+        </table>
     )
 }
 
@@ -465,6 +592,17 @@ function VerPedido({ pedido, onVolver }) {
                     {pedido.direccion_entrega_texto || pedido.clientes?.direccion_fiscal || '—'}
                 </p>
             </div>
+
+            {/* Motivo anulación */}
+            {pedido.motivo_anulacion && (
+                <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '10px', padding: '12px 16px', marginBottom: '20px', display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+                    <Ban size={16} color="#dc2626" style={{ marginTop: '1px', flexShrink: 0 }} />
+                    <div>
+                        <p style={{ fontSize: '11px', color: '#dc2626', margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Motivo de anulación</p>
+                        <p style={{ fontSize: '13px', color: '#991b1b', margin: 0 }}>{pedido.motivo_anulacion}</p>
+                    </div>
+                </div>
+            )}
 
             {/* Notas */}
             {pedido.notas && (

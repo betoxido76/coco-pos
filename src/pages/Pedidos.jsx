@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
-import { Check, X, FileText, ChevronRight, Clock, Search, Bell } from 'lucide-react'
+import { Check, X, FileText, ChevronRight, Clock, Search, Bell, Ban } from 'lucide-react'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 
@@ -12,6 +12,7 @@ const ESTADOS = {
     rechazado:  { bg: '#fee2e2', color: '#991b1b', label: 'Rechazado' },
     facturado:  { bg: '#dcfce7', color: '#166534', label: 'Facturado' },
     despachado: { bg: '#d1fae5', color: '#065f46', label: 'Despachado' },
+    anulado:    { bg: '#f3f4f6', color: '#6b7280', label: 'Anulado' },
 }
 
 function BadgeEstado({ estado }) {
@@ -104,6 +105,7 @@ export default function Pedidos() {
         else if (tabActiva === 'alistados') q = q.eq('estado', 'alistado')
         else if (tabActiva === 'pordespachar') q = q.eq('estado', 'facturado')
         else if (tabActiva === 'historial') q = q.in('estado', ['rechazado', 'despachado'])
+        else if (tabActiva === 'anulados') q = q.eq('estado', 'anulado')
 
         const { data } = await q
         if (data) setPedidos(data)
@@ -154,6 +156,7 @@ export default function Pedidos() {
                     { key: 'alistados',    label: 'Por Registrar',             estado: 'alistado',   badgeBg: '#fff7ed', badgeColor: '#c2410c' },
                     { key: 'pordespachar', label: 'Por Despachar',             estado: 'facturado',  badgeBg: '#dcfce7', badgeColor: '#166534' },
                     { key: 'historial',    label: 'Completados',               estado: null },
+                    { key: 'anulados',     label: 'Anulados',                  estado: null,         badgeBg: '#f3f4f6', badgeColor: '#6b7280' },
                 ].map(tab => {
                     const count = tab.estado ? conteos[tab.estado] : 0
                     const isActive = tabActiva === tab.key
@@ -206,6 +209,43 @@ export default function Pedidos() {
                     <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>
                         No hay pedidos en este estado
                     </div>
+                ) : tabActiva === 'anulados' ? (
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead>
+                            <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                                {['Pedido', 'O/C Cliente', 'Cliente', 'Vendedor', 'Fecha pedido', 'Motivo anulación', ''].map((h, i) => (
+                                    <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left' }}>{h}</th>
+                                ))}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {filtrados.map(p => (
+                                <tr key={p.id} style={{ borderBottom: '1px solid #f3f4f6' }}
+                                    onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
+                                    onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                                    <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', fontWeight: 600, color: '#9ca3af' }}>{p.numero_pedido || '—'}</td>
+                                    <td style={{ padding: '12px 16px', fontSize: '12px', fontFamily: 'monospace', color: p.oc_cliente ? '#9ca3af' : '#d1d5db' }}>{p.oc_cliente || '—'}</td>
+                                    <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>
+                                        {p.clientes?.nombre || '—'}
+                                        {p.clientes?.rif && <div style={{ fontSize: '11px', color: '#9ca3af', fontFamily: 'monospace' }}>{p.clientes.rif}</div>}
+                                    </td>
+                                    <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{p.usuarios?.nombre || '—'}</td>
+                                    <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280', whiteSpace: 'nowrap' }}>
+                                        {new Date(p.fecha_pedido).toLocaleDateString('es-VE')}
+                                    </td>
+                                    <td style={{ padding: '12px 16px', fontSize: '13px', color: '#dc2626', maxWidth: '280px' }}>
+                                        {p.motivo_anulacion || '—'}
+                                    </td>
+                                    <td style={{ padding: '12px 16px' }}>
+                                        <button onClick={() => setPedidoActual(p)}
+                                            style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
+                                            <FileText size={13} /> Ver
+                                        </button>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
                 ) : (
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
@@ -567,6 +607,17 @@ function DetallePedido({ pedido, onVolver }) {
                 <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '10px', padding: '12px 16px', marginBottom: '20px' }}>
                     <p style={{ fontSize: '11px', color: '#dc2626', margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Motivo de rechazo</p>
                     <p style={{ fontSize: '13px', color: '#991b1b', margin: 0 }}>{pedido.motivo_rechazo}</p>
+                </div>
+            )}
+
+            {/* Motivo anulación */}
+            {pedido.estado === 'anulado' && pedido.motivo_anulacion && (
+                <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '10px', padding: '12px 16px', marginBottom: '20px', display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+                    <Ban size={16} color="#dc2626" style={{ marginTop: '1px', flexShrink: 0 }} />
+                    <div>
+                        <p style={{ fontSize: '11px', color: '#dc2626', margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Motivo de anulación</p>
+                        <p style={{ fontSize: '13px', color: '#991b1b', margin: 0 }}>{pedido.motivo_anulacion}</p>
+                    </div>
                 </div>
             )}
 
