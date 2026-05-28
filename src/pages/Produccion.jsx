@@ -1109,13 +1109,31 @@ function ModalCierre({ orden, producto, onCerrar, onCerrada }) {
 
         if (errOrden) { setError('Error: ' + errOrden.message); setGuardando(false); return }
 
-        // 2. Registrar consumo real y descontar stock de insumos
+        // 2. Crear el lote de producción primero (solo PT; para MP se deja null)
+        let loteId = null
+        if (orden.tipo_salida !== 'materia_prima') {
+            const userId = (await supabase.auth.getUser()).data.user.id
+            const { data: lote, error: errLote } = await supabase.from('lotes_produccion').insert({
+                orden_id: orden.id, producto_id: orden.producto_id,
+                usuario_id: userId,
+                numero_lote: numeroLote || orden.numero_lote || null,
+                cantidad_producida: Number(cantReal),
+                fecha_produccion: new Date().toISOString().split('T')[0],
+                fecha_vencimiento: fechaVenc || null,
+                observaciones: observ || null,
+                empresa_id: perfil.empresa_id
+            }).select('id').single()
+            if (errLote) { setError('Error al crear lote: ' + errLote.message); setGuardando(false); return }
+            loteId = lote.id
+        }
+
+        // 3. Registrar consumo real y descontar stock de insumos
         const consumosValidos = consumoItems.filter(c => c.insumo_id && Number(c.cantidad_real) > 0)
 
         if (consumosValidos.length > 0) {
             const { error: errConsumos } = await supabase.from('lote_consumos').insert(
                 consumosValidos.map(c => ({
-                    orden_id: orden.id, lote_id: orden.id,
+                    orden_id: orden.id, lote_id: loteId,
                     tipo_insumo: c.tipo_insumo, insumo_id: c.insumo_id,
                     insumo_nombre: c.insumo_nombre,
                     cantidad_sugerida: c.cantidad_sugerida || Number(c.cantidad_real),
@@ -1192,7 +1210,6 @@ function ModalCierre({ orden, producto, onCerrar, onCerrada }) {
                     await supabase.from('stock_ubicacion').insert({ almacen_id: almacenId, almacen_ubicacion_id: null, tipo_item: 'producto_terminado', item_id: orden.producto_id, cantidad: Number(cantReal), empresa_id: perfil.empresa_id, updated_at: new Date().toISOString() })
                 }
                 await supabase.from('movimientos_inventario').insert({ empresa_id: perfil.empresa_id, tipo_item: 'producto_terminado', item_id: orden.producto_id, item_nombre: producto?.nombre, item_codigo: producto?.sku || '', tipo_movimiento: 'entrada', cantidad: Number(cantReal), stock_anterior: pt.stock_actual, stock_actual: nuevoStock, origen: 'produccion_cierre', almacen_id: almacenId, fecha: new Date().toISOString() })
-                await supabase.from('lotes_produccion').insert({ orden_id: orden.id, producto_id: orden.producto_id, usuario_id: (await supabase.auth.getUser()).data.user.id, numero_lote: numeroLote || orden.numero_lote || null, cantidad_producida: Number(cantReal), fecha_produccion: new Date().toISOString().split('T')[0], fecha_vencimiento: fechaVenc || null, observaciones: observ || null, empresa_id: perfil.empresa_id })
             }
         }
 
