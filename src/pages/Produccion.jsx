@@ -811,6 +811,7 @@ function NuevaOrden({ onCreada, onCancelar }) {
 // ══════════════════════════════════════════════════════════════
 function DetalleOrden({ orden, onVolver, onActualizada }) {
     const [consumos, setConsumos] = useState([])
+    const [consumosDeReceta, setConsumosDeReceta] = useState(false)
     const [loading, setLoading] = useState(true)
     const [modalCierre, setModalCierre] = useState(false)
     const [procesando, setProcesando] = useState(false)
@@ -821,7 +822,49 @@ function DetalleOrden({ orden, onVolver, onActualizada }) {
     async function cargarDetalle() {
         setLoading(true)
         const { data: cons } = await supabase.from('lote_consumos').select('*').eq('orden_id', orden.id)
-        if (cons) setConsumos(cons)
+
+        if (cons && cons.length > 0) {
+            setConsumos(cons)
+            setConsumosDeReceta(false)
+        } else if (orden.receta_id) {
+            // Sin consumos registrados — cargar ingredientes de la receta como referencia
+            const { data: receta } = await supabase
+                .from('recetas')
+                .select('rinde_unidades, receta_items(tipo_insumo, insumo_id, cantidad)')
+                .eq('id', orden.receta_id)
+                .single()
+
+            if (receta?.receta_items?.length) {
+                const factor = Number(orden.cantidad_planificada) / (receta.rinde_unidades || 1)
+                const mpIds = receta.receta_items.filter(i => i.tipo_insumo === 'materia_prima').map(i => i.insumo_id)
+                const meIds = receta.receta_items.filter(i => i.tipo_insumo !== 'materia_prima').map(i => i.insumo_id)
+
+                const [{ data: mps }, { data: mes }] = await Promise.all([
+                    mpIds.length ? supabase.from('materias_primas').select('id, nombre').in('id', mpIds) : Promise.resolve({ data: [] }),
+                    meIds.length ? supabase.from('materiales_empaque').select('id, nombre').in('id', meIds) : Promise.resolve({ data: [] }),
+                ])
+
+                const mpMap = Object.fromEntries((mps || []).map(m => [m.id, m.nombre]))
+                const meMap = Object.fromEntries((mes || []).map(m => [m.id, m.nombre]))
+
+                setConsumos(receta.receta_items.map((item, idx) => ({
+                    id: `receta-${idx}`,
+                    tipo_insumo: item.tipo_insumo,
+                    insumo_id: item.insumo_id,
+                    insumo_nombre: item.tipo_insumo === 'materia_prima' ? (mpMap[item.insumo_id] || '—') : (meMap[item.insumo_id] || '—'),
+                    cantidad_sugerida: parseFloat((item.cantidad * factor).toFixed(4)),
+                    cantidad_consumida: parseFloat((item.cantidad * factor).toFixed(4)),
+                })))
+                setConsumosDeReceta(true)
+            } else {
+                setConsumos([])
+                setConsumosDeReceta(false)
+            }
+        } else {
+            setConsumos([])
+            setConsumosDeReceta(false)
+        }
+
         if (orden.tipo_salida === 'materia_prima' && orden.mp_salida_id) {
             const { data: mp } = await supabase.from('materias_primas')
                 .select('nombre, codigo, unidad_medida, vida_util_dias').eq('id', orden.mp_salida_id).single()
@@ -948,9 +991,14 @@ function DetalleOrden({ orden, onVolver, onActualizada }) {
 
             {/* Consumos */}
             <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden', marginBottom: '20px' }}>
-                <div style={{ padding: '14px 16px', borderBottom: '1px solid #e5e7eb', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div style={{ padding: '14px 16px', borderBottom: '1px solid #e5e7eb', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                     <FlaskConical size={16} style={{ color: '#6b7280' }} />
-                    <span style={{ fontSize: '14px', fontWeight: 600, color: '#1f2937' }}>Insumos consumidos</span>
+                    <span style={{ fontSize: '14px', fontWeight: 600, color: '#1f2937' }}>Insumos</span>
+                    {consumosDeReceta && (
+                        <span style={{ fontSize: '11px', color: '#d97706', backgroundColor: '#fef9c3', padding: '2px 8px', borderRadius: '12px', border: '1px solid #fde68a' }}>
+                            Cantidades según receta — sin consumos registrados
+                        </span>
+                    )}
                 </div>
                 {loading ? (
                     <div style={{ padding: '24px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
@@ -960,9 +1008,11 @@ function DetalleOrden({ orden, onVolver, onActualizada }) {
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
                             <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                {['Tipo', 'Insumo', 'Cant. sugerida', 'Cant. consumida', 'Diferencia'].map(h => (
-                                    <th key={h} style={{ padding: '9px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left' }}>{h}</th>
-                                ))}
+                                <th style={{ padding: '9px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left' }}>Tipo</th>
+                                <th style={{ padding: '9px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left' }}>Insumo</th>
+                                <th style={{ padding: '9px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left' }}>{consumosDeReceta ? 'Cant. planificada' : 'Cant. sugerida'}</th>
+                                {!consumosDeReceta && <th style={{ padding: '9px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left' }}>Cant. consumida</th>}
+                                {!consumosDeReceta && <th style={{ padding: '9px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left' }}>Diferencia</th>}
                             </tr>
                         </thead>
                         <tbody>
@@ -978,14 +1028,18 @@ function DetalleOrden({ orden, onVolver, onActualizada }) {
                                         </td>
                                         <td style={{ padding: '10px 14px', fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>{c.insumo_nombre || c.insumo_id}</td>
                                         <td style={{ padding: '10px 14px', fontSize: '13px', color: '#6b7280' }}>{c.cantidad_sugerida ? fmt(c.cantidad_sugerida) : '—'}</td>
-                                        <td style={{ padding: '10px 14px', fontSize: '13px', fontWeight: 600, color: '#1f2937' }}>{fmt(c.cantidad_consumida)}</td>
-                                        <td style={{ padding: '10px 14px' }}>
-                                            {c.cantidad_sugerida ? (
-                                                <span style={{ fontSize: '12px', fontWeight: 500, color: Math.abs(diffPct) > 10 ? '#dc2626' : Math.abs(diffPct) > 0 ? '#d97706' : '#16a34a' }}>
-                                                    {diff > 0 ? '+' : ''}{fmt(diff)} ({diff > 0 ? '+' : ''}{diffPct.toFixed(1)}%)
-                                                </span>
-                                            ) : <span style={{ color: '#9ca3af', fontSize: '12px' }}>—</span>}
-                                        </td>
+                                        {!consumosDeReceta && (
+                                            <td style={{ padding: '10px 14px', fontSize: '13px', fontWeight: 600, color: '#1f2937' }}>{fmt(c.cantidad_consumida)}</td>
+                                        )}
+                                        {!consumosDeReceta && (
+                                            <td style={{ padding: '10px 14px' }}>
+                                                {c.cantidad_sugerida ? (
+                                                    <span style={{ fontSize: '12px', fontWeight: 500, color: Math.abs(diffPct) > 10 ? '#dc2626' : Math.abs(diffPct) > 0 ? '#d97706' : '#16a34a' }}>
+                                                        {diff > 0 ? '+' : ''}{fmt(diff)} ({diff > 0 ? '+' : ''}{diffPct.toFixed(1)}%)
+                                                    </span>
+                                                ) : <span style={{ color: '#9ca3af', fontSize: '12px' }}>—</span>}
+                                            </td>
+                                        )}
                                     </tr>
                                 )
                             })}
