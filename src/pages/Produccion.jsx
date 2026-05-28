@@ -433,7 +433,24 @@ function NuevaOrden({ onCreada, onCancelar }) {
 
         if (errOrden) { setError('Error al crear la orden: ' + errOrden.message); setGuardando(false); return }
 
-        // Los consumos se registran al CERRAR la orden, no al crearla
+        // Guardar consumos planificados para preservar cantidades editadas por el usuario
+        const consumosAGuardar = consumos.filter(c => c.insumo_id)
+        if (consumosAGuardar.length > 0) {
+            await supabase.from('lote_consumos').insert(
+                consumosAGuardar.map(c => ({
+                    orden_id: orden.id,
+                    lote_id: null,
+                    tipo_insumo: c.tipo_insumo === 'empaque' ? 'material_empaque' : c.tipo_insumo,
+                    insumo_id: c.insumo_id,
+                    insumo_nombre: c.nombre,
+                    cantidad_sugerida: Number(c.cantidad_sugerida) || 0,
+                    cantidad_consumida: Number(c.cantidad_real) || Number(c.cantidad_sugerida) || 0,
+                    nota: null,
+                    empresa_id: perfil.empresa_id,
+                }))
+            )
+        }
+
         setGuardando(false)
         onCreada(orden)
     }
@@ -1131,6 +1148,9 @@ function ModalCierre({ orden, producto, onCerrar, onCerrada }) {
         const consumosValidos = consumoItems.filter(c => c.insumo_id && Number(c.cantidad_real) > 0)
 
         if (consumosValidos.length > 0) {
+            // Eliminar planificados (guardados al crear la orden) antes de insertar los reales
+            await supabase.from('lote_consumos').delete().eq('orden_id', orden.id)
+
             const { error: errConsumos } = await supabase.from('lote_consumos').insert(
                 consumosValidos.map(c => ({
                     orden_id: orden.id, lote_id: loteId,
