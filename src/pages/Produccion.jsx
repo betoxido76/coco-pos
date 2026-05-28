@@ -778,7 +778,7 @@ function DetalleOrden({ orden, onVolver, onActualizada }) {
 
                 setConsumos(receta.receta_items.map((item, idx) => ({
                     id: `receta-${idx}`,
-                    tipo_insumo: item.tipo_insumo,
+                    tipo_insumo: item.tipo_insumo === 'empaque' ? 'material_empaque' : item.tipo_insumo,
                     insumo_id: item.insumo_id,
                     insumo_nombre: item.tipo_insumo === 'materia_prima' ? (mpMap[item.insumo_id] || '—') : (meMap[item.insumo_id] || '—'),
                     cantidad_sugerida: parseFloat((item.cantidad * factor).toFixed(4)),
@@ -1053,9 +1053,10 @@ function ModalCierre({ orden, producto, onCerrar, onCerrada }) {
                 setConsumoItems(receta.receta_items.map((item, idx) => {
                     const ins = allInsumos.find(i => i.id === item.insumo_id)
                     const qty = parseFloat((item.cantidad * factor).toFixed(4))
+                    const tipoNorm = item.tipo_insumo === 'empaque' ? 'material_empaque' : item.tipo_insumo
                     return {
                         _key: `receta-${idx}`,
-                        tipo_insumo: item.tipo_insumo,
+                        tipo_insumo: tipoNorm,
                         insumo_id: item.insumo_id,
                         insumo_nombre: ins?.nombre || '—',
                         cantidad_sugerida: qty,
