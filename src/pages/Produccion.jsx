@@ -436,28 +436,25 @@ function NuevaOrden({ onCreada, onCancelar }) {
         // Guardar consumos planificados para preservar cantidades editadas por el usuario
         const consumosAGuardar = consumos.filter(c => c.insumo_id)
         if (consumosAGuardar.length > 0) {
-            const payload = consumosAGuardar.map(c => ({
-                orden_id: orden.id,
-                lote_id: null,
-                tipo_insumo: c.tipo_insumo === 'empaque' ? 'material_empaque' : c.tipo_insumo,
-                insumo_id: c.insumo_id,
-                insumo_nombre: c.nombre,
-                cantidad_sugerida: Number(c.cantidad_sugerida) || 0,
-                cantidad_consumida: Number(c.cantidad_real) || Number(c.cantidad_sugerida) || 0,
-                nota: null,
-                empresa_id: perfil.empresa_id,
-            }))
-            console.log('[crearOrden] guardando consumos planificados:', payload)
-            const { error: errPlan } = await supabase.from('lote_consumos').insert(payload)
+            const { error: errPlan } = await supabase.from('lote_consumos').insert(
+                consumosAGuardar.map(c => ({
+                    orden_id: orden.id,
+                    lote_id: null,
+                    tipo_insumo: c.tipo_insumo === 'empaque' ? 'material_empaque' : c.tipo_insumo,
+                    insumo_id: c.insumo_id,
+                    insumo_nombre: c.nombre,
+                    cantidad_sugerida: Number(c.cantidad_sugerida) || 0,
+                    cantidad_consumida: Number(c.cantidad_real) || Number(c.cantidad_sugerida) || 0,
+                    nota: null,
+                    empresa_id: perfil.empresa_id,
+                }))
+            )
             if (errPlan) {
-                console.error('[crearOrden] error al guardar consumos planificados:', errPlan)
                 setError('Orden creada, pero error al guardar consumos: ' + errPlan.message)
                 setGuardando(false)
                 onCreada(orden)
                 return
             }
-        } else {
-            console.log('[crearOrden] consumos vacíos, no se guardan (consumos.length=', consumos.length, ')')
         }
 
         setGuardando(false)
