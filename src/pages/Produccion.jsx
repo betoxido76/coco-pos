@@ -433,25 +433,7 @@ function NuevaOrden({ onCreada, onCancelar }) {
 
         if (errOrden) { setError('Error al crear la orden: ' + errOrden.message); setGuardando(false); return }
 
-        // Guardar consumos planificados de la receta como referencia (el stock se descuenta al cerrar la orden)
-        const consumosValidos = consumos.filter(c => c.insumo_id && Number(c.cantidad_real) > 0)
-        if (consumosValidos.length > 0) {
-            await supabase.from('lote_consumos').insert(
-                consumosValidos.map(c => ({
-                    orden_id: orden.id,
-                    lote_id: orden.id,
-                    tipo_insumo: c.tipo_insumo,
-                    insumo_id: c.insumo_id,
-                    insumo_nombre: c.nombre,
-                    cantidad_sugerida: c.cantidad_sugerida || Number(c.cantidad_real),
-                    cantidad_consumida: Number(c.cantidad_real),
-                    nota: null,
-                    empresa_id: perfil.empresa_id,
-                    almacen_id: c.almacen_id || null,
-                }))
-            )
-        }
-
+        // Los consumos se registran al CERRAR la orden, no al crearla
         setGuardando(false)
         onCreada(orden)
     }
@@ -1129,11 +1111,8 @@ function ModalCierre({ orden, producto, onCerrar, onCerrada }) {
         // 2. Registrar consumo real y descontar stock de insumos
         const consumosValidos = consumoItems.filter(c => c.insumo_id && Number(c.cantidad_real) > 0)
 
-        // Reemplazar lote_consumos (borra planificado, inserta real)
-        await supabase.from('lote_consumos').delete().eq('orden_id', orden.id)
-
         if (consumosValidos.length > 0) {
-            await supabase.from('lote_consumos').insert(
+            const { error: errConsumos } = await supabase.from('lote_consumos').insert(
                 consumosValidos.map(c => ({
                     orden_id: orden.id, lote_id: orden.id,
                     tipo_insumo: c.tipo_insumo, insumo_id: c.insumo_id,
@@ -1144,6 +1123,7 @@ function ModalCierre({ orden, producto, onCerrar, onCerrada }) {
                     almacen_id: c.almacen_id || null,
                 }))
             )
+            if (errConsumos) { setError('Error al guardar consumos: ' + errConsumos.message); setGuardando(false); return }
 
             for (const c of consumosValidos) {
                 const tabla = c.tipo_insumo === 'materia_prima' ? 'materias_primas' : 'materiales_empaque'
