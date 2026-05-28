@@ -199,7 +199,7 @@ recetas               -- Recetas de productos
                       --   Filtrar receta por MP: .eq('mp_id', id)
 receta_items          -- Ingredientes de recetas
 ordenes_produccion    -- Órdenes de producción
-lote_consumos         -- Insumos consumidos por lote (con almacen_id)
+lote_consumos         -- Insumos consumidos por orden/lote (lote_id nullable — NULL = planificado al crear, se asigna al cerrar)
 lotes_produccion      -- Lotes de PT producidos
 ```
 
@@ -458,6 +458,12 @@ ON CONFLICT DO NOTHING;
 -- Campo O/C del Cliente en pedidos y ventas
 ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS oc_cliente text;
 ALTER TABLE ventas ADD COLUMN IF NOT EXISTS oc_cliente text;
+```
+
+### Supabase — cambios aplicados en sesión 2026-05-28
+```sql
+-- lote_consumos: permitir lote_id NULL (consumos planificados al crear la orden, antes del cierre)
+ALTER TABLE lote_consumos ALTER COLUMN lote_id DROP NOT NULL;
 ```
 
 ### Supabase — cambios aplicados en sesión 2026-05-26
