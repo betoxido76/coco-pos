@@ -1121,7 +1121,6 @@ function ModalCierre({ orden, producto, onCerrar, onCerrada }) {
                     cantidad_sugerida: c.cantidad_sugerida || Number(c.cantidad_real),
                     cantidad_consumida: Number(c.cantidad_real),
                     nota: null, empresa_id: perfil.empresa_id,
-                    almacen_id: c.almacen_id || null,
                 }))
             )
             if (errConsumos) { setError('Error al guardar consumos: ' + errConsumos.message); setGuardando(false); return }
