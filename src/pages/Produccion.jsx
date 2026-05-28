@@ -433,11 +433,9 @@ function NuevaOrden({ onCreada, onCancelar }) {
 
         if (errOrden) { setError('Error al crear la orden: ' + errOrden.message); setGuardando(false); return }
 
-        // Descontar inventario de insumos al confirmar
+        // Guardar consumos planificados de la receta como referencia (el stock se descuenta al cerrar la orden)
         const consumosValidos = consumos.filter(c => c.insumo_id && Number(c.cantidad_real) > 0)
-
         if (consumosValidos.length > 0) {
-            // Insertar consumos
             await supabase.from('lote_consumos').insert(
                 consumosValidos.map(c => ({
                     orden_id: orden.id,
@@ -452,57 +450,6 @@ function NuevaOrden({ onCreada, onCancelar }) {
                     almacen_id: c.almacen_id || null,
                 }))
             )
-
-            // Descontar stock
-            for (const c of consumosValidos) {
-                const tabla = c.tipo_insumo === 'materia_prima' ? 'materias_primas' : 'materiales_empaque'
-                const lista = c.tipo_insumo === 'materia_prima' ? insumosMp : insumosMe
-                const insumo = lista.find(i => i.id === c.insumo_id)
-
-                if (insumo) {
-                    const nuevoStock = insumo.stock_actual - Number(c.cantidad_real)
-                    await supabase.from(tabla).update({ stock_actual: nuevoStock }).eq('id', c.insumo_id)
-
-                    // Descontar de stock_ubicacion si hay almacén seleccionado
-                    if (c.almacen_id) {
-                        const tipoItemSu = c.tipo_insumo === 'materia_prima' ? 'materia_prima' : 'material_empaque'
-                        const { data: su } = await supabase.from('stock_ubicacion')
-                            .select('id, cantidad')
-                            .eq('almacen_id', c.almacen_id).eq('tipo_item', tipoItemSu)
-                            .eq('item_id', c.insumo_id).eq('empresa_id', perfil.empresa_id)
-                            .is('almacen_ubicacion_id', null).maybeSingle()
-                        if (su) {
-                            await supabase.from('stock_ubicacion')
-                                .update({ cantidad: Math.max(0, Number(su.cantidad) - Number(c.cantidad_real)), updated_at: new Date().toISOString() })
-                                .eq('id', su.id)
-                        } else {
-                            // Registro no existía (datos cargados externamente) — crear en cero
-                            await supabase.from('stock_ubicacion').insert({
-                                almacen_id: c.almacen_id, almacen_ubicacion_id: null,
-                                tipo_item: tipoItemSu, item_id: c.insumo_id,
-                                cantidad: 0, empresa_id: perfil.empresa_id,
-                                updated_at: new Date().toISOString(),
-                            })
-                        }
-                    }
-
-                    // Registrar movimiento
-                    await supabase.from('movimientos_inventario').insert({
-                        empresa_id: perfil.empresa_id,
-                        tipo_item: c.tipo_insumo === 'materia_prima' ? 'materia_prima' : 'material_empaque',
-                        item_id: c.insumo_id,
-                        item_nombre: c.nombre || insumo.nombre,
-                        item_codigo: insumo.codigo || '',
-                        tipo_movimiento: 'salida',
-                        cantidad: Number(c.cantidad_real),
-                        stock_anterior: insumo.stock_actual,
-                        stock_actual: nuevoStock,
-                        origen: 'produccion_consumo',
-                        almacen_id: c.almacen_id || null,
-                        fecha: new Date().toISOString()
-                    })
-                }
-            }
         }
 
         setGuardando(false)
@@ -889,51 +836,11 @@ function DetalleOrden({ orden, onVolver, onActualizada }) {
     }
 
     async function anularOrden() {
-        if (!confirm('¿Seguro que deseas anular esta orden? Se revertirá el stock descontado.')) return
+        if (!confirm('¿Seguro que deseas anular esta orden? El inventario no se ha modificado en este punto.')) return
         setProcesando(true)
 
-        for (const c of consumos) {
-            const tabla = c.tipo_insumo === 'materia_prima' ? 'materias_primas' : 'materiales_empaque'
-            const tipoItem = c.tipo_insumo === 'materia_prima' ? 'materia_prima' : 'material_empaque'
-            const { data: insumo } = await supabase.from(tabla).select('stock_actual, nombre, codigo').eq('id', c.insumo_id).single()
-            if (!insumo) continue
-
-            const nuevoStock = insumo.stock_actual + Number(c.cantidad_consumida)
-            await supabase.from(tabla).update({ stock_actual: nuevoStock }).eq('id', c.insumo_id)
-
-            // Revertir stock_ubicacion del almacén original
-            if (c.almacen_id) {
-                const { data: su } = await supabase.from('stock_ubicacion')
-                    .select('id, cantidad')
-                    .eq('almacen_id', c.almacen_id).eq('tipo_item', tipoItem)
-                    .eq('item_id', c.insumo_id).eq('empresa_id', orden.empresa_id)
-                    .is('almacen_ubicacion_id', null).maybeSingle()
-                if (su) {
-                    await supabase.from('stock_ubicacion')
-                        .update({ cantidad: Number(su.cantidad) + Number(c.cantidad_consumida), updated_at: new Date().toISOString() })
-                        .eq('id', su.id)
-                } else {
-                    await supabase.from('stock_ubicacion').insert({
-                        almacen_id: c.almacen_id, almacen_ubicacion_id: null,
-                        tipo_item: tipoItem, item_id: c.insumo_id,
-                        cantidad: Number(c.cantidad_consumida),
-                        empresa_id: orden.empresa_id, updated_at: new Date().toISOString(),
-                    })
-                }
-            }
-
-            // Registrar reversión en historial
-            await supabase.from('movimientos_inventario').insert({
-                empresa_id: orden.empresa_id, tipo_item: tipoItem,
-                item_id: c.insumo_id,
-                item_nombre: c.insumo_nombre || insumo.nombre,
-                item_codigo: insumo.codigo || '',
-                tipo_movimiento: 'entrada', cantidad: Number(c.cantidad_consumida),
-                stock_anterior: insumo.stock_actual, stock_actual: nuevoStock,
-                origen: 'produccion_anulada',
-                almacen_id: c.almacen_id || null, fecha: new Date().toISOString()
-            })
-        }
+        // Eliminar consumos planificados (el stock no fue descontado aún — se descuenta solo al cerrar)
+        await supabase.from('lote_consumos').delete().eq('orden_id', orden.id)
 
         const { data } = await supabase.from('ordenes_produccion')
             .update({ estado: 'anulada' }).eq('id', orden.id).select().single()
@@ -1083,7 +990,6 @@ function DetalleOrden({ orden, onVolver, onActualizada }) {
                 <ModalCierre
                     orden={orden}
                     producto={producto}
-                    consumos={consumos}
                     onCerrar={() => setModalCierre(false)}
                     onCerrada={(o) => { onActualizada(o); setModalCierre(false); cargarDetalle() }}
                 />
@@ -1095,7 +1001,7 @@ function DetalleOrden({ orden, onVolver, onActualizada }) {
 // ══════════════════════════════════════════════════════════════
 // MODAL DE CIERRE
 // ══════════════════════════════════════════════════════════════
-function ModalCierre({ orden, producto, consumos, onCerrar, onCerrada }) {
+function ModalCierre({ orden, producto, onCerrar, onCerrada }) {
     const { perfil } = useAuth()
     const [cantReal, setCantReal] = useState(orden.cantidad_planificada)
     const [fechaVenc, setFechaVenc] = useState(() => {
@@ -1111,29 +1017,99 @@ function ModalCierre({ orden, producto, consumos, onCerrar, onCerrada }) {
     const [guardando, setGuardando] = useState(false)
     const [error, setError] = useState('')
 
-    // Almacén destino para el PT
+    // Almacén destino del PT/MP producido
     const [almacenes, setAlmacenes] = useState([])
     const [almacenId, setAlmacenId] = useState('')
 
-    useEffect(() => {
-        supabase.from('almacenes').select('id, nombre, es_default')
-            .eq('empresa_id', perfil.empresa_id).eq('activo', true)
-            .order('es_default', { ascending: false }).order('nombre')
-            .then(({ data }) => {
-                if (data) {
-                    setAlmacenes(data)
-                    const def = data.find(a => a.es_default) || data[0]
-                    if (def) setAlmacenId(def.id)
-                }
-            })
-    }, [])
+    // Consumo de insumos
+    const [consumoItems, setConsumoItems] = useState([])
+    const [insumosMp, setInsumosMp] = useState([])
+    const [insumosMe, setInsumosMe] = useState([])
+    const [loadingInsumos, setLoadingInsumos] = useState(true)
+
+    useEffect(() => { cargarDatos() }, [])
+
+    async function cargarDatos() {
+        const [
+            { data: alms },
+            { data: mps },
+            { data: mes },
+        ] = await Promise.all([
+            supabase.from('almacenes').select('id, nombre, es_default').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('es_default', { ascending: false }).order('nombre'),
+            supabase.from('materias_primas').select('id, nombre, codigo, unidad_medida, stock_actual').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre'),
+            supabase.from('materiales_empaque').select('id, nombre, codigo, unidad_medida, stock_actual').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre'),
+        ])
+
+        setAlmacenes(alms || [])
+        const def = (alms || []).find(a => a.es_default) || (alms || [])[0]
+        if (def) setAlmacenId(def.id)
+        setInsumosMp(mps || [])
+        setInsumosMe(mes || [])
+
+        const defAlmId = def?.id || ''
+        const allInsumos = [...(mps || []), ...(mes || [])]
+
+        // Cargar lote_consumos existentes (planificados) o la receta como fallback
+        const { data: existingConsumos } = await supabase.from('lote_consumos').select('*').eq('orden_id', orden.id)
+
+        if (existingConsumos && existingConsumos.length > 0) {
+            setConsumoItems(existingConsumos.map(c => ({
+                _key: c.id,
+                tipo_insumo: c.tipo_insumo,
+                insumo_id: c.insumo_id,
+                insumo_nombre: c.insumo_nombre,
+                cantidad_sugerida: Number(c.cantidad_sugerida),
+                cantidad_real: String(c.cantidad_consumida),
+                almacen_id: c.almacen_id || defAlmId,
+            })))
+        } else if (orden.receta_id) {
+            const { data: receta } = await supabase.from('recetas')
+                .select('rinde_unidades, receta_items(tipo_insumo, insumo_id, cantidad)')
+                .eq('id', orden.receta_id).single()
+            if (receta?.receta_items?.length) {
+                const factor = Number(orden.cantidad_planificada) / (receta.rinde_unidades || 1)
+                setConsumoItems(receta.receta_items.map((item, idx) => {
+                    const ins = allInsumos.find(i => i.id === item.insumo_id)
+                    const qty = parseFloat((item.cantidad * factor).toFixed(4))
+                    return {
+                        _key: `receta-${idx}`,
+                        tipo_insumo: item.tipo_insumo,
+                        insumo_id: item.insumo_id,
+                        insumo_nombre: ins?.nombre || '—',
+                        cantidad_sugerida: qty,
+                        cantidad_real: String(qty),
+                        almacen_id: defAlmId,
+                    }
+                }))
+            }
+        }
+
+        setLoadingInsumos(false)
+    }
+
+    function actualizarConsumo(key, campo, valor) {
+        setConsumoItems(prev => prev.map(c => c._key === key ? { ...c, [campo]: valor } : c))
+    }
+
+    function seleccionarInsumo(key, tipoYId) {
+        if (!tipoYId) return
+        const [tipo, id] = tipoYId.split(':')
+        const lista = tipo === 'materia_prima' ? insumosMp : insumosMe
+        const ins = lista.find(i => i.id === id)
+        setConsumoItems(prev => prev.map(c => c._key === key ? { ...c, tipo_insumo: tipo, insumo_id: id, insumo_nombre: ins?.nombre || '' } : c))
+    }
+
+    function agregarInsumo() {
+        const defAlmId = almacenes.find(a => a.es_default)?.id || almacenes[0]?.id || ''
+        setConsumoItems(prev => [...prev, { _key: `nuevo-${Date.now()}`, tipo_insumo: 'materia_prima', insumo_id: '', insumo_nombre: '', cantidad_sugerida: 0, cantidad_real: '', almacen_id: defAlmId }])
+    }
 
     async function cerrar() {
         if (!cantReal || Number(cantReal) <= 0) { setError('Ingresa la cantidad real producida'); return }
-        if (!almacenId) { setError('Selecciona el almacén donde entra el producto terminado'); return }
+        if (!almacenId) { setError('Selecciona el almacén de ingreso del producto terminado'); return }
         setGuardando(true); setError('')
 
-        // Actualizar orden
+        // 1. Cerrar la orden
         const { data: ordenCerrada, error: errOrden } = await supabase
             .from('ordenes_produccion')
             .update({
@@ -1146,90 +1122,97 @@ function ModalCierre({ orden, producto, consumos, onCerrar, onCerrada }) {
                 alerta_lote_vacio: !numeroLote && !orden.numero_lote,
                 usuario_cierre_id: (await supabase.auth.getUser()).data.user.id,
             })
-            .eq('id', orden.id)
-            .select()
-            .single()
+            .eq('id', orden.id).select().single()
 
         if (errOrden) { setError('Error: ' + errOrden.message); setGuardando(false); return }
 
+        // 2. Registrar consumo real y descontar stock de insumos
+        const consumosValidos = consumoItems.filter(c => c.insumo_id && Number(c.cantidad_real) > 0)
+
+        // Reemplazar lote_consumos (borra planificado, inserta real)
+        await supabase.from('lote_consumos').delete().eq('orden_id', orden.id)
+
+        if (consumosValidos.length > 0) {
+            await supabase.from('lote_consumos').insert(
+                consumosValidos.map(c => ({
+                    orden_id: orden.id, lote_id: orden.id,
+                    tipo_insumo: c.tipo_insumo, insumo_id: c.insumo_id,
+                    insumo_nombre: c.insumo_nombre,
+                    cantidad_sugerida: c.cantidad_sugerida || Number(c.cantidad_real),
+                    cantidad_consumida: Number(c.cantidad_real),
+                    nota: null, empresa_id: perfil.empresa_id,
+                    almacen_id: c.almacen_id || null,
+                }))
+            )
+
+            for (const c of consumosValidos) {
+                const tabla = c.tipo_insumo === 'materia_prima' ? 'materias_primas' : 'materiales_empaque'
+                const tipoItem = c.tipo_insumo === 'materia_prima' ? 'materia_prima' : 'material_empaque'
+                const { data: insumo } = await supabase.from(tabla)
+                    .select('stock_actual, nombre, codigo').eq('id', c.insumo_id).single()
+                if (!insumo) continue
+
+                const nuevoStock = Math.max(0, insumo.stock_actual - Number(c.cantidad_real))
+                await supabase.from(tabla).update({ stock_actual: nuevoStock }).eq('id', c.insumo_id)
+
+                if (c.almacen_id) {
+                    const { data: su } = await supabase.from('stock_ubicacion')
+                        .select('id, cantidad')
+                        .eq('almacen_id', c.almacen_id).eq('tipo_item', tipoItem)
+                        .eq('item_id', c.insumo_id).eq('empresa_id', perfil.empresa_id)
+                        .is('almacen_ubicacion_id', null).maybeSingle()
+                    if (su) {
+                        await supabase.from('stock_ubicacion')
+                            .update({ cantidad: Math.max(0, Number(su.cantidad) - Number(c.cantidad_real)), updated_at: new Date().toISOString() })
+                            .eq('id', su.id)
+                    } else {
+                        await supabase.from('stock_ubicacion').insert({
+                            almacen_id: c.almacen_id, almacen_ubicacion_id: null,
+                            tipo_item: tipoItem, item_id: c.insumo_id,
+                            cantidad: 0, empresa_id: perfil.empresa_id,
+                            updated_at: new Date().toISOString(),
+                        })
+                    }
+                }
+
+                await supabase.from('movimientos_inventario').insert({
+                    empresa_id: perfil.empresa_id, tipo_item: tipoItem,
+                    item_id: c.insumo_id, item_nombre: c.insumo_nombre || insumo.nombre,
+                    item_codigo: insumo.codigo || '', tipo_movimiento: 'salida',
+                    cantidad: Number(c.cantidad_real), stock_anterior: insumo.stock_actual,
+                    stock_actual: nuevoStock, origen: 'produccion_consumo',
+                    almacen_id: c.almacen_id || null, fecha: new Date().toISOString()
+                })
+            }
+        }
+
+        // 3. Agregar PT/MP producido al stock
         if (orden.tipo_salida === 'materia_prima') {
-            // Sumar MP producida al stock
             const { data: mp } = await supabase.from('materias_primas').select('stock_actual').eq('id', orden.mp_salida_id).single()
             if (mp) {
                 const nuevoStock = mp.stock_actual + Number(cantReal)
                 await supabase.from('materias_primas').update({ stock_actual: nuevoStock }).eq('id', orden.mp_salida_id)
-
-                const { data: su } = await supabase.from('stock_ubicacion')
-                    .select('id, cantidad')
-                    .eq('almacen_id', almacenId).eq('tipo_item', 'materia_prima')
-                    .eq('item_id', orden.mp_salida_id).eq('empresa_id', perfil.empresa_id)
-                    .is('almacen_ubicacion_id', null).maybeSingle()
+                const { data: su } = await supabase.from('stock_ubicacion').select('id, cantidad').eq('almacen_id', almacenId).eq('tipo_item', 'materia_prima').eq('item_id', orden.mp_salida_id).eq('empresa_id', perfil.empresa_id).is('almacen_ubicacion_id', null).maybeSingle()
                 if (su) {
-                    await supabase.from('stock_ubicacion')
-                        .update({ cantidad: Number(su.cantidad) + Number(cantReal), updated_at: new Date().toISOString() })
-                        .eq('id', su.id)
+                    await supabase.from('stock_ubicacion').update({ cantidad: Number(su.cantidad) + Number(cantReal), updated_at: new Date().toISOString() }).eq('id', su.id)
                 } else {
-                    await supabase.from('stock_ubicacion').insert({
-                        almacen_id: almacenId, almacen_ubicacion_id: null,
-                        tipo_item: 'materia_prima', item_id: orden.mp_salida_id,
-                        cantidad: Number(cantReal), empresa_id: perfil.empresa_id,
-                        updated_at: new Date().toISOString(),
-                    })
+                    await supabase.from('stock_ubicacion').insert({ almacen_id: almacenId, almacen_ubicacion_id: null, tipo_item: 'materia_prima', item_id: orden.mp_salida_id, cantidad: Number(cantReal), empresa_id: perfil.empresa_id, updated_at: new Date().toISOString() })
                 }
-
-                await supabase.from('movimientos_inventario').insert({
-                    empresa_id: perfil.empresa_id, tipo_item: 'materia_prima',
-                    item_id: orden.mp_salida_id, item_nombre: producto?.nombre,
-                    item_codigo: producto?.sku || '', tipo_movimiento: 'entrada',
-                    cantidad: Number(cantReal), stock_anterior: mp.stock_actual,
-                    stock_actual: nuevoStock, origen: 'produccion_cierre',
-                    almacen_id: almacenId, fecha: new Date().toISOString()
-                })
+                await supabase.from('movimientos_inventario').insert({ empresa_id: perfil.empresa_id, tipo_item: 'materia_prima', item_id: orden.mp_salida_id, item_nombre: producto?.nombre, item_codigo: producto?.sku || '', tipo_movimiento: 'entrada', cantidad: Number(cantReal), stock_anterior: mp.stock_actual, stock_actual: nuevoStock, origen: 'produccion_cierre', almacen_id: almacenId, fecha: new Date().toISOString() })
             }
         } else {
-            // Sumar PT al stock global
             const { data: pt } = await supabase.from('productos_terminados').select('stock_actual').eq('id', orden.producto_id).single()
             if (pt) {
                 const nuevoStock = pt.stock_actual + Number(cantReal)
                 await supabase.from('productos_terminados').update({ stock_actual: nuevoStock }).eq('id', orden.producto_id)
-
-                const { data: su } = await supabase.from('stock_ubicacion')
-                    .select('id, cantidad')
-                    .eq('almacen_id', almacenId).eq('tipo_item', 'producto_terminado')
-                    .eq('item_id', orden.producto_id).eq('empresa_id', perfil.empresa_id)
-                    .is('almacen_ubicacion_id', null).maybeSingle()
+                const { data: su } = await supabase.from('stock_ubicacion').select('id, cantidad').eq('almacen_id', almacenId).eq('tipo_item', 'producto_terminado').eq('item_id', orden.producto_id).eq('empresa_id', perfil.empresa_id).is('almacen_ubicacion_id', null).maybeSingle()
                 if (su) {
-                    await supabase.from('stock_ubicacion')
-                        .update({ cantidad: Number(su.cantidad) + Number(cantReal), updated_at: new Date().toISOString() })
-                        .eq('id', su.id)
+                    await supabase.from('stock_ubicacion').update({ cantidad: Number(su.cantidad) + Number(cantReal), updated_at: new Date().toISOString() }).eq('id', su.id)
                 } else {
-                    await supabase.from('stock_ubicacion').insert({
-                        almacen_id: almacenId, almacen_ubicacion_id: null,
-                        tipo_item: 'producto_terminado', item_id: orden.producto_id,
-                        cantidad: Number(cantReal), empresa_id: perfil.empresa_id,
-                        updated_at: new Date().toISOString(),
-                    })
+                    await supabase.from('stock_ubicacion').insert({ almacen_id: almacenId, almacen_ubicacion_id: null, tipo_item: 'producto_terminado', item_id: orden.producto_id, cantidad: Number(cantReal), empresa_id: perfil.empresa_id, updated_at: new Date().toISOString() })
                 }
-
-                await supabase.from('movimientos_inventario').insert({
-                    empresa_id: perfil.empresa_id, tipo_item: 'producto_terminado',
-                    item_id: orden.producto_id, item_nombre: producto?.nombre,
-                    item_codigo: producto?.sku || '', tipo_movimiento: 'entrada',
-                    cantidad: Number(cantReal), stock_anterior: pt.stock_actual,
-                    stock_actual: nuevoStock, origen: 'produccion_cierre',
-                    almacen_id: almacenId, fecha: new Date().toISOString()
-                })
-
-                // Registrar lote de PT en lotes_produccion
-                await supabase.from('lotes_produccion').insert({
-                    orden_id: orden.id, producto_id: orden.producto_id,
-                    usuario_id: (await supabase.auth.getUser()).data.user.id,
-                    numero_lote: numeroLote || orden.numero_lote || null,
-                    cantidad_producida: Number(cantReal),
-                    fecha_produccion: new Date().toISOString().split('T')[0],
-                    fecha_vencimiento: fechaVenc || null,
-                    observaciones: observ || null, empresa_id: perfil.empresa_id,
-                })
+                await supabase.from('movimientos_inventario').insert({ empresa_id: perfil.empresa_id, tipo_item: 'producto_terminado', item_id: orden.producto_id, item_nombre: producto?.nombre, item_codigo: producto?.sku || '', tipo_movimiento: 'entrada', cantidad: Number(cantReal), stock_anterior: pt.stock_actual, stock_actual: nuevoStock, origen: 'produccion_cierre', almacen_id: almacenId, fecha: new Date().toISOString() })
+                await supabase.from('lotes_produccion').insert({ orden_id: orden.id, producto_id: orden.producto_id, usuario_id: (await supabase.auth.getUser()).data.user.id, numero_lote: numeroLote || orden.numero_lote || null, cantidad_producida: Number(cantReal), fecha_produccion: new Date().toISOString().split('T')[0], fecha_vencimiento: fechaVenc || null, observaciones: observ || null, empresa_id: perfil.empresa_id })
             }
         }
 
@@ -1244,7 +1227,7 @@ function ModalCierre({ orden, producto, consumos, onCerrar, onCerrada }) {
     return (
         <>
             <div onClick={onCerrar} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', zIndex: 40 }} />
-            <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', backgroundColor: '#fff', borderRadius: '16px', padding: '28px', width: '480px', zIndex: 50, boxShadow: '0 20px 60px rgba(0,0,0,0.2)', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', backgroundColor: '#fff', borderRadius: '16px', padding: '28px', width: '560px', zIndex: 50, boxShadow: '0 20px 60px rgba(0,0,0,0.2)', maxHeight: '92vh', overflowY: 'auto' }}>
 
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                     <h2 style={{ fontSize: '17px', fontWeight: 700, color: '#1f2937', margin: 0 }}>Cerrar orden de producción</h2>
@@ -1257,13 +1240,9 @@ function ModalCierre({ orden, producto, consumos, onCerrar, onCerrada }) {
                         <span style={{ color: '#6b7280' }}>Producto</span>
                         <span style={{ fontWeight: 600, color: '#1f2937' }}>{producto?.nombre}</span>
                     </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '6px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
                         <span style={{ color: '#6b7280' }}>Cantidad planificada</span>
                         <span style={{ color: '#1f2937' }}>{fmt(orden.cantidad_planificada, 0)} {producto?.unidad_medida}</span>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
-                        <span style={{ color: '#6b7280' }}>Insumos consumidos</span>
-                        <span style={{ color: '#1f2937' }}>{consumos.length} ítem(s)</span>
                     </div>
                 </div>
 
@@ -1271,24 +1250,15 @@ function ModalCierre({ orden, producto, consumos, onCerrar, onCerrada }) {
 
                     {/* Almacén destino */}
                     <div>
-                        <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '8px' }}>
-                            Almacén de ingreso *
-                        </label>
+                        <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '8px' }}>Almacén de ingreso del {orden.tipo_salida === 'materia_prima' ? 'MP' : 'PT'} *</label>
                         {almacenes.length === 0 ? (
                             <p style={{ fontSize: '13px', color: '#ef4444', margin: 0 }}>No hay almacenes configurados</p>
                         ) : (
                             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                                 {almacenes.map(a => (
                                     <button key={a.id} onClick={() => setAlmacenId(a.id)}
-                                        style={{
-                                            padding: '7px 14px', borderRadius: '8px', fontSize: '13px', fontWeight: 500,
-                                            border: '1px solid', cursor: 'pointer',
-                                            borderColor: almacenId === a.id ? '#16a34a' : '#e5e7eb',
-                                            backgroundColor: almacenId === a.id ? '#f0fdf4' : '#fff',
-                                            color: almacenId === a.id ? '#16a34a' : '#6b7280',
-                                        }}>
-                                        {a.nombre}
-                                        {a.es_default && <span style={{ fontSize: '10px', marginLeft: '5px', opacity: 0.6 }}>(principal)</span>}
+                                        style={{ padding: '7px 14px', borderRadius: '8px', fontSize: '13px', fontWeight: 500, border: '1px solid', cursor: 'pointer', borderColor: almacenId === a.id ? '#16a34a' : '#e5e7eb', backgroundColor: almacenId === a.id ? '#f0fdf4' : '#fff', color: almacenId === a.id ? '#16a34a' : '#6b7280' }}>
+                                        {a.nombre}{a.es_default && <span style={{ fontSize: '10px', marginLeft: '5px', opacity: 0.6 }}>(principal)</span>}
                                     </button>
                                 ))}
                             </div>
@@ -1297,15 +1267,62 @@ function ModalCierre({ orden, producto, consumos, onCerrar, onCerrada }) {
 
                     {/* Cantidad real */}
                     <div>
-                        <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>
-                            Cantidad real producida * ({producto?.unidad_medida})
-                        </label>
-                        <input type="number" min="0" step="1" value={cantReal}
-                            onChange={e => setCantReal(e.target.value)} style={inputStyle} />
+                        <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Cantidad real producida * ({producto?.unidad_medida})</label>
+                        <input type="number" min="0" step="1" value={cantReal} onChange={e => setCantReal(e.target.value)} style={inputStyle} />
                         {cantReal && orden.cantidad_planificada > 0 && (
                             <p style={{ fontSize: '12px', margin: '4px 0 0', color: Number(eficiencia) >= 95 ? '#16a34a' : Number(eficiencia) >= 80 ? '#d97706' : '#ef4444' }}>
                                 Eficiencia: {eficiencia}% de lo planificado
                             </p>
+                        )}
+                    </div>
+
+                    {/* Insumos consumidos */}
+                    <div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                            <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151' }}>Insumos consumidos</label>
+                            <button onClick={agregarInsumo} style={{ fontSize: '12px', color: '#1d4ed8', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 500 }}>+ Agregar</button>
+                        </div>
+                        {loadingInsumos ? (
+                            <p style={{ fontSize: '13px', color: '#9ca3af', margin: 0 }}>Cargando insumos...</p>
+                        ) : consumoItems.length === 0 ? (
+                            <div style={{ backgroundColor: '#f9fafb', borderRadius: '8px', padding: '10px 14px', border: '1px solid #e5e7eb', fontSize: '13px', color: '#9ca3af' }}>
+                                Sin insumos registrados — haz clic en "+ Agregar" para agregar manualmente
+                            </div>
+                        ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                {consumoItems.map(c => (
+                                    <div key={c._key} style={{ border: '1px solid #e5e7eb', borderRadius: '8px', padding: '10px 12px', backgroundColor: '#fafafa' }}>
+                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 130px 80px 28px', gap: '6px', alignItems: 'center' }}>
+                                            <select value={c.insumo_id ? `${c.tipo_insumo}:${c.insumo_id}` : ''} onChange={e => seleccionarInsumo(c._key, e.target.value)}
+                                                style={{ fontSize: '12px', padding: '5px 8px', borderRadius: '6px', border: '1px solid #d1d5db', backgroundColor: '#fff' }}>
+                                                <option value="">Seleccionar insumo...</option>
+                                                {insumosMp.length > 0 && <optgroup label="Materias primas">
+                                                    {insumosMp.map(i => <option key={i.id} value={`materia_prima:${i.id}`}>{i.nombre}</option>)}
+                                                </optgroup>}
+                                                {insumosMe.length > 0 && <optgroup label="Materiales de empaque">
+                                                    {insumosMe.map(i => <option key={i.id} value={`material_empaque:${i.id}`}>{i.nombre}</option>)}
+                                                </optgroup>}
+                                            </select>
+                                            <select value={c.almacen_id} onChange={e => actualizarConsumo(c._key, 'almacen_id', e.target.value)}
+                                                style={{ fontSize: '12px', padding: '5px 8px', borderRadius: '6px', border: '1px solid #d1d5db', backgroundColor: '#fff' }}>
+                                                <option value="">Sin almacén</option>
+                                                {almacenes.map(a => <option key={a.id} value={a.id}>{a.nombre}</option>)}
+                                            </select>
+                                            <input type="number" min="0" step="0.001" value={c.cantidad_real}
+                                                onChange={e => actualizarConsumo(c._key, 'cantidad_real', e.target.value)}
+                                                placeholder="Cant."
+                                                style={{ fontSize: '12px', padding: '5px 8px', borderRadius: '6px', border: '1px solid #d1d5db', textAlign: 'right' }} />
+                                            <button onClick={() => setConsumoItems(prev => prev.filter(x => x._key !== c._key))}
+                                                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', padding: '2px', display: 'flex', alignItems: 'center' }}>
+                                                <X size={14} />
+                                            </button>
+                                        </div>
+                                        {c.cantidad_sugerida > 0 && (
+                                            <p style={{ margin: '3px 0 0', fontSize: '11px', color: '#9ca3af' }}>Planificado: {fmt(c.cantidad_sugerida)}</p>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
                         )}
                     </div>
 
@@ -1314,8 +1331,7 @@ function ModalCierre({ orden, producto, consumos, onCerrar, onCerrada }) {
                         <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>
                             Número de lote {!orden.numero_lote && <span style={{ color: '#d97706' }}>(sin definir — recomendado completar ahora)</span>}
                         </label>
-                        <input value={numeroLote} onChange={e => setNumeroLote(e.target.value)}
-                            placeholder="Ej: LOTE-2024-001" style={inputStyle} />
+                        <input value={numeroLote} onChange={e => setNumeroLote(e.target.value)} placeholder="Ej: LOTE-2024-001" style={inputStyle} />
                     </div>
 
                     {/* Fecha vencimiento */}
@@ -1340,11 +1356,12 @@ function ModalCierre({ orden, producto, consumos, onCerrar, onCerrada }) {
                     <p style={{ fontSize: '12px', color: '#16a34a', margin: '0 0 6px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Impacto en inventario al confirmar</p>
                     <p style={{ fontSize: '13px', color: '#166534', margin: '0 0 2px' }}>
                         ✓ Se sumarán <strong>{fmt(cantReal, 0)} {producto?.unidad_medida}</strong> al stock de <strong>{producto?.nombre}</strong>
-                        {orden.tipo_salida === 'materia_prima' && <span style={{ fontSize: '12px', color: '#059669', marginLeft: '6px' }}>(materia prima)</span>}
                     </p>
-                    <p style={{ fontSize: '12px', color: '#16a34a', margin: 0 }}>
-                        (Los insumos ya fueron descontados al confirmar la orden)
-                    </p>
+                    {consumoItems.filter(c => c.insumo_id && Number(c.cantidad_real) > 0).length > 0 && (
+                        <p style={{ fontSize: '12px', color: '#166534', margin: '2px 0 0' }}>
+                            ✓ Se descontarán {consumoItems.filter(c => c.insumo_id && Number(c.cantidad_real) > 0).length} insumo(s) del inventario
+                        </p>
+                    )}
                 </div>
 
                 {error && <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px', fontSize: '13px', color: '#dc2626', marginBottom: '12px' }}>{error}</div>}
