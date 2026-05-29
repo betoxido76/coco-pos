@@ -563,8 +563,9 @@ function ModalPago({ compra, saldo, tasas, onCerrar, onPagado }) {
     }
 
     async function confirmar() {
-        if (saldoEfectivo > 0.001 && (!montoUsd || Number(montoUsd) <= 0)) { setError('Ingresa un monto válido'); return }
-        if (Number(montoUsd) > saldoEfectivo + 0.01) { setError(`El monto no puede superar el saldo efectivo de ${fmt(saldoEfectivo)}`); return }
+        const totalPago = Number(montoUsd || 0) + Number(montoBs || 0) / tasa
+        if (saldoEfectivo > 0.001 && totalPago <= 0.001) { setError('Ingresa un monto válido'); return }
+        if (totalPago > saldoEfectivo + 0.01) { setError(`El monto no puede superar el saldo efectivo de ${fmt(saldoEfectivo)}`); return }
         setGuardando(true); setError('')
 
         const { data: { user } } = await supabase.auth.getUser()
