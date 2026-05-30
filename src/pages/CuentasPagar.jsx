@@ -490,6 +490,7 @@ function ModalPago({ compra, saldo, tasas, onCerrar, onPagado }) {
         { key: 'tasa_binance', label: 'USD · Binance' },
     ]
     const [tipoTasa, setTipoTasa] = useState('tasa_bcv')
+    const [descPct, setDescPct] = useState(0)
     const [montoUsd, setMontoUsd] = useState(saldo.toFixed(2))
     const [montoBs, setMontoBs] = useState('')
     const [metodoUsd, setMetodoUsd] = useState('transferencia')
@@ -524,7 +525,9 @@ function ModalPago({ compra, saldo, tasas, onCerrar, onPagado }) {
         const nd = ndsDisponibles.find(n => n.id === id)
         return s + Number(nd?.monto_total || 0)
     }, 0)
-    const saldoEfectivo = Math.max(0, saldo - montoNDs)
+    const descMonto = saldo * (Number(descPct) / 100)
+    const saldoConDesc = Math.max(0, saldo - descMonto)
+    const saldoEfectivo = Math.max(0, saldoConDesc - montoNDs)
 
     function toggleNd(ndId) {
         setNdsSeleccionadas(prev => {
@@ -540,7 +543,7 @@ function ModalPago({ compra, saldo, tasas, onCerrar, onPagado }) {
     useEffect(() => {
         setMontoUsd(saldoEfectivo.toFixed(2))
         setMontoBs('0')
-    }, [ndsSeleccionadas.size])
+    }, [ndsSeleccionadas.size, descPct])
 
     useEffect(() => {
         const usd = Number(montoUsd) || 0
@@ -569,6 +572,17 @@ function ModalPago({ compra, saldo, tasas, onCerrar, onPagado }) {
         setGuardando(true); setError('')
 
         const { data: { user } } = await supabase.auth.getUser()
+
+        if (descMonto > 0.001) {
+            await supabase.from('pagos_proveedor').insert({
+                compra_id: compra.id, usuario_id: user.id,
+                monto_usd: parseFloat(descMonto.toFixed(2)), monto_bs: 0,
+                tasa_cambio: tasa, tipo_tasa: tipoTasa,
+                metodo_usd: 'descuento', metodo_bs: null,
+                nota: `Descuento ${descPct}%`,
+                empresa_id: perfil.empresa_id,
+            })
+        }
 
         for (const ndId of ndsSeleccionadas) {
             const nd = ndsDisponibles.find(n => n.id === ndId)
@@ -616,9 +630,21 @@ function ModalPago({ compra, saldo, tasas, onCerrar, onPagado }) {
                     <p style={{ fontSize: '13px', color: '#6b7280', margin: 0 }}>{compra.numero_doc} · {compra.proveedores?.nombre}</p>
                 </div>
 
-                <div style={{ backgroundColor: '#eff6ff', borderRadius: '8px', padding: '12px 16px', marginBottom: ndsDisponibles.length > 0 ? '12px' : '20px', display: 'flex', justifyContent: 'space-between' }}>
+                <div style={{ backgroundColor: '#eff6ff', borderRadius: '8px', padding: '12px 16px', marginBottom: '12px', display: 'flex', justifyContent: 'space-between' }}>
                     <span style={{ fontSize: '13px', color: '#16a34a' }}>Saldo pendiente</span>
                     <span style={{ fontSize: '15px', fontWeight: 700, color: '#16a34a' }}>{fmt(saldo)}</span>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: ndsDisponibles.length > 0 ? '12px' : '20px' }}>
+                    <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', whiteSpace: 'nowrap' }}>Descuento (%)</label>
+                    <input type="number" min="0" max="100" step="0.1" value={descPct || ''} placeholder="0"
+                        onChange={e => setDescPct(Math.min(100, Math.max(0, Number(e.target.value) || 0)))}
+                        style={{ width: '80px', padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', textAlign: 'right' }} />
+                    {descMonto > 0.001 && (
+                        <span style={{ fontSize: '13px', color: '#dc2626', fontWeight: 500 }}>
+                            -{fmt(descMonto)} · A pagar: {fmt(saldoConDesc)}
+                        </span>
+                    )}
                 </div>
 
                 {ndsDisponibles.length > 0 && (
