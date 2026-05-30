@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
-import { Plus, Search, Check, X, RefreshCw, Trash2, ArrowRight } from 'lucide-react'
+import { Plus, Search, Check, X, RefreshCw, Trash2, ArrowRight, ClipboardList } from 'lucide-react'
 
 const fmt = (n) => Number(n || 0).toLocaleString('es-VE', { minimumFractionDigits: 0, maximumFractionDigits: 3 })
 
@@ -39,8 +39,17 @@ export default function CambiosManoMano() {
     const [stockReproceso, setStockReproceso] = useState([])
     const [loadingStock, setLoadingStock] = useState(true)
 
-    useEffect(() => { cargarCambios() }, [paginaCambios])
-    useEffect(() => { if (tabActiva === 'reproceso') cargarStock() }, [tabActiva])
+    // Solicitudes de campo
+    const [solicitudes, setSolicitudes] = useState([])
+    const [loadingSolicitudes, setLoadingSolicitudes] = useState(false)
+    const [totalSolicitudes, setTotalSolicitudes] = useState(0)
+    const [solicitudAProcesar, setSolicitudAProcesar] = useState(null)
+
+    useEffect(() => { cargarCambios(); cargarSolicitudes() }, [paginaCambios])
+    useEffect(() => {
+        if (tabActiva === 'reproceso') cargarStock()
+        if (tabActiva === 'solicitudes') cargarSolicitudes()
+    }, [tabActiva])
 
     async function cargarCambios() {
         setLoadingCambios(true)
@@ -48,10 +57,12 @@ export default function CambiosManoMano() {
         const [{ data: kpi }, { data, count }] = await Promise.all([
             supabase.from('cambios_mano_mano')
                 .select('cantidad')
-                .eq('empresa_id', perfil.empresa_id),
+                .eq('empresa_id', perfil.empresa_id)
+                .eq('estado', 'ejecutado'),
             supabase.from('cambios_mano_mano')
                 .select(`*, clientes(nombre), productos_terminados(nombre, sku, unidad_medida), usuarios!cambios_mano_mano_despachador_id_fkey(nombre)`, { count: 'exact' })
                 .eq('empresa_id', perfil.empresa_id)
+                .eq('estado', 'ejecutado')
                 .order('fecha', { ascending: false })
                 .order('created_at', { ascending: false })
                 .range(paginaCambios * PAGE_SIZE, (paginaCambios + 1) * PAGE_SIZE - 1),
@@ -79,6 +90,19 @@ export default function CambiosManoMano() {
         setLoadingStock(false)
     }
 
+    async function cargarSolicitudes() {
+        setLoadingSolicitudes(true)
+        const { data, count } = await supabase
+            .from('cambios_mano_mano')
+            .select(`*, clientes(nombre), productos_terminados(nombre, sku, unidad_medida)`, { count: 'exact' })
+            .eq('empresa_id', perfil.empresa_id)
+            .eq('estado', 'solicitado')
+            .order('created_at', { ascending: false })
+        setSolicitudes(data || [])
+        setTotalSolicitudes(count || 0)
+        setLoadingSolicitudes(false)
+    }
+
     // KPIs — totalCambios y unidades calculados desde query completa (kpiCambios)
     const totalCambios = kpiCambios.length
     const unidadesEntregadas = kpiCambios.reduce((s, c) => s + Number(c.cantidad), 0)
@@ -87,6 +111,13 @@ export default function CambiosManoMano() {
     if (vista === 'nuevo')
         return <NuevoCambio
             onRegistrado={() => { cargarCambios(); cargarStock(); setVista('lista') }}
+            onCancelar={() => setVista('lista')}
+        />
+
+    if (vista === 'procesar_solicitud')
+        return <ProcesarSolicitud
+            solicitud={solicitudAProcesar}
+            onProcesada={() => { cargarCambios(); cargarSolicitudes(); cargarStock(); setVista('lista') }}
             onCancelar={() => setVista('lista')}
         />
 
@@ -104,6 +135,11 @@ export default function CambiosManoMano() {
                         style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px 16px', fontSize: '14px', fontWeight: 500, cursor: 'pointer' }}>
                         <Plus size={16} /> Registrar cambio
                     </button>
+                )}
+                {tabActiva === 'solicitudes' && totalSolicitudes > 0 && (
+                    <span style={{ fontSize: '13px', color: '#d97706', fontWeight: 500 }}>
+                        {totalSolicitudes} solicitud(es) pendiente(s) de procesamiento
+                    </span>
                 )}
             </div>
 
@@ -125,6 +161,7 @@ export default function CambiosManoMano() {
             <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
                 {[
                     { key: 'cambios', label: 'Cambios registrados' },
+                    { key: 'solicitudes', label: 'Solicitudes de campo', badge: totalSolicitudes },
                     { key: 'reproceso', label: 'Stock de reproceso', badge: enReproceso },
                 ].map(tab => (
                     <button key={tab.key} onClick={() => setTabActiva(tab.key)}
@@ -217,6 +254,61 @@ export default function CambiosManoMano() {
                             Siguiente →
                         </button>
                     </div>
+                </div>
+            )}
+
+            {/* Tab Solicitudes de campo */}
+            {tabActiva === 'solicitudes' && (
+                <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                    {loadingSolicitudes ? (
+                        <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
+                    ) : solicitudes.length === 0 ? (
+                        <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>
+                            <ClipboardList size={36} style={{ marginBottom: '10px', display: 'block', margin: '0 auto 10px' }} />
+                            No hay solicitudes pendientes
+                        </div>
+                    ) : (
+                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                            <thead>
+                                <tr style={{ backgroundColor: '#fffbeb', borderBottom: '1px solid #e5e7eb' }}>
+                                    {['N° Cambio', 'Fecha', 'Cliente', 'Producto', 'Cantidad', 'Motivo', ''].map((h, i) => (
+                                        <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
+                                    ))}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {solicitudes.map(s => (
+                                    <tr key={s.id} style={{ borderBottom: '1px solid #f3f4f6' }}
+                                        onMouseEnter={e => e.currentTarget.style.backgroundColor = '#fffbeb'}
+                                        onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                                        <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', fontWeight: 600, color: '#374151' }}>{s.numero_cambio}</td>
+                                        <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280', whiteSpace: 'nowrap' }}>
+                                            {new Date(s.fecha + 'T00:00:00').toLocaleDateString('es-VE')}
+                                        </td>
+                                        <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>{s.clientes?.nombre || '—'}</td>
+                                        <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1f2937' }}>
+                                            {s.productos_terminados?.nombre || '—'}
+                                            {s.productos_terminados?.sku && (
+                                                <span style={{ fontSize: '11px', color: '#9ca3af', marginLeft: '6px', fontFamily: 'monospace' }}>{s.productos_terminados.sku}</span>
+                                            )}
+                                        </td>
+                                        <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937' }}>
+                                            {fmt(s.cantidad)} {s.productos_terminados?.unidad_medida}
+                                        </td>
+                                        <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>
+                                            {MOTIVOS.find(m => m.key === s.motivo)?.label || s.motivo}
+                                        </td>
+                                        <td style={{ padding: '12px 16px' }}>
+                                            <button onClick={() => { setSolicitudAProcesar(s); setVista('procesar_solicitud') }}
+                                                style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: '#d97706', color: '#fff', border: 'none', borderRadius: '6px', padding: '6px 12px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>
+                                                <ArrowRight size={13} /> Procesar
+                                            </button>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    )}
                 </div>
             )}
 
@@ -545,6 +637,260 @@ function ModalSalida({ item, onConfirmar, onCerrar }) {
                 </div>
             </div>
         </>
+    )
+}
+
+// ══════════════════════════════════════════════════════════════
+// PROCESAR SOLICITUD DE CAMPO
+// ══════════════════════════════════════════════════════════════
+function ProcesarSolicitud({ solicitud, onProcesada, onCancelar }) {
+    const { perfil } = useAuth()
+    const [despachadorId, setDespachadorId] = useState('')
+    const [destino, setDestino] = useState('reprocesar')
+    const [almacenId, setAlmacenId] = useState('')
+    const [almacenReproceso, setAlmacenReproceso] = useState('')
+    const [despachadores, setDespachadores] = useState([])
+    const [almacenes, setAlmacenes] = useState([])
+    const [stockEnAlmacen, setStockEnAlmacen] = useState(null)
+    const [guardando, setGuardando] = useState(false)
+    const [error, setError] = useState('')
+
+    const producto = solicitud.productos_terminados
+
+    useEffect(() => {
+        supabase.from('usuarios').select('id, nombre').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('nombre')
+            .then(({ data }) => setDespachadores(data || []))
+        supabase.from('almacenes').select('id, nombre, es_default')
+            .eq('empresa_id', perfil.empresa_id).eq('activo', true)
+            .order('es_default', { ascending: false }).order('nombre')
+            .then(({ data }) => {
+                if (data) {
+                    setAlmacenes(data)
+                    const def = data.find(a => a.es_default) || data[0]
+                    if (def) { setAlmacenId(def.id); setAlmacenReproceso(def.id) }
+                }
+            })
+    }, [])
+
+    useEffect(() => {
+        if (!almacenId) { setStockEnAlmacen(null); return }
+        supabase.from('stock_ubicacion')
+            .select('cantidad')
+            .eq('almacen_id', almacenId)
+            .eq('tipo_item', 'producto_terminado')
+            .eq('item_id', solicitud.producto_id)
+            .eq('empresa_id', perfil.empresa_id)
+            .is('almacen_ubicacion_id', null)
+            .maybeSingle()
+            .then(({ data }) => setStockEnAlmacen(data ? Number(data.cantidad) : 0))
+    }, [almacenId])
+
+    async function confirmar() {
+        if (!despachadorId) { setError('Selecciona el despachador'); return }
+        if (!almacenId) { setError('Selecciona el almacén de origen'); return }
+        if (stockEnAlmacen !== null && solicitud.cantidad > stockEnAlmacen) {
+            setError(`Stock insuficiente. Disponible: ${stockEnAlmacen} ${producto?.unidad_medida}`)
+            return
+        }
+        setGuardando(true); setError('')
+        const { data: { user } } = await supabase.auth.getUser()
+
+        // 1. Actualizar la solicitud a ejecutado
+        const { error: errUpd } = await supabase.from('cambios_mano_mano').update({
+            estado: 'ejecutado',
+            despachador_id: despachadorId,
+            almacen_id: almacenId,
+            destino,
+        }).eq('id', solicitud.id)
+        if (errUpd) { setError('Error: ' + errUpd.message); setGuardando(false); return }
+
+        // 2. Descontar stock global
+        const { data: prodActual } = await supabase.from('productos_terminados')
+            .select('stock_actual').eq('id', solicitud.producto_id).single()
+        const stockAnterior = Number(prodActual?.stock_actual || 0)
+        const nuevoStock = stockAnterior - Number(solicitud.cantidad)
+        await supabase.from('productos_terminados')
+            .update({ stock_actual: nuevoStock }).eq('id', solicitud.producto_id)
+
+        // 3. Descontar stock_ubicacion
+        const { data: su } = await supabase.from('stock_ubicacion')
+            .select('id, cantidad')
+            .eq('almacen_id', almacenId).eq('tipo_item', 'producto_terminado')
+            .eq('item_id', solicitud.producto_id).eq('empresa_id', perfil.empresa_id)
+            .is('almacen_ubicacion_id', null).maybeSingle()
+        if (su) {
+            await supabase.from('stock_ubicacion')
+                .update({ cantidad: Math.max(0, Number(su.cantidad) - Number(solicitud.cantidad)), updated_at: new Date().toISOString() })
+                .eq('id', su.id)
+        }
+
+        // 4. Movimiento de inventario
+        await supabase.from('movimientos_inventario').insert({
+            empresa_id: perfil.empresa_id,
+            tipo_item: 'producto_terminado',
+            item_id: solicitud.producto_id,
+            item_nombre: producto?.nombre || '',
+            item_codigo: producto?.sku || null,
+            tipo_movimiento: 'salida',
+            cantidad: Number(solicitud.cantidad),
+            stock_anterior: stockAnterior,
+            stock_actual: nuevoStock,
+            origen: 'cambio_mano_mano',
+            almacen_id: almacenId,
+            fecha: new Date().toISOString(),
+        })
+
+        // 5. Si reprocesar → stock_reproceso
+        if (destino === 'reprocesar') {
+            await supabase.from('stock_reproceso').insert({
+                empresa_id: perfil.empresa_id,
+                producto_id: solicitud.producto_id,
+                cantidad: Number(solicitud.cantidad),
+                cambio_id: solicitud.id,
+                estado: 'pendiente',
+                fecha_entrada: solicitud.fecha,
+                almacen_id: almacenReproceso || null,
+            })
+        }
+
+        // 6. Si desechar → merma
+        if (destino === 'desechar') {
+            await supabase.from('mermas').insert({
+                empresa_id: perfil.empresa_id,
+                tipo_item: 'producto_terminado',
+                item_id: solicitud.producto_id,
+                item_nombre: producto?.nombre || '',
+                item_codigo: producto?.sku || null,
+                unidad_medida: producto?.unidad_medida || null,
+                cantidad: Number(solicitud.cantidad),
+                tipo_merma: 'inventario',
+                motivo: 'Desecho de cambio mano a mano',
+                descripcion: `Cambio ${solicitud.numero_cambio} · Motivo: ${MOTIVOS.find(m => m.key === solicitud.motivo)?.label}${solicitud.notas ? ' · ' + solicitud.notas : ''}`,
+                fecha: solicitud.fecha,
+                usuario_id: user.id,
+                almacen_id: almacenId,
+            })
+        }
+
+        setGuardando(false)
+        onProcesada()
+    }
+
+    return (
+        <div style={{ padding: '24px', maxWidth: '640px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
+                <button onClick={onCancelar} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', fontSize: '13px' }}>← Volver</button>
+                <div>
+                    <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Procesar solicitud de cambio</h1>
+                    <p style={{ fontSize: '13px', color: '#9ca3af', margin: '2px 0 0' }}>{solicitud.numero_cambio}</p>
+                </div>
+            </div>
+
+            {/* Resumen de la solicitud (solo lectura) */}
+            <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: '12px', padding: '16px', marginBottom: '20px' }}>
+                <p style={{ fontSize: '11px', fontWeight: 600, color: '#92400e', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 10px' }}>Solicitud del vendedor</p>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', fontSize: '13px' }}>
+                    <div>
+                        <p style={{ color: '#6b7280', margin: '0 0 2px' }}>Cliente</p>
+                        <p style={{ fontWeight: 600, color: '#1f2937', margin: 0 }}>{solicitud.clientes?.nombre || '—'}</p>
+                    </div>
+                    <div>
+                        <p style={{ color: '#6b7280', margin: '0 0 2px' }}>Fecha solicitud</p>
+                        <p style={{ fontWeight: 600, color: '#1f2937', margin: 0 }}>{new Date(solicitud.fecha + 'T00:00:00').toLocaleDateString('es-VE')}</p>
+                    </div>
+                    <div>
+                        <p style={{ color: '#6b7280', margin: '0 0 2px' }}>Producto</p>
+                        <p style={{ fontWeight: 600, color: '#1f2937', margin: 0 }}>{producto?.nombre || '—'}</p>
+                        {producto?.sku && <p style={{ fontSize: '11px', color: '#9ca3af', margin: '2px 0 0', fontFamily: 'monospace' }}>{producto.sku}</p>}
+                    </div>
+                    <div>
+                        <p style={{ color: '#6b7280', margin: '0 0 2px' }}>Cantidad</p>
+                        <p style={{ fontWeight: 600, color: '#dc2626', margin: 0 }}>{fmt(solicitud.cantidad)} {producto?.unidad_medida}</p>
+                    </div>
+                    <div>
+                        <p style={{ color: '#6b7280', margin: '0 0 2px' }}>Motivo</p>
+                        <p style={{ fontWeight: 600, color: '#1f2937', margin: 0 }}>{MOTIVOS.find(m => m.key === solicitud.motivo)?.label || solicitud.motivo}</p>
+                    </div>
+                    {solicitud.notas && (
+                        <div style={{ gridColumn: '1 / -1' }}>
+                            <p style={{ color: '#6b7280', margin: '0 0 2px' }}>Notas</p>
+                            <p style={{ fontWeight: 500, color: '#374151', margin: 0, fontStyle: 'italic' }}>"{solicitud.notas}"</p>
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+
+                {/* Despachador */}
+                <div>
+                    <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Despachador *</label>
+                    <select value={despachadorId} onChange={e => setDespachadorId(e.target.value)} style={inputStyle}>
+                        <option value="">Seleccionar despachador...</option>
+                        {despachadores.map(d => <option key={d.id} value={d.id}>{d.nombre}</option>)}
+                    </select>
+                </div>
+
+                {/* Almacén de origen */}
+                <div>
+                    <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Almacén de origen *</label>
+                    <select value={almacenId} onChange={e => setAlmacenId(e.target.value)} style={inputStyle}>
+                        <option value="">Seleccionar almacén...</option>
+                        {almacenes.map(a => <option key={a.id} value={a.id}>{a.nombre}{a.es_default ? ' (principal)' : ''}</option>)}
+                    </select>
+                    {almacenId && stockEnAlmacen !== null && (
+                        <p style={{ fontSize: '12px', margin: '6px 0 0', color: stockEnAlmacen <= 0 ? '#dc2626' : '#6b7280' }}>
+                            Stock disponible: <strong style={{ color: stockEnAlmacen <= 0 ? '#dc2626' : '#374151' }}>{stockEnAlmacen} {producto?.unidad_medida}</strong>
+                        </p>
+                    )}
+                </div>
+
+                {/* Destino */}
+                <div>
+                    <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '8px' }}>Destino del producto retirado *</label>
+                    <div style={{ display: 'flex', gap: '10px' }}>
+                        <button onClick={() => setDestino('reprocesar')}
+                            style={{ flex: 1, padding: '12px', borderRadius: '10px', fontSize: '13px', fontWeight: 600, border: '2px solid', cursor: 'pointer', textAlign: 'center', borderColor: destino === 'reprocesar' ? '#1d4ed8' : '#e5e7eb', backgroundColor: destino === 'reprocesar' ? '#eff6ff' : '#fff', color: destino === 'reprocesar' ? '#1d4ed8' : '#6b7280' }}>
+                            <div>♻️ Reprocesar</div>
+                            <div style={{ fontSize: '11px', fontWeight: 400, marginTop: '4px' }}>Entra a stock de reproceso</div>
+                        </button>
+                        <button onClick={() => setDestino('desechar')}
+                            style={{ flex: 1, padding: '12px', borderRadius: '10px', fontSize: '13px', fontWeight: 600, border: '2px solid', cursor: 'pointer', textAlign: 'center', borderColor: destino === 'desechar' ? '#dc2626' : '#e5e7eb', backgroundColor: destino === 'desechar' ? '#fef2f2' : '#fff', color: destino === 'desechar' ? '#dc2626' : '#6b7280' }}>
+                            <div>🗑️ Desechar</div>
+                            <div style={{ fontSize: '11px', fontWeight: 400, marginTop: '4px' }}>Se registra como merma</div>
+                        </button>
+                    </div>
+                </div>
+
+                {/* Almacén destino reproceso */}
+                {destino === 'reprocesar' && (
+                    <div>
+                        <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Almacén donde entra el reproceso *</label>
+                        <select value={almacenReproceso} onChange={e => setAlmacenReproceso(e.target.value)} style={inputStyle}>
+                            <option value="">Seleccionar almacén...</option>
+                            {almacenes.map(a => <option key={a.id} value={a.id}>{a.nombre}{a.es_default ? ' (principal)' : ''}</option>)}
+                        </select>
+                    </div>
+                )}
+
+                {error && (
+                    <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 14px', fontSize: '13px', color: '#dc2626' }}>
+                        {error}
+                    </div>
+                )}
+
+                <div style={{ display: 'flex', gap: '10px' }}>
+                    <button onClick={confirmar} disabled={guardando}
+                        style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#d97706', color: '#fff', border: 'none', borderRadius: '8px', padding: '12px 24px', fontSize: '14px', fontWeight: 600, cursor: 'pointer', opacity: guardando ? 0.7 : 1 }}>
+                        <Check size={16} /> {guardando ? 'Procesando...' : 'Confirmar procesamiento'}
+                    </button>
+                    <button onClick={onCancelar}
+                        style={{ padding: '12px 20px', borderRadius: '8px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: '#374151', fontSize: '14px', cursor: 'pointer' }}>
+                        Cancelar
+                    </button>
+                </div>
+            </div>
+        </div>
     )
 }
 

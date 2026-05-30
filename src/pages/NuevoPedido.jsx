@@ -574,6 +574,16 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
     const [paginaVisitas, setPaginaVisitas] = useState(0)
     const [totalVisitas, setTotalVisitas] = useState(0)
 
+    const [modalCambio, setModalCambio] = useState(false)
+    const [productosCambio, setProductosCambio] = useState([])
+    const [busqCambio, setBusqCambio] = useState('')
+    const [productoSelCambio, setProductoSelCambio] = useState(null)
+    const [cantCambio, setCantCambio] = useState('')
+    const [motivoCambio, setMotivoCambio] = useState('')
+    const [notasCambio, setNotasCambio] = useState('')
+    const [guardandoCambio, setGuardandoCambio] = useState(false)
+    const [errorCambio, setErrorCambio] = useState('')
+
     useEffect(() => { cargar() }, [])
 
     async function cargar() {
@@ -684,6 +694,39 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
             setPaginaVisitas(0)
             cargarVisitas(0)
         }
+    }
+
+    async function cargarProductosCambio() {
+        if (productosCambio.length > 0) return
+        const { data } = await supabase.from('productos_terminados')
+            .select('id, nombre, sku, unidad_medida')
+            .eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
+        setProductosCambio(data || [])
+    }
+
+    async function guardarSolicitudCambio() {
+        if (!productoSelCambio) { setErrorCambio('Selecciona el producto'); return }
+        if (!cantCambio || Number(cantCambio) <= 0) { setErrorCambio('Ingresa una cantidad válida'); return }
+        if (!motivoCambio) { setErrorCambio('Selecciona el motivo'); return }
+        setGuardandoCambio(true); setErrorCambio('')
+        const { data: { user } } = await supabase.auth.getUser()
+        const { data: numero } = await supabase.rpc('obtener_siguiente_cambio_numero', { p_empresa_id: perfil.empresa_id })
+        const { error: err } = await supabase.from('cambios_mano_mano').insert({
+            empresa_id: perfil.empresa_id,
+            numero_cambio: numero || 'CMM-000001',
+            cliente_id: cliente.id,
+            producto_id: productoSelCambio.id,
+            cantidad: Number(cantCambio),
+            motivo: motivoCambio,
+            notas: notasCambio.trim() || null,
+            fecha: new Date().toISOString().split('T')[0],
+            usuario_id: user.id,
+            estado: 'solicitado',
+        })
+        setGuardandoCambio(false)
+        if (err) { setErrorCambio('Error: ' + err.message); return }
+        setModalCambio(false)
+        setBusqCambio(''); setProductoSelCambio(null); setCantCambio(''); setMotivoCambio(''); setNotasCambio('')
     }
 
     const totalCxC = datos?.cxc?.reduce((s, v) => s + Number(v.saldo_pendiente || 0), 0) || 0
@@ -853,6 +896,10 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
 
                             <button onClick={() => onNuevoPedido()} style={s.btnPrimary}>
                                 <Plus size={18} /> Tomar pedido
+                            </button>
+                            <button onClick={() => { setModalCambio(true); cargarProductosCambio() }}
+                                style={{ ...s.btnSecondary, marginTop: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                                <RefreshCw size={16} /> Solicitar cambio mano a mano
                             </button>
                         </>
                     )}
@@ -1203,6 +1250,106 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
                         <button onClick={guardarVisita} disabled={guardandoVisita}
                             style={{ ...s.btnPrimary, opacity: guardandoVisita ? 0.7 : 1 }}>
                             <Check size={18} /> {guardandoVisita ? 'Guardando...' : 'Guardar visita'}
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* ── MODAL SOLICITAR CAMBIO MANO A MANO ── */}
+            {modalCambio && (
+                <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 50, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
+                    onClick={e => { if (e.target === e.currentTarget) setModalCambio(false) }}>
+                    <div style={{ backgroundColor: '#fff', borderRadius: '20px 20px 0 0', padding: '24px 20px 36px', width: '100%', maxWidth: '480px', maxHeight: '85vh', overflowY: 'auto' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                            <h2 style={{ fontSize: '18px', fontWeight: 700, color: '#1f2937', margin: 0 }}>Solicitar cambio mano a mano</h2>
+                            <button onClick={() => setModalCambio(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', padding: '4px' }}>
+                                <X size={22} />
+                            </button>
+                        </div>
+
+                        {/* Producto */}
+                        <label style={s.label}>Producto *</label>
+                        {!productoSelCambio ? (
+                            <>
+                                <div style={{ position: 'relative', marginBottom: '8px' }}>
+                                    <Search size={15} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
+                                    <input type="text" placeholder="Buscar por nombre o código..."
+                                        value={busqCambio} onChange={e => setBusqCambio(e.target.value)}
+                                        style={{ ...s.input, paddingLeft: '36px', fontSize: '15px' }} />
+                                </div>
+                                {busqCambio && (
+                                    <div style={{ border: '1px solid #e5e7eb', borderRadius: '10px', overflow: 'hidden', maxHeight: '180px', overflowY: 'auto', marginBottom: '16px' }}>
+                                        {productosCambio.filter(p =>
+                                            p.nombre.toLowerCase().includes(busqCambio.toLowerCase()) ||
+                                            p.sku?.toLowerCase().includes(busqCambio.toLowerCase())
+                                        ).length === 0
+                                            ? <div style={{ padding: '12px', textAlign: 'center', fontSize: '13px', color: '#9ca3af' }}>Sin resultados</div>
+                                            : productosCambio.filter(p =>
+                                                p.nombre.toLowerCase().includes(busqCambio.toLowerCase()) ||
+                                                p.sku?.toLowerCase().includes(busqCambio.toLowerCase())
+                                            ).map(p => (
+                                                <div key={p.id} onClick={() => { setProductoSelCambio(p); setBusqCambio('') }}
+                                                    style={{ padding: '12px 14px', borderBottom: '1px solid #f3f4f6', cursor: 'pointer', fontSize: '14px' }}
+                                                    onTouchStart={e => e.currentTarget.style.backgroundColor = '#f0fdf4'}
+                                                    onTouchEnd={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                                                    <span style={{ fontWeight: 500, color: '#1f2937' }}>{p.nombre}</span>
+                                                    {p.sku && <span style={{ color: '#9ca3af', marginLeft: '8px', fontFamily: 'monospace', fontSize: '12px' }}>{p.sku}</span>}
+                                                </div>
+                                            ))
+                                        }
+                                    </div>
+                                )}
+                            </>
+                        ) : (
+                            <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '10px', padding: '12px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                                <div>
+                                    <p style={{ fontSize: '14px', fontWeight: 600, color: '#166534', margin: 0 }}>{productoSelCambio.nombre}</p>
+                                    {productoSelCambio.sku && <p style={{ fontSize: '12px', color: '#16a34a', margin: '2px 0 0', fontFamily: 'monospace' }}>{productoSelCambio.sku}</p>}
+                                </div>
+                                <button onClick={() => setProductoSelCambio(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#16a34a', padding: '4px' }}>
+                                    <X size={18} />
+                                </button>
+                            </div>
+                        )}
+
+                        {/* Cantidad */}
+                        <label style={s.label}>Cantidad {productoSelCambio ? `(${productoSelCambio.unidad_medida})` : ''} *</label>
+                        <input type="number" min="0.001" step="0.001" value={cantCambio}
+                            onChange={e => setCantCambio(e.target.value)}
+                            placeholder="0"
+                            style={{ ...s.input, marginBottom: '16px' }} />
+
+                        {/* Motivo */}
+                        <label style={s.label}>Motivo del retiro *</label>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '16px' }}>
+                            {[
+                                { key: 'vencido', label: 'Vencido' },
+                                { key: 'danado', label: 'Dañado' },
+                                { key: 'mal_estado', label: 'Mal estado' },
+                                { key: 'otro', label: 'Otro' },
+                            ].map(m => (
+                                <button key={m.key} onClick={() => setMotivoCambio(m.key)}
+                                    style={{ padding: '10px', borderRadius: '10px', border: `2px solid ${motivoCambio === m.key ? '#16a34a' : '#e5e7eb'}`, backgroundColor: motivoCambio === m.key ? '#f0fdf4' : '#fff', color: motivoCambio === m.key ? '#16a34a' : '#6b7280', fontSize: '14px', fontWeight: 600, cursor: 'pointer' }}>
+                                    {m.label}
+                                </button>
+                            ))}
+                        </div>
+
+                        {/* Notas */}
+                        <label style={s.label}>Notas <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>(opcional)</span></label>
+                        <textarea value={notasCambio} onChange={e => setNotasCambio(e.target.value)}
+                            rows={2} placeholder="Observaciones sobre el cambio..."
+                            style={{ ...s.input, resize: 'none', fontFamily: 'inherit', marginBottom: '16px' }} />
+
+                        {errorCambio && (
+                            <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '10px', padding: '10px 14px', fontSize: '13px', color: '#dc2626', marginBottom: '12px' }}>
+                                {errorCambio}
+                            </div>
+                        )}
+
+                        <button onClick={guardarSolicitudCambio} disabled={guardandoCambio}
+                            style={{ ...s.btnPrimary, opacity: guardandoCambio ? 0.7 : 1 }}>
+                            <Check size={18} /> {guardandoCambio ? 'Enviando...' : 'Enviar solicitud'}
                         </button>
                     </div>
                 </div>
