@@ -10,6 +10,8 @@ const VACIO = {
     contribuyente_especial: false, tipo_cliente_id: '',
     direccion_fiscal: '',
     cat1_id: '', cat2_id: '', cat3_id: '', cat4_id: '',
+    contacto_comercial: '', email_comercial: '', telefono_comercial: '',
+    contacto_administrativo: '', email_administrativo: '', telefono_administrativo: '',
 }
 
 const VACIO_DIR = {
@@ -126,6 +128,12 @@ export default function Clientes() {
             cat2_id: c.cat2_id || '',
             cat3_id: c.cat3_id || '',
             cat4_id: c.cat4_id || '',
+            contacto_comercial: c.contacto_comercial || '',
+            email_comercial: c.email_comercial || '',
+            telefono_comercial: c.telefono_comercial || '',
+            contacto_administrativo: c.contacto_administrativo || '',
+            email_administrativo: c.email_administrativo || '',
+            telefono_administrativo: c.telefono_administrativo || '',
         })
         cargarDirecciones(c.id)
 
@@ -168,6 +176,12 @@ export default function Clientes() {
             cat2_id: form.cat2_id || null,
             cat3_id: form.cat3_id || null,
             cat4_id: form.cat4_id || null,
+            contacto_comercial: form.contacto_comercial.trim() || null,
+            email_comercial: form.email_comercial.trim() || null,
+            telefono_comercial: form.telefono_comercial.trim() || null,
+            contacto_administrativo: form.contacto_administrativo.trim() || null,
+            email_administrativo: form.email_administrativo.trim() || null,
+            telefono_administrativo: form.telefono_administrativo.trim() || null,
         }
 
         let nuevoClienteId = editando
@@ -378,6 +392,22 @@ export default function Clientes() {
                             <label htmlFor="contribuyente_especial" style={{ fontSize: '14px', color: '#374151', cursor: 'pointer' }}>Contribuyente Especial</label>
                         </div>
                     </div>
+                </div>
+            </div>
+
+            {/* Contactos */}
+            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '20px', marginBottom: '20px' }}>
+                <p style={{ fontSize: '13px', fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 16px' }}>Contactos</p>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                    <div style={{ gridColumn: 'span 2', fontSize: '12px', fontWeight: 600, color: '#374151', borderBottom: '1px solid #f3f4f6', paddingBottom: '6px' }}>Contacto Comercial</div>
+                    <Campo label="Nombre"><input value={form.contacto_comercial} onChange={e => campo('contacto_comercial', e.target.value)} placeholder="Nombre del contacto comercial" style={inputStyle} /></Campo>
+                    <Campo label="Teléfono"><input value={form.telefono_comercial} onChange={e => campo('telefono_comercial', e.target.value)} placeholder="0414-000-0000" style={inputStyle} /></Campo>
+                    <Campo label="Email" span={2}><input type="email" value={form.email_comercial} onChange={e => campo('email_comercial', e.target.value)} placeholder="comercial@empresa.com" style={inputStyle} /></Campo>
+
+                    <div style={{ gridColumn: 'span 2', fontSize: '12px', fontWeight: 600, color: '#374151', borderBottom: '1px solid #f3f4f6', paddingBottom: '6px', marginTop: '8px' }}>Contacto Administrativo</div>
+                    <Campo label="Nombre"><input value={form.contacto_administrativo} onChange={e => campo('contacto_administrativo', e.target.value)} placeholder="Nombre del contacto administrativo" style={inputStyle} /></Campo>
+                    <Campo label="Teléfono"><input value={form.telefono_administrativo} onChange={e => campo('telefono_administrativo', e.target.value)} placeholder="0414-000-0000" style={inputStyle} /></Campo>
+                    <Campo label="Email" span={2}><input type="email" value={form.email_administrativo} onChange={e => campo('email_administrativo', e.target.value)} placeholder="admin@empresa.com" style={inputStyle} /></Campo>
                 </div>
             </div>
 
