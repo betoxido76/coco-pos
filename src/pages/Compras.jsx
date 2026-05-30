@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
-import { Plus, Search, Trash2, Check, CheckCircle, FileText, X, AlertTriangle, Truck, ClipboardList, ArrowRight, RotateCcw } from 'lucide-react'
+import { Plus, Search, Trash2, Check, CheckCircle, FileText, X, AlertTriangle, Truck, ClipboardList, ArrowRight, RotateCcw, Pencil, Ban } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
@@ -34,6 +34,7 @@ export default function Compras() {
     const [totalDevoluciones, setTotalDevoluciones] = useState(0)
     const [paginaDevoluciones, setPaginaDevoluciones] = useState(0)
     const [devolucionActual, setDevolucionActual] = useState(null)
+    const [ocAEditar, setOcAEditar] = useState(null)
 
     useEffect(() => {
         if (tabActiva === 'ordenes') cargarOrdenes()
@@ -81,6 +82,15 @@ export default function Compras() {
     function abrirDetalleOC(oc) { setOrdenActual(oc); setVista('detalle_oc') }
     function abrirDetalleRecepcion(rec) { setRecepcionActual(rec); setVista('detalle_recepcion') }
     function abrirDetalleDevolucion(dev) { setDevolucionActual(dev); setVista('detalle_devolucion') }
+
+    async function anularOC(oc) {
+        if (!window.confirm(`¿Anular la orden ${oc.numero_oc}? Esta acción no se puede deshacer.`)) return
+        await supabase.from('ordenes_compra').update({ estado: 'cancelada' }).eq('id', oc.id)
+        cargarOrdenes()
+    }
+
+    if (vista === 'editar_oc')
+        return <EditarOrden oc={ocAEditar} onGuardada={() => { cargarOrdenes(); setVista('lista') }} onCancelar={() => setVista('lista')} />
 
     if (vista === 'nueva_oc')
         return <NuevaOrden onCreada={(oc) => { cargarOrdenes(); setOrdenActual(oc); setVista('detalle_oc') }} onCancelar={() => setVista('lista')} />
@@ -144,7 +154,9 @@ export default function Compras() {
 
             {tabActiva === 'ordenes' && (
                 <>
-                    <TablaOrdenes ordenes={ordenes} loading={loading} onVer={abrirDetalleOC} />
+                    <TablaOrdenes ordenes={ordenes} loading={loading} onVer={abrirDetalleOC}
+                    onEditar={oc => { setOcAEditar(oc); setVista('editar_oc') }}
+                    onAnular={anularOC} />
                     {totalOrdenes > PAGE_SIZE && (
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', marginTop: '8px' }}>
                             <span style={{ fontSize: '13px', color: '#6b7280' }}>
@@ -213,7 +225,8 @@ export default function Compras() {
 }
 
 // ─── Tablas de Listado ──────────────────────────────────────
-function TablaOrdenes({ ordenes, loading, onVer }) {
+function TablaOrdenes({ ordenes, loading, onVer, onEditar, onAnular }) {
+    const editable = (estado) => estado === 'pendiente' || estado === 'aprobada'
     return (
         <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
             {loading ? <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af' }}>Cargando...</div> : ordenes.length === 0 ?
@@ -238,9 +251,19 @@ function TablaOrdenes({ ordenes, loading, onVer }) {
                                     <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(o.total)}</td>
                                     <td style={{ padding: '12px 16px' }}><BadgeOC estado={o.estado} /></td>
                                     <td style={{ padding: '12px 16px' }}>
-                                        <button onClick={() => onVer(o)} style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
-                                            <FileText size={13} /> Ver
-                                        </button>
+                                        <div style={{ display: 'flex', gap: '6px' }}>
+                                            <button onClick={() => onVer(o)} style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
+                                                <FileText size={13} /> Ver
+                                            </button>
+                                            {editable(o.estado) && <>
+                                                <button onClick={() => onEditar(o)} style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #d1d5db', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
+                                                    <Pencil size={12} /> Editar
+                                                </button>
+                                                <button onClick={() => onAnular(o)} style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #fecaca', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#dc2626', cursor: 'pointer' }}>
+                                                    <Ban size={12} /> Anular
+                                                </button>
+                                            </>}
+                                        </div>
                                     </td>
                                 </tr>
                             ))}
@@ -2838,6 +2861,266 @@ function DetalleDevolucion({ devolucion: dev, onVolver }) {
                     {dev.fecha_liquidacion && <p style={{ fontSize: '11px', color: '#16a34a', margin: '4px 0 0' }}>{new Date(dev.fecha_liquidacion).toLocaleDateString('es-VE')}</p>}
                 </div>
             )}
+        </div>
+    )
+}
+
+// ─── Editar Orden de Compra ────────────────────────────────────
+function EditarOrden({ oc, onGuardada, onCancelar }) {
+    const { perfil } = useAuth()
+    const [proveedores, setProveedores] = useState([])
+    const [insumos, setInsumos] = useState([])
+    const [proveedorId, setProveedorId] = useState(oc.proveedor_id || '')
+    const [busqueda, setBusqueda] = useState('')
+    const [items, setItems] = useState([])
+    const [fechaEntrega, setFechaEntrega] = useState(oc.fecha_entrega_esperada ? oc.fecha_entrega_esperada.split('T')[0] : '')
+    const [guardando, setGuardando] = useState(false)
+    const [error, setError] = useState('')
+    const [cargando, setCargando] = useState(true)
+
+    useEffect(() => { cargarDatos() }, [])
+
+    async function cargarDatos() {
+        setCargando(true)
+        const [provRes, mpRes, meRes, ptRes, itemsRes] = await Promise.all([
+            supabase.from('proveedores').select('id, nombre').eq('activo', true).order('nombre'),
+            supabase.from('materias_primas').select('id, nombre, codigo, aplica_iva, costo_compra_promedio').eq('activo', true),
+            supabase.from('materiales_empaque').select('id, nombre, codigo, aplica_iva, costo_compra_promedio').eq('activo', true),
+            supabase.from('productos_terminados').select('id, nombre, sku, aplica_iva, costo_promedio, tipo_producto').eq('activo', true),
+            supabase.from('orden_compra_items').select('*').eq('orden_id', oc.id),
+        ])
+
+        const insumosUnidos = [
+            ...(mpRes.data || []).map(i => ({ ...i, tipo: 'materias_primas', costo: i.costo_compra_promedio })),
+            ...(meRes.data || []).map(i => ({ ...i, tipo: 'materiales_empaque', costo: i.costo_compra_promedio })),
+            ...(ptRes.data || []).filter(p => p.tipo_producto === 'comprado').map(i => ({ ...i, tipo: 'productos_terminados', costo: i.costo_promedio, codigo: i.sku })),
+        ]
+        setProveedores(provRes.data || [])
+        setInsumos(insumosUnidos)
+
+        const tipoFromDB = {
+            materia_prima: 'materias_primas',
+            empaque: 'materiales_empaque',
+            material_empaque: 'materiales_empaque',
+            consumible: 'consumibles',
+            producto_terminado: 'productos_terminados',
+        }
+
+        const existingItems = (itemsRes.data || []).map(dbItem => {
+            const tipoLocal = tipoFromDB[dbItem.tipo_insumo] || 'materias_primas'
+            const match = insumosUnidos.find(ins => ins.id === dbItem.insumo_id && ins.tipo === tipoLocal)
+            const aplicaIva = match?.aplica_iva ?? true
+            const precioConIva = aplicaIva
+                ? Number(dbItem.precio_unitario_esperado) * 1.16
+                : Number(dbItem.precio_unitario_esperado)
+            return {
+                id: dbItem.insumo_id,
+                tipo: tipoLocal,
+                nombre: match?.nombre || '(Ítem desconocido)',
+                codigo: match?.codigo || '',
+                cantidad: Number(dbItem.cantidad_solicitada),
+                precio_unitario: precioConIva,
+                aplica_iva: aplicaIva,
+            }
+        })
+        setItems(existingItems)
+        setCargando(false)
+    }
+
+    const insumosFiltrados = insumos.filter(p =>
+        p.nombre.toLowerCase().includes(busqueda.toLowerCase()) || p.codigo?.toLowerCase().includes(busqueda.toLowerCase())
+    )
+
+    function agregarInsumo(ins) {
+        setItems(prev => {
+            const existe = prev.find(i => i.id === ins.id && i.tipo === ins.tipo)
+            if (existe) return prev.map(i => (i.id === ins.id && i.tipo === ins.tipo) ? { ...i, cantidad: i.cantidad + 1 } : i)
+            return [...prev, { id: ins.id, tipo: ins.tipo, nombre: ins.nombre, codigo: ins.codigo, cantidad: 1, precio_unitario: ins.costo || 0, aplica_iva: ins.aplica_iva ?? true }]
+        })
+        setBusqueda('')
+    }
+
+    function cambiarCantidad(id, tipo, valor) {
+        const n = parseFloat(valor)
+        if (isNaN(n) || n < 0) return
+        setItems(prev => prev.map(i => (i.id === id && i.tipo === tipo) ? { ...i, cantidad: n } : i))
+    }
+
+    function cambiarPrecio(id, tipo, valor) {
+        const n = parseFloat(valor)
+        if (isNaN(n) || n < 0) return
+        setItems(prev => prev.map(i => (i.id === id && i.tipo === tipo) ? { ...i, precio_unitario: n } : i))
+    }
+
+    function eliminarItem(id, tipo) { setItems(prev => prev.filter(i => !(i.id === id && i.tipo === tipo))) }
+
+    const total = items.reduce((s, i) => s + i.cantidad * i.precio_unitario, 0)
+    const subtotal = items.reduce((s, i) => {
+        const linea = i.cantidad * i.precio_unitario
+        return s + ((i.aplica_iva ?? true) ? linea / 1.16 : linea)
+    }, 0)
+    const iva = total - subtotal
+
+    async function guardar() {
+        if (!proveedorId) { setError('Selecciona un proveedor'); return }
+        if (items.length === 0) { setError('Agrega al menos un insumo'); return }
+        setGuardando(true); setError('')
+
+        try {
+            const tipoMap = {
+                materias_primas: 'materia_prima',
+                materiales_empaque: 'empaque',
+                productos_terminados: 'producto_terminado',
+                consumibles: 'consumible',
+            }
+
+            const { error: errOC } = await supabase.from('ordenes_compra').update({
+                proveedor_id: proveedorId,
+                fecha_entrega_esperada: fechaEntrega || null,
+                subtotal,
+                total,
+            }).eq('id', oc.id)
+
+            if (errOC) { setError('Error al actualizar la orden: ' + errOC.message); setGuardando(false); return }
+
+            await supabase.from('orden_compra_items').delete().eq('orden_id', oc.id)
+
+            const { error: errItems } = await supabase.from('orden_compra_items').insert(
+                items.map(i => ({
+                    orden_id: oc.id,
+                    empresa_id: perfil.empresa_id,
+                    tipo_insumo: tipoMap[i.tipo] || i.tipo,
+                    insumo_id: i.id,
+                    cantidad_solicitada: i.cantidad,
+                    cantidad_recibida: 0,
+                    precio_unitario_esperado: (i.aplica_iva ?? true) ? i.precio_unitario / 1.16 : i.precio_unitario,
+                }))
+            )
+
+            if (errItems) { setError('Error al guardar los ítems: ' + errItems.message); setGuardando(false); return }
+
+            setGuardando(false)
+            onGuardada()
+        } catch (e) {
+            setError('Error inesperado: ' + e.message)
+            setGuardando(false)
+        }
+    }
+
+    if (cargando) return <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af' }}>Cargando...</div>
+
+    return (
+        <div style={{ padding: '24px', maxWidth: '900px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
+                <button onClick={onCancelar} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', fontSize: '13px' }}>← Volver</button>
+                <div>
+                    <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Editar Orden de Compra</h1>
+                    <p style={{ fontSize: '13px', color: '#6b7280', margin: '2px 0 0' }}>{oc.numero_oc}</p>
+                </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: '20px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px' }}>
+                        <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '8px' }}>Proveedor</label>
+                        <select value={proveedorId} onChange={e => setProveedorId(e.target.value)}
+                            style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', backgroundColor: '#fff' }}>
+                            <option value="">Seleccionar proveedor...</option>
+                            {proveedores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+                        </select>
+                        <div style={{ marginTop: '12px' }}>
+                            <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '8px' }}>Fecha entrega esperada</label>
+                            <input type="date" value={fechaEntrega} onChange={e => setFechaEntrega(e.target.value)}
+                                style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', boxSizing: 'border-box' }} />
+                        </div>
+                    </div>
+
+                    <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px' }}>
+                        <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '8px' }}>Agregar insumos</label>
+                        <div style={{ position: 'relative' }}>
+                            <Search size={15} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
+                            <input type="text" placeholder="Buscar por nombre o código..." value={busqueda} onChange={e => setBusqueda(e.target.value)}
+                                style={{ width: '100%', padding: '8px 12px 8px 32px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', boxSizing: 'border-box' }} />
+                        </div>
+                        {busqueda && (
+                            <div style={{ marginTop: '8px', border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden', maxHeight: '200px', overflowY: 'auto' }}>
+                                {insumosFiltrados.length === 0 ? (
+                                    <div style={{ padding: '12px', fontSize: '13px', color: '#9ca3af', textAlign: 'center' }}>Sin resultados</div>
+                                ) : insumosFiltrados.map(p => (
+                                    <div key={`${p.id}-${p.tipo}`} onClick={() => agregarInsumo(p)}
+                                        style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', cursor: 'pointer', borderBottom: '1px solid #f3f4f6', fontSize: '13px' }}
+                                        onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f0fdf4'}
+                                        onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                                        <div>
+                                            <span style={{ fontWeight: 500, color: '#1f2937' }}>{p.nombre}</span>
+                                            <span style={{ color: '#9ca3af', marginLeft: '8px', fontFamily: 'monospace', fontSize: '11px' }}>{p.codigo}</span>
+                                        </div>
+                                        <span style={{ fontWeight: 600, color: '#16a34a' }}>{fmt(p.costo)}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    {items.length > 0 && (
+                        <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                <thead>
+                                    <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                                        {['Insumo', 'Tipo', 'Precio', 'Cant.', 'Subtotal', ''].map((h, i) => (
+                                            <th key={i} style={{ padding: '10px 12px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left' }}>{h}</th>
+                                        ))}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {items.map(item => (
+                                        <tr key={`${item.id}-${item.tipo}`} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                                            <td style={{ padding: '10px 12px', fontSize: '13px', color: '#1f2937' }}>{item.nombre}</td>
+                                            <td style={{ padding: '10px 12px', fontSize: '11px', color: '#6b7280', textTransform: 'uppercase' }}>{item.tipo.replace(/_/g, ' ')}</td>
+                                            <td style={{ padding: '10px 12px' }}>
+                                                <input type="number" min="0" step="0.01" value={item.precio_unitario}
+                                                    onChange={e => cambiarPrecio(item.id, item.tipo, e.target.value)}
+                                                    style={{ width: '80px', padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px', textAlign: 'right' }} />
+                                            </td>
+                                            <td style={{ padding: '10px 12px' }}>
+                                                <input type="number" min="0" step="0.01" value={item.cantidad}
+                                                    onChange={e => cambiarCantidad(item.id, item.tipo, e.target.value)}
+                                                    style={{ width: '60px', padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px', textAlign: 'center' }} />
+                                            </td>
+                                            <td style={{ padding: '10px 12px', fontSize: '13px', fontWeight: 600, color: '#1f2937' }}>{fmt(item.cantidad * item.precio_unitario)}</td>
+                                            <td style={{ padding: '10px 12px' }}>
+                                                <button onClick={() => eliminarItem(item.id, item.tipo)}
+                                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', padding: '4px' }}>
+                                                    <Trash2 size={14} />
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+                </div>
+
+                <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '20px', height: 'fit-content', position: 'sticky', top: '24px' }}>
+                    <h2 style={{ fontSize: '15px', fontWeight: 600, color: '#1f2937', margin: '0 0 16px' }}>Resumen de OC</h2>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#6b7280' }}><span>Subtotal</span><span>{fmt(subtotal)}</span></div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#6b7280' }}><span>IVA (16%)</span><span>{fmt(iva)}</span></div>
+                        <div style={{ height: '1px', backgroundColor: '#e5e7eb', margin: '4px 0' }} />
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '16px', fontWeight: 700, color: '#1f2937' }}><span>Total</span><span style={{ color: '#16a34a' }}>{fmt(total)}</span></div>
+                    </div>
+                    {error && (
+                        <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', color: '#dc2626', marginBottom: '12px' }}>
+                            {error}
+                        </div>
+                    )}
+                    <button onClick={guardar} disabled={guardando || items.length === 0}
+                        style={{ width: '100%', backgroundColor: items.length === 0 ? '#d1d5db' : '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '12px', fontSize: '14px', fontWeight: 600, cursor: items.length === 0 ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                        <CheckCircle size={16} /> {guardando ? 'Guardando...' : 'Guardar Cambios'}
+                    </button>
+                </div>
+            </div>
         </div>
     )
 }
