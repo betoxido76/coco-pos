@@ -206,11 +206,17 @@ lotes_produccion      -- Lotes de PT producidos
 ### Otros
 ```
 clientes              -- cat1_id..cat4_id, limite_credito numeric, vehiculo text
+                      --   contacto_comercial, email_comercial, telefono_comercial
+                      --   contacto_administrativo, email_administrativo, telefono_administrativo
 categorias_clientes   -- 4 niveles de categorías por empresa
 perfilamiento_clientes -- Perfiles de segmentación de clientes
 proveedores           -- condicion_pago, dias_credito
+cuentas_proveedor     -- Cuentas bancarias del proveedor (multi-cuenta)
+                      --   proveedor_id, banco, tipo_cuenta, numero_cuenta, titular,
+                      --   rif_titular, es_predeterminada boolean, empresa_id
 mermas                -- almacen_id, numero_merma, tipo_merma
-cambios_mano_mano     -- almacen_id origen
+cambios_mano_mano     -- almacen_id origen (nullable), despachador_id (nullable)
+                      --   estado text: 'solicitado' (desde campo, sin stock) | 'ejecutado' (procesado)
 stock_reproceso       -- almacen_id, estado
 gastos                -- monto_usd, monto_bs, tipo_tasa, metodo_pago,
                       --   estado ('pagado'|'pendiente'), fecha_vencimiento,
@@ -460,10 +466,57 @@ ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS oc_cliente text;
 ALTER TABLE ventas ADD COLUMN IF NOT EXISTS oc_cliente text;
 ```
 
+### Completados (sesión 2026-05-29/30)
+
+| Item | Notas |
+|---|---|
+| Produccion.jsx — flujo consumos rediseñado | `crearOrden()` guarda los consumos editados por el usuario en `lote_consumos` con `lote_id=null` (planificados). `ModalCierre.cerrar()`: elimina los planificados → crea `lotes_produccion` → re-inserta consumos reales con el `lote_id` correcto → descuenta stock. `anularOrden()`: elimina `lote_consumos` y cambia estado; no revierte stock (porque nunca se descontó al crear). `tipo_insumo='empaque'` normalizado a `'material_empaque'` en inserts de `lote_consumos` |
+| CuentasPagar — fix validación USD=0 | `ModalPago.confirmar()` validaba solo `montoUsd <= 0`. Corregido: calcula `totalPago = usd + bs/tasa` y valida el total combinado |
+| CuentasPagar — descuento porcentual en pago | Nuevo campo `descPct` en ModalPago. Muestra saldo con descuento inline (`-$X.XX · A pagar: $Y.YY`). Registra el descuento como fila de `pagos_proveedor` con `metodo_usd='descuento'`. `useEffect([ndsSeleccionadas.size, descPct])` resetea montos al cambiar descuento |
+| Clientes.jsx — campos de contacto | 6 nuevos campos: `contacto_comercial`, `email_comercial`, `telefono_comercial`, `contacto_administrativo`, `email_administrativo`, `telefono_administrativo`. Aparecen en el formulario de crear/editar en una card "Contactos" entre "Datos generales" y "Clasificación" |
+| Proveedores.jsx — sección Datos de pago | Nueva sección con multi-cuenta bancaria. Tabla nueva `cuentas_proveedor`. Modal para agregar/editar cuenta (banco, tipo, número, titular, RIF). Botón estrella para marcar predeterminada. Patrón local-state para proveedores nuevos, DB directo para existentes |
+| Compras.jsx — editar y anular OC | Botones Editar y Anular en `TablaOrdenes`, visibles solo cuando `estado IN ('pendiente','aprobada')`. Anular: cambia estado a `'cancelada'`. Nuevo componente `EditarOrden`: carga ítems existentes, reconstruye precio con IVA desde `precio_unitario_esperado`, permite cambiar proveedor/fecha/items. Guarda con UPDATE + DELETE + re-INSERT |
+| NuevoPedido — solicitar cambio mano a mano | Botón "Solicitar cambio mano a mano" en FichaCliente tab Resumen (junto a "Tomar pedido"). Abre bottom-sheet con búsqueda de producto, cantidad, motivo (4 pills) y notas. Crea registro en `cambios_mano_mano` con `estado='solicitado'` sin mover stock |
+| CambiosManoMano — tab Solicitudes de campo | Nuevo tab "Solicitudes de campo" con badge de pendientes. Carga `estado='solicitado'`. Botón naranja "Procesar" por fila abre `ProcesarSolicitud`: muestra datos del vendedor en modo lectura; el almacén elige despachador, almacén de origen y destino; al confirmar ejecuta movimiento de stock completo y actualiza `estado='ejecutado'`. Tab "Cambios registrados" ya solo muestra `estado='ejecutado'` |
+
 ### Supabase — cambios aplicados en sesión 2026-05-28
 ```sql
 -- lote_consumos: permitir lote_id NULL (consumos planificados al crear la orden, antes del cierre)
 ALTER TABLE lote_consumos ALTER COLUMN lote_id DROP NOT NULL;
+```
+
+### Supabase — cambios aplicados en sesión 2026-05-29/30
+```sql
+-- Contactos en clientes
+ALTER TABLE clientes ADD COLUMN IF NOT EXISTS contacto_comercial text;
+ALTER TABLE clientes ADD COLUMN IF NOT EXISTS email_comercial text;
+ALTER TABLE clientes ADD COLUMN IF NOT EXISTS telefono_comercial text;
+ALTER TABLE clientes ADD COLUMN IF NOT EXISTS contacto_administrativo text;
+ALTER TABLE clientes ADD COLUMN IF NOT EXISTS email_administrativo text;
+ALTER TABLE clientes ADD COLUMN IF NOT EXISTS telefono_administrativo text;
+
+-- Cuentas bancarias de proveedores (nueva tabla)
+CREATE TABLE IF NOT EXISTS cuentas_proveedor (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  empresa_id uuid REFERENCES empresas(id),
+  proveedor_id uuid REFERENCES proveedores(id) ON DELETE CASCADE,
+  banco text NOT NULL,
+  tipo_cuenta text,  -- 'corriente' | 'ahorro' | 'pago_movil'
+  numero_cuenta text,
+  titular text,
+  rif_titular text,
+  es_predeterminada boolean DEFAULT false,
+  created_at timestamptz DEFAULT now()
+);
+ALTER TABLE cuentas_proveedor ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "empresa propia" ON cuentas_proveedor
+  USING (empresa_id = get_empresa_id());
+
+-- Cambios mano a mano: flujo solicitud desde campo
+ALTER TABLE cambios_mano_mano ADD COLUMN IF NOT EXISTS estado text DEFAULT 'ejecutado'
+  CHECK (estado IN ('solicitado', 'ejecutado'));
+ALTER TABLE cambios_mano_mano ALTER COLUMN almacen_id DROP NOT NULL;
+ALTER TABLE cambios_mano_mano ALTER COLUMN despachador_id DROP NOT NULL;
 ```
 
 ### Supabase — cambios aplicados en sesión 2026-05-26
