@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from 'react'
+import { createContext, useContext, useEffect, useState, useMemo } from 'react'
 import { supabase } from '../lib/supabaseClient'
 
 const AuthContext = createContext({})
@@ -13,9 +13,19 @@ const TODOS_LOS_MODULOS = [
 
 export function AuthProvider({ children }) {
     const [user, setUser] = useState(null)
-    const [perfil, setPerfil] = useState(null)
+    const [perfilBase, setPerfilBase] = useState(null)
+    const [empresaActiva, setEmpresaActiva] = useState(null) // { id, nombre, ... } | null — solo superadmin
     const [modulosActivos, setModulosActivos] = useState(null) // null = cargando
     const [loading, setLoading] = useState(true)
+
+    // Para superadmin: sobreescribe empresa_id y empresas con la empresa seleccionada
+    const perfil = useMemo(() => {
+        if (!perfilBase) return null
+        if (perfilBase.rol === 'superadmin' && empresaActiva) {
+            return { ...perfilBase, empresa_id: empresaActiva.id, empresas: empresaActiva }
+        }
+        return perfilBase
+    }, [perfilBase, empresaActiva])
 
     // Suscripción a cambios de auth
     useEffect(() => {
@@ -29,7 +39,7 @@ export function AuthProvider({ children }) {
             async (_event, session) => {
                 setUser(session?.user ?? null)
                 if (session?.user) cargarPerfil(session.user.id)
-                else { setPerfil(null); setModulosActivos(null); setLoading(false) }
+                else { setPerfilBase(null); setEmpresaActiva(null); setModulosActivos(null); setLoading(false) }
             }
         )
         return () => subscription.unsubscribe()
@@ -85,7 +95,7 @@ export function AuthProvider({ children }) {
             return
         }
 
-        setPerfil(data)
+        setPerfilBase(data)
 
         if (data?.rol === 'superadmin') {
             setModulosActivos(TODOS_LOS_MODULOS)
@@ -106,7 +116,7 @@ export function AuthProvider({ children }) {
 
     async function recargarModulos() {
         if (!user) return
-        if (perfil?.rol === 'superadmin') {
+        if (perfilBase?.rol === 'superadmin') {
             setModulosActivos(TODOS_LOS_MODULOS)
             return
         }
@@ -114,7 +124,7 @@ export function AuthProvider({ children }) {
             .from('usuario_modulos')
             .select('modulo_id')
             .eq('usuario_id', user.id)
-            .eq('empresa_id', perfil.empresa_id)
+            .eq('empresa_id', perfilBase.empresa_id)
             .eq('activo', true)
         setModulosActivos(mods ? mods.map(m => m.modulo_id) : [])
     }
@@ -133,11 +143,12 @@ export function AuthProvider({ children }) {
 
     async function logout() {
         localStorage.removeItem(SESSION_KEY)
+        setEmpresaActiva(null)
         await supabase.auth.signOut()
     }
 
     return (
-        <AuthContext.Provider value={{ user, perfil, modulosActivos, loading, login, logout, recargarModulos }}>
+        <AuthContext.Provider value={{ user, perfil, modulosActivos, loading, login, logout, recargarModulos, empresaActiva, setEmpresaActiva }}>
             {children}
         </AuthContext.Provider>
     )

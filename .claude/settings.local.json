@@ -41,7 +41,12 @@
       "Bash(sed -n '1185,1275p' Ventas.jsx)",
       "Bash(sed -n '1,20p' Productos.jsx)",
       "Bash(sed -n '85,105p' Productos.jsx)",
-      "Bash(sed -n '140,170p' Productos.jsx)"
+      "Bash(sed -n '140,170p' Productos.jsx)",
+      "Bash(findstr /R \"\\\\.select.*aplica_iva\\\\|from.*productos_terminados\\\\|from.*materias_primas\\\\|from.*materiales_empaque\\\\|from.*consumibles\" *.jsx)",
+      "Bash(Get-ChildItem \"NuevoPedido_old.jsx\" -ErrorAction SilentlyContinue)",
+      "Bash(npx vite *)",
+      "Bash(python *)",
+      "Bash(grep -v \"^\\\\s*//\")"
     ]
   }
 }

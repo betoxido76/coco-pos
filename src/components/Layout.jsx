@@ -5,9 +5,9 @@ import {
     LayoutDashboard, Package, ShoppingCart,
     TrendingDown, CreditCard, LogOut, Menu, X, Truck, FolderTree,
     ClipboardList, DollarSign, FlaskConical, AlertTriangle, ArrowLeftRight,
-    User, Tag, BarChart2, Landmark, RefreshCw, PackageCheck
+    User, Tag, BarChart2, Landmark, RefreshCw, PackageCheck, Building2
 } from 'lucide-react'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 const NAV_ITEMS = [
     { key: 'dashboard', to: '/', icon: LayoutDashboard, label: 'Dashboard' },
@@ -30,10 +30,19 @@ const NAV_ITEMS = [
 ]
 
 export default function Layout() {
-    const { perfil, logout, modulosActivos, recargarModulos } = useAuth()
+    const { perfil, logout, modulosActivos, recargarModulos, empresaActiva, setEmpresaActiva } = useAuth()
     const navigate = useNavigate()
     const [open, setOpen] = useState(true)
     const [recargando, setRecargando] = useState(false)
+    const [empresas, setEmpresas] = useState([])
+
+    useEffect(() => {
+        if (perfil?.rol !== 'superadmin') return
+        supabase.from('empresas')
+            .select('id, nombre, rif, logo_url, activo, perfil_negocio, aprobacion_pedido, flujo_ventas')
+            .order('nombre')
+            .then(({ data }) => { if (data) setEmpresas(data) })
+    }, [perfil?.rol])
 
     async function handleRecargar() {
         setRecargando(true)
@@ -96,6 +105,54 @@ export default function Layout() {
                     </button>
                 </div>
 
+                {/* Selector de empresa — solo superadmin */}
+                {perfil?.rol === 'superadmin' && (
+                    <div style={{
+                        padding: open ? '10px 12px' : '10px 8px',
+                        borderBottom: '1px solid #fde68a',
+                        backgroundColor: empresaActiva ? '#fffbeb' : '#fefce8',
+                    }}>
+                        {open ? (
+                            <>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginBottom: '5px' }}>
+                                    <Building2 size={11} style={{ color: '#b45309' }} />
+                                    <span style={{ fontSize: '10px', fontWeight: 600, color: '#b45309', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                        Empresa activa
+                                    </span>
+                                </div>
+                                <select
+                                    value={empresaActiva?.id || ''}
+                                    onChange={e => {
+                                        if (!e.target.value) { setEmpresaActiva(null); return }
+                                        const emp = empresas.find(x => x.id === e.target.value)
+                                        if (emp) setEmpresaActiva(emp)
+                                    }}
+                                    style={{
+                                        width: '100%', padding: '5px 8px',
+                                        border: '1px solid #fcd34d', borderRadius: '6px',
+                                        fontSize: '12px', color: '#374151', backgroundColor: '#fff', cursor: 'pointer',
+                                    }}
+                                >
+                                    <option value="">Mi empresa (demo)</option>
+                                    {empresas.map(emp => (
+                                        <option key={emp.id} value={emp.id}>{emp.nombre}</option>
+                                    ))}
+                                </select>
+                                {empresaActiva && (
+                                    <div style={{ fontSize: '10px', color: '#92400e', marginTop: '4px' }}>
+                                        Viendo datos de este cliente
+                                    </div>
+                                )}
+                            </>
+                        ) : (
+                            <div title={empresaActiva ? `Empresa: ${empresaActiva.nombre}` : 'Mi empresa (demo)'}
+                                style={{ display: 'flex', justifyContent: 'center' }}>
+                                <Building2 size={16} style={{ color: empresaActiva ? '#d97706' : '#b45309' }} />
+                            </div>
+                        )}
+                    </div>
+                )}
+
                 {/* Nav */}
                 <nav style={{ flex: 1, padding: '12px 8px', overflowY: 'auto' }}>
                     {modulosActivos === null ? (
@@ -151,7 +208,7 @@ export default function Layout() {
             </aside>
 
             <main style={{ flex: 1, minWidth: 0, overflowY: 'auto' }}>
-                <Outlet />
+                <Outlet key={empresaActiva?.id || 'own'} />
             </main>
 
             {/* Modal cambiar contraseña */}
