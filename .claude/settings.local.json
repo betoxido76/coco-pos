@@ -46,7 +46,11 @@
       "Bash(Get-ChildItem \"NuevoPedido_old.jsx\" -ErrorAction SilentlyContinue)",
       "Bash(npx vite *)",
       "Bash(python *)",
-      "Bash(grep -v \"^\\\\s*//\")"
+      "Bash(grep -v \"^\\\\s*//\")",
+      "Bash(New-Item -ItemType Directory -Force \"C:\\\\Users\\\\Alberto Teixeira\\\\Documents\\\\Python\\\\Proyectos\\\\pos-manufactura\\\\docs\")",
+      "Bash(Out-Null)",
+      "Bash(Write-Output \"OK\")",
+      "PowerShell(New-Item *)"
     ]
   }
 }
