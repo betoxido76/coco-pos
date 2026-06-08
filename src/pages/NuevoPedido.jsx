@@ -294,16 +294,20 @@ export default function NuevoPedido({ onCancelar }) {
 // ══════════════════════════════════════════════════════════════
 // PANTALLA 1: HOME DEL VENDEDOR
 // ══════════════════════════════════════════════════════════════
+const PAGE_SIZE_RECIENTES = 10
+
 function HomeVendedor({ onNuevoPedido, onVerClientes, onCancelar, refreshKey }) {
     const { perfil } = useAuth()
     const [stats, setStats] = useState({ pedidosHoy: 0, montoHoy: 0, clientesHoy: 0, visitasHoy: 0 })
     const [pedidosRecientes, setPedidosRecientes] = useState([])
+    const [totalRecientes, setTotalRecientes] = useState(0)
+    const [pagRecientes, setPagRecientes] = useState(1)
     const [loading, setLoading] = useState(true)
 
-    useEffect(() => { cargar() }, [])
-    useEffect(() => { if (refreshKey) cargar() }, [refreshKey])
+    useEffect(() => { cargar(1) }, [])
+    useEffect(() => { if (refreshKey) { setPagRecientes(1); cargar(1) } }, [refreshKey])
 
-    async function cargar() {
+    async function cargar(pag = 1) {
         setLoading(true)
         const { data: { user } } = await supabase.auth.getUser()
         const hoy = new Date().toISOString().split('T')[0]
@@ -316,13 +320,13 @@ function HomeVendedor({ onNuevoPedido, onVerClientes, onCancelar, refreshKey }) 
             .gte('fecha_pedido', hoy + 'T00:00:00')
             .order('fecha_pedido', { ascending: false })
 
-        const { data: recientes } = await supabase
+        const { data: recientes, count } = await supabase
             .from('pedidos')
-            .select('id, numero_pedido, fecha_pedido, estado, clientes(nombre), pedido_items(subtotal, descuento_item, cantidad)')
+            .select('id, numero_pedido, fecha_pedido, estado, clientes(nombre), pedido_items(subtotal, descuento_item, cantidad)', { count: 'exact' })
             .eq('empresa_id', perfil.empresa_id)
             .eq('vendedor_id', user.id)
             .order('fecha_pedido', { ascending: false })
-            .limit(5)
+            .range((pag - 1) * PAGE_SIZE_RECIENTES, pag * PAGE_SIZE_RECIENTES - 1)
 
         const { data: visitasHoyData } = await supabase
             .from('visitas_comerciales')
@@ -339,8 +343,21 @@ function HomeVendedor({ onNuevoPedido, onVerClientes, onCancelar, refreshKey }) 
             const clientesUnicos = new Set(pedidosHoy.map(p => p.cliente_id)).size
             setStats({ pedidosHoy: pedidosHoy.length, montoHoy, clientesHoy: clientesUnicos, visitasHoy: visitasHoyData?.length || 0 })
         }
-        if (recientes) setPedidosRecientes(recientes)
+        if (recientes) { setPedidosRecientes(recientes); setTotalRecientes(count || 0) }
         setLoading(false)
+    }
+
+    async function cambiarPagRecientes(nueva) {
+        const { data: { user } } = await supabase.auth.getUser()
+        const { data: recientes, count } = await supabase
+            .from('pedidos')
+            .select('id, numero_pedido, fecha_pedido, estado, clientes(nombre), pedido_items(subtotal, descuento_item, cantidad)', { count: 'exact' })
+            .eq('empresa_id', perfil.empresa_id)
+            .eq('vendedor_id', user.id)
+            .order('fecha_pedido', { ascending: false })
+            .range((nueva - 1) * PAGE_SIZE_RECIENTES, nueva * PAGE_SIZE_RECIENTES - 1)
+        if (recientes) { setPedidosRecientes(recientes); setTotalRecientes(count || 0) }
+        setPagRecientes(nueva)
     }
 
     const hora = new Date().getHours()
@@ -434,6 +451,25 @@ function HomeVendedor({ onNuevoPedido, onVerClientes, onCancelar, refreshKey }) 
                         )
                     })}
                 </div>
+                {totalRecientes > PAGE_SIZE_RECIENTES && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '10px', padding: '0 4px' }}>
+                        <button
+                            onClick={() => cambiarPagRecientes(pagRecientes - 1)}
+                            disabled={pagRecientes === 1}
+                            style={{ background: 'none', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '6px 12px', fontSize: '13px', cursor: pagRecientes === 1 ? 'default' : 'pointer', color: pagRecientes === 1 ? '#d1d5db' : '#374151' }}>
+                            ← Anterior
+                        </button>
+                        <span style={{ fontSize: '12px', color: '#6b7280' }}>
+                            Pág {pagRecientes} de {Math.ceil(totalRecientes / PAGE_SIZE_RECIENTES)}
+                        </span>
+                        <button
+                            onClick={() => cambiarPagRecientes(pagRecientes + 1)}
+                            disabled={pagRecientes >= Math.ceil(totalRecientes / PAGE_SIZE_RECIENTES)}
+                            style={{ background: 'none', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '6px 12px', fontSize: '13px', cursor: pagRecientes >= Math.ceil(totalRecientes / PAGE_SIZE_RECIENTES) ? 'default' : 'pointer', color: pagRecientes >= Math.ceil(totalRecientes / PAGE_SIZE_RECIENTES) ? '#d1d5db' : '#374151' }}>
+                            Siguiente →
+                        </button>
+                    </div>
+                )}
             </div>
         </div>
     )
