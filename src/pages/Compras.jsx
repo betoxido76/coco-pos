@@ -282,8 +282,8 @@ function TablaRecepciones({ recepciones, loading, onVer }) {
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
                             <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                {['Doc', 'Proveedor', 'Fecha', 'OC Vinculada', 'Total', 'Cobro', ''].map((h, i) => (
-                                    <th key={i} style={{ padding: '10px 16px', textAlign: i === 4 ? 'right' : 'left', fontSize: '12px', fontWeight: 500, color: '#6b7280' }}>{h}</th>
+                                {['Doc', 'Doc. Prov.', 'Proveedor', 'Fecha', 'OC Vinculada', 'Total', 'Cobro', ''].map((h, i) => (
+                                    <th key={i} style={{ padding: '10px 16px', textAlign: i === 5 ? 'right' : 'left', fontSize: '12px', fontWeight: 500, color: '#6b7280' }}>{h}</th>
                                 ))}
                             </tr>
                         </thead>
@@ -293,6 +293,7 @@ function TablaRecepciones({ recepciones, loading, onVer }) {
                                     onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
                                     onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
                                     <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>{r.numero_doc || 'S/N'}</td>
+                                    <td style={{ padding: '12px 16px', fontSize: '12px', fontFamily: 'monospace', color: '#6b7280' }}>{r.nro_doc_proveedor || '—'}</td>
                                     <td style={{ padding: '12px 16px', fontSize: '13px', color: '#374151' }}>{r.proveedores?.nombre || '—'}</td>
                                     <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{new Date(r.fecha_compra).toLocaleDateString('es-VE')}</td>
                                     <td style={{ padding: '12px 16px', fontSize: '12px', color: '#6b7280' }}>{r.ordenes_compra?.numero_oc || '—'}</td>
