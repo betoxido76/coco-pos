@@ -422,6 +422,7 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
                 fecha_vencimiento_pago: fechaVencimiento,
                 direccion_entrega_id: pedido.direccion_entrega_id || null,
                 direccion_entrega_texto: pedido.direccion_entrega_texto || null,
+                direccion_entrega_nombre: pedido.direccion_entrega_nombre || null,
             })
             .select().single()
 
@@ -531,9 +532,13 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
             {/* Dirección de entrega */}
             <div style={{ backgroundColor: '#f9fafb', borderRadius: '10px', border: '1px solid #e5e7eb', padding: '12px 16px', marginBottom: '20px' }}>
                 <p style={{ fontSize: '11px', color: '#9ca3af', margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Dirección de entrega</p>
-                <p style={{ fontSize: '14px', fontWeight: 500, color: '#1f2937', margin: 0 }}>
-                    {pedido.direccion_entrega_texto || pedido.clientes?.direccion_fiscal || '—'}
-                </p>
+                {pedido.direccion_entrega_nombre
+                    ? <>
+                        <p style={{ fontSize: '14px', fontWeight: 700, color: '#1f2937', margin: '0 0 2px' }}>{pedido.direccion_entrega_nombre}</p>
+                        <p style={{ fontSize: '14px', fontWeight: 400, color: '#1f2937', margin: 0 }}>{pedido.direccion_entrega_texto}</p>
+                      </>
+                    : <p style={{ fontSize: '14px', fontWeight: 500, color: '#1f2937', margin: 0 }}>{pedido.direccion_entrega_texto || pedido.clientes?.direccion_fiscal || '—'}</p>
+                }
             </div>
 
             {pedido.notas && (
@@ -1131,9 +1136,8 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                     oc_cliente: ocCliente.trim() || null,
                     fecha_vencimiento_pago: fechaVencimiento,
                     direccion_entrega_id: direccionId || null,
-                    direccion_entrega_texto: direccionId
-                        ? direcciones.find(d => d.id === direccionId)?.direccion || null
-                        : null,
+                    direccion_entrega_texto: direccionId ? direcciones.find(d => d.id === direccionId)?.direccion || null : null,
+                    direccion_entrega_nombre: direccionId ? direcciones.find(d => d.id === direccionId)?.nombre || null : null,
                 })
                 .select()
                 .single()
@@ -1239,6 +1243,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                 oc_cliente: ocCliente.trim() || null,
                 direccion_entrega_id: direccionId || null,
                 direccion_entrega_texto: direccionId ? direcciones.find(d => d.id === direccionId)?.direccion || null : null,
+                direccion_entrega_nombre: direccionId ? direcciones.find(d => d.id === direccionId)?.nombre || null : null,
             }).select().single()
 
             if (errPedido) { setError('Error: ' + errPedido.message); setGuardando(false); return }
@@ -2868,9 +2873,13 @@ function Factura({ venta, onVolver, onDevolucionCreada }) {
                     </div>
                     <div style={{ backgroundColor: '#f9fafb', borderRadius: '8px', padding: '12px 16px' }}>
                         <div style={{ fontSize: '11px', color: '#9ca3af', marginBottom: '2px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Dirección de entrega</div>
-                        <div style={{ fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>
-                            {venta.direccion_entrega_texto || venta.clientes?.direccion_fiscal || '—'}
-                        </div>
+                        {venta.direccion_entrega_nombre
+                            ? <>
+                                <div style={{ fontSize: '13px', fontWeight: 700, color: '#1f2937' }}>{venta.direccion_entrega_nombre}</div>
+                                <div style={{ fontSize: '13px', fontWeight: 400, color: '#1f2937' }}>{venta.direccion_entrega_texto}</div>
+                              </>
+                            : <div style={{ fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>{venta.direccion_entrega_texto || venta.clientes?.direccion_fiscal || '—'}</div>
+                        }
                     </div>
                 </div>
 

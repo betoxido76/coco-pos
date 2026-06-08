@@ -196,7 +196,7 @@ export default function NuevoPedido({ onCancelar }) {
                         origen: 'campo',
                         fecha_pedido: p.fecha_pedido, fecha_entrega: p.fecha_entrega,
                         notas: p.notas, numero_pedido: num || p.tempId,
-                        direccion_entrega_id: p.direccion_entrega_id, direccion_entrega_texto: p.direccion_entrega_texto,
+                        direccion_entrega_id: p.direccion_entrega_id, direccion_entrega_texto: p.direccion_entrega_texto, direccion_entrega_nombre: p.direccion_entrega_nombre,
                     }).select().single()
                     if (!error && pedido) {
                         await supabase.from('pedido_items').insert(
@@ -1685,6 +1685,7 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
                 notas: notas.trim() || null,
                 direccion_entrega_id: direccionId || null,
                 direccion_entrega_texto: direccionId ? direcciones.find(d => d.id === direccionId)?.direccion || null : null,
+                direccion_entrega_nombre: direccionId ? direcciones.find(d => d.id === direccionId)?.nombre || null : null,
                 items: items.map(i => ({
                     producto_id: i.id, nombre_producto: i.nombre, cantidad: i.cantidad,
                     precio_unitario: (i.aplica_iva ?? true) ? i.precio / 1.16 : i.precio, descuento_item: Number(i.descuento_item) || 0,
@@ -1718,6 +1719,7 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
             numero_pedido: numero,
             direccion_entrega_id: direccionId || null,
             direccion_entrega_texto: direccionId ? direcciones.find(d => d.id === direccionId)?.direccion || null : null,
+            direccion_entrega_nombre: direccionId ? direcciones.find(d => d.id === direccionId)?.nombre || null : null,
         }).select().single()
 
         if (errPedido) { setError('Error: ' + errPedido.message); setGuardando(false); return }

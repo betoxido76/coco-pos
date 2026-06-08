@@ -588,9 +588,13 @@ function VerPedido({ pedido, onVolver }) {
             {/* Dirección de entrega */}
             <div style={{ backgroundColor: '#f9fafb', borderRadius: '10px', border: '1px solid #e5e7eb', padding: '12px 16px', marginBottom: '20px' }}>
                 <p style={{ fontSize: '11px', color: '#9ca3af', margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Dirección de entrega</p>
-                <p style={{ fontSize: '14px', fontWeight: 500, color: '#1f2937', margin: 0 }}>
-                    {pedido.direccion_entrega_texto || pedido.clientes?.direccion_fiscal || '—'}
-                </p>
+                {pedido.direccion_entrega_nombre
+                    ? <>
+                        <p style={{ fontSize: '14px', fontWeight: 700, color: '#1f2937', margin: '0 0 2px' }}>{pedido.direccion_entrega_nombre}</p>
+                        <p style={{ fontSize: '14px', fontWeight: 400, color: '#1f2937', margin: 0 }}>{pedido.direccion_entrega_texto}</p>
+                      </>
+                    : <p style={{ fontSize: '14px', fontWeight: 500, color: '#1f2937', margin: 0 }}>{pedido.direccion_entrega_texto || pedido.clientes?.direccion_fiscal || '—'}</p>
+                }
             </div>
 
             {/* Motivo anulación */}
