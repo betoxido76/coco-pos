@@ -266,8 +266,8 @@ export default function CuentasPagar() {
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
                             <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                {['', 'Documento', 'Proveedor', 'Vencimiento', 'Total', 'Pagado', 'Saldo', 'Estado', 'Accion'].map((h, i) => (
-                                    <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: [4, 5, 6].includes(i) ? 'right' : 'left', width: i === 0 ? '28px' : undefined }}>{h}</th>
+                                {['', 'Documento', 'Doc. Prov.', 'Proveedor', 'Vencimiento', 'Total', 'Pagado', 'Saldo', 'Estado', 'Accion'].map((h, i) => (
+                                    <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: [5, 6, 7].includes(i) ? 'right' : 'left', width: i === 0 ? '28px' : undefined }}>{h}</th>
                                 ))}
                             </tr>
                         </thead>
@@ -285,6 +285,7 @@ export default function CuentasPagar() {
                                             )}
                                         </td>
                                         <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>{c.numero_doc}</td>
+                                        <td style={{ padding: '12px 16px', fontSize: '12px', fontFamily: 'monospace', color: '#6b7280' }}>{c.nro_doc_proveedor || '—'}</td>
                                         <td style={{ padding: '12px 16px', fontSize: '13px', color: '#374151' }}>{c.proveedores?.nombre || '—'}</td>
                                         <td style={{ padding: '12px 16px', fontSize: '13px' }}>
                                             <div>{c.fecha_vencimiento_pago ? new Date(c.fecha_vencimiento_pago).toLocaleDateString('es-VE') : '—'}</div>
