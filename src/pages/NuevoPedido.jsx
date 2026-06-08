@@ -597,6 +597,7 @@ const RESULTADOS_VISITA = {
 // PANTALLA 3: FICHA DEL CLIENTE
 // ══════════════════════════════════════════════════════════════
 const VISITAS_PAGE = 10
+const PEDIDOS_PAGE = 10
 
 function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
     const { perfil } = useAuth()
@@ -609,6 +610,8 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
     const [pedidoDetalle, setPedidoDetalle] = useState(null)
     const [paginaVisitas, setPaginaVisitas] = useState(0)
     const [totalVisitas, setTotalVisitas] = useState(0)
+    const [pagPedidos, setPagPedidos] = useState(0)
+    const [totalPedidos, setTotalPedidos] = useState(0)
 
     const [modalCambio, setModalCambio] = useState(false)
     const [productosCambio, setProductosCambio] = useState([])
@@ -627,7 +630,7 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
         const [
             { data: ventas },
             { data: cobrosData },
-            { data: pedidos },
+            { data: pedidos, count: pedidosTotal },
             { data: config },
             { data: visitasData },
             { count: visitasTotal },
@@ -648,11 +651,11 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
                 .limit(5),
 
             supabase.from('pedidos')
-                .select('id, numero_pedido, fecha_pedido, estado, pedido_items(producto_id, nombre_producto, cantidad, precio_unitario, descuento_item, subtotal)')
+                .select('id, numero_pedido, fecha_pedido, estado, pedido_items(producto_id, nombre_producto, cantidad, precio_unitario, descuento_item, subtotal)', { count: 'exact' })
                 .eq('cliente_id', cliente.id)
                 .eq('empresa_id', perfil.empresa_id)
                 .order('fecha_pedido', { ascending: false })
-                .limit(10),
+                .range(0, PEDIDOS_PAGE - 1),
 
             supabase.from('configuracion')
                 .select('tasa_bcv')
@@ -681,6 +684,8 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
 
         setPaginaVisitas(0)
         setTotalVisitas(visitasTotal || 0)
+        setPagPedidos(0)
+        setTotalPedidos(pedidosTotal || 0)
 
         const ventasConSaldo = (ventas || []).map(v => {
             const pagadoUsd = Number(v.pago_usd || 0)
@@ -708,6 +713,16 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
             .order('fecha_visita', { ascending: false })
             .range(pag * VISITAS_PAGE, (pag + 1) * VISITAS_PAGE - 1)
         if (data) setDatos(prev => ({ ...prev, visitas: data }))
+    }
+
+    async function cargarPedidos(pag) {
+        const { data, count } = await supabase.from('pedidos')
+            .select('id, numero_pedido, fecha_pedido, estado, pedido_items(producto_id, nombre_producto, cantidad, precio_unitario, descuento_item, subtotal)', { count: 'exact' })
+            .eq('cliente_id', cliente.id)
+            .eq('empresa_id', perfil.empresa_id)
+            .order('fecha_pedido', { ascending: false })
+            .range(pag * PEDIDOS_PAGE, (pag + 1) * PEDIDOS_PAGE - 1)
+        if (data) { setDatos(prev => ({ ...prev, pedidos: data })); setTotalPedidos(count || 0) }
     }
 
     async function guardarVisita() {
@@ -1049,6 +1064,7 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
                                     <p style={{ fontSize: '14px', color: '#9ca3af', margin: 0 }}>Sin pedidos registrados</p>
                                 </div>
                             ) : (
+                                <>
                                 <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden', marginBottom: '12px' }}>
                                     {datos.pedidos.map(p => {
                                         const total = (p.pedido_items || []).reduce((s, i) => s + Number(i.subtotal || 0), 0)
@@ -1079,6 +1095,26 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
                                         )
                                     })}
                                 </div>
+                                {totalPedidos > PEDIDOS_PAGE && (
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', padding: '0 4px' }}>
+                                        <button
+                                            onClick={() => { const p = pagPedidos - 1; setPagPedidos(p); cargarPedidos(p) }}
+                                            disabled={pagPedidos === 0}
+                                            style={{ background: 'none', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '6px 12px', fontSize: '13px', cursor: pagPedidos === 0 ? 'default' : 'pointer', color: pagPedidos === 0 ? '#d1d5db' : '#374151' }}>
+                                            ← Anterior
+                                        </button>
+                                        <span style={{ fontSize: '12px', color: '#6b7280' }}>
+                                            Pág {pagPedidos + 1} de {Math.ceil(totalPedidos / PEDIDOS_PAGE)}
+                                        </span>
+                                        <button
+                                            onClick={() => { const p = pagPedidos + 1; setPagPedidos(p); cargarPedidos(p) }}
+                                            disabled={pagPedidos >= Math.ceil(totalPedidos / PEDIDOS_PAGE) - 1}
+                                            style={{ background: 'none', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '6px 12px', fontSize: '13px', cursor: pagPedidos >= Math.ceil(totalPedidos / PEDIDOS_PAGE) - 1 ? 'default' : 'pointer', color: pagPedidos >= Math.ceil(totalPedidos / PEDIDOS_PAGE) - 1 ? '#d1d5db' : '#374151' }}>
+                                            Siguiente →
+                                        </button>
+                                    </div>
+                                )}
+                                </>
                             )}
                             <button onClick={() => onNuevoPedido()} style={s.btnPrimary}>
                                 <Plus size={18} /> Tomar nuevo pedido
