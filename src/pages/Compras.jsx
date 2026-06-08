@@ -1179,7 +1179,7 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
             : proveedorLibreId || null
 
         const payload = {
-            proveedor_id: proveedorId, usuario_id: user.id, numero_doc: nroDocProveedor.trim() || numero,
+            proveedor_id: proveedorId, usuario_id: user.id, numero_doc: numero, nro_doc_proveedor: nroDocProveedor.trim() || null,
             subtotal, total, descuento_global: descGlobal || 0, estado: 'recibida', fecha_compra: new Date().toISOString(),
             orden_compra_id: modo === 'contra_oc' ? ocSeleccionada : null,
             ...datosPago
@@ -2426,6 +2426,9 @@ function DetalleRecepcion({ recepcion, onVolver }) {
                     <div>
                         <div style={{ fontSize: '16px', fontWeight: 700, color: '#1f2937' }}>Recepción</div>
                         <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>{recepcion.numero_doc}</div>
+                        {recepcion.nro_doc_proveedor && (
+                            <div style={{ fontSize: '12px', color: '#9ca3af', marginTop: '2px' }}>Doc. proveedor: {recepcion.nro_doc_proveedor}</div>
+                        )}
                     </div>
                     <div style={{ textAlign: 'right' }}>
                         <div style={{ fontSize: '12px', color: '#6b7280' }}>{new Date(recepcion.fecha_compra).toLocaleDateString('es-VE')}</div>
