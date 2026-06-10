@@ -69,13 +69,14 @@ export default function Pedidos() {
     }, [perfil?.empresa_id])
 
     useEffect(() => {
+        if (!perfil?.empresa_id) return
         supabase.from('usuarios')
             .select('id, nombre')
             .eq('empresa_id', perfil.empresa_id)
             .eq('rol', 'vendedor')
             .order('nombre')
             .then(({ data }) => setVendedores(data || []))
-    }, [])
+    }, [perfil?.empresa_id])
 
     async function cargarConteos() {
         const eid = perfil.empresa_id
