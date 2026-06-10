@@ -70,12 +70,19 @@ export default function Pedidos() {
 
     useEffect(() => {
         if (!perfil?.empresa_id) return
-        supabase.from('usuarios')
-            .select('id, nombre')
+        supabase.from('pedidos')
+            .select('vendedor_id, usuarios(id, nombre)')
             .eq('empresa_id', perfil.empresa_id)
-            .eq('rol', 'vendedor')
-            .order('nombre')
-            .then(({ data }) => setVendedores(data || []))
+            .not('vendedor_id', 'is', null)
+            .then(({ data }) => {
+                if (!data) return
+                const seen = new Set()
+                const unicos = data
+                    .filter(p => p.usuarios && !seen.has(p.vendedor_id) && seen.add(p.vendedor_id))
+                    .map(p => ({ id: p.vendedor_id, nombre: p.usuarios.nombre }))
+                    .sort((a, b) => a.nombre.localeCompare(b.nombre))
+                setVendedores(unicos)
+            })
     }, [perfil?.empresa_id])
 
     async function cargarConteos() {
