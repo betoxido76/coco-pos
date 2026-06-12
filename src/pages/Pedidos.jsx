@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
-import { Check, X, FileText, ChevronRight, Clock, Search, Bell, Ban } from 'lucide-react'
+import { Check, X, FileText, ChevronRight, Clock, Search, Bell, Ban, Pencil } from 'lucide-react'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 
@@ -378,6 +378,11 @@ function DetallePedido({ pedido, onVolver }) {
     const [motivoRechazo, setMotivoRechazo] = useState('')
     const [error, setError] = useState('')
     const [exito, setExito] = useState('')
+    const [editando, setEditando] = useState(false)
+    const [itemsEdit, setItemsEdit] = useState([])
+    const [descGlobalEdit, setDescGlobalEdit] = useState('')
+    const [descGlobalActual, setDescGlobalActual] = useState(Number(pedido.descuento_global || 0))
+    const [guardandoEdit, setGuardandoEdit] = useState(false)
 
     useEffect(() => {
         supabase.from('pedido_items')
@@ -386,7 +391,7 @@ function DetallePedido({ pedido, onVolver }) {
             .then(({ data }) => { if (data) setItems(data); setLoading(false) })
     }, [pedido.id])
 
-    const descGlobal = Number(pedido.descuento_global || 0)
+    const descGlobal = descGlobalActual
     const esAlistado = ['alistado', 'facturado', 'despachado'].includes(pedido.estado)
     // NuevoPedido guarda unidad_venta='2'; Ventas guarda el nombre (ej: 'caja').
     // Ambos casos indican unidad secundaria si coincide con unidad_venta_2 del producto.
@@ -454,6 +459,40 @@ function DetallePedido({ pedido, onVolver }) {
         if (err) { setError('Error: ' + err.message); return }
         setExito('Pedido rechazado')
         setTimeout(() => onVolver(), 1500)
+    }
+
+    function iniciarEdicion() {
+        setItemsEdit(items.map(i => ({
+            ...i,
+            _precio: String(Number(i.precio_unitario).toFixed(4)),
+            _descuento: String(Number(i.descuento_item || 0)),
+        })))
+        setDescGlobalEdit(String(descGlobalActual))
+        setEditando(true)
+        setExito('')
+        setError('')
+    }
+
+    async function guardarEdicion() {
+        setGuardandoEdit(true); setError('')
+        for (const item of itemsEdit) {
+            const { error: err } = await supabase.from('pedido_items').update({
+                precio_unitario: Math.max(0, Number(item._precio) || 0),
+                descuento_item: Math.min(100, Math.max(0, Number(item._descuento) || 0)),
+            }).eq('id', item.id)
+            if (err) { setError('Error al guardar: ' + err.message); setGuardandoEdit(false); return }
+        }
+        const nuevoDescGlobal = Math.min(100, Math.max(0, Number(descGlobalEdit) || 0))
+        await supabase.from('pedidos').update({ descuento_global: nuevoDescGlobal }).eq('id', pedido.id)
+        const { data } = await supabase.from('pedido_items')
+            .select('*, productos_terminados(nombre, sku, aplica_iva, factor_conversion_2, unidad_medida, unidad_venta_2)')
+            .eq('pedido_id', pedido.id)
+        if (data) setItems(data)
+        setDescGlobalActual(nuevoDescGlobal)
+        setGuardandoEdit(false)
+        setEditando(false)
+        setExito('Pedido actualizado correctamente')
+        setTimeout(() => setExito(''), 3000)
     }
 
     async function convertirEnFactura() {
@@ -635,56 +674,113 @@ function DetallePedido({ pedido, onVolver }) {
                 </div>
             )}
 
-            {/* Items */}
-            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden', marginBottom: '20px' }}>
-                {loading ? (
-                    <div style={{ padding: '24px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando items...</div>
-                ) : (
+            {/* Items — modo edición */}
+            {editando && (
+                <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '2px solid #d97706', overflow: 'hidden', marginBottom: '20px' }}>
+                    <div style={{ backgroundColor: '#fffbeb', padding: '10px 16px', borderBottom: '1px solid #fde68a', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <Pencil size={14} color="#d97706" />
+                        <span style={{ fontSize: '13px', fontWeight: 600, color: '#92400e' }}>Modo edición — modifica precios y descuentos, luego guarda</span>
+                    </div>
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
-                            <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                {['Producto', esAlistado ? 'Cant. alistada' : 'Cant. pedida', tieneUM2 ? 'Cant. (2)' : null, 'Precio lista', 'Desc. item', 'Subtotal'].filter(Boolean).map((h, i) => (
-                                    <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: i === 0 ? 'left' : 'right' }}>{h}</th>
+                            <tr style={{ backgroundColor: '#fffbeb', borderBottom: '1px solid #fde68a' }}>
+                                {['Producto', 'Cantidad', 'Precio unit.', 'Desc. (%)', 'Subtotal'].map((h, i) => (
+                                    <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#92400e', textAlign: i === 0 ? 'left' : 'right' }}>{h}</th>
                                 ))}
                             </tr>
                         </thead>
                         <tbody>
-                            {items.map((item, idx) => {
-                                const precioConDesc = Number(item.precio_unitario) * (1 - Number(item.descuento_item || 0) / 100)
-                                const cantUsada = cantFn(item)
-                                const cancelado = esAlistado && Number(item.cantidad_alistada) === 0
-                                const subtotal = cantUsada * precioConDesc
+                            {itemsEdit.map((item, idx) => {
+                                const precio = Math.max(0, Number(item._precio) || 0)
+                                const desc = Math.min(100, Math.max(0, Number(item._descuento) || 0))
+                                const cant = Number(item.cantidad)
+                                const subtotal = cant * precio * (1 - desc / 100)
                                 return (
-                                    <tr key={idx} style={{ borderBottom: '1px solid #f3f4f6', opacity: cancelado ? 0.5 : 1 }}>
+                                    <tr key={idx} style={{ borderBottom: '1px solid #f3f4f6' }}>
                                         <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1f2937', fontWeight: 500 }}>
                                             {item.nombre_producto || item.productos_terminados?.nombre || '—'}
                                             {item.productos_terminados?.sku && (
                                                 <span style={{ fontSize: '11px', color: '#9ca3af', marginLeft: '6px', fontFamily: 'monospace' }}>{item.productos_terminados.sku}</span>
                                             )}
-                                            {cancelado && <span style={{ fontSize: '11px', color: '#dc2626', marginLeft: '8px', fontWeight: 600 }}>CANCELADO</span>}
                                         </td>
-                                        <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: esAlistado ? 600 : 400, textAlign: 'right', color: cancelado ? '#dc2626' : esAlistado ? '#16a34a' : '#6b7280' }}>
-                                            {cantPrimaria(item).toLocaleString('es-VE')}
+                                        <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{cant}</td>
+                                        <td style={{ padding: '8px 12px', textAlign: 'right' }}>
+                                            <input type="number" min="0" step="0.0001" value={item._precio}
+                                                onChange={e => setItemsEdit(prev => prev.map((it, i) => i === idx ? { ...it, _precio: e.target.value } : it))}
+                                                style={{ width: '110px', padding: '6px 8px', border: '1px solid #d97706', borderRadius: '6px', fontSize: '13px', textAlign: 'right', fontWeight: 600, color: '#1f2937' }} />
                                         </td>
-                                        {tieneUM2 && (
-                                            <td style={{ padding: '12px 16px', fontSize: '13px', textAlign: 'right', color: '#6b7280' }}>
-                                                {(() => { const c2 = cantSecundaria(item); return c2 != null ? c2.toLocaleString('es-VE', { maximumFractionDigits: 2 }) : '—' })()}
-                                            </td>
-                                        )}
-                                        <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{fmt(item.precio_unitario)}</td>
-                                        <td style={{ padding: '12px 16px', fontSize: '13px', textAlign: 'right' }}>
-                                            {Number(item.descuento_item || 0) > 0
-                                                ? <span style={{ color: '#16a34a', fontWeight: 500 }}>-{item.descuento_item}%</span>
-                                                : <span style={{ color: '#9ca3af' }}>—</span>}
+                                        <td style={{ padding: '8px 12px', textAlign: 'right' }}>
+                                            <input type="number" min="0" max="100" step="0.1" value={item._descuento}
+                                                onChange={e => setItemsEdit(prev => prev.map((it, i) => i === idx ? { ...it, _descuento: e.target.value } : it))}
+                                                style={{ width: '70px', padding: '6px 8px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px', textAlign: 'right', color: '#374151' }} />
                                         </td>
-                                        <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{cancelado ? '—' : fmt(subtotal)}</td>
+                                        <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(subtotal)}</td>
                                     </tr>
                                 )
                             })}
                         </tbody>
                     </table>
-                )}
-            </div>
+                    <div style={{ padding: '12px 16px', borderTop: '1px solid #fde68a', backgroundColor: '#fffbeb', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <span style={{ fontSize: '13px', color: '#92400e', fontWeight: 500 }}>Descuento global (%):</span>
+                        <input type="number" min="0" max="100" step="0.1" value={descGlobalEdit}
+                            onChange={e => setDescGlobalEdit(e.target.value)}
+                            style={{ width: '80px', padding: '6px 8px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px', textAlign: 'right' }} />
+                    </div>
+                </div>
+            )}
+
+            {/* Items — modo lectura */}
+            {!editando && (
+                <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden', marginBottom: '20px' }}>
+                    {loading ? (
+                        <div style={{ padding: '24px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando items...</div>
+                    ) : (
+                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                            <thead>
+                                <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                                    {['Producto', esAlistado ? 'Cant. alistada' : 'Cant. pedida', tieneUM2 ? 'Cant. (2)' : null, 'Precio lista', 'Desc. item', 'Subtotal'].filter(Boolean).map((h, i) => (
+                                        <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: i === 0 ? 'left' : 'right' }}>{h}</th>
+                                    ))}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {items.map((item, idx) => {
+                                    const precioConDesc = Number(item.precio_unitario) * (1 - Number(item.descuento_item || 0) / 100)
+                                    const cantUsada = cantFn(item)
+                                    const cancelado = esAlistado && Number(item.cantidad_alistada) === 0
+                                    const subtotal = cantUsada * precioConDesc
+                                    return (
+                                        <tr key={idx} style={{ borderBottom: '1px solid #f3f4f6', opacity: cancelado ? 0.5 : 1 }}>
+                                            <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1f2937', fontWeight: 500 }}>
+                                                {item.nombre_producto || item.productos_terminados?.nombre || '—'}
+                                                {item.productos_terminados?.sku && (
+                                                    <span style={{ fontSize: '11px', color: '#9ca3af', marginLeft: '6px', fontFamily: 'monospace' }}>{item.productos_terminados.sku}</span>
+                                                )}
+                                                {cancelado && <span style={{ fontSize: '11px', color: '#dc2626', marginLeft: '8px', fontWeight: 600 }}>CANCELADO</span>}
+                                            </td>
+                                            <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: esAlistado ? 600 : 400, textAlign: 'right', color: cancelado ? '#dc2626' : esAlistado ? '#16a34a' : '#6b7280' }}>
+                                                {cantPrimaria(item).toLocaleString('es-VE')}
+                                            </td>
+                                            {tieneUM2 && (
+                                                <td style={{ padding: '12px 16px', fontSize: '13px', textAlign: 'right', color: '#6b7280' }}>
+                                                    {(() => { const c2 = cantSecundaria(item); return c2 != null ? c2.toLocaleString('es-VE', { maximumFractionDigits: 2 }) : '—' })()}
+                                                </td>
+                                            )}
+                                            <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{fmt(item.precio_unitario)}</td>
+                                            <td style={{ padding: '12px 16px', fontSize: '13px', textAlign: 'right' }}>
+                                                {Number(item.descuento_item || 0) > 0
+                                                    ? <span style={{ color: '#16a34a', fontWeight: 500 }}>-{item.descuento_item}%</span>
+                                                    : <span style={{ color: '#9ca3af' }}>—</span>}
+                                            </td>
+                                            <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{cancelado ? '—' : fmt(subtotal)}</td>
+                                        </tr>
+                                    )
+                                })}
+                            </tbody>
+                        </table>
+                    )}
+                </div>
+            )}
 
             {/* Totales */}
             <div style={{ backgroundColor: '#f9fafb', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px 20px', marginBottom: '20px' }}>
@@ -710,7 +806,7 @@ function DetallePedido({ pedido, onVolver }) {
             )}
 
             {/* Acciones */}
-            {pedido.estado === 'pendiente' && (
+            {pedido.estado === 'pendiente' && !editando && (
                 <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
                     <button onClick={aprobar} disabled={procesando}
                         style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '11px 20px', fontSize: '14px', fontWeight: 600, cursor: 'pointer', opacity: procesando ? 0.6 : 1 }}>
@@ -719,6 +815,23 @@ function DetallePedido({ pedido, onVolver }) {
                     <button onClick={() => setModalRechazo(true)} disabled={procesando}
                         style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#fff', color: '#dc2626', border: '1px solid #fecaca', borderRadius: '8px', padding: '11px 20px', fontSize: '14px', fontWeight: 500, cursor: 'pointer' }}>
                         <X size={16} /> Rechazar
+                    </button>
+                    <button onClick={iniciarEdicion} disabled={procesando}
+                        style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#fff', color: '#d97706', border: '1px solid #fde68a', borderRadius: '8px', padding: '11px 20px', fontSize: '14px', fontWeight: 500, cursor: 'pointer' }}>
+                        <Pencil size={16} /> Editar pedido
+                    </button>
+                </div>
+            )}
+
+            {editando && (
+                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                    <button onClick={guardarEdicion} disabled={guardandoEdit}
+                        style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#d97706', color: '#fff', border: 'none', borderRadius: '8px', padding: '11px 20px', fontSize: '14px', fontWeight: 600, cursor: 'pointer', opacity: guardandoEdit ? 0.6 : 1 }}>
+                        <Check size={16} /> {guardandoEdit ? 'Guardando...' : 'Guardar cambios'}
+                    </button>
+                    <button onClick={() => setEditando(false)} disabled={guardandoEdit}
+                        style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#fff', color: '#6b7280', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '11px 20px', fontSize: '14px', fontWeight: 500, cursor: 'pointer' }}>
+                        <X size={16} /> Cancelar edición
                     </button>
                 </div>
             )}
