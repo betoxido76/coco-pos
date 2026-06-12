@@ -44,7 +44,15 @@ cobros                -- Cobros parciales/totales en multimoneda
 devoluciones          -- Notas de crédito
                       --   numero_nc, cliente_id, nota_liquidacion, fecha_liquidacion
                       --   estado_nc CHECK IN ('pendiente','aplicada','reembolsada','anulada')
+                      --   solicitud_id uuid → solicitudes_devolucion (nullable, para flujo SDR manufactura)
 devolucion_items      -- Detalle de devoluciones
+solicitudes_devolucion     -- Paso 1 del flujo SDR (manufactura): almacén registra recepción física
+                           --   numero_solicitud, venta_id, pedido_id (nullable), cliente_id
+                           --   numero_pedido text (denormalizado para búsqueda por almacén)
+                           --   almacen_id, notas_almacen, usuario_almacen_id
+                           --   fecha_recepcion date, estado text ('recibida'|'autorizada'|'rechazada')
+                           --   motivo_rechazo text (nullable)
+solicitud_devolucion_items -- Detalle de SDR: producto_id, cantidad_recibida, precio_unitario, aplica_iva
 ```
 
 ### Compras
