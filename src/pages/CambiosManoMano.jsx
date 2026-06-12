@@ -284,7 +284,7 @@ export default function CambiosManoMano() {
                         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                             <thead>
                                 <tr style={{ backgroundColor: '#fffbeb', borderBottom: '1px solid #e5e7eb' }}>
-                                    {['N° Cambio', 'Fecha', 'Cliente', 'Producto', 'Cantidad', 'Motivo', ''].map((h, i) => (
+                                    {['N° Cambio', 'Fecha', 'Cliente', 'Producto', 'Cantidad', 'Motivo', '', ''].map((h, i) => (
                                         <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
                                     ))}
                                 </tr>
@@ -310,6 +310,12 @@ export default function CambiosManoMano() {
                                         </td>
                                         <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>
                                             {MOTIVOS.find(m => m.key === s.motivo)?.label || s.motivo}
+                                        </td>
+                                        <td style={{ padding: '12px 16px' }}>
+                                            <button onClick={() => { setCambioVer(s); setVista('ver') }}
+                                                style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: '#f3f4f6', color: '#374151', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '6px 12px', fontSize: '12px', fontWeight: 500, cursor: 'pointer' }}>
+                                                <Eye size={13} /> Ver
+                                            </button>
                                         </td>
                                         <td style={{ padding: '12px 16px' }}>
                                             <button onClick={() => { setSolicitudAProcesar(s); setVista('procesar_solicitud') }}
