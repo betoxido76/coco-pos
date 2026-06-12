@@ -1037,7 +1037,7 @@ function RegistrarDevolucion({ onGuardado, onCancelar }) {
         const { data } = await supabase
             .from('venta_items').select('*, productos_terminados(nombre, sku, unidad_medida, aplica_iva)')
             .eq('venta_id', venta.id)
-        setItems((data || []).map(i => ({ ...i, cantidad_recibida: Number(i.cantidad) })))
+        setItems((data || []).map(i => ({ ...i, cantidad_recibida: '' })))
         setCargandoItems(false)
     }
 
