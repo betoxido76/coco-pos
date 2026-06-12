@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
-import { PackageCheck, ChevronRight, Check, AlertTriangle, Truck, FileText, Ban } from 'lucide-react'
+import { PackageCheck, ChevronRight, Check, AlertTriangle, Truck, FileText, Ban, RotateCcw, Search, Plus, X } from 'lucide-react'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 
@@ -31,7 +31,7 @@ export default function Despacho() {
     const [loading, setLoading] = useState(true)
     const [pedidoActual, setPedidoActual] = useState(null)
     const [pedidoVer, setPedidoVer] = useState(null)
-    const [conteos, setConteos] = useState({ alistamiento: 0, porregistrar: 0, despacho: 0 })
+    const [conteos, setConteos] = useState({ alistamiento: 0, porregistrar: 0, despacho: 0, devoluciones: 0 })
     const [modalAnulacion, setModalAnulacion] = useState(null)
     const [motivoAnulacion, setMotivoAnulacion] = useState('')
     const [anulando, setAnulando] = useState(false)
@@ -41,15 +41,17 @@ export default function Despacho() {
 
     async function cargarConteos() {
         const eid = perfil.empresa_id
-        const [r1, r2, r3] = await Promise.all([
+        const [r1, r2, r3, r4] = await Promise.all([
             supabase.from('pedidos').select('*', { count: 'exact', head: true }).eq('empresa_id', eid).eq('estado', 'aprobado'),
             supabase.from('pedidos').select('*', { count: 'exact', head: true }).eq('empresa_id', eid).eq('estado', 'alistado'),
             supabase.from('pedidos').select('*', { count: 'exact', head: true }).eq('empresa_id', eid).eq('estado', 'facturado'),
+            supabase.from('solicitudes_devolucion').select('*', { count: 'exact', head: true }).eq('empresa_id', eid).eq('estado', 'recibida'),
         ])
-        setConteos({ alistamiento: r1.count || 0, porregistrar: r2.count || 0, despacho: r3.count || 0 })
+        setConteos({ alistamiento: r1.count || 0, porregistrar: r2.count || 0, despacho: r3.count || 0, devoluciones: r4.count || 0 })
     }
 
     async function cargar() {
+        if (tabActiva === 'devoluciones') { setLoading(false); return }
         setLoading(true)
         let estado
         if (tabActiva === 'alistamiento') estado = 'aprobado'
@@ -104,10 +106,11 @@ export default function Despacho() {
             {/* Tabs */}
             <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', flexWrap: 'wrap' }}>
                 {[
-                    { key: 'alistamiento', label: 'Alistamiento',  count: conteos.alistamiento, badgeBg: '#fff7ed', badgeColor: '#c2410c' },
-                    { key: 'porregistrar', label: 'Por Registrar', count: conteos.porregistrar, badgeBg: '#fef9c3', badgeColor: '#854d0e' },
-                    { key: 'despacho',     label: 'Despacho',      count: conteos.despacho,     badgeBg: '#dcfce7', badgeColor: '#166534' },
-                    { key: 'anulados',     label: 'Anulados',      count: 0,                    badgeBg: '#f3f4f6', badgeColor: '#6b7280' },
+                    { key: 'alistamiento',  label: 'Alistamiento',   count: conteos.alistamiento,  badgeBg: '#fff7ed', badgeColor: '#c2410c' },
+                    { key: 'porregistrar',  label: 'Por Registrar',  count: conteos.porregistrar,  badgeBg: '#fef9c3', badgeColor: '#854d0e' },
+                    { key: 'despacho',      label: 'Despacho',       count: conteos.despacho,      badgeBg: '#dcfce7', badgeColor: '#166534' },
+                    { key: 'anulados',      label: 'Anulados',       count: 0,                     badgeBg: '#f3f4f6', badgeColor: '#6b7280' },
+                    { key: 'devoluciones',  label: 'Devoluciones',   count: conteos.devoluciones,  badgeBg: '#fce7f3', badgeColor: '#9d174d' },
                 ].map(tab => {
                     const isActive = tabActiva === tab.key
                     return (
@@ -136,7 +139,9 @@ export default function Despacho() {
             </div>
 
             <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
-                {loading ? (
+                {tabActiva === 'devoluciones' ? (
+                    <TablaDevoluciones onConteoChange={cargarConteos} />
+                ) : loading ? (
                     <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
                 ) : pedidos.length === 0 ? (
                     <div style={{ padding: '48px', textAlign: 'center' }}>
@@ -866,6 +871,341 @@ function AlistarPedido({ pedido, onAlistado, onCancelar }) {
                     Cancelar
                 </button>
             </div>
+        </div>
+    )
+}
+
+// ── Badges de estado solicitud ─────────────────────────────────
+const BADGE_SOL = {
+    recibida:   { bg: '#fef9c3', color: '#854d0e',  label: 'Recibida' },
+    autorizada: { bg: '#dcfce7', color: '#166534',  label: 'Autorizada' },
+    rechazada:  { bg: '#fee2e2', color: '#991b1b',  label: 'Rechazada' },
+}
+
+// ── Tab Devoluciones (Almacén) ─────────────────────────────────
+function TablaDevoluciones({ onConteoChange }) {
+    const { perfil } = useAuth()
+    const [vista, setVista] = useState('lista')
+    const [solicitudes, setSolicitudes] = useState([])
+    const [loading, setLoading] = useState(true)
+    const [filtroEstado, setFiltroEstado] = useState('todas')
+
+    useEffect(() => { cargar() }, [])
+
+    async function cargar() {
+        setLoading(true)
+        const { data } = await supabase
+            .from('solicitudes_devolucion')
+            .select('*, ventas(numero_factura), clientes(nombre), almacenes(nombre)')
+            .eq('empresa_id', perfil.empresa_id)
+            .order('created_at', { ascending: false })
+        if (data) setSolicitudes(data)
+        setLoading(false)
+    }
+
+    if (vista === 'nueva')
+        return <RegistrarDevolucion
+            onGuardado={() => { setVista('lista'); cargar(); onConteoChange() }}
+            onCancelar={() => setVista('lista')}
+        />
+
+    const filtradas = filtroEstado === 'todas' ? solicitudes : solicitudes.filter(s => s.estado === filtroEstado)
+
+    return (
+        <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px', borderBottom: '1px solid #e5e7eb', flexWrap: 'wrap', gap: '10px' }}>
+                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                    {['todas', 'recibida', 'autorizada', 'rechazada'].map(e => (
+                        <button key={e} onClick={() => setFiltroEstado(e)}
+                            style={{ padding: '4px 12px', borderRadius: '20px', fontSize: '12px', fontWeight: 500, cursor: 'pointer', border: '1px solid', borderColor: filtroEstado === e ? '#374151' : '#e5e7eb', backgroundColor: filtroEstado === e ? '#374151' : '#fff', color: filtroEstado === e ? '#fff' : '#6b7280' }}>
+                            {e === 'todas' ? 'Todas' : BADGE_SOL[e].label}
+                        </button>
+                    ))}
+                </div>
+                <button onClick={() => setVista('nueva')}
+                    style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}>
+                    <Plus size={14} /> Registrar devolución recibida
+                </button>
+            </div>
+            {loading ? (
+                <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
+            ) : filtradas.length === 0 ? (
+                <div style={{ padding: '48px', textAlign: 'center' }}>
+                    <RotateCcw size={32} style={{ color: '#d1d5db', marginBottom: '12px', display: 'block', margin: '0 auto 12px' }} />
+                    <p style={{ color: '#9ca3af', fontSize: '14px', margin: 0 }}>No hay solicitudes de devolución registradas</p>
+                </div>
+            ) : (
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                        <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                            {['Nro. Solicitud', 'Nro. Pedido', 'Nota de Entrega', 'Cliente', 'Almacén', 'Estado', 'Fecha'].map(h => (
+                                <th key={h} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left' }}>{h}</th>
+                            ))}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {filtradas.map(s => {
+                            const badge = BADGE_SOL[s.estado] || BADGE_SOL.recibida
+                            return (
+                                <tr key={s.id} style={{ borderBottom: '1px solid #f3f4f6' }}
+                                    onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
+                                    onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                                    <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', fontWeight: 600, color: '#374151' }}>{s.numero_solicitud}</td>
+                                    <td style={{ padding: '12px 16px', fontSize: '12px', fontFamily: 'monospace', color: s.numero_pedido ? '#374151' : '#d1d5db' }}>{s.numero_pedido || '—'}</td>
+                                    <td style={{ padding: '12px 16px', fontSize: '12px', fontFamily: 'monospace', color: '#374151' }}>{s.ventas?.numero_factura || '—'}</td>
+                                    <td style={{ padding: '12px 16px', fontSize: '13px', color: '#374151' }}>{s.clientes?.nombre || '—'}</td>
+                                    <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{s.almacenes?.nombre || '—'}</td>
+                                    <td style={{ padding: '12px 16px' }}>
+                                        <span style={{ backgroundColor: badge.bg, color: badge.color, padding: '2px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 500 }}>{badge.label}</span>
+                                        {s.estado === 'rechazada' && s.motivo_rechazo && (
+                                            <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '2px' }}>{s.motivo_rechazo.length > 40 ? s.motivo_rechazo.slice(0, 40) + '...' : s.motivo_rechazo}</div>
+                                        )}
+                                    </td>
+                                    <td style={{ padding: '12px 16px', fontSize: '12px', color: '#9ca3af' }}>
+                                        {s.fecha_recepcion ? new Date(s.fecha_recepcion + 'T00:00:00').toLocaleDateString('es-VE') : '—'}
+                                    </td>
+                                </tr>
+                            )
+                        })}
+                    </tbody>
+                </table>
+            )}
+        </div>
+    )
+}
+
+// ── Registrar devolución recibida ──────────────────────────────
+function RegistrarDevolucion({ onGuardado, onCancelar }) {
+    const { perfil } = useAuth()
+    const [busqueda, setBusqueda] = useState('')
+    const [buscando, setBuscando] = useState(false)
+    const [resultados, setResultados] = useState([])
+    const [ventaSel, setVentaSel] = useState(null)
+    const [items, setItems] = useState([])
+    const [cargandoItems, setCargandoItems] = useState(false)
+    const [almacenes, setAlmacenes] = useState([])
+    const [almacenId, setAlmacenId] = useState('')
+    const [notasAlmacen, setNotasAlmacen] = useState('')
+    const [guardando, setGuardando] = useState(false)
+    const [error, setError] = useState('')
+
+    useEffect(() => {
+        supabase.from('almacenes').select('id, nombre').eq('empresa_id', perfil.empresa_id).order('nombre')
+            .then(({ data }) => { if (data) { setAlmacenes(data); if (data.length === 1) setAlmacenId(data[0].id) } })
+    }, [])
+
+    async function buscar() {
+        if (!busqueda.trim()) return
+        setBuscando(true)
+        const eid = perfil.empresa_id
+        const termino = busqueda.trim()
+
+        const { data: byFactura } = await supabase
+            .from('ventas').select('id, numero_factura, pedido_id, fecha_venta, cliente_id, clientes(nombre)')
+            .eq('empresa_id', eid).ilike('numero_factura', `%${termino}%`).limit(5)
+
+        const { data: pedidosMatch } = await supabase
+            .from('pedidos').select('id, numero_pedido')
+            .eq('empresa_id', eid).ilike('numero_pedido', `%${termino}%`).limit(10)
+
+        let byPedido = []
+        if (pedidosMatch?.length) {
+            const { data: vbp } = await supabase
+                .from('ventas').select('id, numero_factura, pedido_id, fecha_venta, cliente_id, clientes(nombre)')
+                .eq('empresa_id', eid).in('pedido_id', pedidosMatch.map(p => p.id))
+            byPedido = vbp || []
+        }
+
+        const all = [...(byFactura || []), ...byPedido]
+        const seen = new Set()
+        const unique = all.filter(v => { if (seen.has(v.id)) return false; seen.add(v.id); return true })
+
+        const pedidoMap = {}
+        ;(pedidosMatch || []).forEach(p => { pedidoMap[p.id] = p.numero_pedido })
+        const missingIds = unique.filter(v => v.pedido_id && !pedidoMap[v.pedido_id]).map(v => v.pedido_id)
+        if (missingIds.length) {
+            const { data: extras } = await supabase.from('pedidos').select('id, numero_pedido').in('id', missingIds)
+            ;(extras || []).forEach(p => { pedidoMap[p.id] = p.numero_pedido })
+        }
+
+        setResultados(unique.map(v => ({ ...v, numero_pedido: pedidoMap[v.pedido_id] || null })))
+        setBuscando(false)
+    }
+
+    async function seleccionar(venta) {
+        setVentaSel(venta); setResultados([]); setCargandoItems(true)
+        const { data } = await supabase
+            .from('venta_items').select('*, productos_terminados(nombre, sku, unidad_medida, aplica_iva)')
+            .eq('venta_id', venta.id)
+        setItems((data || []).map(i => ({ ...i, cantidad_recibida: Number(i.cantidad) })))
+        setCargandoItems(false)
+    }
+
+    function setCantRecibida(id, val) {
+        const n = parseFloat(val)
+        setItems(prev => prev.map(i => i.id === id ? { ...i, cantidad_recibida: isNaN(n) ? '' : Math.max(0, n) } : i))
+    }
+
+    async function guardar() {
+        if (!almacenId) { setError('Selecciona el almacén de destino'); return }
+        const validos = items.filter(i => Number(i.cantidad_recibida) > 0)
+        if (!validos.length) { setError('Ingresa al menos un ítem con cantidad mayor a cero'); return }
+        setGuardando(true); setError('')
+
+        const { data: { user } } = await supabase.auth.getUser()
+        const { data: numData } = await supabase.rpc('obtener_siguiente_solicitud_devolucion_numero', { p_empresa_id: perfil.empresa_id })
+
+        const { data: sol, error: errSol } = await supabase.from('solicitudes_devolucion').insert({
+            empresa_id: perfil.empresa_id,
+            numero_solicitud: numData || 'SDR-000001',
+            numero_pedido: ventaSel.numero_pedido || null,
+            venta_id: ventaSel.id,
+            pedido_id: ventaSel.pedido_id || null,
+            cliente_id: ventaSel.cliente_id,
+            almacen_id: almacenId,
+            notas_almacen: notasAlmacen.trim() || null,
+            usuario_almacen_id: user.id,
+            fecha_recepcion: new Date().toISOString().split('T')[0],
+        }).select().single()
+        if (errSol) { setError('Error: ' + errSol.message); setGuardando(false); return }
+
+        const { error: errItems } = await supabase.from('solicitud_devolucion_items').insert(
+            validos.map(i => ({
+                solicitud_id: sol.id,
+                empresa_id: perfil.empresa_id,
+                producto_id: i.producto_id,
+                cantidad_recibida: Number(i.cantidad_recibida),
+                precio_unitario: Number(i.precio_unitario),
+                aplica_iva: i.productos_terminados?.aplica_iva ?? true,
+            }))
+        )
+        if (errItems) { setError('Error en ítems: ' + errItems.message); setGuardando(false); return }
+
+        setGuardando(false); onGuardado()
+    }
+
+    const inp = { width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', color: '#374151', boxSizing: 'border-box' }
+
+    return (
+        <div style={{ padding: '24px', maxWidth: '760px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
+                <button onClick={onCancelar} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', fontSize: '13px' }}>← Volver</button>
+                <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Registrar devolución recibida</h1>
+            </div>
+
+            {!ventaSel && (
+                <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '20px', marginBottom: '16px' }}>
+                    <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '8px' }}>Buscar por número de pedido o nota de entrega</label>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                        <input value={busqueda} onChange={e => setBusqueda(e.target.value)} onKeyDown={e => e.key === 'Enter' && buscar()}
+                            placeholder="Ej: PED-000123 o NE-000456" style={{ ...inp, flex: 1 }} />
+                        <button onClick={buscar} disabled={buscando || !busqueda.trim()}
+                            style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '13px', fontWeight: 500, cursor: 'pointer', opacity: (!busqueda.trim() || buscando) ? 0.6 : 1 }}>
+                            <Search size={14} /> {buscando ? 'Buscando...' : 'Buscar'}
+                        </button>
+                    </div>
+                    {resultados.length > 0 && (
+                        <div style={{ marginTop: '12px', border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden' }}>
+                            {resultados.map(v => (
+                                <div key={v.id} onClick={() => seleccionar(v)}
+                                    style={{ padding: '12px 16px', cursor: 'pointer', borderBottom: '1px solid #f3f4f6', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                                    onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
+                                    onMouseLeave={e => e.currentTarget.style.backgroundColor = '#fff'}>
+                                    <div>
+                                        <div style={{ fontSize: '13px', fontWeight: 600, color: '#374151', fontFamily: 'monospace' }}>
+                                            {v.numero_factura}
+                                            {v.numero_pedido && <span style={{ marginLeft: '10px', color: '#6b7280', fontWeight: 400 }}>{v.numero_pedido}</span>}
+                                        </div>
+                                        <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '2px' }}>{v.clientes?.nombre}</div>
+                                    </div>
+                                    <div style={{ fontSize: '12px', color: '#9ca3af' }}>
+                                        {v.fecha_venta ? new Date(v.fecha_venta).toLocaleDateString('es-VE') : ''}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                    {!buscando && resultados.length === 0 && busqueda && (
+                        <p style={{ fontSize: '12px', color: '#9ca3af', margin: '8px 0 0' }}>Sin resultados para "{busqueda}"</p>
+                    )}
+                </div>
+            )}
+
+            {ventaSel && (
+                <>
+                    <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '10px', padding: '12px 16px', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div>
+                            <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                                <span style={{ fontSize: '14px', fontWeight: 700, fontFamily: 'monospace', color: '#374151' }}>{ventaSel.numero_factura}</span>
+                                {ventaSel.numero_pedido && <span style={{ fontSize: '13px', fontFamily: 'monospace', color: '#6b7280' }}>{ventaSel.numero_pedido}</span>}
+                            </div>
+                            <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '2px' }}>{ventaSel.clientes?.nombre}</div>
+                        </div>
+                        <button onClick={() => { setVentaSel(null); setItems([]) }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', padding: '4px' }}>
+                            <X size={16} />
+                        </button>
+                    </div>
+
+                    {cargandoItems ? (
+                        <div style={{ padding: '24px', textAlign: 'center', color: '#9ca3af', fontSize: '13px' }}>Cargando ítems...</div>
+                    ) : (
+                        <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden', marginBottom: '16px' }}>
+                            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                <thead>
+                                    <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                                        {['Producto', 'Cant. facturada', 'Cant. recibida'].map(h => (
+                                            <th key={h} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left' }}>{h}</th>
+                                        ))}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {items.map(i => (
+                                        <tr key={i.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                                            <td style={{ padding: '12px 16px' }}>
+                                                <div style={{ fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>{i.productos_terminados?.nombre}</div>
+                                                {i.productos_terminados?.sku && <div style={{ fontSize: '11px', color: '#9ca3af', fontFamily: 'monospace' }}>{i.productos_terminados.sku}</div>}
+                                            </td>
+                                            <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{Number(i.cantidad)} {i.productos_terminados?.unidad_medida}</td>
+                                            <td style={{ padding: '12px 16px' }}>
+                                                <input type="number" min="0" max={Number(i.cantidad)} step="0.001"
+                                                    value={i.cantidad_recibida} onChange={e => setCantRecibida(i.id, e.target.value)}
+                                                    style={{ width: '100px', padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px', textAlign: 'right' }} />
+                                                <span style={{ fontSize: '12px', color: '#9ca3af', marginLeft: '6px' }}>{i.productos_terminados?.unidad_medida}</span>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+
+                    <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '20px', marginBottom: '16px' }}>
+                        <div style={{ marginBottom: '16px' }}>
+                            <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Almacén de destino <span style={{ color: '#dc2626' }}>*</span></label>
+                            <select value={almacenId} onChange={e => setAlmacenId(e.target.value)} style={inp}>
+                                <option value="">— Seleccionar almacén —</option>
+                                {almacenes.map(a => <option key={a.id} value={a.id}>{a.nombre}</option>)}
+                            </select>
+                        </div>
+                        <div>
+                            <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Observaciones (opcional)</label>
+                            <textarea value={notasAlmacen} onChange={e => setNotasAlmacen(e.target.value)}
+                                placeholder="Estado de la mercancía, condiciones de recepción..." rows={3}
+                                style={{ ...inp, resize: 'vertical', fontFamily: 'inherit' }} />
+                        </div>
+                    </div>
+
+                    {error && <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 14px', fontSize: '13px', color: '#dc2626', marginBottom: '12px' }}>{error}</div>}
+
+                    <div style={{ display: 'flex', gap: '10px' }}>
+                        <button onClick={onCancelar} style={{ padding: '10px 20px', border: '1px solid #e5e7eb', borderRadius: '8px', backgroundColor: '#fff', color: '#374151', fontSize: '14px', cursor: 'pointer' }}>Cancelar</button>
+                        <button onClick={guardar} disabled={guardando}
+                            style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '10px 20px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '14px', fontWeight: 600, cursor: 'pointer', opacity: guardando ? 0.6 : 1 }}>
+                            <Check size={15} /> {guardando ? 'Guardando...' : 'Registrar devolución recibida'}
+                        </button>
+                    </div>
+                </>
+            )}
         </div>
     )
 }

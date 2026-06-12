@@ -38,9 +38,19 @@ export default function Ventas() {
     const [pageSize, setPageSize] = useState(50)
     const [sortCol, setSortCol] = useState('fecha')
     const [sortDir, setSortDir] = useState('desc')
+    const [solicitudesDevCount, setSolicitudesDevCount] = useState(0)
 
-    useEffect(() => { cargarVentas() }, [])
+    useEffect(() => { cargarVentas(); cargarConteoSolicitudes() }, [])
     useEffect(() => { if (tabActiva === 'pedidos') cargarPedidosAprobados() }, [tabActiva])
+
+    async function cargarConteoSolicitudes() {
+        const { count } = await supabase
+            .from('solicitudes_devolucion')
+            .select('*', { count: 'exact', head: true })
+            .eq('empresa_id', perfil.empresa_id)
+            .eq('estado', 'recibida')
+        setSolicitudesDevCount(count || 0)
+    }
 
     async function cargarVentas() {
         setLoading(true)
@@ -160,6 +170,24 @@ export default function Ventas() {
                         )}
                     </button>
                 )}
+                {!esRetail && (
+                    <button onClick={() => setTabActiva('devoluciones')}
+                        style={{
+                            display: 'flex', alignItems: 'center', gap: '6px',
+                            padding: '8px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 500,
+                            border: '1px solid', cursor: 'pointer',
+                            borderColor: tabActiva === 'devoluciones' ? '#16a34a' : '#e5e7eb',
+                            backgroundColor: tabActiva === 'devoluciones' ? '#f0fdf4' : '#fff',
+                            color: tabActiva === 'devoluciones' ? '#16a34a' : '#6b7280',
+                        }}>
+                        <RotateCcw size={14} /> Devoluciones
+                        {solicitudesDevCount > 0 && (
+                            <span style={{ backgroundColor: tabActiva === 'devoluciones' ? '#16a34a' : '#dc2626', color: '#fff', borderRadius: '20px', padding: '1px 7px', fontSize: '11px', fontWeight: 700 }}>
+                                {solicitudesDevCount}
+                            </span>
+                        )}
+                    </button>
+                )}
             </div>
 
             {/* Tab Ventas */}
@@ -253,6 +281,11 @@ export default function Ventas() {
                         </div>
                     )}
                 </div>
+            )}
+
+            {/* Tab Devoluciones */}
+            {!esRetail && tabActiva === 'devoluciones' && (
+                <TabSolicitudesDevoluciones onConteoChange={cargarConteoSolicitudes} />
             )}
 
             {/* Tab Pedidos por facturar (solo manufactura) */}
@@ -2814,12 +2847,6 @@ function Factura({ venta, onVolver, onDevolucionCreada }) {
                     🖨️ Imprimir
                 </button>
 
-                {puedeDevolver && (
-                    <button onClick={() => setMostrarDevolucion(true)}
-                        style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '8px 14px', fontSize: '13px', color: '#374151', cursor: 'pointer' }}>
-                        <RotateCcw size={14} /> Registrar devolución
-                    </button>
-                )}
             </div>
 
             <div className="print-target" style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '32px', marginBottom: '16px' }}>
@@ -3186,6 +3213,330 @@ function FormDevolucion({ venta, items, onCancelar, onConfirmada }) {
                 <RotateCcw size={16} />
                 {guardando ? 'Procesando...' : 'Confirmar devolución'}
             </button>
+        </div>
+    )
+}
+
+// ── Constantes compartidas ─────────────────────────────────────
+const BADGE_SOL_V = {
+    recibida:   { bg: '#fef9c3', color: '#854d0e',  label: 'Recibida' },
+    autorizada: { bg: '#dcfce7', color: '#166534',  label: 'Autorizada' },
+    rechazada:  { bg: '#fee2e2', color: '#991b1b',  label: 'Rechazada' },
+}
+const TIPOS_DEV = [
+    { key: 'nota_credito',    label: 'Nota de Crédito',       desc: 'Crédito disponible para futuras facturas del cliente' },
+    { key: 'reembolso',       label: 'Reembolso',             desc: 'Se devuelve el dinero al cliente' },
+    { key: 'reposicion_stock', label: 'Reposición de stock',  desc: 'Se envía mercancía de reposición al cliente' },
+]
+
+// ── Tab Devoluciones (Ventas/Finanzas) ─────────────────────────
+function TabSolicitudesDevoluciones({ onConteoChange }) {
+    const { perfil } = useAuth()
+    const [solicitudes, setSolicitudes] = useState([])
+    const [loading, setLoading] = useState(true)
+    const [filtroEstado, setFiltroEstado] = useState('recibida')
+    const [autorizando, setAutorizando] = useState(null)
+    const [rechazando, setRechazando] = useState(null)
+    const [motivoRechazo, setMotivoRechazo] = useState('')
+    const [guardandoRechazo, setGuardandoRechazo] = useState(false)
+    const [errorRechazo, setErrorRechazo] = useState('')
+
+    useEffect(() => { cargar() }, [])
+
+    async function cargar() {
+        setLoading(true)
+        const { data } = await supabase
+            .from('solicitudes_devolucion')
+            .select('*, ventas(numero_factura), clientes(nombre), almacenes(nombre), solicitud_devolucion_items(*, productos_terminados(nombre, sku, unidad_medida, aplica_iva))')
+            .eq('empresa_id', perfil.empresa_id)
+            .order('created_at', { ascending: false })
+        if (data) setSolicitudes(data)
+        setLoading(false)
+    }
+
+    async function rechazar() {
+        if (!motivoRechazo.trim()) { setErrorRechazo('El motivo es obligatorio'); return }
+        setGuardandoRechazo(true); setErrorRechazo('')
+        const { data: { user } } = await supabase.auth.getUser()
+        const { error } = await supabase.from('solicitudes_devolucion').update({
+            estado: 'rechazada',
+            motivo_rechazo: motivoRechazo.trim(),
+            usuario_ventas_id: user.id,
+            fecha_resolucion: new Date().toISOString(),
+        }).eq('id', rechazando.id)
+        setGuardandoRechazo(false)
+        if (error) { setErrorRechazo('Error: ' + error.message); return }
+        setRechazando(null); setMotivoRechazo('')
+        cargar(); onConteoChange()
+    }
+
+    if (autorizando)
+        return <AutorizarDevolucion
+            solicitud={autorizando}
+            onAutorizada={() => { setAutorizando(null); cargar(); onConteoChange() }}
+            onCancelar={() => setAutorizando(null)}
+        />
+
+    const filtradas = filtroEstado === 'todas' ? solicitudes : solicitudes.filter(s => s.estado === filtroEstado)
+    const countPendientes = solicitudes.filter(s => s.estado === 'recibida').length
+
+    return (
+        <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+            <div style={{ display: 'flex', gap: '6px', padding: '16px 20px', borderBottom: '1px solid #e5e7eb', flexWrap: 'wrap', alignItems: 'center' }}>
+                <span style={{ fontSize: '13px', color: '#6b7280', marginRight: '4px' }}>Filtrar:</span>
+                {['recibida', 'autorizada', 'rechazada', 'todas'].map(e => (
+                    <button key={e} onClick={() => setFiltroEstado(e)}
+                        style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '4px 12px', borderRadius: '20px', fontSize: '12px', fontWeight: 500, cursor: 'pointer', border: '1px solid', borderColor: filtroEstado === e ? '#374151' : '#e5e7eb', backgroundColor: filtroEstado === e ? '#374151' : '#fff', color: filtroEstado === e ? '#fff' : '#6b7280' }}>
+                        {e === 'recibida' ? 'Pendientes' : e === 'autorizada' ? 'Autorizadas' : e === 'rechazada' ? 'Rechazadas' : 'Todas'}
+                        {e === 'recibida' && countPendientes > 0 && (
+                            <span style={{ backgroundColor: '#dc2626', color: '#fff', borderRadius: '10px', padding: '0 5px', fontSize: '10px', fontWeight: 700 }}>{countPendientes}</span>
+                        )}
+                    </button>
+                ))}
+            </div>
+
+            {loading ? (
+                <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
+            ) : filtradas.length === 0 ? (
+                <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>
+                    {filtroEstado === 'recibida' ? 'No hay solicitudes pendientes de autorización.' : 'No hay registros.'}
+                </div>
+            ) : (
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                        <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                            {['Nro. Solicitud', 'Nro. Pedido', 'Nota de Entrega', 'Cliente', 'Almacén', 'Ítems', 'Estado', ''].map(h => (
+                                <th key={h || 'acc'} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left' }}>{h}</th>
+                            ))}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {filtradas.map(s => {
+                            const badge = BADGE_SOL_V[s.estado] || BADGE_SOL_V.recibida
+                            return (
+                                <tr key={s.id} style={{ borderBottom: '1px solid #f3f4f6' }}
+                                    onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
+                                    onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                                    <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', fontWeight: 600, color: '#374151' }}>{s.numero_solicitud}</td>
+                                    <td style={{ padding: '12px 16px', fontSize: '12px', fontFamily: 'monospace', color: s.numero_pedido ? '#374151' : '#d1d5db' }}>{s.numero_pedido || '—'}</td>
+                                    <td style={{ padding: '12px 16px', fontSize: '12px', fontFamily: 'monospace', color: '#374151' }}>{s.ventas?.numero_factura || '—'}</td>
+                                    <td style={{ padding: '12px 16px', fontSize: '13px', color: '#374151' }}>{s.clientes?.nombre || '—'}</td>
+                                    <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{s.almacenes?.nombre || '—'}</td>
+                                    <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{s.solicitud_devolucion_items?.length || 0} ítem(s)</td>
+                                    <td style={{ padding: '12px 16px' }}>
+                                        <span style={{ backgroundColor: badge.bg, color: badge.color, padding: '2px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 500 }}>{badge.label}</span>
+                                    </td>
+                                    <td style={{ padding: '12px 16px' }}>
+                                        {s.estado === 'recibida' && (
+                                            <div style={{ display: 'flex', gap: '6px' }}>
+                                                <button onClick={() => setAutorizando(s)}
+                                                    style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '5px 12px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>
+                                                    <Check size={12} /> Autorizar
+                                                </button>
+                                                <button onClick={() => { setRechazando(s); setMotivoRechazo(''); setErrorRechazo('') }}
+                                                    style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '5px 10px', background: 'none', border: '1px solid #fca5a5', borderRadius: '6px', fontSize: '12px', color: '#dc2626', cursor: 'pointer' }}>
+                                                    <X size={12} /> Rechazar
+                                                </button>
+                                            </div>
+                                        )}
+                                    </td>
+                                </tr>
+                            )
+                        })}
+                    </tbody>
+                </table>
+            )}
+
+            {rechazando && (
+                <>
+                    <div onClick={() => setRechazando(null)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', zIndex: 40 }} />
+                    <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', backgroundColor: '#fff', borderRadius: '16px', padding: '28px', width: '440px', zIndex: 50, boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+                        <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#1f2937', margin: '0 0 6px', textAlign: 'center' }}>Rechazar solicitud</h3>
+                        <p style={{ fontSize: '13px', color: '#6b7280', margin: '0 0 20px', textAlign: 'center' }}>
+                            <strong style={{ fontFamily: 'monospace' }}>{rechazando.numero_solicitud}</strong> — {rechazando.clientes?.nombre}
+                        </p>
+                        <label style={{ fontSize: '12px', fontWeight: 600, color: '#374151', display: 'block', marginBottom: '6px' }}>Motivo del rechazo <span style={{ color: '#dc2626' }}>*</span></label>
+                        <textarea value={motivoRechazo} onChange={e => setMotivoRechazo(e.target.value)}
+                            placeholder="Explica por qué se rechaza esta devolución..." rows={3} autoFocus
+                            style={{ width: '100%', padding: '10px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', color: '#374151', resize: 'vertical', boxSizing: 'border-box', fontFamily: 'inherit' }} />
+                        {errorRechazo && <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '8px 12px', fontSize: '13px', color: '#dc2626', marginTop: '10px' }}>{errorRechazo}</div>}
+                        <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
+                            <button onClick={() => setRechazando(null)} style={{ flex: 1, padding: '10px', border: '1px solid #e5e7eb', borderRadius: '8px', backgroundColor: '#fff', color: '#374151', fontSize: '14px', cursor: 'pointer' }}>Cancelar</button>
+                            <button onClick={rechazar} disabled={guardandoRechazo}
+                                style={{ flex: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '10px', border: 'none', borderRadius: '8px', backgroundColor: '#dc2626', color: '#fff', fontSize: '14px', fontWeight: 600, cursor: 'pointer', opacity: guardandoRechazo ? 0.6 : 1 }}>
+                                <X size={15} /> {guardandoRechazo ? 'Rechazando...' : 'Confirmar rechazo'}
+                            </button>
+                        </div>
+                    </div>
+                </>
+            )}
+        </div>
+    )
+}
+
+// ── Autorizar devolución ───────────────────────────────────────
+function AutorizarDevolucion({ solicitud, onAutorizada, onCancelar }) {
+    const { perfil } = useAuth()
+    const [tipoDevolucion, setTipoDevolucion] = useState('nota_credito')
+    const [guardando, setGuardando] = useState(false)
+    const [error, setError] = useState('')
+    const items = solicitud.solicitud_devolucion_items || []
+
+    async function confirmar() {
+        setGuardando(true); setError('')
+        const { data: { user } } = await supabase.auth.getUser()
+
+        const { data: ncNum } = await supabase.rpc('obtener_siguiente_nc_numero', { p_empresa_id: perfil.empresa_id })
+        const montoDevuelto = items.reduce((s, i) => s + Number(i.cantidad_recibida) * Number(i.precio_unitario), 0)
+
+        const { data: dev, error: errDev } = await supabase.from('devoluciones').insert({
+            empresa_id: perfil.empresa_id,
+            venta_id: solicitud.venta_id,
+            cliente_id: solicitud.cliente_id,
+            numero_nc: ncNum || 'NC-000001',
+            tipo_devolucion: tipoDevolucion,
+            motivo: solicitud.notas_almacen || 'Devolución recibida en almacén',
+            monto_devuelto: montoDevuelto,
+            es_total: false,
+            estado_nc: 'pendiente',
+            usuario_id: user.id,
+            solicitud_id: solicitud.id,
+        }).select().single()
+        if (errDev) { setError('Error al crear NC: ' + errDev.message); setGuardando(false); return }
+
+        await supabase.from('devolucion_items').insert(
+            items.map(i => ({
+                devolucion_id: dev.id,
+                producto_id: i.producto_id,
+                cantidad_devuelta: Number(i.cantidad_recibida),
+                precio_unitario: Number(i.precio_unitario),
+                empresa_id: perfil.empresa_id,
+            }))
+        )
+
+        for (const item of items) {
+            if (Number(item.cantidad_recibida) <= 0) continue
+            const { data: prod } = await supabase.from('productos_terminados').select('stock_actual').eq('id', item.producto_id).single()
+            const stockAnterior = Number(prod?.stock_actual || 0)
+            const nuevoStock = stockAnterior + Number(item.cantidad_recibida)
+            await supabase.from('productos_terminados').update({ stock_actual: nuevoStock }).eq('id', item.producto_id)
+
+            const { data: su } = await supabase.from('stock_ubicacion')
+                .select('id, cantidad').eq('tipo_item', 'producto_terminado')
+                .eq('item_id', item.producto_id).eq('almacen_id', solicitud.almacen_id).maybeSingle()
+            if (su) {
+                await supabase.from('stock_ubicacion').update({ cantidad: Number(su.cantidad) + Number(item.cantidad_recibida) }).eq('id', su.id)
+            } else {
+                await supabase.from('stock_ubicacion').insert({
+                    tipo_item: 'producto_terminado', item_id: item.producto_id,
+                    almacen_id: solicitud.almacen_id, cantidad: Number(item.cantidad_recibida),
+                    empresa_id: perfil.empresa_id,
+                })
+            }
+
+            await supabase.from('movimientos_inventario').insert({
+                empresa_id: perfil.empresa_id,
+                tipo_item: 'producto_terminado',
+                item_id: item.producto_id,
+                item_nombre: item.productos_terminados?.nombre || '',
+                item_codigo: item.productos_terminados?.sku || '',
+                tipo_movimiento: 'entrada',
+                cantidad: Number(item.cantidad_recibida),
+                stock_anterior: stockAnterior,
+                stock_actual: nuevoStock,
+                almacen_id: solicitud.almacen_id,
+                origen: 'devolucion',
+                fecha: new Date().toISOString(),
+            })
+        }
+
+        await supabase.from('solicitudes_devolucion').update({
+            estado: 'autorizada',
+            usuario_ventas_id: user.id,
+            fecha_resolucion: new Date().toISOString(),
+        }).eq('id', solicitud.id)
+
+        setGuardando(false); onAutorizada()
+    }
+
+    return (
+        <div style={{ padding: '24px', maxWidth: '760px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
+                <button onClick={onCancelar} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', fontSize: '13px' }}>← Volver</button>
+                <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Autorizar devolución</h1>
+            </div>
+
+            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px 20px', marginBottom: '16px' }}>
+                <div style={{ display: 'flex', gap: '24px', flexWrap: 'wrap' }}>
+                    <div><div style={{ fontSize: '11px', color: '#9ca3af', fontWeight: 500, marginBottom: '2px' }}>SOLICITUD</div><div style={{ fontSize: '14px', fontWeight: 700, fontFamily: 'monospace', color: '#374151' }}>{solicitud.numero_solicitud}</div></div>
+                    {solicitud.numero_pedido && <div><div style={{ fontSize: '11px', color: '#9ca3af', fontWeight: 500, marginBottom: '2px' }}>PEDIDO</div><div style={{ fontSize: '14px', fontFamily: 'monospace', color: '#374151' }}>{solicitud.numero_pedido}</div></div>}
+                    <div><div style={{ fontSize: '11px', color: '#9ca3af', fontWeight: 500, marginBottom: '2px' }}>NOTA DE ENTREGA</div><div style={{ fontSize: '14px', fontFamily: 'monospace', color: '#374151' }}>{solicitud.ventas?.numero_factura || '—'}</div></div>
+                    <div><div style={{ fontSize: '11px', color: '#9ca3af', fontWeight: 500, marginBottom: '2px' }}>CLIENTE</div><div style={{ fontSize: '14px', color: '#374151' }}>{solicitud.clientes?.nombre}</div></div>
+                    <div><div style={{ fontSize: '11px', color: '#9ca3af', fontWeight: 500, marginBottom: '2px' }}>ALMACÉN DESTINO</div><div style={{ fontSize: '14px', color: '#374151' }}>{solicitud.almacenes?.nombre}</div></div>
+                </div>
+                {solicitud.notas_almacen && (
+                    <div style={{ marginTop: '12px', padding: '8px 12px', backgroundColor: '#f9fafb', borderRadius: '6px', fontSize: '13px', color: '#6b7280' }}>
+                        <strong>Notas de almacén:</strong> {solicitud.notas_almacen}
+                    </div>
+                )}
+            </div>
+
+            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden', marginBottom: '16px' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                        <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                            {['Producto', 'Cant. recibida', 'Precio unit.', 'Subtotal'].map((h, i) => (
+                                <th key={h} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: i > 1 ? 'right' : 'left' }}>{h}</th>
+                            ))}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {items.map(i => (
+                            <tr key={i.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                                <td style={{ padding: '12px 16px' }}>
+                                    <div style={{ fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>{i.productos_terminados?.nombre}</div>
+                                    {i.productos_terminados?.sku && <div style={{ fontSize: '11px', color: '#9ca3af', fontFamily: 'monospace' }}>{i.productos_terminados.sku}</div>}
+                                </td>
+                                <td style={{ padding: '12px 16px', fontSize: '13px', color: '#374151' }}>{Number(i.cantidad_recibida)} {i.productos_terminados?.unidad_medida}</td>
+                                <td style={{ padding: '12px 16px', fontSize: '13px', color: '#374151', textAlign: 'right' }}>${Number(i.precio_unitario).toFixed(2)}</td>
+                                <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#374151', textAlign: 'right' }}>${(Number(i.cantidad_recibida) * Number(i.precio_unitario)).toFixed(2)}</td>
+                            </tr>
+                        ))}
+                        <tr style={{ backgroundColor: '#f9fafb', borderTop: '2px solid #e5e7eb' }}>
+                            <td colSpan={3} style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#374151', textAlign: 'right' }}>Total a acreditar</td>
+                            <td style={{ padding: '12px 16px', fontSize: '15px', fontWeight: 700, color: '#16a34a', textAlign: 'right' }}>
+                                ${items.reduce((s, i) => s + Number(i.cantidad_recibida) * Number(i.precio_unitario), 0).toFixed(2)}
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '20px', marginBottom: '16px' }}>
+                <label style={{ fontSize: '13px', fontWeight: 600, color: '#374151', display: 'block', marginBottom: '12px' }}>Tipo de resolución</label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {TIPOS_DEV.map(t => (
+                        <label key={t.key} onClick={() => setTipoDevolucion(t.key)}
+                            style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', padding: '12px', border: '2px solid', borderRadius: '8px', cursor: 'pointer', borderColor: tipoDevolucion === t.key ? '#16a34a' : '#e5e7eb', backgroundColor: tipoDevolucion === t.key ? '#f0fdf4' : '#fff' }}>
+                            <input type="radio" name="tipo" value={t.key} checked={tipoDevolucion === t.key} onChange={() => setTipoDevolucion(t.key)} style={{ marginTop: '2px' }} />
+                            <div>
+                                <div style={{ fontSize: '13px', fontWeight: 600, color: '#374151' }}>{t.label}</div>
+                                <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '2px' }}>{t.desc}</div>
+                            </div>
+                        </label>
+                    ))}
+                </div>
+            </div>
+
+            {error && <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 14px', fontSize: '13px', color: '#dc2626', marginBottom: '12px' }}>{error}</div>}
+
+            <div style={{ display: 'flex', gap: '10px' }}>
+                <button onClick={onCancelar} style={{ padding: '10px 20px', border: '1px solid #e5e7eb', borderRadius: '8px', backgroundColor: '#fff', color: '#374151', fontSize: '14px', cursor: 'pointer' }}>Cancelar</button>
+                <button onClick={confirmar} disabled={guardando}
+                    style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '10px 20px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '14px', fontWeight: 600, cursor: 'pointer', opacity: guardando ? 0.6 : 1 }}>
+                    <CheckCircle size={16} /> {guardando ? 'Procesando...' : 'Autorizar y crear nota de crédito'}
+                </button>
+            </div>
         </div>
     )
 }
