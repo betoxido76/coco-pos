@@ -502,6 +502,7 @@ function DetallePedido({ pedido, onVolver }) {
                 direccion_entrega_id: pedido.direccion_entrega_id || null,
                 direccion_entrega_texto: pedido.direccion_entrega_texto || null,
                 direccion_entrega_nombre: pedido.direccion_entrega_nombre || null,
+                pedido_id: pedido.id,
             })
             .select()
             .single()
