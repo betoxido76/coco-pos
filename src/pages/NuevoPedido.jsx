@@ -5,7 +5,7 @@ import {
     Search, Plus, Minus, Trash2, Check, ChevronRight, ChevronLeft,
     X, Clock, Package, ShoppingCart, DollarSign, Users, AlertCircle,
     TrendingUp, FileText, MapPin, Phone, Building2, CreditCard,
-    RotateCcw, ArrowRight, Calendar, ChevronDown, RefreshCw, WifiOff, Eye
+    RotateCcw, ArrowRight, Calendar, ChevronDown, RefreshCw, WifiOff, Eye, Pencil
 } from 'lucide-react'
 
 // ── Cache localStorage ──────────────────────────────────────
@@ -608,6 +608,11 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
     const [visitaForm, setVisitaForm] = useState({ tipo: 'presencial', resultado: 'sin_pedido', notas: '' })
     const [guardandoVisita, setGuardandoVisita] = useState(false)
     const [pedidoDetalle, setPedidoDetalle] = useState(null)
+    const [editandoPedido, setEditandoPedido] = useState(false)
+    const [itemsEditPedido, setItemsEditPedido] = useState([])
+    const [descGlobalEditPedido, setDescGlobalEditPedido] = useState('')
+    const [guardandoEditPedido, setGuardandoEditPedido] = useState(false)
+    const [errorEditPedido, setErrorEditPedido] = useState('')
     const [paginaVisitas, setPaginaVisitas] = useState(0)
     const [totalVisitas, setTotalVisitas] = useState(0)
     const [pagPedidos, setPagPedidos] = useState(0)
@@ -651,7 +656,7 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
                 .limit(5),
 
             supabase.from('pedidos')
-                .select('id, numero_pedido, fecha_pedido, estado, pedido_items(producto_id, nombre_producto, cantidad, precio_unitario, descuento_item, subtotal)', { count: 'exact' })
+                .select('id, numero_pedido, fecha_pedido, estado, descuento_global, pedido_items(id, producto_id, nombre_producto, cantidad, precio_unitario, descuento_item, subtotal)', { count: 'exact' })
                 .eq('cliente_id', cliente.id)
                 .eq('empresa_id', perfil.empresa_id)
                 .order('fecha_pedido', { ascending: false })
@@ -717,12 +722,45 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
 
     async function cargarPedidos(pag) {
         const { data, count } = await supabase.from('pedidos')
-            .select('id, numero_pedido, fecha_pedido, estado, pedido_items(producto_id, nombre_producto, cantidad, precio_unitario, descuento_item, subtotal)', { count: 'exact' })
+            .select('id, numero_pedido, fecha_pedido, estado, descuento_global, pedido_items(id, producto_id, nombre_producto, cantidad, precio_unitario, descuento_item, subtotal)', { count: 'exact' })
             .eq('cliente_id', cliente.id)
             .eq('empresa_id', perfil.empresa_id)
             .order('fecha_pedido', { ascending: false })
             .range(pag * PEDIDOS_PAGE, (pag + 1) * PEDIDOS_PAGE - 1)
         if (data) { setDatos(prev => ({ ...prev, pedidos: data })); setTotalPedidos(count || 0) }
+    }
+
+    function iniciarEdicionPedido() {
+        const items = pedidoDetalle.pedido_items || []
+        setItemsEditPedido(items.map(i => ({
+            ...i,
+            _precio: String(Number(i.precio_unitario).toFixed(4)),
+            _descuento: String(Number(i.descuento_item || 0)),
+        })))
+        setDescGlobalEditPedido(String(Number(pedidoDetalle.descuento_global || 0)))
+        setEditandoPedido(true)
+        setErrorEditPedido('')
+    }
+
+    async function guardarEdicionPedido() {
+        setGuardandoEditPedido(true); setErrorEditPedido('')
+        for (const item of itemsEditPedido) {
+            const precio = Math.max(0, Number(item._precio) || 0)
+            const desc = Math.min(100, Math.max(0, Number(item._descuento) || 0))
+            const subtotal = Number(item.cantidad) * precio * (1 - desc / 100)
+            const { error: err } = await supabase.from('pedido_items').update({
+                precio_unitario: precio,
+                descuento_item: desc,
+                subtotal,
+            }).eq('id', item.id)
+            if (err) { setErrorEditPedido('Error: ' + err.message); setGuardandoEditPedido(false); return }
+        }
+        const nuevoDescGlobal = Math.min(100, Math.max(0, Number(descGlobalEditPedido) || 0))
+        await supabase.from('pedidos').update({ descuento_global: nuevoDescGlobal }).eq('id', pedidoDetalle.id)
+        await cargarPedidos(pagPedidos)
+        setEditandoPedido(false)
+        setGuardandoEditPedido(false)
+        setPedidoDetalle(null)
     }
 
     async function guardarVisita() {
@@ -1229,54 +1267,142 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
             {pedidoDetalle && (() => {
                 const est = ESTADOS_PEDIDO[pedidoDetalle.estado] || ESTADOS_PEDIDO.pendiente
                 const items = pedidoDetalle.pedido_items || []
-                const total = items.reduce((s, i) => s + Number(i.subtotal || 0), 0)
+                const total = editandoPedido
+                    ? itemsEditPedido.reduce((s, i) => {
+                        const p = Math.max(0, Number(i._precio) || 0)
+                        const d = Math.min(100, Math.max(0, Number(i._descuento) || 0))
+                        return s + Number(i.cantidad) * p * (1 - d / 100)
+                    }, 0)
+                    : items.reduce((s, i) => s + Number(i.subtotal || 0), 0)
                 return (
                     <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 50, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
-                        onClick={e => { if (e.target === e.currentTarget) setPedidoDetalle(null) }}>
+                        onClick={e => { if (e.target === e.currentTarget && !editandoPedido) setPedidoDetalle(null) }}>
                         <div style={{ backgroundColor: '#fff', borderRadius: '20px 20px 0 0', width: '100%', maxWidth: '480px', maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}>
                             {/* Header */}
-                            <div style={{ padding: '20px 20px 16px', borderBottom: '1px solid #f3f4f6', flexShrink: 0 }}>
+                            <div style={{ padding: '20px 20px 16px', borderBottom: '1px solid #f3f4f6', flexShrink: 0, backgroundColor: editandoPedido ? '#fffbeb' : '#fff', borderRadius: '20px 20px 0 0' }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                                     <div>
                                         <p style={{ fontSize: '18px', fontWeight: 700, color: '#1f2937', margin: '0 0 4px', fontFamily: 'monospace' }}>{pedidoDetalle.numero_pedido}</p>
-                                        <p style={{ fontSize: '13px', color: '#6b7280', margin: 0 }}>{fmtFecha(pedidoDetalle.fecha_pedido)}</p>
+                                        <p style={{ fontSize: '13px', color: editandoPedido ? '#92400e' : '#6b7280', margin: 0, fontWeight: editandoPedido ? 600 : 400 }}>
+                                            {editandoPedido ? '✏️ Editando pedido' : fmtFecha(pedidoDetalle.fecha_pedido)}
+                                        </p>
                                     </div>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                        <span style={{ backgroundColor: est.bg, color: est.color, padding: '4px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 600 }}>{est.label}</span>
-                                        <button onClick={() => setPedidoDetalle(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', padding: '4px' }}>
+                                        {!editandoPedido && <span style={{ backgroundColor: est.bg, color: est.color, padding: '4px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 600 }}>{est.label}</span>}
+                                        <button onClick={() => { if (editandoPedido) setEditandoPedido(false); else setPedidoDetalle(null) }}
+                                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', padding: '4px' }}>
                                             <X size={22} />
                                         </button>
                                     </div>
                                 </div>
                             </div>
-                            {/* Items */}
-                            <div style={{ overflowY: 'auto', flex: 1, padding: '12px 20px' }}>
-                                {items.length === 0 ? (
-                                    <p style={{ textAlign: 'center', color: '#9ca3af', fontSize: '14px', padding: '24px 0' }}>Sin ítems</p>
-                                ) : items.map((item, idx) => (
-                                    <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', padding: '12px 0', borderBottom: '1px solid #f3f4f6' }}>
-                                        <div style={{ flex: 1, paddingRight: '12px' }}>
-                                            <p style={{ fontSize: '14px', fontWeight: 600, color: '#1f2937', margin: '0 0 2px' }}>{item.nombre_producto}</p>
-                                            <p style={{ fontSize: '12px', color: '#9ca3af', margin: 0 }}>
-                                                {item.cantidad} × {fmt(item.precio_unitario)}
-                                                {Number(item.descuento_item) > 0 && <span style={{ color: '#f59e0b', marginLeft: '6px' }}>−{item.descuento_item}%</span>}
-                                            </p>
+
+                            {/* Items — modo lectura */}
+                            {!editandoPedido && (
+                                <div style={{ overflowY: 'auto', flex: 1, padding: '12px 20px' }}>
+                                    {items.length === 0 ? (
+                                        <p style={{ textAlign: 'center', color: '#9ca3af', fontSize: '14px', padding: '24px 0' }}>Sin ítems</p>
+                                    ) : items.map((item, idx) => (
+                                        <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', padding: '12px 0', borderBottom: '1px solid #f3f4f6' }}>
+                                            <div style={{ flex: 1, paddingRight: '12px' }}>
+                                                <p style={{ fontSize: '14px', fontWeight: 600, color: '#1f2937', margin: '0 0 2px' }}>{item.nombre_producto}</p>
+                                                <p style={{ fontSize: '12px', color: '#9ca3af', margin: 0 }}>
+                                                    {item.cantidad} × {fmt(item.precio_unitario)}
+                                                    {Number(item.descuento_item) > 0 && <span style={{ color: '#f59e0b', marginLeft: '6px' }}>−{item.descuento_item}%</span>}
+                                                </p>
+                                            </div>
+                                            <p style={{ fontSize: '14px', fontWeight: 700, color: '#1f2937', margin: 0, flexShrink: 0 }}>{fmt(item.subtotal)}</p>
                                         </div>
-                                        <p style={{ fontSize: '14px', fontWeight: 700, color: '#1f2937', margin: 0, flexShrink: 0 }}>{fmt(item.subtotal)}</p>
-                                    </div>
-                                ))}
-                            </div>
-                            {/* Footer total */}
-                            <div style={{ padding: '16px 20px 32px', borderTop: '1px solid #e5e7eb', flexShrink: 0 }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-                                    <span style={{ fontSize: '15px', fontWeight: 600, color: '#6b7280' }}>Total</span>
-                                    <span style={{ fontSize: '20px', fontWeight: 800, color: '#1f2937' }}>{fmt(total)}</span>
+                                    ))}
                                 </div>
-                                <button onClick={() => { setPedidoDetalle(null); onNuevoPedido(items) }}
-                                    style={{ ...s.btnPrimary }}>
-                                    <RotateCcw size={16} /> Repetir este pedido
-                                </button>
-                            </div>
+                            )}
+
+                            {/* Items — modo edición */}
+                            {editandoPedido && (
+                                <div style={{ overflowY: 'auto', flex: 1, padding: '12px 20px' }}>
+                                    {itemsEditPedido.map((item, idx) => {
+                                        const precio = Math.max(0, Number(item._precio) || 0)
+                                        const desc = Math.min(100, Math.max(0, Number(item._descuento) || 0))
+                                        const subtotal = Number(item.cantidad) * precio * (1 - desc / 100)
+                                        return (
+                                            <div key={idx} style={{ paddingBottom: '16px', marginBottom: '16px', borderBottom: '1px solid #f3f4f6' }}>
+                                                <p style={{ fontSize: '14px', fontWeight: 600, color: '#1f2937', margin: '0 0 10px' }}>
+                                                    {item.nombre_producto}
+                                                    <span style={{ fontSize: '12px', fontWeight: 400, color: '#9ca3af', marginLeft: '8px' }}>{item.cantidad} und.</span>
+                                                </p>
+                                                <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end' }}>
+                                                    <div style={{ flex: 1 }}>
+                                                        <p style={{ fontSize: '11px', fontWeight: 600, color: '#6b7280', margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Precio</p>
+                                                        <input type="number" min="0" step="0.0001" value={item._precio}
+                                                            onChange={e => setItemsEditPedido(prev => prev.map((it, i) => i === idx ? { ...it, _precio: e.target.value } : it))}
+                                                            style={{ width: '100%', padding: '8px 10px', border: '1px solid #d97706', borderRadius: '8px', fontSize: '14px', fontWeight: 600, color: '#1f2937', boxSizing: 'border-box' }} />
+                                                    </div>
+                                                    <div style={{ width: '80px' }}>
+                                                        <p style={{ fontSize: '11px', fontWeight: 600, color: '#6b7280', margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Desc. %</p>
+                                                        <input type="number" min="0" max="100" step="0.1" value={item._descuento}
+                                                            onChange={e => setItemsEditPedido(prev => prev.map((it, i) => i === idx ? { ...it, _descuento: e.target.value } : it))}
+                                                            style={{ width: '100%', padding: '8px 10px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', color: '#374151', boxSizing: 'border-box' }} />
+                                                    </div>
+                                                    <p style={{ fontSize: '14px', fontWeight: 700, color: '#1f2937', margin: '0 0 8px', flexShrink: 0 }}>{fmt(subtotal)}</p>
+                                                </div>
+                                            </div>
+                                        )
+                                    })}
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', paddingTop: '8px' }}>
+                                        <p style={{ fontSize: '13px', color: '#6b7280', margin: 0, fontWeight: 500 }}>Desc. global (%):</p>
+                                        <input type="number" min="0" max="100" step="0.1" value={descGlobalEditPedido}
+                                            onChange={e => setDescGlobalEditPedido(e.target.value)}
+                                            style={{ width: '80px', padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', textAlign: 'right' }} />
+                                    </div>
+                                    {errorEditPedido && (
+                                        <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px', fontSize: '13px', color: '#dc2626', marginTop: '12px' }}>
+                                            {errorEditPedido}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* Footer — modo lectura */}
+                            {!editandoPedido && (
+                                <div style={{ padding: '16px 20px 32px', borderTop: '1px solid #e5e7eb', flexShrink: 0 }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                                        <span style={{ fontSize: '15px', fontWeight: 600, color: '#6b7280' }}>Total</span>
+                                        <span style={{ fontSize: '20px', fontWeight: 800, color: '#1f2937' }}>{fmt(total)}</span>
+                                    </div>
+                                    <div style={{ display: 'flex', gap: '10px' }}>
+                                        <button onClick={() => { setPedidoDetalle(null); onNuevoPedido(items) }}
+                                            style={{ ...s.btnPrimary, flex: 1 }}>
+                                            <RotateCcw size={16} /> Repetir
+                                        </button>
+                                        {pedidoDetalle.estado === 'pendiente' && (
+                                            <button onClick={iniciarEdicionPedido}
+                                                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '14px 16px', borderRadius: '12px', border: '1px solid #fde68a', backgroundColor: '#fffbeb', color: '#d97706', fontSize: '14px', fontWeight: 600, cursor: 'pointer' }}>
+                                                <Pencil size={16} /> Editar
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Footer — modo edición */}
+                            {editandoPedido && (
+                                <div style={{ padding: '16px 20px 32px', borderTop: '1px solid #fde68a', flexShrink: 0, backgroundColor: '#fffbeb' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                                        <span style={{ fontSize: '15px', fontWeight: 600, color: '#92400e' }}>Total estimado</span>
+                                        <span style={{ fontSize: '20px', fontWeight: 800, color: '#92400e' }}>{fmt(total)}</span>
+                                    </div>
+                                    <div style={{ display: 'flex', gap: '10px' }}>
+                                        <button onClick={guardarEdicionPedido} disabled={guardandoEditPedido}
+                                            style={{ ...s.btnPrimary, flex: 1, backgroundColor: '#d97706', opacity: guardandoEditPedido ? 0.7 : 1 }}>
+                                            <Check size={16} /> {guardandoEditPedido ? 'Guardando...' : 'Guardar cambios'}
+                                        </button>
+                                        <button onClick={() => setEditandoPedido(false)}
+                                            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '14px 16px', borderRadius: '12px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: '#6b7280', fontSize: '14px', fontWeight: 600, cursor: 'pointer' }}>
+                                            <X size={16} /> Cancelar
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     </div>
                 )
