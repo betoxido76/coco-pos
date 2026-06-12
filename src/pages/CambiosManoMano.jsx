@@ -225,10 +225,10 @@ export default function CambiosManoMano() {
                                         <td style={{ padding: '12px 16px' }}>
                                             <span style={{
                                                 padding: '2px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 500,
-                                                backgroundColor: c.destino === 'reprocesar' ? '#dbeafe' : '#fee2e2',
-                                                color: c.destino === 'reprocesar' ? '#1e40af' : '#991b1b',
+                                                backgroundColor: c.destino === 'reprocesar' ? '#dbeafe' : c.destino === 'desechar' ? '#fee2e2' : '#f3f4f6',
+                                                color: c.destino === 'reprocesar' ? '#1e40af' : c.destino === 'desechar' ? '#991b1b' : '#6b7280',
                                             }}>
-                                                {c.destino === 'reprocesar' ? 'Reprocesar' : 'Desechar'}
+                                                {c.destino === 'reprocesar' ? 'Reprocesar' : c.destino === 'desechar' ? 'Desechar' : 'Pendiente'}
                                             </span>
                                         </td>
                                     </tr>
