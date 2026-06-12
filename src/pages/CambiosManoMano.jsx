@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
-import { Plus, Search, Check, X, RefreshCw, Trash2, ArrowRight, ClipboardList } from 'lucide-react'
+import { Plus, Search, Check, X, RefreshCw, Trash2, ArrowRight, ClipboardList, Eye } from 'lucide-react'
 
 const fmt = (n) => Number(n || 0).toLocaleString('es-VE', { minimumFractionDigits: 0, maximumFractionDigits: 3 })
 
@@ -27,6 +27,7 @@ export default function CambiosManoMano() {
     const { perfil } = useAuth()
     const [tabActiva, setTabActiva] = useState('cambios')
     const [vista, setVista] = useState('lista')
+    const [cambioVer, setCambioVer] = useState(null)
 
     // Cambios
     const [cambios, setCambios] = useState([])
@@ -60,7 +61,7 @@ export default function CambiosManoMano() {
                 .eq('empresa_id', perfil.empresa_id)
                 .eq('estado', 'ejecutado'),
             supabase.from('cambios_mano_mano')
-                .select(`*, clientes(nombre), productos_terminados(nombre, sku, unidad_medida), usuarios!cambios_mano_mano_despachador_id_fkey(nombre)`, { count: 'exact' })
+                .select(`*, clientes(nombre), productos_terminados(nombre, sku, unidad_medida), usuarios!cambios_mano_mano_despachador_id_fkey(nombre), almacenes(nombre)`, { count: 'exact' })
                 .eq('empresa_id', perfil.empresa_id)
                 .eq('estado', 'ejecutado')
                 .order('fecha', { ascending: false })
@@ -107,6 +108,12 @@ export default function CambiosManoMano() {
     const totalCambios = kpiCambios.length
     const unidadesEntregadas = kpiCambios.reduce((s, c) => s + Number(c.cantidad), 0)
     const enReproceso = stockReproceso.length
+
+    if (vista === 'ver')
+        return <DocumentoCambio
+            cambio={cambioVer}
+            onVolver={() => { setCambioVer(null); setVista('lista') }}
+        />
 
     if (vista === 'nuevo')
         return <NuevoCambio
@@ -194,7 +201,7 @@ export default function CambiosManoMano() {
                         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                             <thead>
                                 <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                    {['N° Cambio', 'Fecha', 'Cliente', 'Despachador', 'Producto', 'Cantidad', 'Motivo', 'Destino'].map((h, i) => (
+                                    {['N° Cambio', 'Fecha', 'Cliente', 'Despachador', 'Producto', 'Cantidad', 'Motivo', 'Destino', ''].map((h, i) => (
                                         <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
                                     ))}
                                 </tr>
@@ -230,6 +237,12 @@ export default function CambiosManoMano() {
                                             }}>
                                                 {c.destino === 'reprocesar' ? 'Reprocesar' : c.destino === 'desechar' ? 'Desechar' : 'Pendiente'}
                                             </span>
+                                        </td>
+                                        <td style={{ padding: '12px 16px' }}>
+                                            <button onClick={() => { setCambioVer(c); setVista('ver') }}
+                                                style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: '#f3f4f6', color: '#374151', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '6px 12px', fontSize: '12px', fontWeight: 500, cursor: 'pointer' }}>
+                                                <Eye size={13} /> Ver
+                                            </button>
                                         </td>
                                     </tr>
                                 ))}
@@ -889,6 +902,132 @@ function ProcesarSolicitud({ solicitud, onProcesada, onCancelar }) {
                         Cancelar
                     </button>
                 </div>
+            </div>
+        </div>
+    )
+}
+
+// ══════════════════════════════════════════════════════════════
+// DOCUMENTO CAMBIO MANO A MANO (Vista imprimible)
+// ══════════════════════════════════════════════════════════════
+function DocumentoCambio({ cambio, onVolver }) {
+    const { perfil } = useAuth()
+    const producto = cambio.productos_terminados
+    const fecha = new Date(cambio.fecha + 'T00:00:00').toLocaleDateString('es-VE', { year: 'numeric', month: 'long', day: 'numeric' })
+    const motivoLabel = MOTIVOS.find(m => m.key === cambio.motivo)?.label || cambio.motivo
+    const destinoLabel = cambio.destino === 'reprocesar' ? 'Reprocesar' : cambio.destino === 'desechar' ? 'Desechar' : 'Pendiente'
+
+    return (
+        <div style={{ padding: '24px', maxWidth: '720px' }}>
+            <style>{`
+                @media print {
+                    body * { visibility: hidden; }
+                    .print-target, .print-target * { visibility: visible; }
+                    .print-target {
+                        position: absolute; left: 0; top: 0; width: 100%;
+                        margin: 0; padding: 20px !important;
+                        border: none !important; box-shadow: none !important; background: white !important;
+                    }
+                    .no-print { display: none !important; }
+                }
+            `}</style>
+
+            <div className="no-print" style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
+                <button onClick={onVolver} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', fontSize: '13px' }}>← Volver</button>
+                <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Cambio Mano a Mano</h1>
+                <button onClick={() => window.print()}
+                    style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '8px 14px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}>
+                    🖨️ Imprimir
+                </button>
+            </div>
+
+            <div className="print-target" style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '32px', marginBottom: '16px' }}>
+
+                {/* Encabezado del documento */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '28px' }}>
+                    <div>
+                        <p style={{ fontSize: '18px', fontWeight: 700, color: '#1f2937', margin: '0 0 4px' }}>{perfil?.empresas?.nombre}</p>
+                        {perfil?.empresas?.rif && (
+                            <p style={{ fontSize: '13px', color: '#6b7280', margin: 0 }}>RIF: {perfil.empresas.rif}</p>
+                        )}
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                        <p style={{ fontSize: '13px', fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 4px' }}>Cambio Mano a Mano</p>
+                        <p style={{ fontSize: '20px', fontWeight: 700, color: '#1f2937', fontFamily: 'monospace', margin: '0 0 4px' }}>{cambio.numero_cambio}</p>
+                        <p style={{ fontSize: '13px', color: '#6b7280', margin: 0 }}>{fecha}</p>
+                    </div>
+                </div>
+
+                <hr style={{ border: 'none', borderTop: '1px solid #e5e7eb', margin: '0 0 24px' }} />
+
+                {/* Datos del cambio */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '28px' }}>
+                    <div>
+                        <p style={{ fontSize: '11px', fontWeight: 600, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 4px' }}>Cliente</p>
+                        <p style={{ fontSize: '14px', fontWeight: 600, color: '#1f2937', margin: 0 }}>{cambio.clientes?.nombre || '—'}</p>
+                    </div>
+                    <div>
+                        <p style={{ fontSize: '11px', fontWeight: 600, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 4px' }}>Despachador</p>
+                        <p style={{ fontSize: '14px', color: '#374151', margin: 0 }}>{cambio.usuarios?.nombre || '—'}</p>
+                    </div>
+                    <div>
+                        <p style={{ fontSize: '11px', fontWeight: 600, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 4px' }}>Almacén origen</p>
+                        <p style={{ fontSize: '14px', color: '#374151', margin: 0 }}>{cambio.almacenes?.nombre || '—'}</p>
+                    </div>
+                    <div>
+                        <p style={{ fontSize: '11px', fontWeight: 600, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 4px' }}>Motivo del retiro</p>
+                        <p style={{ fontSize: '14px', color: '#374151', margin: 0 }}>{motivoLabel}</p>
+                    </div>
+                    <div>
+                        <p style={{ fontSize: '11px', fontWeight: 600, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 4px' }}>Destino del producto</p>
+                        <p style={{ fontSize: '14px', color: '#374151', margin: 0 }}>{destinoLabel}</p>
+                    </div>
+                    {cambio.notas && (
+                        <div style={{ gridColumn: '1 / -1' }}>
+                            <p style={{ fontSize: '11px', fontWeight: 600, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 4px' }}>Notas</p>
+                            <p style={{ fontSize: '14px', color: '#374151', margin: 0, fontStyle: 'italic' }}>{cambio.notas}</p>
+                        </div>
+                    )}
+                </div>
+
+                {/* Tabla de productos */}
+                <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '24px' }}>
+                    <thead>
+                        <tr style={{ backgroundColor: '#f9fafb', borderBottom: '2px solid #e5e7eb' }}>
+                            {['Producto', 'Código', 'UM', 'Cantidad', 'Precio unit.', 'Total'].map((h, i) => (
+                                <th key={i} style={{ padding: '10px 12px', fontSize: '12px', fontWeight: 600, color: '#6b7280', textAlign: i >= 3 ? 'right' : 'left' }}>{h}</th>
+                            ))}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr style={{ borderBottom: '1px solid #f3f4f6' }}>
+                            <td style={{ padding: '12px', fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>{producto?.nombre || '—'}</td>
+                            <td style={{ padding: '12px', fontSize: '12px', fontFamily: 'monospace', color: '#6b7280' }}>{producto?.sku || '—'}</td>
+                            <td style={{ padding: '12px', fontSize: '13px', color: '#6b7280' }}>{producto?.unidad_medida || '—'}</td>
+                            <td style={{ padding: '12px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(cambio.cantidad)}</td>
+                            <td style={{ padding: '12px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>$0.00</td>
+                            <td style={{ padding: '12px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>$0.00</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                {/* Totales */}
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                    <div style={{ width: '260px' }}>
+                        {[
+                            { label: 'Subtotal', valor: '$0.00' },
+                            { label: 'IVA (16%)', valor: '$0.00' },
+                        ].map(({ label, valor }) => (
+                            <div key={label} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', fontSize: '13px', color: '#6b7280', borderBottom: '1px solid #f3f4f6' }}>
+                                <span>{label}</span><span>{valor}</span>
+                            </div>
+                        ))}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0 5px', fontSize: '15px', fontWeight: 700, color: '#1f2937' }}>
+                            <span>Total</span><span>$0.00</span>
+                        </div>
+                    </div>
+                </div>
+
             </div>
         </div>
     )
