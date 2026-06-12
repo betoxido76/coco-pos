@@ -298,6 +298,17 @@ export default function Productos() {
             }
         }
 
+        // Al crear: insertar en todas las listas activas con precio 0
+        if (!editando && productoId) {
+            const { data: listas } = await supabase.from('listas_precio')
+                .select('id').eq('empresa_id', perfil.empresa_id).eq('activo', true)
+            if (listas && listas.length > 0) {
+                await supabase.from('producto_precios').insert(
+                    listas.map(l => ({ lista_id: l.id, producto_id: productoId, empresa_id: perfil.empresa_id, precio: 0 }))
+                )
+            }
+        }
+
         setGuardando(false)
         setExito(editando ? 'Producto actualizado' : 'Producto creado')
         setTimeout(() => setExito(''), 3000)
