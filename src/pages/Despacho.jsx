@@ -152,7 +152,7 @@ export default function Despacho() {
                         </p>
                     </div>
                 ) : tabActiva === 'alistamiento' ? (
-                    <TablaAlistamiento pedidos={pedidos} onAlistar={p => setPedidoActual(p)} onAnular={p => { setModalAnulacion(p); setMotivoAnulacion(''); setErrorAnulacion('') }} />
+                    <TablaAlistamiento pedidos={pedidos} onVer={p => setPedidoVer(p)} onAlistar={p => setPedidoActual(p)} onAnular={p => { setModalAnulacion(p); setMotivoAnulacion(''); setErrorAnulacion('') }} />
                 ) : tabActiva === 'porregistrar' ? (
                     <TablaPorRegistrar pedidos={pedidos} onVer={p => setPedidoVer(p)} onAnular={p => { setModalAnulacion(p); setMotivoAnulacion(''); setErrorAnulacion('') }} />
                 ) : tabActiva === 'despacho' ? (
@@ -209,7 +209,7 @@ export default function Despacho() {
 }
 
 // ── Tabla Alistamiento ─────────────────────────────────────────
-function TablaAlistamiento({ pedidos, onAlistar, onAnular }) {
+function TablaAlistamiento({ pedidos, onAlistar, onAnular, onVer }) {
     return (
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
@@ -245,6 +245,10 @@ function TablaAlistamiento({ pedidos, onAlistar, onAnular }) {
                         </td>
                         <td style={{ padding: '12px 16px' }}>
                             <div style={{ display: 'flex', gap: '6px' }}>
+                                <button onClick={() => onVer(p)}
+                                    style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
+                                    <FileText size={13} /> Ver
+                                </button>
                                 <button onClick={() => onAlistar(p)}
                                     style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#d97706', color: '#fff', border: 'none', borderRadius: '6px', padding: '6px 12px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>
                                     <ChevronRight size={13} /> Alistar
