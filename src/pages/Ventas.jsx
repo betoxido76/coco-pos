@@ -2799,6 +2799,7 @@ function Factura({ venta, onVolver, onDevolucionCreada }) {
     }, 0)
     const total = venta.total != null ? venta.total : subtotal
     const impuesto = total - subtotal
+    const esRetail = perfil?.empresas?.flujo_ventas === 'retail'
     const puedeDevolver = venta.estado_cobro !== 'anulado'
     const [refEditando, setRefEditando] = useState(false)
     const [refValor, setRefValor] = useState(venta.nro_referencia || '')
@@ -2846,6 +2847,12 @@ function Factura({ venta, onVolver, onDevolucionCreada }) {
                     style={{ marginLeft: 'auto', marginRight: '8px', display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '8px 14px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}>
                     🖨️ Imprimir
                 </button>
+                {esRetail && puedeDevolver && (
+                    <button onClick={() => setMostrarDevolucion(true)}
+                        style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#fff', color: '#dc2626', border: '1px solid #dc2626', borderRadius: '8px', padding: '8px 14px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}>
+                        <RotateCcw size={14} /> Devolución
+                    </button>
+                )}
 
             </div>
 
