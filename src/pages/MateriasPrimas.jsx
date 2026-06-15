@@ -11,7 +11,7 @@ const VACIO = {
     costo_compra_promedio: '', stock_actual: '', stock_minimo: '',
     fecha_vencimiento: '', proveedor_preferido_id: '',
     categoria_1: '', categoria_2: '', categoria_3: '', categoria_4: '',
-    tipo_producto: 'comprado', activo: true,
+    tipo_producto: 'comprado', vida_util_dias: '', activo: true,
     aplica_iva: true,
 }
 
@@ -74,6 +74,7 @@ export default function MateriasPrimas({ tabInicial = 'materias_primas' }) {
             categoria_3: p.categoria_3 || '',
             categoria_4: p.categoria_4 || '',
             tipo_producto: p.tipo_producto || 'comprado',
+            vida_util_dias: p.vida_util_dias ?? '',
             activo: p.activo ?? true,
             aplica_iva: p.aplica_iva ?? true,
         })
@@ -106,6 +107,7 @@ export default function MateriasPrimas({ tabInicial = 'materias_primas' }) {
             categoria_3: form.categoria_3 || null,
             categoria_4: form.categoria_4 || null,
             tipo_producto: form.tipo_producto,
+            vida_util_dias: form.vida_util_dias !== '' ? Number(form.vida_util_dias) : null,
             activo: form.activo,
             aplica_iva: form.aplica_iva,
         }
@@ -202,7 +204,13 @@ export default function MateriasPrimas({ tabInicial = 'materias_primas' }) {
                         placeholder="0" style={inputStyle} />
                 </Campo>
 
-                <Campo label="Fecha de vencimiento" span={2}>
+                <Campo label="Vida útil (días)">
+                    <input type="number" min="0" value={form.vida_util_dias}
+                        onChange={e => campo('vida_util_dias', e.target.value)}
+                        placeholder="Ej: 30" style={inputStyle} />
+                </Campo>
+
+                <Campo label="Fecha de vencimiento">
                     <input type="date" value={form.fecha_vencimiento}
                         onChange={e => campo('fecha_vencimiento', e.target.value)}
                         style={inputStyle} />
