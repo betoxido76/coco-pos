@@ -693,15 +693,15 @@ function ProcesarSolicitud({ solicitud, onProcesada, onCancelar }) {
 
     useEffect(() => {
         if (!almacenId) { setStockEnAlmacen(null); return }
+        // Sumar TODAS las filas del almacén+producto: el stock puede estar repartido
+        // en varias ubicaciones (almacen_ubicacion_id distinto, incluido NULL).
         supabase.from('stock_ubicacion')
             .select('cantidad')
             .eq('almacen_id', almacenId)
             .eq('tipo_item', 'producto_terminado')
             .eq('item_id', solicitud.producto_id)
             .eq('empresa_id', perfil.empresa_id)
-            .is('almacen_ubicacion_id', null)
-            .maybeSingle()
-            .then(({ data }) => setStockEnAlmacen(data ? Number(data.cantidad) : 0))
+            .then(({ data }) => setStockEnAlmacen((data || []).reduce((s, r) => s + Number(r.cantidad), 0)))
     }, [almacenId])
 
     async function confirmar() {
@@ -731,16 +731,23 @@ function ProcesarSolicitud({ solicitud, onProcesada, onCancelar }) {
         await supabase.from('productos_terminados')
             .update({ stock_actual: nuevoStock }).eq('id', solicitud.producto_id)
 
-        // 3. Descontar stock_ubicacion
-        const { data: su } = await supabase.from('stock_ubicacion')
+        // 3. Descontar stock_ubicacion — repartir el descuento entre las filas del
+        //    almacén (el stock puede estar en varias ubicaciones). Se consume primero
+        //    la fila sin ubicación (NULL) y luego las ubicaciones con saldo.
+        const { data: filasSU } = await supabase.from('stock_ubicacion')
             .select('id, cantidad')
             .eq('almacen_id', almacenId).eq('tipo_item', 'producto_terminado')
             .eq('item_id', solicitud.producto_id).eq('empresa_id', perfil.empresa_id)
-            .is('almacen_ubicacion_id', null).maybeSingle()
-        if (su) {
+            .gt('cantidad', 0)
+            .order('almacen_ubicacion_id', { ascending: true, nullsFirst: true })
+        let restante = Number(solicitud.cantidad)
+        for (const fila of (filasSU || [])) {
+            if (restante <= 0) break
+            const descontar = Math.min(Number(fila.cantidad), restante)
             await supabase.from('stock_ubicacion')
-                .update({ cantidad: Math.max(0, Number(su.cantidad) - Number(solicitud.cantidad)), updated_at: new Date().toISOString() })
-                .eq('id', su.id)
+                .update({ cantidad: Number(fila.cantidad) - descontar, updated_at: new Date().toISOString() })
+                .eq('id', fila.id)
+            restante -= descontar
         }
 
         // 4. Movimiento de inventario
