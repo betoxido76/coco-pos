@@ -1180,22 +1180,21 @@ function ModalCierre({ orden, producto, onCerrar, onCerrada }) {
                 await supabase.from(tabla).update({ stock_actual: nuevoStock }).eq('id', c.insumo_id)
 
                 if (c.almacen_id) {
-                    const { data: su } = await supabase.from('stock_ubicacion')
+                    // Repartir el descuento entre las filas del almacen (NULL primero, luego ubicaciones)
+                    const { data: filasSU } = await supabase.from('stock_ubicacion')
                         .select('id, cantidad')
                         .eq('almacen_id', c.almacen_id).eq('tipo_item', tipoItem)
                         .eq('item_id', c.insumo_id).eq('empresa_id', perfil.empresa_id)
-                        .is('almacen_ubicacion_id', null).maybeSingle()
-                    if (su) {
+                        .gt('cantidad', 0)
+                        .order('almacen_ubicacion_id', { ascending: true, nullsFirst: true })
+                    let restante = Number(c.cantidad_real)
+                    for (const fila of (filasSU || [])) {
+                        if (restante <= 0) break
+                        const desc = Math.min(Number(fila.cantidad), restante)
                         await supabase.from('stock_ubicacion')
-                            .update({ cantidad: Math.max(0, Number(su.cantidad) - Number(c.cantidad_real)), updated_at: new Date().toISOString() })
-                            .eq('id', su.id)
-                    } else {
-                        await supabase.from('stock_ubicacion').insert({
-                            almacen_id: c.almacen_id, almacen_ubicacion_id: null,
-                            tipo_item: tipoItem, item_id: c.insumo_id,
-                            cantidad: 0, empresa_id: perfil.empresa_id,
-                            updated_at: new Date().toISOString(),
-                        })
+                            .update({ cantidad: Number(fila.cantidad) - desc, updated_at: new Date().toISOString() })
+                            .eq('id', fila.id)
+                        restante -= desc
                     }
                 }
 

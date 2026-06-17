@@ -518,18 +518,23 @@ function NuevaMerma({ onRegistrada, onCancelar }) {
                 empaque: 'material_empaque',
                 consumible: 'consumible',
             }
-            const { data: su } = await supabase.from('stock_ubicacion')
+            // Repartir el descuento entre las filas del almacen (NULL primero, luego ubicaciones)
+            const { data: filasSU } = await supabase.from('stock_ubicacion')
                 .select('id, cantidad')
                 .eq('almacen_id', almacenId)
                 .eq('tipo_item', tipoItemMap[tipoItem] || tipoItem)
                 .eq('item_id', itemSel.id)
                 .eq('empresa_id', perfil.empresa_id)
-                .is('almacen_ubicacion_id', null)
-                .maybeSingle()
-            if (su) {
+                .gt('cantidad', 0)
+                .order('almacen_ubicacion_id', { ascending: true, nullsFirst: true })
+            let restante = Number(cantidad)
+            for (const fila of (filasSU || [])) {
+                if (restante <= 0) break
+                const desc = Math.min(Number(fila.cantidad), restante)
                 await supabase.from('stock_ubicacion')
-                    .update({ cantidad: Math.max(0, Number(su.cantidad) - Number(cantidad)), updated_at: new Date().toISOString() })
-                    .eq('id', su.id)
+                    .update({ cantidad: Number(fila.cantidad) - desc, updated_at: new Date().toISOString() })
+                    .eq('id', fila.id)
+                restante -= desc
             }
         }
 

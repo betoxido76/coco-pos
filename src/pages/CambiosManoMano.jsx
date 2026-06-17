@@ -1161,19 +1161,23 @@ function NuevoCambio({ onRegistrado, onCancelar }) {
             .update({ stock_actual: nuevoStock })
             .eq('id', productoSel.id)
 
-        // 3. Descontar stock_ubicacion del almacén origen
-        const { data: su } = await supabase.from('stock_ubicacion')
+        // 3. Descontar stock_ubicacion del almacén origen — repartir entre filas (NULL primero, luego ubicaciones)
+        const { data: filasSU } = await supabase.from('stock_ubicacion')
             .select('id, cantidad')
             .eq('almacen_id', almacenId)
             .eq('tipo_item', 'producto_terminado')
             .eq('item_id', productoSel.id)
             .eq('empresa_id', perfil.empresa_id)
-            .is('almacen_ubicacion_id', null)
-            .maybeSingle()
-        if (su) {
+            .gt('cantidad', 0)
+            .order('almacen_ubicacion_id', { ascending: true, nullsFirst: true })
+        let restante = Number(cantidad)
+        for (const fila of (filasSU || [])) {
+            if (restante <= 0) break
+            const desc = Math.min(Number(fila.cantidad), restante)
             await supabase.from('stock_ubicacion')
-                .update({ cantidad: Math.max(0, Number(su.cantidad) - Number(cantidad)), updated_at: new Date().toISOString() })
-                .eq('id', su.id)
+                .update({ cantidad: Number(fila.cantidad) - desc, updated_at: new Date().toISOString() })
+                .eq('id', fila.id)
+            restante -= desc
         }
 
         // 4. Registrar movimiento de salida
