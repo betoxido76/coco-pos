@@ -5,6 +5,14 @@ import { Plus, Search, Check, X, RefreshCw, Trash2, ArrowRight, ClipboardList, E
 
 const fmt = (n) => Number(n || 0).toLocaleString('es-VE', { minimumFractionDigits: 0, maximumFractionDigits: 3 })
 
+// Resume las líneas (cambio_items) de un documento para mostrarlo en listados
+const resumirItems = (items = []) => ({
+    count: items.length,
+    total: items.reduce((s, i) => s + Number(i.cantidad || 0), 0),
+    motivos: [...new Set(items.map(i => i.motivo).filter(Boolean))],
+    destinos: [...new Set(items.map(i => i.destino).filter(Boolean))],
+})
+
 const MOTIVOS = [
     { key: 'vencido', label: 'Vencido' },
     { key: 'danado', label: 'Dañado' },
@@ -32,6 +40,7 @@ export default function CambiosManoMano() {
     // Cambios
     const [cambios, setCambios] = useState([])
     const [kpiCambios, setKpiCambios] = useState([])
+    const [totalDocsCount, setTotalDocsCount] = useState(0)
     const [loadingCambios, setLoadingCambios] = useState(true)
     const [paginaCambios, setPaginaCambios] = useState(0)
     const [totalCambiosCount, setTotalCambiosCount] = useState(0)
@@ -55,13 +64,17 @@ export default function CambiosManoMano() {
     async function cargarCambios() {
         setLoadingCambios(true)
 
-        const [{ data: kpi }, { data, count }] = await Promise.all([
+        const [{ data: kpiItems }, { count: docsCount }, { data, count }] = await Promise.all([
+            supabase.from('cambio_items')
+                .select('cantidad, cambios_mano_mano!inner(estado)')
+                .eq('empresa_id', perfil.empresa_id)
+                .eq('cambios_mano_mano.estado', 'ejecutado'),
             supabase.from('cambios_mano_mano')
-                .select('cantidad')
+                .select('id', { count: 'exact', head: true })
                 .eq('empresa_id', perfil.empresa_id)
                 .eq('estado', 'ejecutado'),
             supabase.from('cambios_mano_mano')
-                .select(`*, clientes(nombre), productos_terminados(nombre, sku, unidad_medida), usuarios!cambios_mano_mano_despachador_id_fkey(nombre), almacenes(nombre)`, { count: 'exact' })
+                .select(`*, clientes(nombre), usuarios!cambios_mano_mano_despachador_id_fkey(nombre), almacenes(nombre), cambio_items(*, productos_terminados(nombre, sku, unidad_medida))`, { count: 'exact' })
                 .eq('empresa_id', perfil.empresa_id)
                 .eq('estado', 'ejecutado')
                 .order('fecha', { ascending: false })
@@ -69,7 +82,8 @@ export default function CambiosManoMano() {
                 .range(paginaCambios * PAGE_SIZE, (paginaCambios + 1) * PAGE_SIZE - 1),
         ])
 
-        if (kpi) setKpiCambios(kpi)
+        setKpiCambios(kpiItems || [])
+        setTotalDocsCount(docsCount || 0)
         if (data) setCambios(data)
         if (count !== null) setTotalCambiosCount(count)
         setLoadingCambios(false)
@@ -95,7 +109,7 @@ export default function CambiosManoMano() {
         setLoadingSolicitudes(true)
         const { data, count } = await supabase
             .from('cambios_mano_mano')
-            .select(`*, clientes(nombre), productos_terminados(nombre, sku, unidad_medida)`, { count: 'exact' })
+            .select(`*, clientes(nombre), cambio_items(*, productos_terminados(nombre, sku, unidad_medida))`, { count: 'exact' })
             .eq('empresa_id', perfil.empresa_id)
             .eq('estado', 'solicitado')
             .order('created_at', { ascending: false })
@@ -104,8 +118,8 @@ export default function CambiosManoMano() {
         setLoadingSolicitudes(false)
     }
 
-    // KPIs — totalCambios y unidades calculados desde query completa (kpiCambios)
-    const totalCambios = kpiCambios.length
+    // KPIs — totalCambios = documentos ejecutados; unidades = suma de líneas
+    const totalCambios = totalDocsCount
     const unidadesEntregadas = kpiCambios.reduce((s, c) => s + Number(c.cantidad), 0)
     const enReproceso = stockReproceso.length
 
@@ -217,27 +231,36 @@ export default function CambiosManoMano() {
                                         </td>
                                         <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>{c.clientes?.nombre || '—'}</td>
                                         <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{c.usuarios?.nombre || '—'}</td>
+                                        {(() => { const r = resumirItems(c.cambio_items); const first = c.cambio_items?.[0]?.productos_terminados; return (<>
                                         <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1f2937' }}>
-                                            {c.productos_terminados?.nombre || '—'}
-                                            {c.productos_terminados?.sku && (
-                                                <span style={{ fontSize: '11px', color: '#9ca3af', marginLeft: '6px', fontFamily: 'monospace' }}>{c.productos_terminados.sku}</span>
+                                            {first?.nombre || '—'}
+                                            {first?.sku && (
+                                                <span style={{ fontSize: '11px', color: '#9ca3af', marginLeft: '6px', fontFamily: 'monospace' }}>{first.sku}</span>
                                             )}
+                                            {r.count > 1 && <span style={{ fontSize: '11px', color: '#6b7280', marginLeft: '6px' }}>+{r.count - 1} más</span>}
                                         </td>
                                         <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937' }}>
-                                            {fmt(c.cantidad)} {c.productos_terminados?.unidad_medida}
+                                            {fmt(r.total)}{r.count > 1 ? ` (${r.count} SKU)` : ` ${first?.unidad_medida || ''}`}
                                         </td>
                                         <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>
-                                            {MOTIVOS.find(m => m.key === c.motivo)?.label || c.motivo}
+                                            {r.motivos.length === 1 ? (MOTIVOS.find(m => m.key === r.motivos[0])?.label || r.motivos[0]) : r.motivos.length === 0 ? '—' : 'Varios'}
                                         </td>
                                         <td style={{ padding: '12px 16px' }}>
-                                            <span style={{
-                                                padding: '2px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 500,
-                                                backgroundColor: c.destino === 'reprocesar' ? '#dbeafe' : c.destino === 'desechar' ? '#fee2e2' : '#f3f4f6',
-                                                color: c.destino === 'reprocesar' ? '#1e40af' : c.destino === 'desechar' ? '#991b1b' : '#6b7280',
-                                            }}>
-                                                {c.destino === 'reprocesar' ? 'Reprocesar' : c.destino === 'desechar' ? 'Desechar' : 'Pendiente'}
-                                            </span>
+                                            {r.destinos.length === 1 ? (
+                                                <span style={{
+                                                    padding: '2px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 500,
+                                                    backgroundColor: r.destinos[0] === 'reprocesar' ? '#dbeafe' : r.destinos[0] === 'desechar' ? '#fee2e2' : '#f3f4f6',
+                                                    color: r.destinos[0] === 'reprocesar' ? '#1e40af' : r.destinos[0] === 'desechar' ? '#991b1b' : '#6b7280',
+                                                }}>
+                                                    {r.destinos[0] === 'reprocesar' ? 'Reprocesar' : r.destinos[0] === 'desechar' ? 'Desechar' : 'Pendiente'}
+                                                </span>
+                                            ) : (
+                                                <span style={{ padding: '2px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 500, backgroundColor: '#f3f4f6', color: '#6b7280' }}>
+                                                    {r.destinos.length === 0 ? 'Pendiente' : 'Varios'}
+                                                </span>
+                                            )}
                                         </td>
+                                        </>) })()}
                                         <td style={{ padding: '12px 16px' }}>
                                             <button onClick={() => { setCambioVer(c); setVista('ver') }}
                                                 style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: '#f3f4f6', color: '#374151', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '6px 12px', fontSize: '12px', fontWeight: 500, cursor: 'pointer' }}>
@@ -299,18 +322,21 @@ export default function CambiosManoMano() {
                                             {new Date(s.fecha + 'T00:00:00').toLocaleDateString('es-VE')}
                                         </td>
                                         <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>{s.clientes?.nombre || '—'}</td>
+                                        {(() => { const r = resumirItems(s.cambio_items); const first = s.cambio_items?.[0]?.productos_terminados; return (<>
                                         <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1f2937' }}>
-                                            {s.productos_terminados?.nombre || '—'}
-                                            {s.productos_terminados?.sku && (
-                                                <span style={{ fontSize: '11px', color: '#9ca3af', marginLeft: '6px', fontFamily: 'monospace' }}>{s.productos_terminados.sku}</span>
+                                            {first?.nombre || '—'}
+                                            {first?.sku && (
+                                                <span style={{ fontSize: '11px', color: '#9ca3af', marginLeft: '6px', fontFamily: 'monospace' }}>{first.sku}</span>
                                             )}
+                                            {r.count > 1 && <span style={{ fontSize: '11px', color: '#6b7280', marginLeft: '6px' }}>+{r.count - 1} más</span>}
                                         </td>
                                         <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937' }}>
-                                            {fmt(s.cantidad)} {s.productos_terminados?.unidad_medida}
+                                            {fmt(r.total)}{r.count > 1 ? ` (${r.count} SKU)` : ` ${first?.unidad_medida || ''}`}
                                         </td>
                                         <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>
-                                            {MOTIVOS.find(m => m.key === s.motivo)?.label || s.motivo}
+                                            {r.motivos.length === 1 ? (MOTIVOS.find(m => m.key === r.motivos[0])?.label || r.motivos[0]) : r.motivos.length === 0 ? '—' : 'Varios'}
                                         </td>
+                                        </>) })()}
                                         <td style={{ padding: '12px 16px' }}>
                                             <button onClick={() => { setCambioVer(s); setVista('ver') }}
                                                 style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: '#f3f4f6', color: '#374151', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '6px 12px', fontSize: '12px', fontWeight: 500, cursor: 'pointer' }}>
@@ -665,16 +691,16 @@ function ModalSalida({ item, onConfirmar, onCerrar }) {
 function ProcesarSolicitud({ solicitud, onProcesada, onCancelar }) {
     const { perfil } = useAuth()
     const [despachadorId, setDespachadorId] = useState('')
-    const [destino, setDestino] = useState('reprocesar')
     const [almacenId, setAlmacenId] = useState('')
     const [almacenReproceso, setAlmacenReproceso] = useState('')
     const [despachadores, setDespachadores] = useState([])
     const [almacenes, setAlmacenes] = useState([])
-    const [stockEnAlmacen, setStockEnAlmacen] = useState(null)
+    const [stockMap, setStockMap] = useState({})
+    const [items, setItems] = useState(() => (solicitud.cambio_items || []).map(it => ({ ...it, destino: it.destino || 'reprocesar' })))
     const [guardando, setGuardando] = useState(false)
     const [error, setError] = useState('')
 
-    const producto = solicitud.productos_terminados
+    const hayReproceso = items.some(it => it.destino === 'reprocesar')
 
     useEffect(() => {
         supabase.from('usuarios').select('id, nombre').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('nombre')
@@ -691,111 +717,108 @@ function ProcesarSolicitud({ solicitud, onProcesada, onCancelar }) {
             })
     }, [])
 
+    // Stock disponible por producto en el almacén origen (suma todas las ubicaciones)
     useEffect(() => {
-        if (!almacenId) { setStockEnAlmacen(null); return }
-        // Sumar TODAS las filas del almacén+producto: el stock puede estar repartido
-        // en varias ubicaciones (almacen_ubicacion_id distinto, incluido NULL).
+        if (!almacenId) { setStockMap({}); return }
+        const ids = [...new Set((solicitud.cambio_items || []).map(i => i.producto_id))]
+        if (!ids.length) return
         supabase.from('stock_ubicacion')
-            .select('cantidad')
+            .select('item_id, cantidad')
             .eq('almacen_id', almacenId)
             .eq('tipo_item', 'producto_terminado')
-            .eq('item_id', solicitud.producto_id)
+            .in('item_id', ids)
             .eq('empresa_id', perfil.empresa_id)
-            .then(({ data }) => setStockEnAlmacen((data || []).reduce((s, r) => s + Number(r.cantidad), 0)))
+            .then(({ data }) => {
+                const m = {}
+                ;(data || []).forEach(r => { m[r.item_id] = (m[r.item_id] || 0) + Number(r.cantidad) })
+                setStockMap(m)
+            })
     }, [almacenId])
+
+    const setDestinoItem = (id, val) => setItems(prev => prev.map(it => it.id === id ? { ...it, destino: val } : it))
+
+    // Necesario por producto (puede haber el mismo SKU en varias líneas)
+    const necesarioPorProducto = {}
+    items.forEach(it => { necesarioPorProducto[it.producto_id] = (necesarioPorProducto[it.producto_id] || 0) + Number(it.cantidad) })
 
     async function confirmar() {
         if (!despachadorId) { setError('Selecciona el despachador'); return }
         if (!almacenId) { setError('Selecciona el almacén de origen'); return }
-        if (stockEnAlmacen !== null && solicitud.cantidad > stockEnAlmacen) {
-            setError(`Stock insuficiente. Disponible: ${stockEnAlmacen} ${producto?.unidad_medida}`)
-            return
+        if (hayReproceso && !almacenReproceso) { setError('Selecciona el almacén donde entra el reproceso'); return }
+        for (const pid of Object.keys(necesarioPorProducto)) {
+            const disp = stockMap[pid] ?? 0
+            if (necesarioPorProducto[pid] > disp) {
+                const nombre = items.find(it => it.producto_id === pid)?.productos_terminados?.nombre || ''
+                setError(`Stock insuficiente de ${nombre}. Disponible: ${disp}, requerido: ${necesarioPorProducto[pid]}`)
+                return
+            }
         }
         setGuardando(true); setError('')
         const { data: { user } } = await supabase.auth.getUser()
 
-        // 1. Actualizar la solicitud a ejecutado
+        // 1. Cabecera → ejecutado
         const { error: errUpd } = await supabase.from('cambios_mano_mano').update({
             estado: 'ejecutado',
             despachador_id: despachadorId,
             almacen_id: almacenId,
-            destino,
         }).eq('id', solicitud.id)
         if (errUpd) { setError('Error: ' + errUpd.message); setGuardando(false); return }
 
-        // 2. Descontar stock global
-        const { data: prodActual } = await supabase.from('productos_terminados')
-            .select('stock_actual').eq('id', solicitud.producto_id).single()
-        const stockAnterior = Number(prodActual?.stock_actual || 0)
-        const nuevoStock = stockAnterior - Number(solicitud.cantidad)
-        await supabase.from('productos_terminados')
-            .update({ stock_actual: nuevoStock }).eq('id', solicitud.producto_id)
+        // 2. Procesar cada línea
+        for (const it of items) {
+            const prod = it.productos_terminados
 
-        // 3. Descontar stock_ubicacion — repartir el descuento entre las filas del
-        //    almacén (el stock puede estar en varias ubicaciones). Se consume primero
-        //    la fila sin ubicación (NULL) y luego las ubicaciones con saldo.
-        const { data: filasSU } = await supabase.from('stock_ubicacion')
-            .select('id, cantidad')
-            .eq('almacen_id', almacenId).eq('tipo_item', 'producto_terminado')
-            .eq('item_id', solicitud.producto_id).eq('empresa_id', perfil.empresa_id)
-            .gt('cantidad', 0)
-            .order('almacen_ubicacion_id', { ascending: true, nullsFirst: true })
-        let restante = Number(solicitud.cantidad)
-        for (const fila of (filasSU || [])) {
-            if (restante <= 0) break
-            const descontar = Math.min(Number(fila.cantidad), restante)
-            await supabase.from('stock_ubicacion')
-                .update({ cantidad: Number(fila.cantidad) - descontar, updated_at: new Date().toISOString() })
-                .eq('id', fila.id)
-            restante -= descontar
-        }
+            // 2a. Destino de la línea
+            await supabase.from('cambio_items').update({
+                destino: it.destino,
+                almacen_reproceso_id: it.destino === 'reprocesar' ? (almacenReproceso || null) : null,
+            }).eq('id', it.id)
 
-        // 4. Movimiento de inventario
-        await supabase.from('movimientos_inventario').insert({
-            empresa_id: perfil.empresa_id,
-            tipo_item: 'producto_terminado',
-            item_id: solicitud.producto_id,
-            item_nombre: producto?.nombre || '',
-            item_codigo: producto?.sku || null,
-            tipo_movimiento: 'salida',
-            cantidad: Number(solicitud.cantidad),
-            stock_anterior: stockAnterior,
-            stock_actual: nuevoStock,
-            origen: 'cambio_mano_mano',
-            almacen_id: almacenId,
-            fecha: new Date().toISOString(),
-        })
+            // 2b. Descontar stock global (leer fresco por si el mismo SKU repite)
+            const { data: pa } = await supabase.from('productos_terminados').select('stock_actual').eq('id', it.producto_id).single()
+            const sAnt = Number(pa?.stock_actual || 0)
+            const sNue = sAnt - Number(it.cantidad)
+            await supabase.from('productos_terminados').update({ stock_actual: sNue }).eq('id', it.producto_id)
 
-        // 5. Si reprocesar → stock_reproceso
-        if (destino === 'reprocesar') {
-            await supabase.from('stock_reproceso').insert({
-                empresa_id: perfil.empresa_id,
-                producto_id: solicitud.producto_id,
-                cantidad: Number(solicitud.cantidad),
-                cambio_id: solicitud.id,
-                estado: 'pendiente',
-                fecha_entrada: solicitud.fecha,
-                almacen_id: almacenReproceso || null,
+            // 2c. Descontar stock_ubicacion repartido (NULL primero, luego ubicaciones)
+            const { data: filas } = await supabase.from('stock_ubicacion')
+                .select('id, cantidad')
+                .eq('almacen_id', almacenId).eq('tipo_item', 'producto_terminado')
+                .eq('item_id', it.producto_id).eq('empresa_id', perfil.empresa_id)
+                .gt('cantidad', 0)
+                .order('almacen_ubicacion_id', { ascending: true, nullsFirst: true })
+            let rest = Number(it.cantidad)
+            for (const f of (filas || [])) {
+                if (rest <= 0) break
+                const d = Math.min(Number(f.cantidad), rest)
+                await supabase.from('stock_ubicacion').update({ cantidad: Number(f.cantidad) - d, updated_at: new Date().toISOString() }).eq('id', f.id)
+                rest -= d
+            }
+
+            // 2d. Movimiento de inventario
+            await supabase.from('movimientos_inventario').insert({
+                empresa_id: perfil.empresa_id, tipo_item: 'producto_terminado', item_id: it.producto_id,
+                item_nombre: prod?.nombre || '', item_codigo: prod?.sku || null, tipo_movimiento: 'salida',
+                cantidad: Number(it.cantidad), stock_anterior: sAnt, stock_actual: sNue,
+                origen: 'cambio_mano_mano', almacen_id: almacenId, fecha: new Date().toISOString(),
             })
-        }
 
-        // 6. Si desechar → merma
-        if (destino === 'desechar') {
-            await supabase.from('mermas').insert({
-                empresa_id: perfil.empresa_id,
-                tipo_item: 'producto_terminado',
-                item_id: solicitud.producto_id,
-                item_nombre: producto?.nombre || '',
-                item_codigo: producto?.sku || null,
-                unidad_medida: producto?.unidad_medida || null,
-                cantidad: Number(solicitud.cantidad),
-                tipo_merma: 'inventario',
-                motivo: 'Desecho de cambio mano a mano',
-                descripcion: `Cambio ${solicitud.numero_cambio} · Motivo: ${MOTIVOS.find(m => m.key === solicitud.motivo)?.label}${solicitud.notas ? ' · ' + solicitud.notas : ''}`,
-                fecha: solicitud.fecha,
-                usuario_id: user.id,
-                almacen_id: almacenId,
-            })
+            // 2e. Destino: reproceso o merma
+            if (it.destino === 'reprocesar') {
+                await supabase.from('stock_reproceso').insert({
+                    empresa_id: perfil.empresa_id, producto_id: it.producto_id, cantidad: Number(it.cantidad),
+                    cambio_id: solicitud.id, estado: 'pendiente', fecha_entrada: solicitud.fecha,
+                    almacen_id: almacenReproceso || null,
+                })
+            } else {
+                await supabase.from('mermas').insert({
+                    empresa_id: perfil.empresa_id, tipo_item: 'producto_terminado', item_id: it.producto_id,
+                    item_nombre: prod?.nombre || '', item_codigo: prod?.sku || null, unidad_medida: prod?.unidad_medida || null,
+                    cantidad: Number(it.cantidad), tipo_merma: 'inventario', motivo: 'Desecho de cambio mano a mano',
+                    descripcion: `Cambio ${solicitud.numero_cambio} · ${prod?.nombre || ''} · Motivo: ${MOTIVOS.find(m => m.key === it.motivo)?.label || it.motivo}${solicitud.notas ? ' · ' + solicitud.notas : ''}`,
+                    fecha: solicitud.fecha, usuario_id: user.id, almacen_id: almacenId,
+                })
+            }
         }
 
         setGuardando(false)
@@ -803,7 +826,7 @@ function ProcesarSolicitud({ solicitud, onProcesada, onCancelar }) {
     }
 
     return (
-        <div style={{ padding: '24px', maxWidth: '640px' }}>
+        <div style={{ padding: '24px', maxWidth: '720px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
                 <button onClick={onCancelar} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', fontSize: '13px' }}>← Volver</button>
                 <div>
@@ -823,19 +846,6 @@ function ProcesarSolicitud({ solicitud, onProcesada, onCancelar }) {
                     <div>
                         <p style={{ color: '#6b7280', margin: '0 0 2px' }}>Fecha solicitud</p>
                         <p style={{ fontWeight: 600, color: '#1f2937', margin: 0 }}>{new Date(solicitud.fecha + 'T00:00:00').toLocaleDateString('es-VE')}</p>
-                    </div>
-                    <div>
-                        <p style={{ color: '#6b7280', margin: '0 0 2px' }}>Producto</p>
-                        <p style={{ fontWeight: 600, color: '#1f2937', margin: 0 }}>{producto?.nombre || '—'}</p>
-                        {producto?.sku && <p style={{ fontSize: '11px', color: '#9ca3af', margin: '2px 0 0', fontFamily: 'monospace' }}>{producto.sku}</p>}
-                    </div>
-                    <div>
-                        <p style={{ color: '#6b7280', margin: '0 0 2px' }}>Cantidad</p>
-                        <p style={{ fontWeight: 600, color: '#dc2626', margin: 0 }}>{fmt(solicitud.cantidad)} {producto?.unidad_medida}</p>
-                    </div>
-                    <div>
-                        <p style={{ color: '#6b7280', margin: '0 0 2px' }}>Motivo</p>
-                        <p style={{ fontWeight: 600, color: '#1f2937', margin: 0 }}>{MOTIVOS.find(m => m.key === solicitud.motivo)?.label || solicitud.motivo}</p>
                     </div>
                     {solicitud.notas && (
                         <div style={{ gridColumn: '1 / -1' }}>
@@ -864,32 +874,49 @@ function ProcesarSolicitud({ solicitud, onProcesada, onCancelar }) {
                         <option value="">Seleccionar almacén...</option>
                         {almacenes.map(a => <option key={a.id} value={a.id}>{a.nombre}{a.es_default ? ' (principal)' : ''}</option>)}
                     </select>
-                    {almacenId && stockEnAlmacen !== null && (
-                        <p style={{ fontSize: '12px', margin: '6px 0 0', color: stockEnAlmacen <= 0 ? '#dc2626' : '#6b7280' }}>
-                            Stock disponible: <strong style={{ color: stockEnAlmacen <= 0 ? '#dc2626' : '#374151' }}>{stockEnAlmacen} {producto?.unidad_medida}</strong>
-                        </p>
-                    )}
                 </div>
 
-                {/* Destino */}
+                {/* Líneas del documento: producto + cantidad + motivo + destino por SKU */}
                 <div>
-                    <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '8px' }}>Destino del producto retirado *</label>
-                    <div style={{ display: 'flex', gap: '10px' }}>
-                        <button onClick={() => setDestino('reprocesar')}
-                            style={{ flex: 1, padding: '12px', borderRadius: '10px', fontSize: '13px', fontWeight: 600, border: '2px solid', cursor: 'pointer', textAlign: 'center', borderColor: destino === 'reprocesar' ? '#1d4ed8' : '#e5e7eb', backgroundColor: destino === 'reprocesar' ? '#eff6ff' : '#fff', color: destino === 'reprocesar' ? '#1d4ed8' : '#6b7280' }}>
-                            <div>♻️ Reprocesar</div>
-                            <div style={{ fontSize: '11px', fontWeight: 400, marginTop: '4px' }}>Entra a stock de reproceso</div>
-                        </button>
-                        <button onClick={() => setDestino('desechar')}
-                            style={{ flex: 1, padding: '12px', borderRadius: '10px', fontSize: '13px', fontWeight: 600, border: '2px solid', cursor: 'pointer', textAlign: 'center', borderColor: destino === 'desechar' ? '#dc2626' : '#e5e7eb', backgroundColor: destino === 'desechar' ? '#fef2f2' : '#fff', color: destino === 'desechar' ? '#dc2626' : '#6b7280' }}>
-                            <div>🗑️ Desechar</div>
-                            <div style={{ fontSize: '11px', fontWeight: 400, marginTop: '4px' }}>Se registra como merma</div>
-                        </button>
+                    <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '8px' }}>Productos del cambio ({items.length}) — define el destino de cada uno *</label>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                        {items.map(it => {
+                            const prod = it.productos_terminados
+                            const disp = stockMap[it.producto_id] ?? null
+                            const insuf = disp !== null && Number(it.cantidad) > disp
+                            return (
+                                <div key={it.id} style={{ border: `1px solid ${insuf ? '#fecaca' : '#e5e7eb'}`, borderRadius: '10px', padding: '12px 14px', backgroundColor: insuf ? '#fef2f2' : '#fff' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', marginBottom: '10px' }}>
+                                        <div>
+                                            <p style={{ fontSize: '13px', fontWeight: 600, color: '#1f2937', margin: 0 }}>{prod?.nombre || '—'}</p>
+                                            <p style={{ fontSize: '12px', color: '#6b7280', margin: '2px 0 0' }}>
+                                                {fmt(it.cantidad)} {prod?.unidad_medida} · Motivo: {MOTIVOS.find(m => m.key === it.motivo)?.label || it.motivo}
+                                            </p>
+                                            {disp !== null && (
+                                                <p style={{ fontSize: '11px', margin: '2px 0 0', color: insuf ? '#dc2626' : '#6b7280' }}>
+                                                    Disponible en almacén: <strong>{disp} {prod?.unidad_medida}</strong>
+                                                </p>
+                                            )}
+                                        </div>
+                                        <div style={{ display: 'flex', gap: '6px' }}>
+                                            <button onClick={() => setDestinoItem(it.id, 'reprocesar')}
+                                                style={{ padding: '6px 10px', borderRadius: '8px', fontSize: '12px', fontWeight: 600, border: '2px solid', cursor: 'pointer', borderColor: it.destino === 'reprocesar' ? '#1d4ed8' : '#e5e7eb', backgroundColor: it.destino === 'reprocesar' ? '#eff6ff' : '#fff', color: it.destino === 'reprocesar' ? '#1d4ed8' : '#6b7280' }}>
+                                                ♻️ Reprocesar
+                                            </button>
+                                            <button onClick={() => setDestinoItem(it.id, 'desechar')}
+                                                style={{ padding: '6px 10px', borderRadius: '8px', fontSize: '12px', fontWeight: 600, border: '2px solid', cursor: 'pointer', borderColor: it.destino === 'desechar' ? '#dc2626' : '#e5e7eb', backgroundColor: it.destino === 'desechar' ? '#fef2f2' : '#fff', color: it.destino === 'desechar' ? '#dc2626' : '#6b7280' }}>
+                                                🗑️ Desechar
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            )
+                        })}
                     </div>
                 </div>
 
-                {/* Almacén destino reproceso */}
-                {destino === 'reprocesar' && (
+                {/* Almacén destino reproceso (aplica a las líneas marcadas como reprocesar) */}
+                {hayReproceso && (
                     <div>
                         <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Almacén donde entra el reproceso *</label>
                         <select value={almacenReproceso} onChange={e => setAlmacenReproceso(e.target.value)} style={inputStyle}>
@@ -925,10 +952,9 @@ function ProcesarSolicitud({ solicitud, onProcesada, onCancelar }) {
 // ══════════════════════════════════════════════════════════════
 function DocumentoCambio({ cambio, onVolver }) {
     const { perfil } = useAuth()
-    const producto = cambio.productos_terminados
+    const items = cambio.cambio_items || []
     const fecha = new Date(cambio.fecha + 'T00:00:00').toLocaleDateString('es-VE', { year: 'numeric', month: 'long', day: 'numeric' })
-    const motivoLabel = MOTIVOS.find(m => m.key === cambio.motivo)?.label || cambio.motivo
-    const destinoLabel = cambio.destino === 'reprocesar' ? 'Reprocesar' : cambio.destino === 'desechar' ? 'Desechar' : 'Pendiente'
+    const destinoLabel = (d) => d === 'reprocesar' ? 'Reprocesar' : d === 'desechar' ? 'Desechar' : 'Pendiente'
 
     return (
         <div style={{ padding: '24px', maxWidth: '720px' }}>
@@ -987,14 +1013,6 @@ function DocumentoCambio({ cambio, onVolver }) {
                         <p style={{ fontSize: '11px', fontWeight: 600, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 4px' }}>Almacén origen</p>
                         <p style={{ fontSize: '14px', color: '#374151', margin: 0 }}>{cambio.almacenes?.nombre || '—'}</p>
                     </div>
-                    <div>
-                        <p style={{ fontSize: '11px', fontWeight: 600, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 4px' }}>Motivo del retiro</p>
-                        <p style={{ fontSize: '14px', color: '#374151', margin: 0 }}>{motivoLabel}</p>
-                    </div>
-                    <div>
-                        <p style={{ fontSize: '11px', fontWeight: 600, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 4px' }}>Destino del producto</p>
-                        <p style={{ fontSize: '14px', color: '#374151', margin: 0 }}>{destinoLabel}</p>
-                    </div>
                     {cambio.notas && (
                         <div style={{ gridColumn: '1 / -1' }}>
                             <p style={{ fontSize: '11px', fontWeight: 600, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 4px' }}>Notas</p>
@@ -1007,39 +1025,24 @@ function DocumentoCambio({ cambio, onVolver }) {
                 <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '24px' }}>
                     <thead>
                         <tr style={{ backgroundColor: '#f9fafb', borderBottom: '2px solid #e5e7eb' }}>
-                            {['Producto', 'Código', 'UM', 'Cantidad', 'Precio unit.', 'Total'].map((h, i) => (
-                                <th key={i} style={{ padding: '10px 12px', fontSize: '12px', fontWeight: 600, color: '#6b7280', textAlign: i >= 3 ? 'right' : 'left' }}>{h}</th>
+                            {['Producto', 'Código', 'UM', 'Cantidad', 'Motivo', 'Destino'].map((h, i) => (
+                                <th key={i} style={{ padding: '10px 12px', fontSize: '12px', fontWeight: 600, color: '#6b7280', textAlign: i === 3 ? 'right' : 'left' }}>{h}</th>
                             ))}
                         </tr>
                     </thead>
                     <tbody>
-                        <tr style={{ borderBottom: '1px solid #f3f4f6' }}>
-                            <td style={{ padding: '12px', fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>{producto?.nombre || '—'}</td>
-                            <td style={{ padding: '12px', fontSize: '12px', fontFamily: 'monospace', color: '#6b7280' }}>{producto?.sku || '—'}</td>
-                            <td style={{ padding: '12px', fontSize: '13px', color: '#6b7280' }}>{producto?.unidad_medida || '—'}</td>
-                            <td style={{ padding: '12px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(cambio.cantidad)}</td>
-                            <td style={{ padding: '12px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>$0.00</td>
-                            <td style={{ padding: '12px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>$0.00</td>
-                        </tr>
+                        {items.map(it => (
+                            <tr key={it.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                                <td style={{ padding: '12px', fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>{it.productos_terminados?.nombre || '—'}</td>
+                                <td style={{ padding: '12px', fontSize: '12px', fontFamily: 'monospace', color: '#6b7280' }}>{it.productos_terminados?.sku || '—'}</td>
+                                <td style={{ padding: '12px', fontSize: '13px', color: '#6b7280' }}>{it.productos_terminados?.unidad_medida || '—'}</td>
+                                <td style={{ padding: '12px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(it.cantidad)}</td>
+                                <td style={{ padding: '12px', fontSize: '13px', color: '#6b7280' }}>{MOTIVOS.find(m => m.key === it.motivo)?.label || it.motivo}</td>
+                                <td style={{ padding: '12px', fontSize: '13px', color: '#374151' }}>{destinoLabel(it.destino)}</td>
+                            </tr>
+                        ))}
                     </tbody>
                 </table>
-
-                {/* Totales */}
-                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                    <div style={{ width: '260px' }}>
-                        {[
-                            { label: 'Subtotal', valor: '$0.00' },
-                            { label: 'IVA (16%)', valor: '$0.00' },
-                        ].map(({ label, valor }) => (
-                            <div key={label} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', fontSize: '13px', color: '#6b7280', borderBottom: '1px solid #f3f4f6' }}>
-                                <span>{label}</span><span>{valor}</span>
-                            </div>
-                        ))}
-                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0 5px', fontSize: '15px', fontWeight: 700, color: '#1f2937' }}>
-                            <span>Total</span><span>$0.00</span>
-                        </div>
-                    </div>
-                </div>
 
             </div>
         </div>
@@ -1054,26 +1057,29 @@ function NuevoCambio({ onRegistrado, onCancelar }) {
     const [clientes, setClientes] = useState([])
     const [despachadores, setDespachadores] = useState([])
     const [productos, setProductos] = useState([])
-    const [busqProducto, setBusqProducto] = useState('')
-    const [productoSel, setProductoSel] = useState(null)
+    const [almacenes, setAlmacenes] = useState([])
 
+    // Cabecera del documento
     const [clienteId, setClienteId] = useState('')
     const [despachadorId, setDespachadorId] = useState('')
+    const [almacenId, setAlmacenId] = useState('')
+    const [almacenReproceso, setAlmacenReproceso] = useState('')
+    const [fecha, setFecha] = useState(new Date().toISOString().split('T')[0])
+    const [notas, setNotas] = useState('')
+
+    // Líneas (varios SKU por documento)
+    const [items, setItems] = useState([])
+    const [stockMap, setStockMap] = useState({})
+
+    // Línea en edición (draft)
+    const [busqProducto, setBusqProducto] = useState('')
+    const [productoSel, setProductoSel] = useState(null)
     const [cantidad, setCantidad] = useState('')
     const [motivo, setMotivo] = useState('')
     const [destino, setDestino] = useState('reprocesar')
-    const [fecha, setFecha] = useState(new Date().toISOString().split('T')[0])
-    const [notas, setNotas] = useState('')
+
     const [guardando, setGuardando] = useState(false)
     const [error, setError] = useState('')
-
-    // Almacén de origen
-    const [almacenes, setAlmacenes] = useState([])
-    const [almacenId, setAlmacenId] = useState('')
-    const [stockEnAlmacen, setStockEnAlmacen] = useState(null)
-
-    // Almacén destino del reproceso
-    const [almacenReproceso, setAlmacenReproceso] = useState('')
 
     useEffect(() => {
         supabase.from('clientes').select('id, nombre').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
@@ -1097,134 +1103,139 @@ function NuevoCambio({ onRegistrado, onCancelar }) {
             })
     }, [])
 
-    // Cargar stock del producto en el almacén seleccionado
+    // Stock por producto en el almacén origen (suma todas las ubicaciones)
     useEffect(() => {
-        if (!productoSel || !almacenId) { setStockEnAlmacen(null); return }
-        // Sumar todas las filas del almacen+producto (el stock puede estar en varias ubicaciones)
+        if (!almacenId) { setStockMap({}); return }
+        const ids = [...new Set([...items.map(i => i.producto.id), ...(productoSel ? [productoSel.id] : [])])]
+        if (!ids.length) { setStockMap({}); return }
         supabase.from('stock_ubicacion')
-            .select('cantidad')
+            .select('item_id, cantidad')
             .eq('almacen_id', almacenId)
             .eq('tipo_item', 'producto_terminado')
-            .eq('item_id', productoSel.id)
+            .in('item_id', ids)
             .eq('empresa_id', perfil.empresa_id)
-            .then(({ data }) => setStockEnAlmacen((data || []).reduce((s, r) => s + Number(r.cantidad), 0)))
-    }, [productoSel, almacenId])
+            .then(({ data }) => {
+                const m = {}
+                ;(data || []).forEach(r => { m[r.item_id] = (m[r.item_id] || 0) + Number(r.cantidad) })
+                setStockMap(m)
+            })
+    }, [almacenId, items, productoSel])
 
     const productosFiltrados = productos.filter(p =>
         p.nombre.toLowerCase().includes(busqProducto.toLowerCase()) ||
         p.sku?.toLowerCase().includes(busqProducto.toLowerCase())
     )
 
-    async function guardar() {
-        if (!clienteId) { setError('Selecciona el cliente'); return }
-        if (!despachadorId) { setError('Selecciona el despachador'); return }
+    const stockDraft = productoSel ? (stockMap[productoSel.id] ?? null) : null
+    const yaEnCarrito = productoSel ? items.filter(i => i.producto.id === productoSel.id).reduce((s, i) => s + Number(i.cantidad), 0) : 0
+    const hayReproceso = items.some(i => i.destino === 'reprocesar')
+
+    function agregarItem() {
         if (!productoSel) { setError('Selecciona el producto'); return }
         if (!cantidad || Number(cantidad) <= 0) { setError('Ingresa una cantidad válida'); return }
         if (!motivo) { setError('Selecciona el motivo'); return }
-        if (!almacenId) { setError('Selecciona el almacén de origen'); return }
-        if (stockEnAlmacen !== null && Number(cantidad) > stockEnAlmacen) {
-            setError(`Stock insuficiente en ese almacén. Disponible: ${stockEnAlmacen} ${productoSel.unidad_medida}`)
+        if (stockDraft !== null && (Number(cantidad) + yaEnCarrito) > stockDraft) {
+            setError(`Stock insuficiente en ese almacén. Disponible: ${stockDraft}${yaEnCarrito ? `, ya en el documento: ${yaEnCarrito}` : ''}`)
             return
+        }
+        setError('')
+        setItems(prev => [...prev, { key: Date.now() + Math.random(), producto: productoSel, cantidad: Number(cantidad), motivo, destino }])
+        setProductoSel(null); setBusqProducto(''); setCantidad(''); setMotivo('')
+    }
+
+    const quitarItem = (key) => setItems(prev => prev.filter(i => i.key !== key))
+
+    async function guardar() {
+        if (!clienteId) { setError('Selecciona el cliente'); return }
+        if (!despachadorId) { setError('Selecciona el despachador'); return }
+        if (!almacenId) { setError('Selecciona el almacén de origen'); return }
+        if (!items.length) { setError('Agrega al menos un producto'); return }
+        if (hayReproceso && !almacenReproceso) { setError('Selecciona el almacén donde entra el reproceso'); return }
+        // Validar stock por producto (suma de líneas del mismo SKU)
+        const need = {}
+        items.forEach(i => { need[i.producto.id] = (need[i.producto.id] || 0) + Number(i.cantidad) })
+        for (const pid of Object.keys(need)) {
+            const disp = stockMap[pid] ?? 0
+            if (need[pid] > disp) {
+                const n = items.find(i => i.producto.id === pid)?.producto.nombre
+                setError(`Stock insuficiente de ${n}. Disponible: ${disp}, requerido: ${need[pid]}`)
+                return
+            }
         }
 
         setGuardando(true); setError('')
         const { data: { user } } = await supabase.auth.getUser()
+        const { data: numeroConsecutivo } = await supabase.rpc('obtener_siguiente_cambio_numero', { p_empresa_id: perfil.empresa_id })
+        const numero = numeroConsecutivo || 'CMM-000001'
 
-        // Obtener consecutivo secuencial desde la BD (independiente por empresa)
-        const { data: numeroConsecutivo } = await supabase.rpc('obtener_siguiente_cambio_numero', {
-            p_empresa_id: perfil.empresa_id
-        })
-        const numero = numeroConsecutivo || 'CMM-000001' // Fallback por si falla
-
-        // 1. Registrar el cambio
+        // 1. Cabecera del documento
         const { data: cambio, error: errCambio } = await supabase.from('cambios_mano_mano').insert({
             empresa_id: perfil.empresa_id,
             numero_cambio: numero,
             cliente_id: clienteId,
             despachador_id: despachadorId,
-            producto_id: productoSel.id,
-            cantidad: Number(cantidad),
-            motivo,
-            destino,
             fecha,
             notas: notas.trim() || null,
             usuario_id: user.id,
             almacen_id: almacenId,
+            estado: 'ejecutado',
         }).select().single()
-
         if (errCambio) { setError('Error: ' + errCambio.message); setGuardando(false); return }
 
-        // 2. Descontar stock global
-        const nuevoStock = productoSel.stock_actual - Number(cantidad)
-        await supabase.from('productos_terminados')
-            .update({ stock_actual: nuevoStock })
-            .eq('id', productoSel.id)
+        // 2. Cada línea: item + inventario (4 pasos) + reproceso/merma
+        for (const it of items) {
+            const prod = it.producto
 
-        // 3. Descontar stock_ubicacion del almacén origen — repartir entre filas (NULL primero, luego ubicaciones)
-        const { data: filasSU } = await supabase.from('stock_ubicacion')
-            .select('id, cantidad')
-            .eq('almacen_id', almacenId)
-            .eq('tipo_item', 'producto_terminado')
-            .eq('item_id', productoSel.id)
-            .eq('empresa_id', perfil.empresa_id)
-            .gt('cantidad', 0)
-            .order('almacen_ubicacion_id', { ascending: true, nullsFirst: true })
-        let restante = Number(cantidad)
-        for (const fila of (filasSU || [])) {
-            if (restante <= 0) break
-            const desc = Math.min(Number(fila.cantidad), restante)
-            await supabase.from('stock_ubicacion')
-                .update({ cantidad: Number(fila.cantidad) - desc, updated_at: new Date().toISOString() })
-                .eq('id', fila.id)
-            restante -= desc
-        }
-
-        // 4. Registrar movimiento de salida
-        await supabase.from('movimientos_inventario').insert({
-            empresa_id: perfil.empresa_id,
-            tipo_item: 'producto_terminado',
-            item_id: productoSel.id,
-            item_nombre: productoSel.nombre,
-            item_codigo: productoSel.sku || null,
-            tipo_movimiento: 'salida',
-            cantidad: Number(cantidad),
-            stock_anterior: productoSel.stock_actual,
-            stock_actual: nuevoStock,
-            origen: 'cambio_mano_mano',
-            almacen_id: almacenId,
-            fecha: new Date().toISOString()
-        })
-
-        // 5. Si destino = reprocesar, agregar a stock_reproceso
-        if (destino === 'reprocesar') {
-            await supabase.from('stock_reproceso').insert({
-                empresa_id: perfil.empresa_id,
-                producto_id: productoSel.id,
-                cantidad: Number(cantidad),
+            await supabase.from('cambio_items').insert({
                 cambio_id: cambio.id,
-                estado: 'pendiente',
-                fecha_entrada: fecha,
-                almacen_id: almacenReproceso || null,
-            })
-        }
-
-        // 6. Si destino = desechar, registrar como merma
-        if (destino === 'desechar') {
-            await supabase.from('mermas').insert({
                 empresa_id: perfil.empresa_id,
-                tipo_item: 'producto_terminado',
-                item_id: productoSel.id,
-                item_nombre: productoSel.nombre,
-                item_codigo: productoSel.sku || null,
-                unidad_medida: productoSel.unidad_medida || null,
-                cantidad: Number(cantidad),
-                tipo_merma: 'inventario',
-                motivo: 'Desecho de cambio mano a mano',
-                descripcion: `Cambio ${numero} · Motivo: ${MOTIVOS.find(m => m.key === motivo)?.label}${notas ? ' · ' + notas : ''}`,
-                fecha,
-                usuario_id: user.id,
-                almacen_id: almacenId,
+                producto_id: prod.id,
+                cantidad: it.cantidad,
+                motivo: it.motivo,
+                destino: it.destino,
+                almacen_reproceso_id: it.destino === 'reprocesar' ? (almacenReproceso || null) : null,
             })
+
+            const { data: pa } = await supabase.from('productos_terminados').select('stock_actual').eq('id', prod.id).single()
+            const sAnt = Number(pa?.stock_actual || 0)
+            const sNue = sAnt - it.cantidad
+            await supabase.from('productos_terminados').update({ stock_actual: sNue }).eq('id', prod.id)
+
+            const { data: filas } = await supabase.from('stock_ubicacion')
+                .select('id, cantidad')
+                .eq('almacen_id', almacenId).eq('tipo_item', 'producto_terminado')
+                .eq('item_id', prod.id).eq('empresa_id', perfil.empresa_id)
+                .gt('cantidad', 0)
+                .order('almacen_ubicacion_id', { ascending: true, nullsFirst: true })
+            let rest = it.cantidad
+            for (const f of (filas || [])) {
+                if (rest <= 0) break
+                const d = Math.min(Number(f.cantidad), rest)
+                await supabase.from('stock_ubicacion').update({ cantidad: Number(f.cantidad) - d, updated_at: new Date().toISOString() }).eq('id', f.id)
+                rest -= d
+            }
+
+            await supabase.from('movimientos_inventario').insert({
+                empresa_id: perfil.empresa_id, tipo_item: 'producto_terminado', item_id: prod.id,
+                item_nombre: prod.nombre, item_codigo: prod.sku || null, tipo_movimiento: 'salida',
+                cantidad: it.cantidad, stock_anterior: sAnt, stock_actual: sNue,
+                origen: 'cambio_mano_mano', almacen_id: almacenId, fecha: new Date().toISOString(),
+            })
+
+            if (it.destino === 'reprocesar') {
+                await supabase.from('stock_reproceso').insert({
+                    empresa_id: perfil.empresa_id, producto_id: prod.id, cantidad: it.cantidad,
+                    cambio_id: cambio.id, estado: 'pendiente', fecha_entrada: fecha, almacen_id: almacenReproceso || null,
+                })
+            } else {
+                await supabase.from('mermas').insert({
+                    empresa_id: perfil.empresa_id, tipo_item: 'producto_terminado', item_id: prod.id,
+                    item_nombre: prod.nombre, item_codigo: prod.sku || null, unidad_medida: prod.unidad_medida || null,
+                    cantidad: it.cantidad, tipo_merma: 'inventario', motivo: 'Desecho de cambio mano a mano',
+                    descripcion: `Cambio ${numero} · ${prod.nombre} · Motivo: ${MOTIVOS.find(m => m.key === it.motivo)?.label || it.motivo}${notas ? ' · ' + notas : ''}`,
+                    fecha, usuario_id: user.id, almacen_id: almacenId,
+                })
+            }
         }
 
         setGuardando(false)
@@ -1232,7 +1243,7 @@ function NuevoCambio({ onRegistrado, onCancelar }) {
     }
 
     return (
-        <div style={{ padding: '24px', maxWidth: '640px' }}>
+        <div style={{ padding: '24px', maxWidth: '720px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
                 <button onClick={onCancelar} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', fontSize: '13px' }}>← Volver</button>
                 <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Registrar cambio mano a mano</h1>
@@ -1258,9 +1269,25 @@ function NuevoCambio({ onRegistrado, onCancelar }) {
                     </div>
                 </div>
 
-                {/* Producto */}
-                <div>
-                    <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Producto *</label>
+                {/* Almacén de origen y Fecha */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                    <div>
+                        <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Almacén de origen *</label>
+                        <select value={almacenId} onChange={e => setAlmacenId(e.target.value)} style={inputStyle}>
+                            <option value="">Seleccionar almacén...</option>
+                            {almacenes.map(a => <option key={a.id} value={a.id}>{a.nombre}{a.es_default ? ' (principal)' : ''}</option>)}
+                        </select>
+                    </div>
+                    <div>
+                        <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Fecha *</label>
+                        <input type="date" value={fecha} onChange={e => setFecha(e.target.value)} style={inputStyle} />
+                    </div>
+                </div>
+
+                {/* Editor de línea: agregar producto */}
+                <div style={{ border: '1px dashed #d1d5db', borderRadius: '10px', padding: '16px' }}>
+                    <p style={{ fontSize: '12px', fontWeight: 600, color: '#374151', margin: '0 0 10px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Agregar producto</p>
+
                     <div style={{ position: 'relative' }}>
                         <Search size={15} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
                         <input type="text" placeholder="Buscar producto por nombre o código..."
@@ -1291,114 +1318,100 @@ function NuevoCambio({ onRegistrado, onCancelar }) {
                     )}
 
                     {productoSel && (
-                        <div style={{ marginTop: '8px', backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <div>
-                                <span style={{ fontSize: '13px', fontWeight: 600, color: '#166534' }}>{productoSel.nombre}</span>
-                                <span style={{ fontSize: '12px', color: '#16a34a', marginLeft: '8px' }}>
-                                    Stock disponible: {fmt(productoSel.stock_actual)} {productoSel.unidad_medida}
-                                </span>
+                        <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                            <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <div>
+                                    <span style={{ fontSize: '13px', fontWeight: 600, color: '#166534' }}>{productoSel.nombre}</span>
+                                    {almacenId && stockDraft !== null && (
+                                        <span style={{ fontSize: '12px', marginLeft: '8px', color: stockDraft <= 0 ? '#dc2626' : '#16a34a' }}>
+                                            En almacén: {stockDraft} {productoSel.unidad_medida}{yaEnCarrito ? ` (ya en doc: ${yaEnCarrito})` : ''}
+                                        </span>
+                                    )}
+                                </div>
+                                <button onClick={() => { setProductoSel(null); setBusqProducto('') }}
+                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#16a34a' }}>
+                                    <X size={16} />
+                                </button>
                             </div>
-                            <button onClick={() => { setProductoSel(null); setBusqProducto('') }}
-                                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#16a34a' }}>
-                                <X size={16} />
+
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '12px' }}>
+                                <div>
+                                    <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Cantidad * {`(${productoSel.unidad_medida})`}</label>
+                                    <input type="number" min="0.001" step="0.001" value={cantidad}
+                                        onChange={e => setCantidad(e.target.value)} style={inputStyle} />
+                                </div>
+                                <div>
+                                    <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Motivo *</label>
+                                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                                        {MOTIVOS.map(m => (
+                                            <button key={m.key} onClick={() => setMotivo(m.key)}
+                                                style={{ padding: '7px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: 500, border: '1px solid', cursor: 'pointer', borderColor: motivo === m.key ? '#16a34a' : '#e5e7eb', backgroundColor: motivo === m.key ? '#f0fdf4' : '#fff', color: motivo === m.key ? '#16a34a' : '#6b7280' }}>
+                                                {m.label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div>
+                                <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Destino *</label>
+                                <div style={{ display: 'flex', gap: '10px' }}>
+                                    <button onClick={() => setDestino('reprocesar')}
+                                        style={{ flex: 1, padding: '10px', borderRadius: '10px', fontSize: '13px', fontWeight: 600, border: '2px solid', cursor: 'pointer', textAlign: 'center', borderColor: destino === 'reprocesar' ? '#1d4ed8' : '#e5e7eb', backgroundColor: destino === 'reprocesar' ? '#eff6ff' : '#fff', color: destino === 'reprocesar' ? '#1d4ed8' : '#6b7280' }}>
+                                        ♻️ Reprocesar
+                                    </button>
+                                    <button onClick={() => setDestino('desechar')}
+                                        style={{ flex: 1, padding: '10px', borderRadius: '10px', fontSize: '13px', fontWeight: 600, border: '2px solid', cursor: 'pointer', textAlign: 'center', borderColor: destino === 'desechar' ? '#dc2626' : '#e5e7eb', backgroundColor: destino === 'desechar' ? '#fef2f2' : '#fff', color: destino === 'desechar' ? '#dc2626' : '#6b7280' }}>
+                                        🗑️ Desechar
+                                    </button>
+                                </div>
+                            </div>
+
+                            <button onClick={agregarItem}
+                                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', backgroundColor: '#1f2937', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}>
+                                <Plus size={15} /> Agregar al documento
                             </button>
                         </div>
                     )}
                 </div>
 
-                {/* Almacén de origen */}
-                <div>
-                    <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '8px' }}>
-                        Almacén de origen *
-                    </label>
-                    <select value={almacenId} onChange={e => setAlmacenId(e.target.value)} style={inputStyle}>
-                        <option value="">Seleccionar almacén...</option>
-                        {almacenes.map(a => (
-                            <option key={a.id} value={a.id}>
-                                {a.nombre}{a.es_default ? ' (principal)' : ''}
-                            </option>
-                        ))}
-                    </select>
-                    {productoSel && almacenId && stockEnAlmacen !== null && (
-                        <p style={{ fontSize: '12px', margin: '6px 0 0', color: stockEnAlmacen <= 0 ? '#dc2626' : '#6b7280' }}>
-                            Stock en este almacén: <strong style={{ color: stockEnAlmacen <= 0 ? '#dc2626' : '#374151' }}>
-                                {stockEnAlmacen} {productoSel.unidad_medida}
-                            </strong>
-                        </p>
-                    )}
-                </div>
-
-                {/* Cantidad y Fecha */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                    <div>
-                        <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>
-                            Cantidad * {productoSel ? `(${productoSel.unidad_medida})` : ''}
-                        </label>
-                        <input type="number" min="0.001" step="0.001" value={cantidad}
-                            onChange={e => setCantidad(e.target.value)}
-                            style={{ ...inputStyle, borderColor: productoSel && cantidad && Number(cantidad) > productoSel.stock_actual ? '#f87171' : '#d1d5db' }} />
-                        {productoSel && cantidad && Number(cantidad) > productoSel.stock_actual && (
-                            <p style={{ fontSize: '12px', color: '#dc2626', margin: '4px 0 0' }}>
-                                Supera el stock disponible ({fmt(productoSel.stock_actual)})
-                            </p>
-                        )}
+                {/* Líneas agregadas */}
+                {items.length > 0 && (
+                    <div style={{ border: '1px solid #e5e7eb', borderRadius: '10px', overflow: 'hidden' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                            <thead>
+                                <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                                    {['Producto', 'Cantidad', 'Motivo', 'Destino', ''].map((h, i) => (
+                                        <th key={i} style={{ padding: '8px 12px', fontSize: '11px', fontWeight: 600, color: '#6b7280', textAlign: 'left' }}>{h}</th>
+                                    ))}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {items.map(it => (
+                                    <tr key={it.key} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                                        <td style={{ padding: '10px 12px', fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>
+                                            {it.producto.nombre}
+                                            {it.producto.sku && <span style={{ fontSize: '11px', color: '#9ca3af', marginLeft: '6px', fontFamily: 'monospace' }}>{it.producto.sku}</span>}
+                                        </td>
+                                        <td style={{ padding: '10px 12px', fontSize: '13px', fontWeight: 600, color: '#1f2937' }}>{fmt(it.cantidad)} {it.producto.unidad_medida}</td>
+                                        <td style={{ padding: '10px 12px', fontSize: '13px', color: '#6b7280' }}>{MOTIVOS.find(m => m.key === it.motivo)?.label || it.motivo}</td>
+                                        <td style={{ padding: '10px 12px', fontSize: '13px', color: it.destino === 'reprocesar' ? '#1d4ed8' : '#dc2626', fontWeight: 500 }}>
+                                            {it.destino === 'reprocesar' ? 'Reprocesar' : 'Desechar'}
+                                        </td>
+                                        <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                                            <button onClick={() => quitarItem(it.key)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626' }}>
+                                                <Trash2 size={15} />
+                                            </button>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
                     </div>
-                    <div>
-                        <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Fecha *</label>
-                        <input type="date" value={fecha} onChange={e => setFecha(e.target.value)} style={inputStyle} />
-                    </div>
-                </div>
+                )}
 
-                {/* Motivo */}
-                <div>
-                    <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '8px' }}>Motivo del retiro *</label>
-                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                        {MOTIVOS.map(m => (
-                            <button key={m.key} onClick={() => setMotivo(m.key)}
-                                style={{
-                                    padding: '8px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 500,
-                                    border: '1px solid', cursor: 'pointer',
-                                    borderColor: motivo === m.key ? '#16a34a' : '#e5e7eb',
-                                    backgroundColor: motivo === m.key ? '#f0fdf4' : '#fff',
-                                    color: motivo === m.key ? '#16a34a' : '#6b7280',
-                                }}>
-                                {m.label}
-                            </button>
-                        ))}
-                    </div>
-                </div>
-
-                {/* Destino del producto retirado */}
-                <div>
-                    <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '8px' }}>Destino del producto retirado *</label>
-                    <div style={{ display: 'flex', gap: '10px' }}>
-                        <button onClick={() => setDestino('reprocesar')}
-                            style={{
-                                flex: 1, padding: '12px', borderRadius: '10px', fontSize: '13px', fontWeight: 600,
-                                border: '2px solid', cursor: 'pointer', textAlign: 'center',
-                                borderColor: destino === 'reprocesar' ? '#1d4ed8' : '#e5e7eb',
-                                backgroundColor: destino === 'reprocesar' ? '#eff6ff' : '#fff',
-                                color: destino === 'reprocesar' ? '#1d4ed8' : '#6b7280',
-                            }}>
-                            <div>♻️ Reprocesar</div>
-                            <div style={{ fontSize: '11px', fontWeight: 400, marginTop: '4px' }}>Entra a stock de reproceso</div>
-                        </button>
-                        <button onClick={() => setDestino('desechar')}
-                            style={{
-                                flex: 1, padding: '12px', borderRadius: '10px', fontSize: '13px', fontWeight: 600,
-                                border: '2px solid', cursor: 'pointer', textAlign: 'center',
-                                borderColor: destino === 'desechar' ? '#dc2626' : '#e5e7eb',
-                                backgroundColor: destino === 'desechar' ? '#fef2f2' : '#fff',
-                                color: destino === 'desechar' ? '#dc2626' : '#6b7280',
-                            }}>
-                            <div>🗑️ Desechar</div>
-                            <div style={{ fontSize: '11px', fontWeight: 400, marginTop: '4px' }}>Se registra como merma</div>
-                        </button>
-                    </div>
-                </div>
-
-                {/* Almacén destino del reproceso */}
-                {destino === 'reprocesar' && (
+                {/* Almacén destino del reproceso (aplica a las líneas marcadas como reprocesar) */}
+                {hayReproceso && (
                     <div>
                         <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>
                             Almacén donde entra el reproceso *
@@ -1411,25 +1424,6 @@ function NuevoCambio({ onRegistrado, onCancelar }) {
                                 </option>
                             ))}
                         </select>
-                    </div>
-                )}
-
-                {/* Resumen */}
-                {productoSel && cantidad && Number(cantidad) > 0 && motivo && (
-                    <div style={{ backgroundColor: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '14px 16px' }}>
-                        <p style={{ fontSize: '12px', color: '#6b7280', fontWeight: 600, margin: '0 0 8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                            Resumen del cambio
-                        </p>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#374151', marginBottom: '4px' }}>
-                            <span style={{ color: '#dc2626', fontWeight: 600 }}>Sale del inventario:</span>
-                            <span>{fmt(cantidad)} {productoSel.unidad_medida} de {productoSel.nombre}</span>
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#374151' }}>
-                            <span style={{ color: destino === 'reprocesar' ? '#1d4ed8' : '#dc2626', fontWeight: 600 }}>
-                                {destino === 'reprocesar' ? 'Entra a reproceso:' : 'Se desecha:'}
-                            </span>
-                            <span>{fmt(cantidad)} {productoSel.unidad_medida} retiradas del cliente</span>
-                        </div>
                     </div>
                 )}
 
@@ -1452,7 +1446,7 @@ function NuevoCambio({ onRegistrado, onCancelar }) {
                 <div style={{ display: 'flex', gap: '10px' }}>
                     <button onClick={guardar} disabled={guardando}
                         style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '12px 24px', fontSize: '14px', fontWeight: 600, cursor: 'pointer', opacity: guardando ? 0.7 : 1 }}>
-                        <Check size={16} /> {guardando ? 'Registrando...' : 'Confirmar cambio'}
+                        <Check size={16} /> {guardando ? 'Registrando...' : `Confirmar cambio${items.length ? ` (${items.length})` : ''}`}
                     </button>
                     <button onClick={onCancelar}
                         style={{ padding: '12px 20px', borderRadius: '8px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: '#374151', fontSize: '14px', cursor: 'pointer' }}>

@@ -627,6 +627,7 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
     const [notasCambio, setNotasCambio] = useState('')
     const [guardandoCambio, setGuardandoCambio] = useState(false)
     const [errorCambio, setErrorCambio] = useState('')
+    const [itemsCambio, setItemsCambio] = useState([])
 
     useEffect(() => { cargar() }, [])
 
@@ -793,29 +794,49 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
         setProductosCambio(data || [])
     }
 
-    async function guardarSolicitudCambio() {
+    function agregarItemCambio() {
         if (!productoSelCambio) { setErrorCambio('Selecciona el producto'); return }
         if (!cantCambio || Number(cantCambio) <= 0) { setErrorCambio('Ingresa una cantidad válida'); return }
         if (!motivoCambio) { setErrorCambio('Selecciona el motivo'); return }
+        setErrorCambio('')
+        setItemsCambio(prev => [...prev, { key: Date.now() + Math.random(), producto: productoSelCambio, cantidad: Number(cantCambio), motivo: motivoCambio }])
+        setProductoSelCambio(null); setBusqCambio(''); setCantCambio(''); setMotivoCambio('')
+    }
+
+    const quitarItemCambio = (key) => setItemsCambio(prev => prev.filter(i => i.key !== key))
+
+    async function guardarSolicitudCambio() {
+        if (!itemsCambio.length) { setErrorCambio('Agrega al menos un producto'); return }
         setGuardandoCambio(true); setErrorCambio('')
         const { data: { user } } = await supabase.auth.getUser()
         const { data: numero } = await supabase.rpc('obtener_siguiente_cambio_numero', { p_empresa_id: perfil.empresa_id })
-        const { error: err } = await supabase.from('cambios_mano_mano').insert({
+
+        // 1. Cabecera de la solicitud
+        const { data: cambio, error: err } = await supabase.from('cambios_mano_mano').insert({
             empresa_id: perfil.empresa_id,
             numero_cambio: numero || 'CMM-000001',
             cliente_id: cliente.id,
-            producto_id: productoSelCambio.id,
-            cantidad: Number(cantCambio),
-            motivo: motivoCambio,
             notas: notasCambio.trim() || null,
             fecha: new Date().toISOString().split('T')[0],
             usuario_id: user.id,
             estado: 'solicitado',
-        })
+        }).select().single()
+        if (err) { setGuardandoCambio(false); setErrorCambio('Error: ' + err.message); return }
+
+        // 2. Líneas (destino lo decide la oficina al procesar)
+        const { error: errItems } = await supabase.from('cambio_items').insert(
+            itemsCambio.map(it => ({
+                cambio_id: cambio.id,
+                empresa_id: perfil.empresa_id,
+                producto_id: it.producto.id,
+                cantidad: it.cantidad,
+                motivo: it.motivo,
+            }))
+        )
         setGuardandoCambio(false)
-        if (err) { setErrorCambio('Error: ' + err.message); return }
+        if (errItems) { setErrorCambio('Error: ' + errItems.message); return }
         setModalCambio(false)
-        setBusqCambio(''); setProductoSelCambio(null); setCantCambio(''); setMotivoCambio(''); setNotasCambio('')
+        setBusqCambio(''); setProductoSelCambio(null); setCantCambio(''); setMotivoCambio(''); setNotasCambio(''); setItemsCambio([])
     }
 
     const totalCxC = datos?.cxc?.reduce((s, v) => s + Number(v.saldo_pendiente || 0), 0) || 0
@@ -1533,6 +1554,31 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
                             ))}
                         </div>
 
+                        {/* Agregar al documento */}
+                        <button onClick={agregarItemCambio} disabled={!productoSelCambio}
+                            style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', backgroundColor: productoSelCambio ? '#1f2937' : '#e5e7eb', color: productoSelCambio ? '#fff' : '#9ca3af', border: 'none', borderRadius: '10px', padding: '12px', fontSize: '14px', fontWeight: 600, cursor: productoSelCambio ? 'pointer' : 'default', marginBottom: '16px' }}>
+                            + Agregar producto
+                        </button>
+
+                        {/* Productos agregados */}
+                        {itemsCambio.length > 0 && (
+                            <div style={{ border: '1px solid #e5e7eb', borderRadius: '10px', overflow: 'hidden', marginBottom: '16px' }}>
+                                {itemsCambio.map(it => (
+                                    <div key={it.key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', borderBottom: '1px solid #f3f4f6' }}>
+                                        <div style={{ minWidth: 0 }}>
+                                            <p style={{ fontSize: '14px', fontWeight: 600, color: '#1f2937', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.producto.nombre}</p>
+                                            <p style={{ fontSize: '12px', color: '#6b7280', margin: '2px 0 0' }}>
+                                                {it.cantidad} {it.producto.unidad_medida} · {({ vencido: 'Vencido', danado: 'Dañado', mal_estado: 'Mal estado', otro: 'Otro' })[it.motivo] || it.motivo}
+                                            </p>
+                                        </div>
+                                        <button onClick={() => quitarItemCambio(it.key)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', padding: '4px', flexShrink: 0 }}>
+                                            <X size={18} />
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
                         {/* Notas */}
                         <label style={s.label}>Notas <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>(opcional)</span></label>
                         <textarea value={notasCambio} onChange={e => setNotasCambio(e.target.value)}
@@ -1545,9 +1591,9 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
                             </div>
                         )}
 
-                        <button onClick={guardarSolicitudCambio} disabled={guardandoCambio}
-                            style={{ ...s.btnPrimary, opacity: guardandoCambio ? 0.7 : 1 }}>
-                            <Check size={18} /> {guardandoCambio ? 'Enviando...' : 'Enviar solicitud'}
+                        <button onClick={guardarSolicitudCambio} disabled={guardandoCambio || !itemsCambio.length}
+                            style={{ ...s.btnPrimary, opacity: (guardandoCambio || !itemsCambio.length) ? 0.6 : 1 }}>
+                            <Check size={18} /> {guardandoCambio ? 'Enviando...' : `Enviar solicitud${itemsCambio.length ? ` (${itemsCambio.length})` : ''}`}
                         </button>
                     </div>
                 </div>
