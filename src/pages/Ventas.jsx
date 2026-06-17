@@ -2491,9 +2491,17 @@ function ModalNuevoCliente({ perfil, onCreado, onCerrar }) {
         if (err) { setGuardando(false); setError('Error: ' + err.message); return }
         const nuevoId = data[0].id
         if (direcciones.length > 0) {
-            await supabase.from('direcciones_entrega').insert(
-                direcciones.map(d => ({ ...d, id: undefined, cliente_id: nuevoId, empresa_id: perfil.empresa_id }))
+            // Quitar la clave id (no ponerla en undefined): en inserts de array supabase-js
+            // arma ?columns= con Object.keys(), que incluye claves undefined, y eso fuerza a
+            // PostgREST a insertar NULL en id en vez de usar el DEFAULT -> viola el not-null.
+            const { error: errDir } = await supabase.from('direcciones_entrega').insert(
+                direcciones.map(({ id, ...d }) => ({ ...d, cliente_id: nuevoId, empresa_id: perfil.empresa_id }))
             )
+            if (errDir) {
+                setGuardando(false)
+                setError('El cliente se guardó pero falló el guardado de direcciones: ' + errDir.message)
+                return
+            }
         }
         if (listasSeleccionadas.size > 0) {
             await supabase.from('cliente_listas_precio').insert(
