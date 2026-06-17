@@ -205,12 +205,15 @@ export default function Clientes() {
                 return
             }
             if (direcciones.length > 0) {
-                // Preparamos las direcciones para insertar en BD
-                const direccionesParaGuardar = direcciones.map(d => ({
+                // Preparamos las direcciones para insertar en BD.
+                // OJO: hay que QUITAR la clave id (no ponerla en undefined). En inserts de
+                // array, supabase-js arma ?columns= con Object.keys(), que incluye claves
+                // undefined; eso fuerza a PostgREST a insertar NULL en id en vez de usar el
+                // DEFAULT gen_random_uuid() y viola el not-null.
+                const direccionesParaGuardar = direcciones.map(({ id, ...d }) => ({
                     ...d,
                     cliente_id: nuevoClienteId,
                     empresa_id: perfil.empresa_id,
-                    id: undefined // Eliminamos IDs temporales si los hubiera
                 }))
                 const { error: errDir } = await supabase.from('direcciones_entrega').insert(direccionesParaGuardar)
                 if (errDir) {
