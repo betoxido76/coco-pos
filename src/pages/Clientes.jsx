@@ -194,8 +194,16 @@ export default function Clientes() {
         if (err) { setGuardando(false); setError('Error: ' + err.message); return }
 
         // Si es cliente nuevo, guardar también las direcciones temporales
-        if (!editando && data && data.length > 0) {
-            nuevoClienteId = data[0].id
+        if (!editando) {
+            // El INSERT puede persistir aunque .select() devuelva vacío (RLS/PostgREST).
+            // Si no recuperamos el id, no podemos asociar las direcciones: avisamos en vez de perderlas en silencio.
+            nuevoClienteId = data && data.length > 0 ? data[0].id : null
+            if (!nuevoClienteId) {
+                setGuardando(false)
+                setError('El cliente se guardó pero no se pudo recuperar su ID; abre el cliente para agregar la dirección de entrega.')
+                await cargar()
+                return
+            }
             if (direcciones.length > 0) {
                 // Preparamos las direcciones para insertar en BD
                 const direccionesParaGuardar = direcciones.map(d => ({
@@ -204,7 +212,13 @@ export default function Clientes() {
                     empresa_id: perfil.empresa_id,
                     id: undefined // Eliminamos IDs temporales si los hubiera
                 }))
-                await supabase.from('direcciones_entrega').insert(direccionesParaGuardar)
+                const { error: errDir } = await supabase.from('direcciones_entrega').insert(direccionesParaGuardar)
+                if (errDir) {
+                    setGuardando(false)
+                    setError('El cliente se guardó pero falló el guardado de direcciones: ' + errDir.message)
+                    await cargar()
+                    return
+                }
             }
         }
 
