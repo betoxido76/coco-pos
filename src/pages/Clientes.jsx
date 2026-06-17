@@ -552,8 +552,8 @@ export default function Clientes() {
                                             </p>
                                         )}
                                     </div>
-                                    {/* Botones de edición solo si estamos editando un cliente existente */}
-                                    {editando && (
+                                    {/* Cliente existente: editar / activar. Cliente nuevo: quitar dirección temporal */}
+                                    {editando ? (
                                         <div style={{ display: 'flex', gap: '6px', marginLeft: '12px' }}>
                                             <button onClick={() => abrirEditarDir(dir)}
                                                 style={{ background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 8px', fontSize: '12px', color: '#374151', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}>
@@ -563,13 +563,14 @@ export default function Clientes() {
                                                 style={{ background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 8px', fontSize: '12px', color: dir.activo ? '#dc2626' : '#16a34a', cursor: 'pointer' }}>
                                                 {dir.activo ? 'Desactivar' : 'Activar'}
                                             </button>
-                                            {/* Opción para borrar dirección temporal */}
-                                            {!editando && (
-                                                <button onClick={() => setDirecciones(prev => prev.filter((_, i) => i !== idx))}
-                                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', padding: '4px' }}>
-                                                    <Trash2 size={12} />
-                                                </button>
-                                            )}
+                                        </div>
+                                    ) : (
+                                        <div style={{ display: 'flex', gap: '6px', marginLeft: '12px' }}>
+                                            <button onClick={() => setDirecciones(prev => prev.filter((_, i) => i !== idx))}
+                                                title="Quitar dirección"
+                                                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', padding: '4px' }}>
+                                                <Trash2 size={12} />
+                                            </button>
                                         </div>
                                     )}
                                 </div>
