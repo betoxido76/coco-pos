@@ -46,8 +46,8 @@ BEGIN;
 WITH grupos AS (
     SELECT
         empresa_id, almacen_id, tipo_item, item_id,
-        MIN(id)       AS keep_id,
-        SUM(cantidad) AS total
+        MIN(id::text)::uuid AS keep_id,
+        SUM(cantidad)       AS total
     FROM stock_ubicacion
     WHERE almacen_ubicacion_id IS NULL
     GROUP BY empresa_id, almacen_id, tipo_item, item_id
@@ -63,7 +63,7 @@ WHERE s.id = g.keep_id;
 WITH grupos AS (
     SELECT
         empresa_id, almacen_id, tipo_item, item_id,
-        MIN(id) AS keep_id
+        MIN(id::text)::uuid AS keep_id
     FROM stock_ubicacion
     WHERE almacen_ubicacion_id IS NULL
     GROUP BY empresa_id, almacen_id, tipo_item, item_id
