@@ -1100,15 +1100,14 @@ function NuevoCambio({ onRegistrado, onCancelar }) {
     // Cargar stock del producto en el almacén seleccionado
     useEffect(() => {
         if (!productoSel || !almacenId) { setStockEnAlmacen(null); return }
+        // Sumar todas las filas del almacen+producto (el stock puede estar en varias ubicaciones)
         supabase.from('stock_ubicacion')
             .select('cantidad')
             .eq('almacen_id', almacenId)
             .eq('tipo_item', 'producto_terminado')
             .eq('item_id', productoSel.id)
             .eq('empresa_id', perfil.empresa_id)
-            .is('almacen_ubicacion_id', null)
-            .maybeSingle()
-            .then(({ data }) => setStockEnAlmacen(data ? Number(data.cantidad) : 0))
+            .then(({ data }) => setStockEnAlmacen((data || []).reduce((s, r) => s + Number(r.cantidad), 0)))
     }, [productoSel, almacenId])
 
     const productosFiltrados = productos.filter(p =>

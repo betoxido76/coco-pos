@@ -425,15 +425,14 @@ function NuevaMerma({ onRegistrada, onCancelar }) {
             empaque: 'material_empaque',
             consumible: 'consumible',
         }
+        // Sumar todas las filas del almacen+item (el stock puede estar en varias ubicaciones)
         supabase.from('stock_ubicacion')
             .select('cantidad')
             .eq('almacen_id', almacenId)
             .eq('tipo_item', tipoItemMap[tipoItem] || tipoItem)
             .eq('item_id', itemSel.id)
             .eq('empresa_id', perfil.empresa_id)
-            .is('almacen_ubicacion_id', null)
-            .maybeSingle()
-            .then(({ data }) => setStockEnAlmacen(data ? Number(data.cantidad) : 0))
+            .then(({ data }) => setStockEnAlmacen((data || []).reduce((s, r) => s + Number(r.cantidad), 0)))
     }, [itemSel, almacenId, tipoMerma])
 
     // Cargar ventas recientes para vincular (solo tipo despacho)
