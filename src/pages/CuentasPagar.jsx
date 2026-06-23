@@ -87,7 +87,7 @@ export default function CuentasPagar() {
 
         let kpiQ = supabase
             .from('compras')
-            .select('id, total, estado_cobro, fecha_vencimiento_pago')
+            .select('id, total, descuento_pago, estado_cobro, fecha_vencimiento_pago')
             .eq('empresa_id', perfil.empresa_id)
             .eq('condicion_pago', 'credito')
         if (filtro !== 'todos') kpiQ = kpiQ.eq('estado_cobro', filtro)
@@ -150,7 +150,7 @@ export default function CuentasPagar() {
     function calcularSaldo(compra) {
         const pagosCompra = pagos[compra.id] || []
         const cobrado = pagosCompra.reduce((s, p) => s + Number(p.monto_usd || 0), 0)
-        return Number(compra.total || 0) - cobrado
+        return Number(compra.total || 0) - Number(compra.descuento_pago || 0) - cobrado
     }
 
     function calcularCobrado(compra) {
@@ -160,7 +160,7 @@ export default function CuentasPagar() {
 
     const totalPendiente = kpiData.reduce((s, c) => {
         const pag = (pagosKpi[c.id] || []).reduce((a, p) => a + Number(p.monto_usd || 0), 0)
-        return s + Math.max(0, Number(c.total || 0) - pag)
+        return s + Math.max(0, Number(c.total || 0) - Number(c.descuento_pago || 0) - pag)
     }, 0)
     const vencidas = kpiData.filter(c => c.fecha_vencimiento_pago && new Date(c.fecha_vencimiento_pago) < new Date()).length
     const alDia = kpiData.filter(c => c.fecha_vencimiento_pago && new Date(c.fecha_vencimiento_pago) >= new Date()).length
@@ -546,24 +546,20 @@ function ModalPago({ compra, saldo, tasas, onCerrar, onPagado }) {
         setMontoBs('0')
     }, [ndsSeleccionadas.size, descPct])
 
-    useEffect(() => {
-        const usd = Number(montoUsd) || 0
-        const complemento = (saldoEfectivo - usd) * tasa
-        setMontoBs(complemento > 0 ? complemento.toFixed(2) : '0')
-    }, [tipoTasa])
-
+    // Campos independientes: editar uno NO autocompleta el otro, para permitir pagos parciales.
     function handleUsdChange(val) {
         setMontoUsd(val)
-        const usd = Number(val) || 0
-        const complemento = (saldoEfectivo - usd) * tasa
-        setMontoBs(complemento > 0 ? complemento.toFixed(2) : '0')
     }
 
     function handleBsChange(val) {
         setMontoBs(val)
-        const bs = Number(val) || 0
-        const complemento = saldoEfectivo - bs / tasa
-        setMontoUsd(complemento > 0 ? complemento.toFixed(2) : '0')
+    }
+
+    // Rellena Bs con lo que falte para saldar el saldo efectivo, dado el USD ya ingresado.
+    function saldarRestoEnBs() {
+        const usd = Number(montoUsd) || 0
+        const resto = (saldoEfectivo - usd) * tasa
+        setMontoBs(resto > 0 ? resto.toFixed(2) : '0')
     }
 
     async function confirmar() {
@@ -574,16 +570,8 @@ function ModalPago({ compra, saldo, tasas, onCerrar, onPagado }) {
 
         const { data: { user } } = await supabase.auth.getUser()
 
-        if (descMonto > 0.001) {
-            await supabase.from('pagos_proveedor').insert({
-                compra_id: compra.id, usuario_id: user.id,
-                monto_usd: parseFloat(descMonto.toFixed(2)), monto_bs: 0,
-                tasa_cambio: tasa, tipo_tasa: tipoTasa,
-                metodo_usd: 'descuento', metodo_bs: null,
-                nota: `Descuento ${descPct}%`,
-                empresa_id: perfil.empresa_id,
-            })
-        }
+        // El descuento reduce el valor de la factura; NO se registra como pago.
+        const descuentoTotal = Number(compra.descuento_pago || 0) + (descMonto > 0.001 ? descMonto : 0)
 
         for (const ndId of ndsSeleccionadas) {
             const nd = ndsDisponibles.find(n => n.id === ndId)
@@ -615,8 +603,12 @@ function ModalPago({ compra, saldo, tasas, onCerrar, onPagado }) {
         const { data: todosPagos } = await supabase
             .from('pagos_proveedor').select('monto_usd').eq('compra_id', compra.id)
         const totalPagado = todosPagos.reduce((s, p) => s + Number(p.monto_usd), 0)
-        const nuevoEstado = totalPagado >= Number(compra.total) - 0.01 ? 'pagado' : 'parcial'
-        await supabase.from('compras').update({ estado_cobro: nuevoEstado }).eq('id', compra.id)
+        const montoDebido = Number(compra.total) - descuentoTotal
+        const nuevoEstado = totalPagado >= montoDebido - 0.01 ? 'pagado' : 'parcial'
+        const { error: errCompra } = await supabase.from('compras')
+            .update({ estado_cobro: nuevoEstado, descuento_pago: parseFloat(descuentoTotal.toFixed(2)) })
+            .eq('id', compra.id)
+        if (errCompra) { setError('Error al actualizar la factura: ' + errCompra.message); setGuardando(false); return }
 
         setGuardando(false)
         onPagado()
@@ -713,7 +705,13 @@ function ModalPago({ compra, saldo, tasas, onCerrar, onPagado }) {
 
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                         <div>
-                            <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Monto Bs. (opcional)</label>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '5px' }}>
+                                <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151' }}>Monto Bs. (opcional)</label>
+                                <button type="button" onClick={saldarRestoEnBs}
+                                    style={{ fontSize: '11px', color: '#16a34a', background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontWeight: 500 }}>
+                                    Saldar resto
+                                </button>
+                            </div>
                             <input type="number" value={montoBs} onChange={e => handleBsChange(e.target.value)} placeholder="0.00"
                                 style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', boxSizing: 'border-box' }} />
                         </div>
