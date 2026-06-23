@@ -36,8 +36,44 @@ export default function Despacho() {
     const [motivoAnulacion, setMotivoAnulacion] = useState('')
     const [anulando, setAnulando] = useState(false)
     const [errorAnulacion, setErrorAnulacion] = useState('')
+    const [clientes, setClientes] = useState([])
+    const [filtroCliente, setFiltroCliente] = useState('')
+    const [fechaDesde, setFechaDesde] = useState('')
+    const [fechaHasta, setFechaHasta] = useState('')
+    const [filtroSku, setFiltroSku] = useState('')
+    const [skuMatch, setSkuMatch] = useState(null) // Set de pedido_id que contienen el SKU/producto, o null
+    const [pagina, setPagina] = useState(0)
+    const [pageSize, setPageSize] = useState(50)
 
     useEffect(() => { cargar(); cargarConteos() }, [tabActiva])
+
+    useEffect(() => {
+        if (!perfil?.empresa_id) return
+        supabase.from('clientes').select('id, nombre').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('nombre')
+            .then(({ data }) => setClientes(data || []))
+    }, [perfil?.empresa_id])
+
+    // Resolver el filtro por SKU/producto a un conjunto de pedido_id
+    useEffect(() => {
+        const term = filtroSku.trim()
+        if (!term) { setSkuMatch(null); return }
+        let cancel = false
+        ;(async () => {
+            const { data: prods } = await supabase.from('productos_terminados')
+                .select('id').eq('empresa_id', perfil.empresa_id)
+                .or(`sku.ilike.%${term}%,nombre.ilike.%${term}%`)
+            const prodIds = (prods || []).map(p => p.id)
+            if (prodIds.length === 0) { if (!cancel) setSkuMatch(new Set()); return }
+            const { data: its } = await supabase.from('pedido_items').select('pedido_id').in('producto_id', prodIds)
+            if (!cancel) setSkuMatch(new Set((its || []).map(r => r.pedido_id)))
+        })()
+        return () => { cancel = true }
+    }, [filtroSku, perfil?.empresa_id])
+
+    // Resetear a la primera página cuando cambian tab o filtros
+    useEffect(() => { setPagina(0) }, [tabActiva, filtroCliente, fechaDesde, fechaHasta, filtroSku])
+
+    const inputStyle = { padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', color: '#374151', backgroundColor: '#fff', boxSizing: 'border-box' }
 
     async function cargarConteos() {
         const eid = perfil.empresa_id
@@ -53,21 +89,34 @@ export default function Despacho() {
     async function cargar() {
         if (tabActiva === 'devoluciones') { setLoading(false); return }
         setLoading(true)
-        let estado
-        if (tabActiva === 'alistamiento') estado = 'aprobado'
-        else if (tabActiva === 'porregistrar') estado = 'alistado'
-        else if (tabActiva === 'despacho') estado = 'facturado'
-        else estado = 'anulado'
-
-        const { data } = await supabase
+        let q = supabase
             .from('pedidos')
             .select('*, clientes(nombre, rif, descripcion, direccion_fiscal), usuarios(nombre)')
             .eq('empresa_id', perfil.empresa_id)
-            .eq('estado', estado)
             .order('created_at', { ascending: false })
+
+        if (tabActiva === 'alistamiento') q = q.eq('estado', 'aprobado')
+        else if (tabActiva === 'porregistrar') q = q.eq('estado', 'alistado')
+        else if (tabActiva === 'despacho') q = q.eq('estado', 'facturado')
+        else if (tabActiva === 'completados') q = q.in('estado', ['rechazado', 'despachado'])
+        else q = q.eq('estado', 'anulado')
+
+        const { data } = await q
         if (data) setPedidos(data)
         setLoading(false)
     }
+
+    // Filtros (cliente, rango de fecha, sku) aplicados en cliente + paginación
+    const filtrados = pedidos.filter(p => {
+        const matchCliente = filtroCliente ? p.cliente_id === filtroCliente : true
+        const fp = (p.fecha_pedido || '').slice(0, 10)
+        const matchDesde = !fechaDesde || (fp && fp >= fechaDesde)
+        const matchHasta = !fechaHasta || (fp && fp <= fechaHasta)
+        const matchSku = !skuMatch || skuMatch.has(p.id)
+        return matchCliente && matchDesde && matchHasta && matchSku
+    })
+    const totalFiltrados = filtrados.length
+    const paginados = filtrados.slice(pagina * pageSize, (pagina + 1) * pageSize)
 
     async function anularPedido() {
         if (!motivoAnulacion.trim()) { setErrorAnulacion('El motivo de anulación es obligatorio'); return }
@@ -106,15 +155,16 @@ export default function Despacho() {
             {/* Tabs */}
             <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', flexWrap: 'wrap' }}>
                 {[
-                    { key: 'alistamiento',  label: 'Alistamiento',   count: conteos.alistamiento,  badgeBg: '#fff7ed', badgeColor: '#c2410c' },
+                    { key: 'alistamiento',  label: 'Por Alistar',    count: conteos.alistamiento,  badgeBg: '#fff7ed', badgeColor: '#c2410c' },
                     { key: 'porregistrar',  label: 'Por Registrar',  count: conteos.porregistrar,  badgeBg: '#fef9c3', badgeColor: '#854d0e' },
-                    { key: 'despacho',      label: 'Despacho',       count: conteos.despacho,      badgeBg: '#dcfce7', badgeColor: '#166534' },
+                    { key: 'despacho',      label: 'Por Despachar',  count: conteos.despacho,      badgeBg: '#dcfce7', badgeColor: '#166534' },
+                    { key: 'completados',   label: 'Completados',    count: 0,                     badgeBg: '#f3f4f6', badgeColor: '#6b7280' },
                     { key: 'anulados',      label: 'Anulados',       count: 0,                     badgeBg: '#f3f4f6', badgeColor: '#6b7280' },
                     { key: 'devoluciones',  label: 'Devoluciones',   count: conteos.devoluciones,  badgeBg: '#fce7f3', badgeColor: '#9d174d' },
                 ].map(tab => {
                     const isActive = tabActiva === tab.key
                     return (
-                        <button key={tab.key} onClick={() => { setTabActiva(tab.key); setPedidoActual(null); setPedidoVer(null) }}
+                        <button key={tab.key} onClick={() => { setTabActiva(tab.key); setPedidoActual(null); setPedidoVer(null); setFiltroCliente(''); setFechaDesde(''); setFechaHasta(''); setFiltroSku('') }}
                             style={{
                                 padding: '8px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 500,
                                 border: '1px solid', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px',
@@ -138,32 +188,86 @@ export default function Despacho() {
                 })}
             </div>
 
+            {/* Filtros (no aplican al tab de devoluciones, que tiene su propia gestión) */}
+            {tabActiva !== 'devoluciones' && (
+                <div style={{ display: 'flex', gap: '10px', marginBottom: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
+                    <input type="text" placeholder="SKU o producto..."
+                        value={filtroSku} onChange={e => setFiltroSku(e.target.value)}
+                        style={{ ...inputStyle, minWidth: '160px' }} />
+                    <select value={filtroCliente} onChange={e => setFiltroCliente(e.target.value)}
+                        style={{ ...inputStyle, minWidth: '180px' }}>
+                        <option value="">Todos los clientes</option>
+                        {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                    </select>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span style={{ fontSize: '12px', color: '#6b7280' }}>Desde</span>
+                        <input type="date" value={fechaDesde} onChange={e => setFechaDesde(e.target.value)} style={inputStyle} />
+                        <span style={{ fontSize: '12px', color: '#6b7280' }}>Hasta</span>
+                        <input type="date" value={fechaHasta} onChange={e => setFechaHasta(e.target.value)} style={inputStyle} />
+                    </div>
+                </div>
+            )}
+
             <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
                 {tabActiva === 'devoluciones' ? (
                     <TablaDevoluciones onConteoChange={cargarConteos} />
                 ) : loading ? (
                     <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
-                ) : pedidos.length === 0 ? (
+                ) : totalFiltrados === 0 ? (
                     <div style={{ padding: '48px', textAlign: 'center' }}>
                         {tabActiva === 'alistamiento'
                             ? <PackageCheck size={32} style={{ color: '#d1d5db', marginBottom: '12px' }} />
                             : <Truck size={32} style={{ color: '#d1d5db', marginBottom: '12px' }} />}
                         <p style={{ color: '#9ca3af', fontSize: '14px', margin: 0 }}>
-                            {tabActiva === 'alistamiento'
+                            {pedidos.length > 0
+                                ? 'No hay pedidos que coincidan con los filtros'
+                                : tabActiva === 'alistamiento'
                                 ? 'No hay pedidos aprobados pendientes de alistamiento'
                                 : tabActiva === 'porregistrar'
                                 ? 'No hay pedidos alistados pendientes de facturación'
-                                : 'No hay pedidos facturados pendientes de despacho'}
+                                : tabActiva === 'despacho'
+                                ? 'No hay pedidos facturados pendientes de despacho'
+                                : tabActiva === 'completados'
+                                ? 'No hay pedidos completados'
+                                : 'No hay pedidos anulados'}
                         </p>
                     </div>
                 ) : tabActiva === 'alistamiento' ? (
-                    <TablaAlistamiento pedidos={pedidos} onVer={p => setPedidoVer(p)} onAlistar={p => setPedidoActual(p)} onAnular={p => { setModalAnulacion(p); setMotivoAnulacion(''); setErrorAnulacion('') }} />
+                    <TablaAlistamiento pedidos={paginados} onVer={p => setPedidoVer(p)} onAlistar={p => setPedidoActual(p)} onAnular={p => { setModalAnulacion(p); setMotivoAnulacion(''); setErrorAnulacion('') }} />
                 ) : tabActiva === 'porregistrar' ? (
-                    <TablaPorRegistrar pedidos={pedidos} onVer={p => setPedidoVer(p)} onAnular={p => { setModalAnulacion(p); setMotivoAnulacion(''); setErrorAnulacion('') }} />
+                    <TablaPorRegistrar pedidos={paginados} onVer={p => setPedidoVer(p)} onAnular={p => { setModalAnulacion(p); setMotivoAnulacion(''); setErrorAnulacion('') }} />
                 ) : tabActiva === 'despacho' ? (
-                    <TablaDespacho pedidos={pedidos} onVer={p => setPedidoVer(p)} onDespachado={() => { cargar(); cargarConteos() }} empresaId={perfil.empresa_id} />
+                    <TablaDespacho pedidos={paginados} onVer={p => setPedidoVer(p)} onDespachado={() => { cargar(); cargarConteos() }} empresaId={perfil.empresa_id} />
+                ) : tabActiva === 'completados' ? (
+                    <TablaCompletados pedidos={paginados} onVer={p => setPedidoVer(p)} />
                 ) : (
-                    <TablaAnulados pedidos={pedidos} onVer={p => setPedidoVer(p)} />
+                    <TablaAnulados pedidos={paginados} onVer={p => setPedidoVer(p)} />
+                )}
+                {tabActiva !== 'devoluciones' && !loading && totalFiltrados > 0 && (
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderTop: '1px solid #e5e7eb', backgroundColor: '#f9fafb' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            <span style={{ fontSize: '13px', color: '#6b7280' }}>
+                                {pagina * pageSize + 1}–{Math.min((pagina + 1) * pageSize, totalFiltrados)} de {totalFiltrados}
+                            </span>
+                            <select value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setPagina(0) }}
+                                style={{ fontSize: '13px', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 8px', color: '#374151', backgroundColor: '#fff', cursor: 'pointer' }}>
+                                <option value={25}>25 / pág</option>
+                                <option value={50}>50 / pág</option>
+                                <option value={100}>100 / pág</option>
+                            </select>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <button onClick={() => setPagina(p => p - 1)} disabled={pagina === 0}
+                                style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: pagina === 0 ? '#d1d5db' : '#374151', cursor: pagina === 0 ? 'default' : 'pointer' }}>
+                                ←
+                            </button>
+                            <span style={{ fontSize: '13px', color: '#6b7280' }}>Pág {pagina + 1} / {Math.ceil(totalFiltrados / pageSize)}</span>
+                            <button onClick={() => setPagina(p => p + 1)} disabled={(pagina + 1) * pageSize >= totalFiltrados}
+                                style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: (pagina + 1) * pageSize >= totalFiltrados ? '#d1d5db' : '#374151', cursor: (pagina + 1) * pageSize >= totalFiltrados ? 'default' : 'pointer' }}>
+                                →
+                            </button>
+                        </div>
+                    </div>
                 )}
             </div>
 
@@ -469,6 +573,52 @@ function TablaAnulados({ pedidos, onVer }) {
                         <td style={{ padding: '12px 16px', fontSize: '13px', color: '#dc2626', maxWidth: '260px' }}>
                             {p.motivo_anulacion || '—'}
                         </td>
+                        <td style={{ padding: '12px 16px' }}>
+                            <button onClick={() => onVer(p)}
+                                style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
+                                <FileText size={13} /> Ver
+                            </button>
+                        </td>
+                    </tr>
+                ))}
+            </tbody>
+        </table>
+    )
+}
+
+// ── Tabla Completados (despachados + rechazados) ───────────────
+function TablaCompletados({ pedidos, onVer }) {
+    return (
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+                <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                    {['Pedido', 'O/C Cliente', 'Cliente', 'Vendedor', 'Fecha pedido', 'F. Programada', 'Total', 'Estado', ''].map((h, i) => (
+                        <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
+                    ))}
+                </tr>
+            </thead>
+            <tbody>
+                {pedidos.map(p => (
+                    <tr key={p.id} style={{ borderBottom: '1px solid #f3f4f6' }}
+                        onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
+                        onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                        <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', fontWeight: 600, color: '#374151' }}>{p.numero_pedido || '—'}</td>
+                        <td style={{ padding: '12px 16px', fontSize: '12px', fontFamily: 'monospace', color: p.oc_cliente ? '#374151' : '#d1d5db' }}>{p.oc_cliente || '—'}</td>
+                        <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>
+                            {p.clientes?.nombre || '—'}
+                            {p.clientes?.rif && <div style={{ fontSize: '11px', color: '#9ca3af', fontFamily: 'monospace' }}>{p.clientes.rif}</div>}
+                        </td>
+                        <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{p.usuarios?.nombre || '—'}</td>
+                        <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280', whiteSpace: 'nowrap' }}>
+                            {p.fecha_pedido ? new Date(p.fecha_pedido).toLocaleDateString('es-VE') : '—'}
+                        </td>
+                        <td style={{ padding: '12px 16px', fontSize: '13px', whiteSpace: 'nowrap', color: p.fecha_despacho ? '#1f2937' : '#d1d5db', fontWeight: p.fecha_despacho ? 500 : 400 }}>
+                            {p.fecha_despacho ? new Date(p.fecha_despacho + 'T00:00:00').toLocaleDateString('es-VE') : '—'}
+                        </td>
+                        <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937' }}>
+                            <TotalPedido pedidoId={p.id} descuentoGlobal={p.descuento_global} estado={p.estado} />
+                        </td>
+                        <td style={{ padding: '12px 16px' }}><BadgeEstado estado={p.estado} /></td>
                         <td style={{ padding: '12px 16px' }}>
                             <button onClick={() => onVer(p)}
                                 style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>

@@ -45,6 +45,14 @@ export default function Pedidos() {
     const [toasts, setToasts] = useState([])
     const [reloadKey, setReloadKey] = useState(0)
     const [conteos, setConteos] = useState({ pendiente: 0, aprobado: 0, alistado: 0, facturado: 0 })
+    const [clientes, setClientes] = useState([])
+    const [filtroCliente, setFiltroCliente] = useState('')
+    const [fechaDesde, setFechaDesde] = useState('')
+    const [fechaHasta, setFechaHasta] = useState('')
+    const [filtroSku, setFiltroSku] = useState('')
+    const [skuMatch, setSkuMatch] = useState(null) // Set de pedido_id que contienen el SKU/producto, o null si no hay filtro
+    const [pagina, setPagina] = useState(0)
+    const [pageSize, setPageSize] = useState(50)
 
     useEffect(() => { cargar(); cargarConteos() }, [tabActiva, reloadKey])
 
@@ -85,6 +93,32 @@ export default function Pedidos() {
             })
     }, [perfil?.empresa_id])
 
+    useEffect(() => {
+        if (!perfil?.empresa_id) return
+        supabase.from('clientes').select('id, nombre').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('nombre')
+            .then(({ data }) => setClientes(data || []))
+    }, [perfil?.empresa_id])
+
+    // Resolver el filtro por SKU/producto a un conjunto de pedido_id
+    useEffect(() => {
+        const term = filtroSku.trim()
+        if (!term) { setSkuMatch(null); return }
+        let cancel = false
+        ;(async () => {
+            const { data: prods } = await supabase.from('productos_terminados')
+                .select('id').eq('empresa_id', perfil.empresa_id)
+                .or(`sku.ilike.%${term}%,nombre.ilike.%${term}%`)
+            const prodIds = (prods || []).map(p => p.id)
+            if (prodIds.length === 0) { if (!cancel) setSkuMatch(new Set()); return }
+            const { data: its } = await supabase.from('pedido_items').select('pedido_id').in('producto_id', prodIds)
+            if (!cancel) setSkuMatch(new Set((its || []).map(r => r.pedido_id)))
+        })()
+        return () => { cancel = true }
+    }, [filtroSku, perfil?.empresa_id])
+
+    // Resetear a la primera página cuando cambian tab o filtros
+    useEffect(() => { setPagina(0) }, [tabActiva, busqueda, filtroVendedor, filtroCliente, fechaDesde, fechaHasta, filtroSku])
+
     async function cargarConteos() {
         const eid = perfil.empresa_id
         const [r1, r2, r3, r4] = await Promise.all([
@@ -122,14 +156,21 @@ export default function Pedidos() {
 
     const filtrados = pedidos.filter(p => {
         const q = busqueda.toLowerCase()
-        const matchBusqueda =
+        const matchBusqueda = !q ||
             p.clientes?.nombre?.toLowerCase().includes(q) ||
             p.clientes?.descripcion?.toLowerCase().includes(q) ||
             p.numero_pedido?.toLowerCase().includes(q) ||
             p.usuarios?.nombre?.toLowerCase().includes(q)
         const matchVendedor = filtroVendedor ? p.vendedor_id === filtroVendedor : true
-        return matchBusqueda && matchVendedor
+        const matchCliente = filtroCliente ? p.cliente_id === filtroCliente : true
+        const fp = (p.fecha_pedido || '').slice(0, 10)
+        const matchDesde = !fechaDesde || (fp && fp >= fechaDesde)
+        const matchHasta = !fechaHasta || (fp && fp <= fechaHasta)
+        const matchSku = !skuMatch || skuMatch.has(p.id)
+        return matchBusqueda && matchVendedor && matchCliente && matchDesde && matchHasta && matchSku
     })
+    const totalFiltrados = filtrados.length
+    const paginados = filtrados.slice(pagina * pageSize, (pagina + 1) * pageSize)
 
     if (pedidoActual)
         return <DetallePedido
@@ -170,7 +211,7 @@ export default function Pedidos() {
                     const isActive = tabActiva === tab.key
                     const hasItems = count > 0
                     return (
-                        <button key={tab.key} onClick={() => { setTabActiva(tab.key); setBusqueda(''); setFiltroVendedor('') }}
+                        <button key={tab.key} onClick={() => { setTabActiva(tab.key); setBusqueda(''); setFiltroVendedor(''); setFiltroCliente(''); setFechaDesde(''); setFechaHasta(''); setFiltroSku('') }}
                             style={{
                                 padding: '8px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 500,
                                 border: '1px solid', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px',
@@ -202,11 +243,27 @@ export default function Pedidos() {
                         value={busqueda} onChange={e => setBusqueda(e.target.value)}
                         style={{ ...inputStyle, paddingLeft: '32px' }} />
                 </div>
+                <input type="text" placeholder="SKU o producto..."
+                    value={filtroSku} onChange={e => setFiltroSku(e.target.value)}
+                    style={{ ...inputStyle, width: 'auto', minWidth: '160px' }} />
+                <select value={filtroCliente} onChange={e => setFiltroCliente(e.target.value)}
+                    style={{ ...inputStyle, width: 'auto', minWidth: '180px' }}>
+                    <option value="">Todos los clientes</option>
+                    {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                </select>
                 <select value={filtroVendedor} onChange={e => setFiltroVendedor(e.target.value)}
                     style={{ ...inputStyle, width: 'auto', minWidth: '180px' }}>
                     <option value="">Todos los vendedores</option>
                     {vendedores.map(v => <option key={v.id} value={v.id}>{v.nombre}</option>)}
                 </select>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span style={{ fontSize: '12px', color: '#6b7280' }}>Desde</span>
+                    <input type="date" value={fechaDesde} onChange={e => setFechaDesde(e.target.value)}
+                        style={{ ...inputStyle, width: 'auto' }} />
+                    <span style={{ fontSize: '12px', color: '#6b7280' }}>Hasta</span>
+                    <input type="date" value={fechaHasta} onChange={e => setFechaHasta(e.target.value)}
+                        style={{ ...inputStyle, width: 'auto' }} />
+                </div>
             </div>
 
             {/* Tabla */}
@@ -227,7 +284,7 @@ export default function Pedidos() {
                             </tr>
                         </thead>
                         <tbody>
-                            {filtrados.map(p => (
+                            {paginados.map(p => (
                                 <tr key={p.id} style={{ borderBottom: '1px solid #f3f4f6' }}
                                     onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
                                     onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
@@ -264,7 +321,7 @@ export default function Pedidos() {
                             </tr>
                         </thead>
                         <tbody>
-                            {filtrados.map(p => (
+                            {paginados.map(p => (
                                 <tr key={p.id} style={{ borderBottom: '1px solid #f3f4f6' }}
                                     onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
                                     onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
@@ -303,6 +360,32 @@ export default function Pedidos() {
                             ))}
                         </tbody>
                     </table>
+                )}
+                {!loading && totalFiltrados > 0 && (
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderTop: '1px solid #e5e7eb', backgroundColor: '#f9fafb' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            <span style={{ fontSize: '13px', color: '#6b7280' }}>
+                                {pagina * pageSize + 1}–{Math.min((pagina + 1) * pageSize, totalFiltrados)} de {totalFiltrados}
+                            </span>
+                            <select value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setPagina(0) }}
+                                style={{ fontSize: '13px', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 8px', color: '#374151', backgroundColor: '#fff', cursor: 'pointer' }}>
+                                <option value={25}>25 / pág</option>
+                                <option value={50}>50 / pág</option>
+                                <option value={100}>100 / pág</option>
+                            </select>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <button onClick={() => setPagina(p => p - 1)} disabled={pagina === 0}
+                                style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: pagina === 0 ? '#d1d5db' : '#374151', cursor: pagina === 0 ? 'default' : 'pointer' }}>
+                                ←
+                            </button>
+                            <span style={{ fontSize: '13px', color: '#6b7280' }}>Pág {pagina + 1} / {Math.ceil(totalFiltrados / pageSize)}</span>
+                            <button onClick={() => setPagina(p => p + 1)} disabled={(pagina + 1) * pageSize >= totalFiltrados}
+                                style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: (pagina + 1) * pageSize >= totalFiltrados ? '#d1d5db' : '#374151', cursor: (pagina + 1) * pageSize >= totalFiltrados ? 'default' : 'pointer' }}>
+                                →
+                            </button>
+                        </div>
+                    </div>
                 )}
             </div>
 
