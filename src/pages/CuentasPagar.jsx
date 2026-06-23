@@ -5,6 +5,8 @@ import { AlertTriangle, CheckCircle, Clock, DollarSign, FileText } from 'lucide-
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 const fmtBs = (n, tasa) => `${(Number(n || 0) * Number(tasa || 1)).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`
+// Equivalente en USD de un pago: parte en USD + parte en Bs convertida por su tasa.
+const pagoEnUsd = (p) => Number(p.monto_usd || 0) + Number(p.monto_bs || 0) / Number(p.tasa_cambio || 1)
 
 function BadgeEstado({ estado }) {
     const estilos = {
@@ -118,7 +120,7 @@ export default function CuentasPagar() {
             const kpiIds = kpi.map(c => c.id)
             if (kpiIds.length > 0) {
                 const { data: kpiPagos } = await supabase
-                    .from('pagos_proveedor').select('compra_id, monto_usd').in('compra_id', kpiIds)
+                    .from('pagos_proveedor').select('compra_id, monto_usd, monto_bs, tasa_cambio').in('compra_id', kpiIds)
                 const kpiPagosMap = {}
                 kpiPagos?.forEach(p => {
                     if (!kpiPagosMap[p.compra_id]) kpiPagosMap[p.compra_id] = []
@@ -149,17 +151,17 @@ export default function CuentasPagar() {
 
     function calcularSaldo(compra) {
         const pagosCompra = pagos[compra.id] || []
-        const cobrado = pagosCompra.reduce((s, p) => s + Number(p.monto_usd || 0), 0)
+        const cobrado = pagosCompra.reduce((s, p) => s + pagoEnUsd(p), 0)
         return Number(compra.total || 0) - Number(compra.descuento_pago || 0) - cobrado
     }
 
     function calcularCobrado(compra) {
         const pagosCompra = pagos[compra.id] || []
-        return pagosCompra.reduce((s, p) => s + Number(p.monto_usd || 0), 0)
+        return pagosCompra.reduce((s, p) => s + pagoEnUsd(p), 0)
     }
 
     const totalPendiente = kpiData.reduce((s, c) => {
-        const pag = (pagosKpi[c.id] || []).reduce((a, p) => a + Number(p.monto_usd || 0), 0)
+        const pag = (pagosKpi[c.id] || []).reduce((a, p) => a + pagoEnUsd(p), 0)
         return s + Math.max(0, Number(c.total || 0) - Number(c.descuento_pago || 0) - pag)
     }, 0)
     const vencidas = kpiData.filter(c => c.fecha_vencimiento_pago && new Date(c.fecha_vencimiento_pago) < new Date()).length
@@ -601,8 +603,8 @@ function ModalPago({ compra, saldo, tasas, onCerrar, onPagado }) {
         }
 
         const { data: todosPagos } = await supabase
-            .from('pagos_proveedor').select('monto_usd').eq('compra_id', compra.id)
-        const totalPagado = todosPagos.reduce((s, p) => s + Number(p.monto_usd), 0)
+            .from('pagos_proveedor').select('monto_usd, monto_bs, tasa_cambio').eq('compra_id', compra.id)
+        const totalPagado = todosPagos.reduce((s, p) => s + pagoEnUsd(p), 0)
         const montoDebido = Number(compra.total) - descuentoTotal
         const nuevoEstado = totalPagado >= montoDebido - 0.01 ? 'pagado' : 'parcial'
         const { error: errCompra } = await supabase.from('compras')
