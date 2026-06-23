@@ -5,6 +5,8 @@ import { X, DollarSign, CheckSquare, FileText } from 'lucide-react'
 
 const fmt = n => `$${Number(n).toFixed(2)}`
 const fmtBs = n => `${Number(n).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`
+// Equivalente en USD de un cobro: parte en USD + parte en Bs convertida por su tasa.
+const cobroEnUsd = (c) => Number(c.monto_usd || 0) + Number(c.monto_bs || 0) / Number(c.tasa_cambio || 1)
 
 function semaforo(fechaVenc) {
     if (!fechaVenc) return null
@@ -22,6 +24,7 @@ export default function CuentasCobrar() {
     const { perfil } = useAuth()
     const [ventas, setVentas] = useState([])
     const [kpiData, setKpiData] = useState([])
+    const [cobradoKpi, setCobradoKpi] = useState({})
     const [loading, setLoading] = useState(true)
     const [filtro, setFiltro] = useState('pendiente')
     const [modalVenta, setModalVenta] = useState(null)       // cobro individual
@@ -56,7 +59,7 @@ export default function CuentasCobrar() {
 
         let kpiQ = supabase
             .from('ventas')
-            .select('total, estado_cobro, fecha_vencimiento_pago, cliente_id')
+            .select('id, total, estado_cobro, fecha_vencimiento_pago, cliente_id')
             .eq('empresa_id', perfil.empresa_id)
             .in('estado_cobro', estados)
         if (filtroCliente) kpiQ = kpiQ.eq('cliente_id', filtroCliente)
@@ -76,7 +79,19 @@ export default function CuentasCobrar() {
             supabase.from('configuracion').select('clave, valor'),
         ])
 
-        if (kpi) setKpiData(kpi)
+        if (kpi) {
+            setKpiData(kpi)
+            const kpiIds = kpi.map(v => v.id)
+            if (kpiIds.length > 0) {
+                const { data: kpiCobros } = await supabase
+                    .from('cobros').select('venta_id, monto_usd, monto_bs, tasa_cambio').in('venta_id', kpiIds)
+                const m = {}
+                kpiCobros?.forEach(c => { m[c.venta_id] = (m[c.venta_id] || 0) + cobroEnUsd(c) })
+                setCobradoKpi(m)
+            } else {
+                setCobradoKpi({})
+            }
+        }
         if (data) setVentas(data)
         if (count !== null) setTotalRegistros(count)
         if (cfg) {
@@ -121,7 +136,7 @@ export default function CuentasCobrar() {
 
     const totalPendiente = kpiData
         .filter(v => v.estado_cobro !== 'pagado')
-        .reduce((s, v) => s + (v.total || 0), 0)
+        .reduce((s, v) => s + Math.max(0, Number(v.total || 0) - (cobradoKpi[v.id] || 0)), 0)
 
     const mostrarCheckboxes = filtro === 'pendiente' || filtro === 'parcial'
 
@@ -360,7 +375,7 @@ function MontoCobrado({ ventaId }) {
     useEffect(() => {
         supabase.from('cobros').select('monto_usd, monto_bs, tasa_cambio').eq('venta_id', ventaId)
             .then(({ data }) => {
-                if (data) setMonto(data.reduce((s, c) => s + c.monto_usd + (c.monto_bs / (c.tasa_cambio || 1)), 0))
+                if (data) setMonto(data.reduce((s, c) => s + cobroEnUsd(c), 0))
             })
     }, [ventaId])
     return <span>{monto != null ? fmt(monto) : '—'}</span>
@@ -371,7 +386,7 @@ function SaldoPendiente({ ventaId, total }) {
     useEffect(() => {
         supabase.from('cobros').select('monto_usd, monto_bs, tasa_cambio').eq('venta_id', ventaId)
             .then(({ data }) => {
-                if (data) setCobrado(data.reduce((s, c) => s + c.monto_usd + (c.monto_bs / (c.tasa_cambio || 1)), 0))
+                if (data) setCobrado(data.reduce((s, c) => s + cobroEnUsd(c), 0))
             })
     }, [ventaId])
     if (cobrado === null) return <span>—</span>
@@ -416,7 +431,7 @@ function ModalCobro({ venta, tasas, onCerrar, onCobrado }) {
         supabase.from('cobros').select('monto_usd, monto_bs, tasa_cambio').eq('venta_id', venta.id)
             .then(({ data }) => {
                 if (data) {
-                    const prev = data.reduce((s, c) => s + c.monto_usd + (c.monto_bs / (c.tasa_cambio || 1)), 0)
+                    const prev = data.reduce((s, c) => s + cobroEnUsd(c), 0)
                     setCobradoPrev(prev)
                     setPagoUsd(Math.max(0, venta.total - prev))
                 }
