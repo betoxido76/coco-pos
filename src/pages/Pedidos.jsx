@@ -30,6 +30,16 @@ const inputStyle = {
     backgroundColor: '#fff', boxSizing: 'border-box',
 }
 
+// Encabezado de columna ordenable (patrón de Ventas)
+function SortableTh({ label, col, sortCol, sortDir, onSort, right }) {
+    return (
+        <th onClick={col ? () => onSort(col) : undefined}
+            style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, textAlign: right ? 'right' : 'left', whiteSpace: 'nowrap', userSelect: 'none', cursor: col ? 'pointer' : 'default', color: col && sortCol === col ? '#16a34a' : '#6b7280' }}>
+            {label}{col && <span style={{ marginLeft: '4px', fontSize: '10px' }}>{sortCol === col ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}</span>}
+        </th>
+    )
+}
+
 // ══════════════════════════════════════════════════════════════
 // COMPONENTE PRINCIPAL
 // ══════════════════════════════════════════════════════════════
@@ -53,6 +63,8 @@ export default function Pedidos() {
     const [skuMatch, setSkuMatch] = useState(null) // Set de pedido_id que contienen el SKU/producto, o null si no hay filtro
     const [pagina, setPagina] = useState(0)
     const [pageSize, setPageSize] = useState(50)
+    const [sortCol, setSortCol] = useState('fecha_pedido')
+    const [sortDir, setSortDir] = useState('desc')
 
     useEffect(() => { cargar(); cargarConteos() }, [tabActiva, reloadKey])
 
@@ -119,6 +131,26 @@ export default function Pedidos() {
     // Resetear a la primera página cuando cambian tab o filtros
     useEffect(() => { setPagina(0) }, [tabActiva, busqueda, filtroVendedor, filtroCliente, fechaDesde, fechaHasta, filtroSku])
 
+    function handleSort(col) {
+        if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+        else { setSortCol(col); setSortDir('asc') }
+        setPagina(0)
+    }
+    function sortVal(p, col) {
+        switch (col) {
+            case 'numero_pedido': return p.numero_pedido || ''
+            case 'oc_cliente': return p.oc_cliente || ''
+            case 'cliente': return p.clientes?.nombre || ''
+            case 'vendedor': return p.usuarios?.nombre || ''
+            case 'estado': return p.estado || ''
+            case 'motivo': return p.motivo_anulacion || ''
+            case 'fecha_pedido': return p.fecha_pedido ? new Date(p.fecha_pedido).getTime() : 0
+            case 'fecha_entrega': return p.fecha_entrega || ''
+            case 'fecha_despacho': return p.fecha_despacho || ''
+            default: return ''
+        }
+    }
+
     async function cargarConteos() {
         const eid = perfil.empresa_id
         const [r1, r2, r3, r4] = await Promise.all([
@@ -169,8 +201,13 @@ export default function Pedidos() {
         const matchSku = !skuMatch || skuMatch.has(p.id)
         return matchBusqueda && matchVendedor && matchCliente && matchDesde && matchHasta && matchSku
     })
-    const totalFiltrados = filtrados.length
-    const paginados = filtrados.slice(pagina * pageSize, (pagina + 1) * pageSize)
+    const ordenados = [...filtrados].sort((a, b) => {
+        const va = sortVal(a, sortCol), vb = sortVal(b, sortCol)
+        if (typeof va === 'string') return sortDir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va)
+        return sortDir === 'asc' ? va - vb : vb - va
+    })
+    const totalFiltrados = ordenados.length
+    const paginados = ordenados.slice(pagina * pageSize, (pagina + 1) * pageSize)
 
     if (pedidoActual)
         return <DetallePedido
@@ -278,9 +315,15 @@ export default function Pedidos() {
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
                             <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                {['Pedido', 'O/C Cliente', 'Cliente', 'Vendedor', 'Fecha pedido', 'Motivo anulación', ''].map((h, i) => (
-                                    <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left' }}>{h}</th>
-                                ))}
+                                {[
+                                    { label: 'Pedido', col: 'numero_pedido' },
+                                    { label: 'O/C Cliente', col: 'oc_cliente' },
+                                    { label: 'Cliente', col: 'cliente' },
+                                    { label: 'Vendedor', col: 'vendedor' },
+                                    { label: 'Fecha pedido', col: 'fecha_pedido' },
+                                    { label: 'Motivo anulación', col: 'motivo' },
+                                    { label: '', col: null },
+                                ].map(c => <SortableTh key={c.label || 'acc'} {...c} sortCol={sortCol} sortDir={sortDir} onSort={handleSort} />)}
                             </tr>
                         </thead>
                         <tbody>
@@ -315,9 +358,18 @@ export default function Pedidos() {
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
                             <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                {['Pedido', 'O/C Cliente', 'Cliente', 'Vendedor', 'Fecha pedido', 'F. Prometida', 'F. Programada', 'Total', 'Estado', ''].map((h, i) => (
-                                    <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
-                                ))}
+                                {[
+                                    { label: 'Pedido', col: 'numero_pedido' },
+                                    { label: 'O/C Cliente', col: 'oc_cliente' },
+                                    { label: 'Cliente', col: 'cliente' },
+                                    { label: 'Vendedor', col: 'vendedor' },
+                                    { label: 'Fecha pedido', col: 'fecha_pedido' },
+                                    { label: 'F. Prometida', col: 'fecha_entrega' },
+                                    { label: 'F. Programada', col: 'fecha_despacho' },
+                                    { label: 'Total', col: null },
+                                    { label: 'Estado', col: 'estado' },
+                                    { label: '', col: null },
+                                ].map(c => <SortableTh key={c.label || 'acc'} {...c} sortCol={sortCol} sortDir={sortDir} onSort={handleSort} />)}
                             </tr>
                         </thead>
                         <tbody>

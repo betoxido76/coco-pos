@@ -24,6 +24,16 @@ function BadgeEstado({ estado }) {
     )
 }
 
+// Encabezado de columna ordenable (patrón de Ventas)
+function SortableTh({ label, col, sortCol, sortDir, onSort, right }) {
+    return (
+        <th onClick={col ? () => onSort(col) : undefined}
+            style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, textAlign: right ? 'right' : 'left', whiteSpace: 'nowrap', userSelect: 'none', cursor: col ? 'pointer' : 'default', color: col && sortCol === col ? '#16a34a' : '#6b7280' }}>
+            {label}{col && <span style={{ marginLeft: '4px', fontSize: '10px' }}>{sortCol === col ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}</span>}
+        </th>
+    )
+}
+
 export default function Despacho() {
     const { perfil } = useAuth()
     const [tabActiva, setTabActiva] = useState('alistamiento')
@@ -44,6 +54,8 @@ export default function Despacho() {
     const [skuMatch, setSkuMatch] = useState(null) // Set de pedido_id que contienen el SKU/producto, o null
     const [pagina, setPagina] = useState(0)
     const [pageSize, setPageSize] = useState(50)
+    const [sortCol, setSortCol] = useState('fecha_pedido')
+    const [sortDir, setSortDir] = useState('desc')
 
     useEffect(() => { cargar(); cargarConteos() }, [tabActiva])
 
@@ -74,6 +86,27 @@ export default function Despacho() {
     useEffect(() => { setPagina(0) }, [tabActiva, filtroCliente, fechaDesde, fechaHasta, filtroSku])
 
     const inputStyle = { padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', color: '#374151', backgroundColor: '#fff', boxSizing: 'border-box' }
+
+    function handleSort(col) {
+        if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+        else { setSortCol(col); setSortDir('asc') }
+        setPagina(0)
+    }
+    function sortVal(p, col) {
+        switch (col) {
+            case 'numero_pedido': return p.numero_pedido || ''
+            case 'oc_cliente': return p.oc_cliente || ''
+            case 'cliente': return p.clientes?.nombre || ''
+            case 'vendedor': return p.usuarios?.nombre || ''
+            case 'origen': return p.origen || ''
+            case 'estado': return p.estado || ''
+            case 'motivo': return p.motivo_anulacion || ''
+            case 'fecha_pedido': return p.fecha_pedido ? new Date(p.fecha_pedido).getTime() : 0
+            case 'fecha_entrega': return p.fecha_entrega || ''
+            case 'fecha_despacho': return p.fecha_despacho || ''
+            default: return ''
+        }
+    }
 
     async function cargarConteos() {
         const eid = perfil.empresa_id
@@ -115,8 +148,13 @@ export default function Despacho() {
         const matchSku = !skuMatch || skuMatch.has(p.id)
         return matchCliente && matchDesde && matchHasta && matchSku
     })
-    const totalFiltrados = filtrados.length
-    const paginados = filtrados.slice(pagina * pageSize, (pagina + 1) * pageSize)
+    const ordenados = [...filtrados].sort((a, b) => {
+        const va = sortVal(a, sortCol), vb = sortVal(b, sortCol)
+        if (typeof va === 'string') return sortDir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va)
+        return sortDir === 'asc' ? va - vb : vb - va
+    })
+    const totalFiltrados = ordenados.length
+    const paginados = ordenados.slice(pagina * pageSize, (pagina + 1) * pageSize)
 
     async function anularPedido() {
         if (!motivoAnulacion.trim()) { setErrorAnulacion('El motivo de anulación es obligatorio'); return }
@@ -233,15 +271,15 @@ export default function Despacho() {
                         </p>
                     </div>
                 ) : tabActiva === 'alistamiento' ? (
-                    <TablaAlistamiento pedidos={paginados} onVer={p => setPedidoVer(p)} onAlistar={p => setPedidoActual(p)} onAnular={p => { setModalAnulacion(p); setMotivoAnulacion(''); setErrorAnulacion('') }} />
+                    <TablaAlistamiento pedidos={paginados} sortCol={sortCol} sortDir={sortDir} onSort={handleSort} onVer={p => setPedidoVer(p)} onAlistar={p => setPedidoActual(p)} onAnular={p => { setModalAnulacion(p); setMotivoAnulacion(''); setErrorAnulacion('') }} />
                 ) : tabActiva === 'porregistrar' ? (
-                    <TablaPorRegistrar pedidos={paginados} onVer={p => setPedidoVer(p)} onAnular={p => { setModalAnulacion(p); setMotivoAnulacion(''); setErrorAnulacion('') }} />
+                    <TablaPorRegistrar pedidos={paginados} sortCol={sortCol} sortDir={sortDir} onSort={handleSort} onVer={p => setPedidoVer(p)} onAnular={p => { setModalAnulacion(p); setMotivoAnulacion(''); setErrorAnulacion('') }} />
                 ) : tabActiva === 'despacho' ? (
-                    <TablaDespacho pedidos={paginados} onVer={p => setPedidoVer(p)} onDespachado={() => { cargar(); cargarConteos() }} empresaId={perfil.empresa_id} />
+                    <TablaDespacho pedidos={paginados} sortCol={sortCol} sortDir={sortDir} onSort={handleSort} onVer={p => setPedidoVer(p)} onDespachado={() => { cargar(); cargarConteos() }} empresaId={perfil.empresa_id} />
                 ) : tabActiva === 'completados' ? (
-                    <TablaCompletados pedidos={paginados} onVer={p => setPedidoVer(p)} />
+                    <TablaCompletados pedidos={paginados} sortCol={sortCol} sortDir={sortDir} onSort={handleSort} onVer={p => setPedidoVer(p)} />
                 ) : (
-                    <TablaAnulados pedidos={paginados} onVer={p => setPedidoVer(p)} />
+                    <TablaAnulados pedidos={paginados} sortCol={sortCol} sortDir={sortDir} onSort={handleSort} onVer={p => setPedidoVer(p)} />
                 )}
                 {tabActiva !== 'devoluciones' && !loading && totalFiltrados > 0 && (
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderTop: '1px solid #e5e7eb', backgroundColor: '#f9fafb' }}>
@@ -318,14 +356,20 @@ export default function Despacho() {
 }
 
 // ── Tabla Alistamiento ─────────────────────────────────────────
-function TablaAlistamiento({ pedidos, onAlistar, onAnular, onVer }) {
+function TablaAlistamiento({ pedidos, onAlistar, onAnular, onVer, sortCol, sortDir, onSort }) {
     return (
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
                 <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                    {['Pedido', 'O/C Cliente', 'Cliente', 'Vendedor', 'Origen', 'Fecha Prometida', ''].map((h, i) => (
-                        <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left' }}>{h}</th>
-                    ))}
+                    {[
+                        { label: 'Pedido', col: 'numero_pedido' },
+                        { label: 'O/C Cliente', col: 'oc_cliente' },
+                        { label: 'Cliente', col: 'cliente' },
+                        { label: 'Vendedor', col: 'vendedor' },
+                        { label: 'Origen', col: 'origen' },
+                        { label: 'Fecha Prometida', col: 'fecha_entrega' },
+                        { label: '', col: null },
+                    ].map((c, i) => <SortableTh key={i} {...c} sortCol={sortCol} sortDir={sortDir} onSort={onSort} />)}
                 </tr>
             </thead>
             <tbody>
@@ -376,14 +420,23 @@ function TablaAlistamiento({ pedidos, onAlistar, onAnular, onVer }) {
 }
 
 // ── Tabla Por Registrar ────────────────────────────────────────
-function TablaPorRegistrar({ pedidos, onVer, onAnular }) {
+function TablaPorRegistrar({ pedidos, onVer, onAnular, sortCol, sortDir, onSort }) {
     return (
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
                 <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                    {['Pedido', 'O/C Cliente', 'Cliente', 'Vendedor', 'Fecha pedido', 'F. Prometida', 'F. Programada', 'Total', 'Estado', ''].map((h, i) => (
-                        <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
-                    ))}
+                    {[
+                        { label: 'Pedido', col: 'numero_pedido' },
+                        { label: 'O/C Cliente', col: 'oc_cliente' },
+                        { label: 'Cliente', col: 'cliente' },
+                        { label: 'Vendedor', col: 'vendedor' },
+                        { label: 'Fecha pedido', col: 'fecha_pedido' },
+                        { label: 'F. Prometida', col: 'fecha_entrega' },
+                        { label: 'F. Programada', col: 'fecha_despacho' },
+                        { label: 'Total', col: null },
+                        { label: 'Estado', col: 'estado' },
+                        { label: '', col: null },
+                    ].map((c, i) => <SortableTh key={i} {...c} sortCol={sortCol} sortDir={sortDir} onSort={onSort} />)}
                 </tr>
             </thead>
             <tbody>
@@ -434,7 +487,7 @@ function TablaPorRegistrar({ pedidos, onVer, onAnular }) {
 }
 
 // ── Tabla Despacho ─────────────────────────────────────────────
-function TablaDespacho({ pedidos, onVer, onDespachado, empresaId }) {
+function TablaDespacho({ pedidos, onVer, onDespachado, empresaId, sortCol, sortDir, onSort }) {
     const [procesando, setProcesando] = useState(null)
     const [confirmando, setConfirmando] = useState(null)
     const [error, setError] = useState('')
@@ -460,9 +513,16 @@ function TablaDespacho({ pedidos, onVer, onDespachado, empresaId }) {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                     <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                        {['Pedido', 'O/C Cliente', 'Cliente', 'Vendedor', 'F. Prometida', 'F. Programada', '', ''].map((h, i) => (
-                            <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left' }}>{h}</th>
-                        ))}
+                        {[
+                            { label: 'Pedido', col: 'numero_pedido' },
+                            { label: 'O/C Cliente', col: 'oc_cliente' },
+                            { label: 'Cliente', col: 'cliente' },
+                            { label: 'Vendedor', col: 'vendedor' },
+                            { label: 'F. Prometida', col: 'fecha_entrega' },
+                            { label: 'F. Programada', col: 'fecha_despacho' },
+                            { label: '', col: null },
+                            { label: '', col: null },
+                        ].map((c, i) => <SortableTh key={i} {...c} sortCol={sortCol} sortDir={sortDir} onSort={onSort} />)}
                     </tr>
                 </thead>
                 <tbody>
@@ -538,7 +598,7 @@ function TablaDespacho({ pedidos, onVer, onDespachado, empresaId }) {
 }
 
 // ── Tabla Anulados ─────────────────────────────────────────────
-function TablaAnulados({ pedidos, onVer }) {
+function TablaAnulados({ pedidos, onVer, sortCol, sortDir, onSort }) {
     if (pedidos.length === 0)
         return (
             <div style={{ padding: '48px', textAlign: 'center' }}>
@@ -550,9 +610,15 @@ function TablaAnulados({ pedidos, onVer }) {
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
                 <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                    {['Pedido', 'O/C Cliente', 'Cliente', 'Vendedor', 'Fecha pedido', 'Motivo anulación', ''].map((h, i) => (
-                        <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left' }}>{h}</th>
-                    ))}
+                    {[
+                        { label: 'Pedido', col: 'numero_pedido' },
+                        { label: 'O/C Cliente', col: 'oc_cliente' },
+                        { label: 'Cliente', col: 'cliente' },
+                        { label: 'Vendedor', col: 'vendedor' },
+                        { label: 'Fecha pedido', col: 'fecha_pedido' },
+                        { label: 'Motivo anulación', col: 'motivo' },
+                        { label: '', col: null },
+                    ].map((c, i) => <SortableTh key={i} {...c} sortCol={sortCol} sortDir={sortDir} onSort={onSort} />)}
                 </tr>
             </thead>
             <tbody>
@@ -587,14 +653,22 @@ function TablaAnulados({ pedidos, onVer }) {
 }
 
 // ── Tabla Completados (despachados + rechazados) ───────────────
-function TablaCompletados({ pedidos, onVer }) {
+function TablaCompletados({ pedidos, onVer, sortCol, sortDir, onSort }) {
     return (
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
                 <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                    {['Pedido', 'O/C Cliente', 'Cliente', 'Vendedor', 'Fecha pedido', 'F. Programada', 'Total', 'Estado', ''].map((h, i) => (
-                        <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
-                    ))}
+                    {[
+                        { label: 'Pedido', col: 'numero_pedido' },
+                        { label: 'O/C Cliente', col: 'oc_cliente' },
+                        { label: 'Cliente', col: 'cliente' },
+                        { label: 'Vendedor', col: 'vendedor' },
+                        { label: 'Fecha pedido', col: 'fecha_pedido' },
+                        { label: 'F. Programada', col: 'fecha_despacho' },
+                        { label: 'Total', col: null },
+                        { label: 'Estado', col: 'estado' },
+                        { label: '', col: null },
+                    ].map((c, i) => <SortableTh key={i} {...c} sortCol={sortCol} sortDir={sortDir} onSort={onSort} />)}
                 </tr>
             </thead>
             <tbody>
