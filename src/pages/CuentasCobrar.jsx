@@ -459,16 +459,18 @@ function ModalCobro({ venta, tasas, onCerrar, onCobrado }) {
         })
     }
 
+    // Campos independientes: editar USD NO autocompleta Bs, para permitir cobros parciales.
     function handleUsdChange(val) {
-        const n = Math.max(0, Number(val))
-        setPagoUsd(n)
-        setPagoBs(parseFloat((Math.max(0, saldoEfectivo - n) * tasa).toFixed(2)))
+        setPagoUsd(Math.max(0, Number(val)))
     }
 
     function handleTasaChange(nuevaTasa) {
         setTipoTasa(nuevaTasa)
-        const t = tasas[nuevaTasa] || 1
-        setPagoBs(parseFloat((Math.max(0, saldoEfectivo - pagoUsd) * t).toFixed(2)))
+    }
+
+    // Rellena Bs con lo que falte para cubrir el saldo efectivo, dado el USD ingresado.
+    function saldarRestoEnBs() {
+        setPagoBs(parseFloat((Math.max(0, saldoEfectivo - pagoUsd) * tasa).toFixed(2)))
     }
 
     async function confirmar() {
@@ -610,7 +612,13 @@ function ModalCobro({ venta, tasas, onCerrar, onCobrado }) {
                                 </select>
                             </div>
                             <div>
-                                <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Pago en Bs.</label>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                                    <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151' }}>Pago en Bs.</label>
+                                    <button type="button" onClick={saldarRestoEnBs}
+                                        style={{ fontSize: '11px', color: '#16a34a', background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontWeight: 500 }}>
+                                        Saldar resto
+                                    </button>
+                                </div>
                                 <input type="number" min="0" step="1" value={pagoBs} onChange={e => setPagoBs(Math.max(0, Number(e.target.value)))}
                                     style={{ width: '100%', padding: '9px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '15px', fontWeight: 600, boxSizing: 'border-box' }} />
                             </div>
