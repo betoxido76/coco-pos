@@ -153,7 +153,7 @@ export default function CuentasCobrar() {
         const dias = Math.max(0, Math.floor((hoyKpi - new Date(v.created_at)) / 86400000))
         return s + dias * saldoKpi(v)
     }, 0)
-    const diasCalle = totalPendiente > 0 ? Math.round(diasCalleNum / totalPendiente) : 0
+    const diasCalle = totalPendiente > 0 ? (diasCalleNum / totalPendiente).toFixed(1) : '0.0'
 
     const mostrarCheckboxes = filtro === 'pendiente' || filtro === 'parcial'
 
