@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import * as XLSX from 'xlsx'
 import { Download, Upload, CheckCircle, AlertTriangle, X, FileSpreadsheet } from 'lucide-react'
+import { UNIDADES } from '../lib/unidades'
 
 // ─── Definición de catálogos ───────────────────────────────────
 const CATALOGOS = [
@@ -15,7 +16,7 @@ const CATALOGOS = [
             { campo: 'nombre', header: 'Nombre', requerido: true },
             { campo: 'sku', header: 'SKU', requerido: true },
             { campo: 'descripcion', header: 'Descripcion', requerido: false },
-            { campo: 'unidad_medida', header: 'Unidad', requerido: true },
+            { campo: 'unidad_medida', header: 'Unidad', requerido: true, opciones: UNIDADES },
             { campo: 'precio_venta', header: 'Precio Venta', requerido: false },
             { campo: 'costo_promedio', header: 'Costo Promedio', requerido: false },
             { campo: 'stock_actual', header: 'Stock Actual', requerido: false },
@@ -37,7 +38,7 @@ const CATALOGOS = [
             { campo: 'nombre', header: 'Nombre', requerido: true },
             { campo: 'codigo', header: 'Codigo', requerido: true },
             { campo: 'descripcion', header: 'Descripcion', requerido: false },
-            { campo: 'unidad_medida', header: 'Unidad', requerido: true },
+            { campo: 'unidad_medida', header: 'Unidad', requerido: true, opciones: UNIDADES },
             { campo: 'costo_compra_promedio', header: 'Costo', requerido: false },
             { campo: 'stock_actual', header: 'Stock Actual', requerido: false },
             { campo: 'stock_minimo', header: 'Stock Minimo', requerido: false },
@@ -56,7 +57,7 @@ const CATALOGOS = [
             { campo: 'nombre', header: 'Nombre', requerido: true },
             { campo: 'codigo', header: 'Codigo', requerido: true },
             { campo: 'descripcion', header: 'Descripcion', requerido: false },
-            { campo: 'unidad_medida', header: 'Unidad', requerido: true },
+            { campo: 'unidad_medida', header: 'Unidad', requerido: true, opciones: UNIDADES },
             { campo: 'costo_compra_promedio', header: 'Costo', requerido: false },
             { campo: 'stock_actual', header: 'Stock Actual', requerido: false },
             { campo: 'stock_minimo', header: 'Stock Minimo', requerido: false },
@@ -74,7 +75,7 @@ const CATALOGOS = [
             { campo: 'nombre', header: 'Nombre', requerido: true },
             { campo: 'codigo', header: 'Codigo', requerido: false },
             { campo: 'descripcion', header: 'Descripcion', requerido: false },
-            { campo: 'unidad_medida', header: 'Unidad', requerido: true },
+            { campo: 'unidad_medida', header: 'Unidad', requerido: true, opciones: UNIDADES },
             { campo: 'costo_compra_promedio', header: 'Costo', requerido: false },
             { campo: 'stock_actual', header: 'Stock Actual', requerido: false },
             { campo: 'stock_minimo', header: 'Stock Minimo', requerido: false },
@@ -123,11 +124,20 @@ function parsearBooleano(val) {
     return ['si', 'sí', 'yes', 'true', '1', 'x'].includes(s)
 }
 
-function validarFila(fila, columnas) {
+function validarFila(fila, filaRaw, columnas) {
     const errores = []
     columnas.forEach(col => {
-        if (col.requerido && (fila[col.campo] === null || fila[col.campo] === undefined || fila[col.campo] === '')) {
-            errores.push(`"${col.header}" es requerido`)
+        const vacio = fila[col.campo] === null || fila[col.campo] === undefined || fila[col.campo] === ''
+        if (col.requerido && vacio) {
+            // Si el archivo traía un valor pero quedó vacío por no estar en `opciones`,
+            // damos un mensaje específico en vez de un genérico "es requerido".
+            const rawVal = filaRaw[col.header]
+            const traiaValor = rawVal !== null && rawVal !== undefined && String(rawVal).trim() !== ''
+            if (col.opciones && traiaValor) {
+                errores.push(`"${col.header}": "${rawVal}" no es válido. Usa uno de: ${col.opciones.join(', ')}`)
+            } else {
+                errores.push(`"${col.header}" es requerido`)
+            }
         }
     })
     return errores
@@ -203,7 +213,7 @@ export default function CargaDatos() {
 
             const errores = {}
             filasProcessadas.forEach((fila, idx) => {
-                const errs = validarFila(fila, catalogo.columnas)
+                const errs = validarFila(fila, rawData[idx], catalogo.columnas)
                 if (errs.length > 0) errores[idx] = errs
             })
 
