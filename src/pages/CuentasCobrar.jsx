@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import { X, DollarSign, CheckSquare, FileText } from 'lucide-react'
 
-const fmt = n => `$${Number(n).toFixed(2)}`
+const fmt = n => `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const fmtBs = n => `${Number(n).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`
 // Equivalente en USD de un cobro: parte en USD + parte en Bs convertida por su tasa.
 const cobroEnUsd = (c) => Number(c.monto_usd || 0) + Number(c.monto_bs || 0) / Number(c.tasa_cambio || 1)
