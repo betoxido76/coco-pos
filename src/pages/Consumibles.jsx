@@ -2,8 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { Plus, Search, Pencil, Check, AlertTriangle, ToggleLeft, ToggleRight } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
-
-const UNIDADES = ['unidad', 'kg', 'g', 'litro', 'ml', 'caja', 'rollo', 'par', 'juego', 'otro']
+import { opcionesUnidad } from '../lib/unidades'
 
 const VACIO = {
     nombre: '', codigo: '', descripcion: '', unidad_medida: 'unidad',
@@ -146,7 +145,7 @@ export default function Consumibles() {
 
                 <Campo label="Unidad de medida">
                     <select value={form.unidad_medida} onChange={e => campo('unidad_medida', e.target.value)} style={inputStyle}>
-                        {UNIDADES.map(u => <option key={u} value={u}>{u}</option>)}
+                        {opcionesUnidad(form.unidad_medida).map(u => <option key={u.value} value={u.value}>{u.label}</option>)}
                     </select>
                 </Campo>
 

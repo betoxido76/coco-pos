@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import { Plus, Search, Trash2, Check, CheckCircle, FileText, RotateCcw, AlertTriangle, ClipboardList, ChevronRight, Edit, X, MapPin, Star } from 'lucide-react'
+import { opcionesUnidad } from '../lib/unidades'
 
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
@@ -1988,7 +1989,6 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
 
 // ─── Factura + Devolución ──────────────────────────────────────
 // ─── Modal Nuevo Producto (desde NuevaVenta) ──────────────────
-const UNIDADES_VENTA = ['unidad', 'kg', 'g', 'litro', 'ml', 'caja', 'bolsa', 'rollo', 'metro', 'paquete', 'par', 'juego']
 const TIPOS_PRODUCTO_VTA = ['producido', 'comprado']
 
 function ModalNuevoProductoVenta({ perfil, onCreado, onCerrar }) {
@@ -2162,7 +2162,7 @@ function ModalNuevoProductoVenta({ perfil, onCreado, onCerrar }) {
                         <div>
                             <label style={labelStyle}>Unidad de medida</label>
                             <select value={unidad} onChange={e => setUnidad(e.target.value)} style={inStyle}>
-                                {UNIDADES_VENTA.map(u => <option key={u} value={u}>{u}</option>)}
+                                {opcionesUnidad(unidad).map(u => <option key={u.value} value={u.value}>{u.label}</option>)}
                             </select>
                         </div>
                         <div>

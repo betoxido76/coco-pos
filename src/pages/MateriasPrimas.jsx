@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { Plus, Search, Pencil, X, Check, AlertTriangle, Package, Layers } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
+import { opcionesUnidad } from '../lib/unidades'
 
 const TIPOS = ['producido', 'comprado']
-const UNIDADES = ['kg', 'g', 'litro', 'ml', 'unidad', 'metro', 'rollo', 'caja', 'bolsa']
 
 const VACIO = {
     nombre: '', codigo: '', descripcion: '', unidad_medida: 'kg',
@@ -188,7 +188,7 @@ export default function MateriasPrimas({ tabInicial = 'materias_primas' }) {
 
                 <Campo label="Unidad de medida">
                     <select value={form.unidad_medida} onChange={e => campo('unidad_medida', e.target.value)} style={inputStyle}>
-                        {UNIDADES.map(u => <option key={u} value={u}>{u}</option>)}
+                        {opcionesUnidad(form.unidad_medida).map(u => <option key={u.value} value={u.value}>{u.label}</option>)}
                     </select>
                 </Campo>
 

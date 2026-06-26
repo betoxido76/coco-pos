@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { Plus, Search, Trash2, Check, CheckCircle, FileText, X, AlertTriangle, Truck, ClipboardList, ArrowRight, RotateCcw, Pencil, Ban } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
+import { opcionesUnidad } from '../lib/unidades'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 
@@ -1575,7 +1576,6 @@ const TIPOS_INSUMO = [
     { value: 'productos_terminados', label: 'Producto Terminado (comprado)' },
 ]
 const TIPOS_PRODUCTO_INS = ['producido', 'comprado']
-const UNIDADES_INSUMO = ['unidad', 'kg', 'g', 'litro', 'ml', 'caja', 'bolsa', 'rollo', 'metro', 'paquete', 'par', 'juego']
 
 function ModalNuevoInsumo({ perfil, onCreado, onCerrar }) {
     const [tipo, setTipo] = useState('materias_primas')
@@ -1753,7 +1753,7 @@ function ModalNuevoInsumo({ perfil, onCreado, onCerrar }) {
                     <div>
                         <label style={lbl}>Unidad de medida</label>
                         <select value={unidad} onChange={e => setUnidad(e.target.value)} style={inStyle}>
-                            {UNIDADES_INSUMO.map(u => <option key={u} value={u}>{u}</option>)}
+                            {opcionesUnidad(unidad).map(u => <option key={u.value} value={u.value}>{u.label}</option>)}
                         </select>
                     </div>
 
