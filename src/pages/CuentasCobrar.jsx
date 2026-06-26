@@ -57,15 +57,6 @@ export default function CuentasCobrar() {
         setLoading(true)
         const estados = filtro === 'todos' ? ['pendiente', 'parcial', 'pagado'] : [filtro]
 
-        // Los KPIs describen siempre la cartera pendiente (pendiente + parcial),
-        // independientes del filtro de pestaña; solo respetan el filtro de cliente.
-        let kpiQ = supabase
-            .from('ventas')
-            .select('id, total, estado_cobro, fecha_vencimiento_pago, cliente_id, created_at')
-            .eq('empresa_id', perfil.empresa_id)
-            .in('estado_cobro', ['pendiente', 'parcial'])
-        if (filtroCliente) kpiQ = kpiQ.eq('cliente_id', filtroCliente)
-
         let tablaQ = supabase
             .from('ventas')
             .select('*, clientes(nombre, condicion_pago, dias_credito)', { count: 'exact' })
@@ -75,32 +66,58 @@ export default function CuentasCobrar() {
             .range(pagina * PAGE_SIZE, (pagina + 1) * PAGE_SIZE - 1)
         if (filtroCliente) tablaQ = tablaQ.eq('cliente_id', filtroCliente)
 
-        const [{ data: kpi }, { data, count }, { data: cfg }] = await Promise.all([
-            kpiQ,
-            tablaQ,
-            supabase.from('configuracion').select('clave, valor'),
-        ])
-
-        if (kpi) {
-            setKpiData(kpi)
-            const kpiIds = kpi.map(v => v.id)
-            if (kpiIds.length > 0) {
-                const { data: kpiCobros } = await supabase
-                    .from('cobros').select('venta_id, monto_usd, monto_bs, tasa_cambio').in('venta_id', kpiIds)
-                const m = {}
-                kpiCobros?.forEach(c => { m[c.venta_id] = (m[c.venta_id] || 0) + cobroEnUsd(c) })
-                setCobradoKpi(m)
-            } else {
-                setCobradoKpi({})
+        // La tabla (paginada) se resuelve y muestra de inmediato; los KPIs de
+        // cartera se cargan aparte para no bloquear el render si la query pesada
+        // tarda o falla.
+        try {
+            const [{ data, count }, { data: cfg }] = await Promise.all([
+                tablaQ,
+                supabase.from('configuracion').select('clave, valor'),
+            ])
+            if (data) setVentas(data)
+            if (count !== null && count !== undefined) setTotalRegistros(count)
+            if (cfg) {
+                const m = {}; cfg.forEach(r => { m[r.clave] = Number(r.valor) })
+                setTasas({ tasa_bcv: m.tasa_bcv || 1, tasa_euro: m.tasa_euro || 1, tasa_binance: m.tasa_binance || 1 })
             }
+        } catch (e) {
+            console.error('Error cargando facturas CxC:', e)
+        } finally {
+            setLoading(false)
         }
-        if (data) setVentas(data)
-        if (count !== null) setTotalRegistros(count)
-        if (cfg) {
-            const m = {}; cfg.forEach(r => { m[r.clave] = Number(r.valor) })
-            setTasas({ tasa_bcv: m.tasa_bcv || 1, tasa_euro: m.tasa_euro || 1, tasa_binance: m.tasa_binance || 1 })
+
+        cargarKpis()
+    }
+
+    // KPIs de cartera (pendiente + parcial), independientes del filtro de pestaña;
+    // solo respetan el filtro de cliente. Se corre fuera de cargar() para no
+    // bloquear la tabla.
+    async function cargarKpis() {
+        try {
+            let kpiQ = supabase
+                .from('ventas')
+                .select('id, total, estado_cobro, fecha_vencimiento_pago, cliente_id, created_at')
+                .eq('empresa_id', perfil.empresa_id)
+                .in('estado_cobro', ['pendiente', 'parcial'])
+            if (filtroCliente) kpiQ = kpiQ.eq('cliente_id', filtroCliente)
+
+            const { data: kpi } = await kpiQ
+            if (!kpi) return
+            setKpiData(kpi)
+
+            // Solo las facturas 'parcial' tienen cobros; las 'pendiente' aportan
+            // saldo completo. Limitar el .in() a las parciales evita un IN de miles
+            // de IDs que satura PostgREST y cuelga la carga.
+            const parcialIds = kpi.filter(v => v.estado_cobro === 'parcial').map(v => v.id)
+            if (parcialIds.length === 0) { setCobradoKpi({}); return }
+            const { data: kpiCobros } = await supabase
+                .from('cobros').select('venta_id, monto_usd, monto_bs, tasa_cambio').in('venta_id', parcialIds)
+            const m = {}
+            kpiCobros?.forEach(c => { m[c.venta_id] = (m[c.venta_id] || 0) + cobroEnUsd(c) })
+            setCobradoKpi(m)
+        } catch (e) {
+            console.error('Error cargando KPIs de cartera CxC:', e)
         }
-        setLoading(false)
     }
 
     async function cargarNcs() {
