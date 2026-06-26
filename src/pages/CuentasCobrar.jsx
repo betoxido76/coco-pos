@@ -57,11 +57,13 @@ export default function CuentasCobrar() {
         setLoading(true)
         const estados = filtro === 'todos' ? ['pendiente', 'parcial', 'pagado'] : [filtro]
 
+        // Los KPIs describen siempre la cartera pendiente (pendiente + parcial),
+        // independientes del filtro de pestaña; solo respetan el filtro de cliente.
         let kpiQ = supabase
             .from('ventas')
-            .select('id, total, estado_cobro, fecha_vencimiento_pago, cliente_id')
+            .select('id, total, estado_cobro, fecha_vencimiento_pago, cliente_id, created_at')
             .eq('empresa_id', perfil.empresa_id)
-            .in('estado_cobro', estados)
+            .in('estado_cobro', ['pendiente', 'parcial'])
         if (filtroCliente) kpiQ = kpiQ.eq('cliente_id', filtroCliente)
 
         let tablaQ = supabase
@@ -134,9 +136,24 @@ export default function CuentasCobrar() {
         })
     }
 
-    const totalPendiente = kpiData
-        .filter(v => v.estado_cobro !== 'pagado')
-        .reduce((s, v) => s + Math.max(0, Number(v.total || 0) - (cobradoKpi[v.id] || 0)), 0)
+    // ─── Métricas de cartera (sobre kpiData = pendiente + parcial) ───
+    const hoyKpi = new Date()
+    const saldoKpi = (v) => Math.max(0, Number(v.total || 0) - (cobradoKpi[v.id] || 0))
+    const esVencidaKpi = (v) => v.fecha_vencimiento_pago && new Date(v.fecha_vencimiento_pago) < hoyKpi
+
+    const totalPendiente = kpiData.reduce((s, v) => s + saldoKpi(v), 0)
+    const valorVencido = kpiData.filter(esVencidaKpi).reduce((s, v) => s + saldoKpi(v), 0)
+    const valorPorVencer = kpiData.filter(v => !esVencidaKpi(v)).reduce((s, v) => s + saldoKpi(v), 0)
+    const pctVencido = totalPendiente > 0 ? (valorVencido / totalPendiente) * 100 : 0
+    const pctPorVencer = totalPendiente > 0 ? (valorPorVencer / totalPendiente) * 100 : 0
+
+    // Días calle ponderado: Σ((hoy - emisión) * saldo) / Σ saldo. Pondera por el
+    // saldo pendiente (para parciales, solo el valor aún por cobrar).
+    const diasCalleNum = kpiData.reduce((s, v) => {
+        const dias = Math.max(0, Math.floor((hoyKpi - new Date(v.created_at)) / 86400000))
+        return s + dias * saldoKpi(v)
+    }, 0)
+    const diasCalle = totalPendiente > 0 ? Math.round(diasCalleNum / totalPendiente) : 0
 
     const mostrarCheckboxes = filtro === 'pendiente' || filtro === 'parcial'
 
@@ -166,12 +183,18 @@ export default function CuentasCobrar() {
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '24px' }}>
                     {[
                         { label: 'Total pendiente', valor: fmt(totalPendiente), sub: fmtBs(totalPendiente * tasas.tasa_bcv), color: '#1f2937' },
-                        { label: 'Facturas vencidas', valor: kpiData.filter(v => v.fecha_vencimiento_pago && new Date(v.fecha_vencimiento_pago) < new Date() && v.estado_cobro !== 'pagado').length, sub: 'requieren atención', color: '#ef4444' },
-                        { label: 'Facturas al día', valor: kpiData.filter(v => v.estado_cobro !== 'pagado' && (!v.fecha_vencimiento_pago || new Date(v.fecha_vencimiento_pago) >= new Date())).length, sub: 'dentro del plazo', color: '#16a34a' },
+                        { label: 'Facturas vencidas', valor: kpiData.filter(esVencidaKpi).length, sub: 'requieren atención', color: '#ef4444' },
+                        { label: 'Facturas al día', valor: kpiData.filter(v => !esVencidaKpi(v)).length, sub: 'dentro del plazo', color: '#16a34a' },
+                        { label: 'Valor vencido', valor: fmt(valorVencido), pct: `${pctVencido.toFixed(0)}%`, sub: fmtBs(valorVencido * tasas.tasa_bcv), color: '#ef4444' },
+                        { label: 'Valor por vencer', valor: fmt(valorPorVencer), pct: `${pctPorVencer.toFixed(0)}%`, sub: fmtBs(valorPorVencer * tasas.tasa_bcv), color: '#16a34a' },
+                        { label: 'Días calle ponderado', valor: `${diasCalle} días`, sub: 'promedio ponderado por saldo', color: '#d97706' },
                     ].map(k => (
                         <div key={k.label} style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px 20px' }}>
                             <p style={{ fontSize: '12px', color: '#6b7280', margin: '0 0 4px' }}>{k.label}</p>
-                            <p style={{ fontSize: '22px', fontWeight: 700, color: k.color, margin: 0 }}>{k.valor}</p>
+                            <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+                                <p style={{ fontSize: '22px', fontWeight: 700, color: k.color, margin: 0 }}>{k.valor}</p>
+                                {k.pct != null && <span style={{ fontSize: '20px', fontWeight: 700, color: k.color }}>({k.pct})</span>}
+                            </div>
                             <p style={{ fontSize: '12px', color: '#9ca3af', margin: '2px 0 0' }}>{k.sub}</p>
                         </div>
                     ))}
