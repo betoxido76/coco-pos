@@ -289,11 +289,16 @@ function TablaRecepciones({ recepciones, loading, onVer }) {
                             </tr>
                         </thead>
                         <tbody>
-                            {recepciones.map(r => (
-                                <tr key={r.id} style={{ borderBottom: '1px solid #f3f4f6' }}
+                            {recepciones.map(r => {
+                                const esAnulada = r.estado === 'anulada'
+                                return (
+                                <tr key={r.id} style={{ borderBottom: '1px solid #f3f4f6', opacity: esAnulada ? 0.55 : 1 }}
                                     onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
                                     onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
-                                    <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>{r.numero_doc || 'S/N'}</td>
+                                    <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>
+                                        {r.numero_doc || 'S/N'}
+                                        {esAnulada && <span style={{ marginLeft: '8px', fontFamily: 'system-ui', fontSize: '11px', fontWeight: 600, color: '#dc2626', backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '4px', padding: '1px 6px' }}>Anulada</span>}
+                                    </td>
                                     <td style={{ padding: '12px 16px', fontSize: '12px', fontFamily: 'monospace', color: '#6b7280' }}>{r.nro_doc_proveedor || '—'}</td>
                                     <td style={{ padding: '12px 16px', fontSize: '13px', color: '#374151' }}>{r.proveedores?.nombre || '—'}</td>
                                     <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{new Date(r.fecha_compra).toLocaleDateString('es-VE')}</td>
@@ -306,7 +311,8 @@ function TablaRecepciones({ recepciones, loading, onVer }) {
                                         </button>
                                     </td>
                                 </tr>
-                            ))}
+                                )
+                            })}
                         </tbody>
                     </table>
                 )}
@@ -377,7 +383,7 @@ function BadgeOC({ estado }) {
 }
 
 function BadgeCobro({ estado }) {
-    const estilos = { pendiente: { bg: '#fef9c3', color: '#854d0e' }, parcial: { bg: '#dbeafe', color: '#1e40af' }, pagado: { bg: '#dcfce7', color: '#166534' } }
+    const estilos = { pendiente: { bg: '#fef9c3', color: '#854d0e' }, parcial: { bg: '#dbeafe', color: '#1e40af' }, pagado: { bg: '#dcfce7', color: '#166534' }, anulado: { bg: '#f3f4f6', color: '#6b7280' } }
     const s = estilos[estado] || estilos.pendiente
     return <span style={{ backgroundColor: s.bg, color: s.color, padding: '2px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 500 }}>{estado}</span>
 }
@@ -1183,6 +1189,7 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
         const payload = {
             proveedor_id: proveedorId, usuario_id: user.id, numero_doc: numero, nro_doc_proveedor: nroDocProveedor.trim() || null,
             subtotal, total, descuento_global: descGlobal || 0, estado: 'recibida', fecha_compra: new Date().toISOString(),
+            almacen_id: almacenId,
             orden_compra_id: modo === 'contra_oc' ? ocSeleccionada : null,
             ...datosPago
         }
@@ -2382,6 +2389,127 @@ function DetalleRecepcion({ recepcion, onVolver }) {
     const [loading, setLoading] = useState(true)
     const [mapaNombres, setMapaNombres] = useState({})
 
+    // ── Anulación de recepción ──
+    const [anulada, setAnulada] = useState(recepcion?.estado === 'anulada')
+    const [infoAnulacion, setInfoAnulacion] = useState(
+        recepcion?.estado === 'anulada'
+            ? { motivo: recepcion.motivo_anulacion, fecha: recepcion.fecha_anulacion }
+            : null
+    )
+    const [mostrarAnular, setMostrarAnular] = useState(false)
+    const [motivoAnular, setMotivoAnular] = useState('')
+    const [anulando, setAnulando] = useState(false)
+    const [errorAnular, setErrorAnular] = useState('')
+    const puedeAnular = ['admin', 'finanzas', 'superadmin'].includes(perfil?.rol)
+
+    // compra_items.tipo_insumo → tabla del producto / tipo_item de stock_ubicacion
+    const TABLA_ANULAR = {
+        materia_prima: 'materias_primas', empaque: 'materiales_empaque', material_empaque: 'materiales_empaque',
+        consumible: 'consumibles', producto_terminado: 'productos_terminados',
+    }
+    const TIPO_ITEM_ANULAR = {
+        materia_prima: 'materia_prima', empaque: 'material_empaque', material_empaque: 'material_empaque',
+        consumible: 'consumible', producto_terminado: 'producto_terminado',
+    }
+
+    async function anularRecepcion() {
+        setErrorAnular('')
+        if (!motivoAnular.trim()) { setErrorAnular('Ingresa el motivo de la anulación'); return }
+        if (!puedeAnular) { setErrorAnular('No tienes permisos para anular recepciones'); return }
+        if (anulada || recepcion.estado === 'anulada') { setErrorAnular('Esta recepción ya está anulada'); return }
+        if (!recepcion.almacen_id) {
+            setErrorAnular('Recepción anterior a esta función (sin almacén registrado). Corrígela con una Nota de Débito al proveedor.')
+            return
+        }
+        // Bloqueo por pago (contado al recibir deja estado_cobro != 'pendiente')
+        if ((recepcion.estado_cobro || 'pendiente') !== 'pendiente') {
+            setErrorAnular('No se puede anular: la recepción tiene un pago asociado. Usa una Nota de Débito al proveedor.')
+            return
+        }
+        setAnulando(true)
+        // Bloqueo por pago (abonos posteriores en CxP)
+        const { count: pagosCount } = await supabase
+            .from('pagos_proveedor').select('id', { count: 'exact', head: true }).eq('compra_id', recepcion.id)
+        if (pagosCount && pagosCount > 0) {
+            setErrorAnular('No se puede anular: la recepción tiene pagos registrados. Usa una Nota de Débito al proveedor.')
+            setAnulando(false); return
+        }
+
+        const { data: compraItems } = await supabase.from('compra_items').select('*')
+            .eq('compra_id', recepcion.id).eq('empresa_id', perfil.empresa_id)
+        if (!compraItems || compraItems.length === 0) {
+            setErrorAnular('No se encontraron items de la recepción'); setAnulando(false); return
+        }
+
+        // Validar TODO el stock antes de mutar nada (evita reversas parciales)
+        const plan = []
+        for (const ci of compraItems) {
+            const tabla = TABLA_ANULAR[ci.tipo_insumo]
+            const tipoItem = TIPO_ITEM_ANULAR[ci.tipo_insumo]
+            if (!tabla) { setErrorAnular(`Tipo de insumo desconocido: ${ci.tipo_insumo}`); setAnulando(false); return }
+            const cant = Number(ci.cantidad)
+            const nombre = mapaNombres[ci.insumo_id] || ci.insumo_id
+            const { data: prod } = await supabase.from(tabla).select('stock_actual').eq('id', ci.insumo_id).single()
+            const { data: su } = await supabase.from('stock_ubicacion')
+                .select('id, cantidad').eq('almacen_id', recepcion.almacen_id).eq('tipo_item', tipoItem)
+                .eq('item_id', ci.insumo_id).eq('empresa_id', perfil.empresa_id).is('almacen_ubicacion_id', null).maybeSingle()
+            const stockActual = Number(prod?.stock_actual || 0)
+            const stockUbic = Number(su?.cantidad || 0)
+            if (stockActual < cant || stockUbic < cant) {
+                setErrorAnular(`No se puede anular: "${nombre}" ya no tiene stock suficiente (se consumió, vendió o transfirió). Usa una Nota de Débito al proveedor.`)
+                setAnulando(false); return
+            }
+            plan.push({ ci, tabla, tipoItem, cant, nombre, stockActual, stockUbicId: su?.id || null, stockUbic })
+        }
+
+        // Reversa del stock (patrón de 4 pasos, espejo de la recepción)
+        const { data: { user } } = await supabase.auth.getUser()
+        for (const p of plan) {
+            const nuevoStock = p.stockActual - p.cant
+            await supabase.from(p.tabla).update({ stock_actual: nuevoStock }).eq('id', p.ci.insumo_id)
+            if (p.stockUbicId) {
+                await supabase.from('stock_ubicacion')
+                    .update({ cantidad: p.stockUbic - p.cant, updated_at: new Date().toISOString() }).eq('id', p.stockUbicId)
+            }
+            await supabase.from('movimientos_inventario').insert({
+                empresa_id: perfil.empresa_id, tipo_item: p.tipoItem, item_id: p.ci.insumo_id,
+                item_nombre: p.nombre, item_codigo: '',
+                tipo_movimiento: 'salida', cantidad: p.cant,
+                stock_anterior: p.stockActual, stock_actual: nuevoStock,
+                origen: 'anulacion_recepcion', almacen_id: recepcion.almacen_id, fecha: new Date().toISOString(),
+            })
+        }
+
+        // Revertir cantidad_recibida de la OC vinculada (match por insumo + tipo)
+        if (recepcion.orden_compra_id) {
+            for (const p of plan) {
+                const { data: oci } = await supabase.from('orden_compra_items')
+                    .select('id, cantidad_recibida').eq('orden_id', recepcion.orden_compra_id)
+                    .eq('insumo_id', p.ci.insumo_id).eq('tipo_insumo', p.ci.tipo_insumo).maybeSingle()
+                if (oci) {
+                    await supabase.from('orden_compra_items')
+                        .update({ cantidad_recibida: Math.max(0, Number(oci.cantidad_recibida || 0) - p.cant) }).eq('id', oci.id)
+                }
+            }
+            const { data: itemsOC } = await supabase.from('orden_compra_items')
+                .select('cantidad_solicitada, cantidad_recibida').eq('orden_id', recepcion.orden_compra_id)
+            const totalSol = (itemsOC || []).reduce((s, i) => s + Number(i.cantidad_solicitada || 0), 0)
+            const totalRec = (itemsOC || []).reduce((s, i) => s + Number(i.cantidad_recibida || 0), 0)
+            const nuevoEstado = totalRec <= 0 ? 'aprobada' : totalRec >= totalSol ? 'recibida_total' : 'recibida_parcial'
+            await supabase.from('ordenes_compra').update({ estado: nuevoEstado }).eq('id', recepcion.orden_compra_id)
+        }
+
+        // Marcar la recepción como anulada (la saca de Cuentas por Pagar vía estado_cobro='anulado')
+        const fecha = new Date().toISOString()
+        await supabase.from('compras').update({
+            estado: 'anulada', estado_cobro: 'anulado',
+            motivo_anulacion: motivoAnular.trim(), anulada_por: user.id, fecha_anulacion: fecha,
+        }).eq('id', recepcion.id)
+
+        setAnulando(false); setMostrarAnular(false)
+        setAnulada(true); setInfoAnulacion({ motivo: motivoAnular.trim(), fecha })
+    }
+
     useEffect(() => {
         if (!perfil?.empresa_id) return // Esperar a que cargue el perfil
 
@@ -2420,7 +2548,14 @@ function DetalleRecepcion({ recepcion, onVolver }) {
             <div className="no-print" style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
                 <button onClick={onVolver} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', fontSize: '13px' }}>← Volver</button>
                 <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Detalle de Recepción</h1>
-                <button onClick={() => window.print()} style={{ marginLeft: 'auto', marginRight: '8px', display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '8px 14px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}>🖨️ Imprimir</button>
+                <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px' }}>
+                    {puedeAnular && !anulada && (
+                        <button onClick={() => { setMotivoAnular(''); setErrorAnular(''); setMostrarAnular(true) }} style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#fff', color: '#dc2626', border: '1px solid #fecaca', borderRadius: '8px', padding: '8px 14px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}>
+                            <Ban size={14} /> Anular recepción
+                        </button>
+                    )}
+                    <button onClick={() => window.print()} style={{ marginRight: '8px', display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '8px 14px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}>🖨️ Imprimir</button>
+                </div>
             </div>
             <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '32px', marginBottom: '16px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
@@ -2438,6 +2573,19 @@ function DetalleRecepcion({ recepcion, onVolver }) {
                         </div>
                     </div>
                 </div>
+                {anulada && (
+                    <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '12px 16px', marginBottom: '16px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 600, color: '#dc2626' }}>
+                            <Ban size={14} /> Recepción anulada
+                        </div>
+                        {infoAnulacion?.motivo && (
+                            <div style={{ fontSize: '12px', color: '#991b1b', marginTop: '4px' }}>
+                                Motivo: {infoAnulacion.motivo}
+                                {infoAnulacion.fecha && ` · ${new Date(infoAnulacion.fecha).toLocaleDateString('es-VE')}`}
+                            </div>
+                        )}
+                    </div>
+                )}
                 {recepcion.ordenes_compra && (
                     <div style={{ backgroundColor: '#f0fdf4', borderRadius: '8px', padding: '12px 16px', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <ArrowRight size={14} style={{ color: '#16a34a' }} />
@@ -2508,6 +2656,28 @@ function DetalleRecepcion({ recepcion, onVolver }) {
                     </div>
                 </div>
             </div>
+
+            {mostrarAnular && (
+                <div className="no-print" style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
+                    <div style={{ backgroundColor: '#fff', borderRadius: '12px', padding: '24px', width: '100%', maxWidth: '440px' }}>
+                        <h2 style={{ fontSize: '17px', fontWeight: 600, color: '#1f2937', margin: '0 0 6px' }}>Anular recepción {recepcion.numero_doc}</h2>
+                        <p style={{ fontSize: '13px', color: '#6b7280', margin: '0 0 16px' }}>
+                            Se revertirá el stock recibido y la recepción quedará anulada. Esta acción no se puede deshacer.
+                        </p>
+                        <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Motivo de la anulación</label>
+                        <textarea value={motivoAnular} onChange={e => setMotivoAnular(e.target.value)} rows={3}
+                            placeholder="Ej: cantidad recibida capturada por error"
+                            style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', color: '#374151', boxSizing: 'border-box', resize: 'vertical', fontFamily: 'inherit' }} />
+                        {errorAnular && (
+                            <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 12px', marginTop: '12px', fontSize: '12px', color: '#dc2626' }}>{errorAnular}</div>
+                        )}
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '20px' }}>
+                            <button onClick={() => setMostrarAnular(false)} disabled={anulando} style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid #d1d5db', backgroundColor: '#fff', color: '#374151', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}>Cancelar</button>
+                            <button onClick={anularRecepcion} disabled={anulando} style={{ padding: '8px 16px', borderRadius: '8px', border: 'none', backgroundColor: '#dc2626', color: '#fff', fontSize: '13px', fontWeight: 600, cursor: anulando ? 'default' : 'pointer', opacity: anulando ? 0.6 : 1 }}>{anulando ? 'Anulando...' : 'Anular recepción'}</button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     )
 }
