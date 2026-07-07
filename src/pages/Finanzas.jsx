@@ -68,6 +68,7 @@ export default function Finanzas() {
     const [cxcPendiente, setCxcPendiente] = useState([])
     const [gastosPagados, setGastosPagados] = useState([])
     const [gastosPendientes, setGastosPendientes] = useState([])
+    const [pagosGasto, setPagosGasto] = useState([]) // abonos a gastos (motor `pagos`)
     const [pagosProveedor, setPagosProveedor] = useState([])
     const [cxpPendiente, setCxpPendiente] = useState([])
     const [movManuales, setMovManuales] = useState([])
@@ -88,6 +89,7 @@ export default function Finanzas() {
         const [
             { data: d1 }, { data: d2 }, { data: d3 }, { data: d4 },
             { data: d5 }, { data: d6 }, { data: d7 }, { data: cfg },
+            { data: dPagos },
         ] = await Promise.all([
             supabase.from('cobros')
                 .select('*, ventas(numero_factura, clientes(nombre))')
@@ -110,7 +112,7 @@ export default function Finanzas() {
             supabase.from('gastos')
                 .select('*, tipos_gastos(nombre)')
                 .eq('empresa_id', perfil.empresa_id)
-                .eq('estado', 'pendiente'),
+                .in('estado', ['pendiente', 'parcial']),
 
             supabase.from('pagos_proveedor')
                 .select('*, compras(proveedores(nombre))')
@@ -132,6 +134,13 @@ export default function Finanzas() {
             supabase.from('configuracion')
                 .select('clave, valor')
                 .eq('empresa_id', perfil.empresa_id),
+
+            // Abonos a gastos (motor `pagos`) — sin filtro de período: se usan para
+            // caja realizada (filtrando por fecha en JS) y para el saldo de parciales.
+            supabase.from('pagos')
+                .select('origen_id, fecha, monto_usd, monto_bs, tasa_cambio, tipo_tasa, metodo_usd')
+                .eq('empresa_id', perfil.empresa_id)
+                .eq('origen_tipo', 'gasto'),
         ])
 
         setCobros(d1 || [])
@@ -141,6 +150,7 @@ export default function Finanzas() {
         setPagosProveedor(d5 || [])
         setCxpPendiente(d6 || [])
         setMovManuales(d7 || [])
+        setPagosGasto(dPagos || [])
         if (cfg) { const t = {}; cfg.forEach(r => { t[r.clave] = Number(r.valor) }); setTasas(t) }
         setLoading(false)
     }
@@ -186,14 +196,34 @@ export default function Finanzas() {
             })),
     ].sort((a, b) => (a.fecha_vencimiento || '9999').localeCompare(b.fecha_vencimiento || '9999'))
 
+    // Gastos que tienen abonos en el motor `pagos` (programados): su caja realizada
+    // sale de `pagos`, NO de la fila del gasto — evita doble conteo.
+    const gastoIdsConAbono = new Set(pagosGasto.map(p => p.origen_id))
+    const enPeriodo = f => f && f >= (filtroDesde || '2000-01-01') && f <= (filtroHasta || '2099-12-31')
+    const pagadoPorGastoFin = {}
+    pagosGasto.forEach(p => {
+        pagadoPorGastoFin[p.origen_id] = (pagadoPorGastoFin[p.origen_id] || 0)
+            + Number(p.monto_usd || 0) + Number(p.monto_bs || 0) / (Number(p.tasa_cambio) || 1)
+    })
+
     const egresosRealizados = [
-        ...gastosPagados.map(g => ({
+        // Gastos de contado: 'pagado' sin abonos registrados en `pagos`
+        ...gastosPagados.filter(g => !gastoIdsConAbono.has(g.id)).map(g => ({
             id: g.id, origen: 'gasto',
             fecha: g.fecha,
             descripcion: `${g.nombre} — ${g.tipos_gastos?.nombre || '—'}`,
             monto_usd: g.monto_usd, monto_bs: g.monto_bs,
             tasa_cambio: g.tasa_cambio, tipo_tasa: g.tipo_tasa,
             metodo: g.metodo_pago,
+        })),
+        // Abonos a gastos programados/parciales, dentro del período
+        ...pagosGasto.filter(p => enPeriodo(p.fecha)).map(p => ({
+            id: `pago-${p.origen_id}-${p.fecha}-${p.monto_usd}-${p.monto_bs}`, origen: 'gasto',
+            fecha: p.fecha,
+            descripcion: 'Abono a gasto',
+            monto_usd: p.monto_usd, monto_bs: p.monto_bs,
+            tasa_cambio: p.tasa_cambio, tipo_tasa: p.tipo_tasa,
+            metodo: p.metodo_usd,
         })),
         ...pagosProveedor.map(p => ({
             id: p.id, origen: 'proveedor',
@@ -215,14 +245,21 @@ export default function Finanzas() {
     ].sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''))
 
     const egresosProgramados = [
-        ...gastosPendientes.map(g => ({
-            id: g.id, origen: 'gasto_prog',
-            fecha: g.fecha,
-            descripcion: `${g.nombre} — ${g.tipos_gastos?.nombre || '—'}`,
-            monto_usd: g.monto_usd, monto_bs: g.monto_bs,
-            tasa_cambio: g.tasa_cambio, tipo_tasa: g.tipo_tasa, metodo: null,
-            fecha_vencimiento: g.fecha_vencimiento,
-        })),
+        ...gastosPendientes.map(g => {
+            const total = Number(g.monto || 0) > 0
+                ? Number(g.monto)
+                : Number(g.monto_usd || 0) + Number(g.monto_bs || 0) / (tasas[g.tipo_tasa] || tasas.tasa_bcv || 1)
+            const saldo = Math.max(0, total - (pagadoPorGastoFin[g.id] || 0))
+            return {
+                id: g.id, origen: 'gasto_prog',
+                fecha: g.fecha,
+                descripcion: `${g.nombre} — ${g.tipos_gastos?.nombre || '—'}`
+                    + (g.estado === 'parcial' ? ' (saldo)' : ''),
+                monto_usd: saldo, monto_bs: 0,
+                tasa_cambio: 1, tipo_tasa: null, metodo: null,
+                fecha_vencimiento: g.fecha_vencimiento,
+            }
+        }),
         ...cxpPendiente.map(c => ({
             id: c.id, origen: 'cxp',
             fecha: c.fecha_vencimiento_pago,

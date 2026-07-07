@@ -48,6 +48,7 @@ export default function Gastos() {
     const [gastoVer, setGastoVer] = useState(null)
     const [pagina, setPagina] = useState(0)
     const [totalRegistros, setTotalRegistros] = useState(0)
+    const [pagadoPorGasto, setPagadoPorGasto] = useState({}) // gasto_id -> USD abonado
 
     // Filtros
     const [filtroTipo, setFiltroTipo] = useState('')
@@ -81,12 +82,13 @@ export default function Gastos() {
         setLoading(true)
 
         let kpiQ = supabase.from('gastos')
-            .select('estado, monto_usd, monto_bs, tipo_tasa, fecha_vencimiento')
+            .select('id, estado, monto, monto_usd, monto_bs, tipo_tasa, fecha_vencimiento')
             .eq('empresa_id', perfil.empresa_id)
         if (filtroTipo) kpiQ = kpiQ.eq('tipo_gasto_id', filtroTipo)
         if (filtroDesde) kpiQ = kpiQ.gte('fecha', filtroDesde)
         if (filtroHasta) kpiQ = kpiQ.lte('fecha', filtroHasta)
-        if (filtroEstado !== 'todos') kpiQ = kpiQ.eq('estado', filtroEstado)
+        if (filtroEstado === 'porpagar') kpiQ = kpiQ.in('estado', ['pendiente', 'parcial'])
+        else if (filtroEstado !== 'todos') kpiQ = kpiQ.eq('estado', filtroEstado)
 
         let tablaQ = supabase.from('gastos')
             .select('*, tipos_gastos(nombre), usuarios(nombre), proveedores(nombre)', { count: 'exact' })
@@ -97,30 +99,56 @@ export default function Gastos() {
         if (filtroTipo) tablaQ = tablaQ.eq('tipo_gasto_id', filtroTipo)
         if (filtroDesde) tablaQ = tablaQ.gte('fecha', filtroDesde)
         if (filtroHasta) tablaQ = tablaQ.lte('fecha', filtroHasta)
-        if (filtroEstado !== 'todos') tablaQ = tablaQ.eq('estado', filtroEstado)
+        if (filtroEstado === 'porpagar') tablaQ = tablaQ.in('estado', ['pendiente', 'parcial'])
+        else if (filtroEstado !== 'todos') tablaQ = tablaQ.eq('estado', filtroEstado)
 
         const [{ data: kpi }, { data, count }] = await Promise.all([kpiQ, tablaQ])
         if (kpi) setKpiData(kpi)
         if (data) setGastos(data)
         if (count !== null) setTotalRegistros(count)
+
+        // Abonos de los gastos parciales (para calcular saldo en KPIs y lista)
+        const parcialIds = (kpi || []).filter(g => g.estado === 'parcial').map(g => g.id)
+        if (parcialIds.length > 0) {
+            const { data: pagos } = await supabase.from('pagos')
+                .select('origen_id, monto_usd, monto_bs, tasa_cambio')
+                .eq('empresa_id', perfil.empresa_id)
+                .eq('origen_tipo', 'gasto').in('origen_id', parcialIds)
+            const map = {}
+            ;(pagos || []).forEach(p => {
+                map[p.origen_id] = (map[p.origen_id] || 0) + Number(p.monto_usd || 0) + Number(p.monto_bs || 0) / (Number(p.tasa_cambio) || 1)
+            })
+            setPagadoPorGasto(map)
+        } else {
+            setPagadoPorGasto({})
+        }
         setLoading(false)
+    }
+
+    // Total de la obligación (USD) y saldo pendiente de un gasto
+    const totalGasto = g => Number(g.monto || 0) > 0
+        ? Number(g.monto)
+        : Number(g.monto_usd || 0) + Number(g.monto_bs || 0) / (tasas[g.tipo_tasa] || tasas.tasa_bcv || 1)
+    const saldoGasto = g => {
+        const est = g.estado || 'pagado'
+        if (est === 'pagado') return 0
+        if (est === 'parcial') return Math.max(0, totalGasto(g) - (pagadoPorGasto[g.id] || 0))
+        return totalGasto(g) // pendiente
     }
 
     const hayFiltros = filtroTipo || filtroDesde || filtroHasta || filtroEstado !== 'todos'
 
     // KPIs — calculados sobre la query completa (kpiData), no la página visible
     const pagados = kpiData.filter(g => (g.estado || 'pagado') === 'pagado')
-    const pendientes = kpiData.filter(g => (g.estado || 'pagado') === 'pendiente')
-    const vencidos = pendientes.filter(g => g.fecha_vencimiento && new Date(g.fecha_vencimiento + 'T00:00:00') < new Date())
+    const porPagar = kpiData.filter(g => ['pendiente', 'parcial'].includes(g.estado || 'pagado'))
+    const vencidos = porPagar.filter(g => g.fecha_vencimiento && new Date(g.fecha_vencimiento + 'T00:00:00') < new Date())
 
     const totalPagadoUsd = pagados.reduce((s, g) => {
         const t = tasas[g.tipo_tasa] || tasas.tasa_bcv || 1
         return s + Number(g.monto_usd || 0) + Number(g.monto_bs || 0) / t
     }, 0)
-    const totalPendienteUsd = pendientes.reduce((s, g) => {
-        const t = tasas[g.tipo_tasa] || tasas.tasa_bcv || 1
-        return s + Number(g.monto_usd || 0) + Number(g.monto_bs || 0) / t
-    }, 0)
+    // Saldo pendiente (total − abonos), incluye parciales
+    const totalPendienteUsd = porPagar.reduce((s, g) => s + saldoGasto(g), 0)
 
     if (vista === 'nuevo') return (
         <NuevoGasto
@@ -183,7 +211,7 @@ export default function Gastos() {
                         <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px 20px' }}>
                             <p style={{ fontSize: '12px', color: '#6b7280', margin: '0 0 4px' }}>Programado / pendiente</p>
                             <p style={{ fontSize: '22px', fontWeight: 700, color: '#d97706', margin: '0 0 2px' }}>{fmt(totalPendienteUsd)}</p>
-                            <p style={{ fontSize: '11px', color: '#9ca3af', margin: 0 }}>{pendientes.length} registro(s)</p>
+                            <p style={{ fontSize: '11px', color: '#9ca3af', margin: 0 }}>{porPagar.length} registro(s)</p>
                         </div>
                         <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: `1px solid ${vencidos.length > 0 ? '#fecaca' : '#e5e7eb'}`, padding: '16px 20px' }}>
                             <p style={{ fontSize: '12px', color: '#6b7280', margin: '0 0 4px' }}>Vencidos sin pagar</p>
@@ -194,7 +222,7 @@ export default function Gastos() {
 
                     {/* Filtro estado */}
                     <div style={{ display: 'flex', gap: '6px', marginBottom: '12px' }}>
-                        {[['todos', 'Todos'], ['pagado', 'Pagados'], ['pendiente', 'Programados']].map(([val, lbl]) => (
+                        {[['todos', 'Todos'], ['pagado', 'Pagados'], ['porpagar', 'Por pagar']].map(([val, lbl]) => (
                             <button key={val} onClick={() => setFiltroEstado(val)}
                                 style={{
                                     padding: '7px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 500,
@@ -204,9 +232,9 @@ export default function Gastos() {
                                     color: filtroEstado === val ? '#fff' : '#6b7280',
                                 }}>
                                 {lbl}
-                                {val === 'pendiente' && pendientes.length > 0 && (
+                                {val === 'porpagar' && porPagar.length > 0 && (
                                     <span style={{ marginLeft: '6px', backgroundColor: filtroEstado === val ? 'rgba(255,255,255,0.3)' : '#f3f4f6', borderRadius: '20px', padding: '1px 6px', fontSize: '11px' }}>
-                                        {pendientes.length}
+                                        {porPagar.length}
                                     </span>
                                 )}
                             </button>
@@ -256,7 +284,8 @@ export default function Gastos() {
                                 <tbody>
                                     {gastos.map(g => {
                                         const estado = g.estado || 'pagado'
-                                        const sem = estado === 'pendiente' ? semaforo(g.fecha_vencimiento) : null
+                                        const esPorPagar = estado === 'pendiente' || estado === 'parcial'
+                                        const sem = esPorPagar ? semaforo(g.fecha_vencimiento) : null
                                         return (
                                             <tr key={g.id}
                                                 style={{ borderBottom: '1px solid #f3f4f6', backgroundColor: sem?.bg || 'transparent' }}
@@ -264,7 +293,7 @@ export default function Gastos() {
                                                 onMouseLeave={e => e.currentTarget.style.backgroundColor = sem?.bg || 'transparent'}>
                                                 {/* Dot semáforo */}
                                                 <td style={{ padding: '12px 8px 12px 14px', fontSize: '16px' }}>
-                                                    {estado === 'pendiente' ? (sem?.dot || '⚪') : ''}
+                                                    {esPorPagar ? (sem?.dot || '⚪') : ''}
                                                 </td>
                                                 <td style={{ padding: '12px 14px', fontSize: '12px', fontFamily: 'monospace', color: '#374151', whiteSpace: 'nowrap' }}>
                                                     {g.numero_gasto || '—'}
@@ -278,10 +307,20 @@ export default function Gastos() {
                                                             <div style={{ fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>{g.nombre}</div>
                                                             {g.proveedores?.nombre && <div style={{ fontSize: '11px', color: '#6b7280', marginTop: '2px' }}>Proveedor: {g.proveedores.nombre}</div>}
                                                             {g.descripcion && <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '2px' }}>{g.descripcion}</div>}
+                                                            {estado === 'parcial' && (
+                                                                <div style={{ fontSize: '11px', color: '#1e40af', marginTop: '2px', fontWeight: 600 }}>
+                                                                    Saldo: {fmt(saldoGasto(g))} de {fmt(totalGasto(g))}
+                                                                </div>
+                                                            )}
                                                         </div>
                                                         {estado === 'pendiente' && (
                                                             <span style={{ fontSize: '10px', backgroundColor: '#fef3c7', color: '#92400e', padding: '2px 8px', borderRadius: '20px', fontWeight: 600, whiteSpace: 'nowrap' }}>
                                                                 Programado
+                                                            </span>
+                                                        )}
+                                                        {estado === 'parcial' && (
+                                                            <span style={{ fontSize: '10px', backgroundColor: '#dbeafe', color: '#1e40af', padding: '2px 8px', borderRadius: '20px', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                                                                Parcial
                                                             </span>
                                                         )}
                                                     </div>
@@ -290,10 +329,8 @@ export default function Gastos() {
                                                     {g.tipos_gastos?.nombre || g.categoria || '—'}
                                                 </td>
                                                 <td style={{ padding: '12px 14px' }}>
-                                                    {estado === 'pendiente'
-                                                        ? sem
-                                                            ? <span style={{ fontSize: '12px', fontWeight: 500, color: sem.color }}>{sem.label}</span>
-                                                            : <span style={{ fontSize: '12px', color: '#9ca3af' }}>—</span>
+                                                    {esPorPagar && sem
+                                                        ? <span style={{ fontSize: '12px', fontWeight: 500, color: sem.color }}>{sem.label}</span>
                                                         : <span style={{ fontSize: '12px', color: '#9ca3af' }}>—</span>
                                                     }
                                                 </td>
@@ -311,10 +348,10 @@ export default function Gastos() {
                                                 </td>
                                                 <td style={{ padding: '12px 14px' }}>
                                                     <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                                                        {estado === 'pendiente' && (
+                                                        {esPorPagar && (
                                                             <button onClick={() => setGastoPagando(g)}
                                                                 style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', padding: '5px 10px', fontSize: '12px', fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                                                                <DollarSign size={12} /> Pagar
+                                                                <DollarSign size={12} /> {estado === 'parcial' ? 'Abonar' : 'Pagar'}
                                                             </button>
                                                         )}
                                                         <button onClick={() => setGastoVer(g)}
@@ -375,41 +412,90 @@ function ModalPagarGasto({ gasto, tasas, onPagado, onCerrar }) {
     const { perfil } = useAuth()
     const [fecha, setFecha] = useState(new Date().toISOString().split('T')[0])
     const [tipoTasa, setTipoTasa] = useState(gasto.tipo_tasa || 'tasa_bcv')
-    const [montoUsd, setMontoUsd] = useState(gasto.monto_usd > 0 ? String(gasto.monto_usd) : '')
-    const [montoBs, setMontoBs] = useState(gasto.monto_bs > 0 ? String(gasto.monto_bs) : '')
+    const [pagosPrevios, setPagosPrevios] = useState([])
+    const [cargandoPagos, setCargandoPagos] = useState(true)
+    const [montoUsd, setMontoUsd] = useState('')
+    const [montoBs, setMontoBs] = useState('')
     const [metodoPago, setMetodoPago] = useState(gasto.metodo_pago || 'Efectivo USD')
     const [guardando, setGuardando] = useState(false)
     const [error, setError] = useState('')
     const [cuentasBancarias, setCuentasBancarias] = useState([])
     const [cuentaBancariaId, setCuentaBancariaId] = useState(gasto.cuenta_bancaria_id || '')
 
+    // Total de la obligación en USD (congelado; NO se toca al abonar)
+    const totalObligacion = Number(gasto.monto || 0) > 0
+        ? Number(gasto.monto)
+        : Number(gasto.monto_usd || 0) + Number(gasto.monto_bs || 0) / (tasas[gasto.tipo_tasa] || 1)
+
+    const pagoEnUsd = p => Number(p.monto_usd || 0) + Number(p.monto_bs || 0) / (Number(p.tasa_cambio) || 1)
+    const pagadoPrevio = pagosPrevios.reduce((s, p) => s + pagoEnUsd(p), 0)
+    const saldo = Math.max(0, totalObligacion - pagadoPrevio)
+
     useEffect(() => {
-        if (perfil?.empresa_id) {
-            supabase.from('cuentas_bancarias').select('id, nombre, banco, moneda').eq('empresa_id', perfil.empresa_id).eq('activa', true)
-                .then(({ data }) => setCuentasBancarias(data || []))
-        }
+        if (!perfil?.empresa_id) return
+        supabase.from('cuentas_bancarias').select('id, nombre, banco, moneda').eq('empresa_id', perfil.empresa_id).eq('activa', true)
+            .then(({ data }) => setCuentasBancarias(data || []))
     }, [perfil?.empresa_id])
+
+    // Cargar abonos previos y prellenar el input con el saldo pendiente (no el total)
+    useEffect(() => {
+        if (!perfil?.empresa_id) return
+        setCargandoPagos(true)
+        supabase.from('pagos')
+            .select('monto_usd, monto_bs, tasa_cambio')
+            .eq('empresa_id', perfil.empresa_id)
+            .eq('origen_tipo', 'gasto').eq('origen_id', gasto.id)
+            .then(({ data }) => {
+                const previos = data || []
+                setPagosPrevios(previos)
+                const pagado = previos.reduce((s, p) => s + pagoEnUsd(p), 0)
+                const saldoPend = Math.max(0, totalObligacion - pagado)
+                setMontoUsd(saldoPend > 0 ? saldoPend.toFixed(2) : '')
+                setCargandoPagos(false)
+            })
+    }, [perfil?.empresa_id, gasto.id])
 
     const tasa = tasas[tipoTasa] || 1
     const totalEnUsd = Number(montoUsd || 0) + (Number(montoBs || 0) / tasa)
 
     async function confirmar() {
         if (Number(montoUsd) <= 0 && Number(montoBs) <= 0) { setError('Ingresa al menos un monto'); return }
+        if (totalEnUsd > saldo + 0.01) { setError(`El abono no puede superar el saldo pendiente de ${fmt(saldo)}`); return }
         setGuardando(true); setError('')
 
-        const { error: err } = await supabase.from('gastos').update({
-            estado: 'pagado',
+        const { data: { user } } = await supabase.auth.getUser()
+
+        // 1) El abono es una fila nueva en `pagos` — la obligación (gasto) queda intacta
+        const { error: errPago } = await supabase.from('pagos').insert({
+            empresa_id: perfil.empresa_id,
+            origen_tipo: 'gasto',
+            origen_id: gasto.id,
             fecha,
             monto_usd: Number(montoUsd || 0),
             monto_bs: Number(montoBs || 0),
             tasa_cambio: tasa,
             tipo_tasa: tipoTasa,
+            metodo_usd: metodoPago,
+            cuenta_bancaria_id: cuentaBancariaId || null,
+            usuario_id: user.id,
+        })
+        if (errPago) { setError('Error: ' + errPago.message); setGuardando(false); return }
+
+        // 2) Estado derivado: releer todos los pagos y comparar contra la obligación
+        const { data: todos } = await supabase.from('pagos')
+            .select('monto_usd, monto_bs, tasa_cambio')
+            .eq('empresa_id', perfil.empresa_id)
+            .eq('origen_tipo', 'gasto').eq('origen_id', gasto.id)
+        const pagadoTotal = (todos || []).reduce((s, p) => s + pagoEnUsd(p), 0)
+        const nuevoEstado = pagadoTotal >= totalObligacion - 0.01 ? 'pagado' : 'parcial'
+
+        const { error: err } = await supabase.from('gastos').update({
+            estado: nuevoEstado,
             metodo_pago: metodoPago,
             cuenta_bancaria_id: cuentaBancariaId || null,
-            monto: totalEnUsd,
         }).eq('id', gasto.id)
 
-        if (err) { setError('Error: ' + err.message); setGuardando(false); return }
+        if (err) { setError('Error al actualizar el gasto: ' + err.message); setGuardando(false); return }
         onPagado()
     }
 
@@ -417,8 +503,24 @@ function ModalPagarGasto({ gasto, tasas, onPagado, onCerrar }) {
         <>
             <div onClick={onCerrar} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', zIndex: 40 }} />
             <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', backgroundColor: '#fff', borderRadius: '16px', padding: '28px', width: '460px', zIndex: 50, boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
-                <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#1f2937', margin: '0 0 4px' }}>Registrar pago</h3>
-                <p style={{ fontSize: '13px', color: '#6b7280', margin: '0 0 20px' }}>{gasto.nombre}</p>
+                <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#1f2937', margin: '0 0 4px' }}>Registrar abono</h3>
+                <p style={{ fontSize: '13px', color: '#6b7280', margin: '0 0 16px' }}>{gasto.nombre}</p>
+
+                {/* Resumen de la obligación */}
+                <div style={{ backgroundColor: '#eff6ff', borderRadius: '8px', padding: '12px 16px', marginBottom: '16px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#6b7280' }}>
+                        <span>Total del gasto</span><span style={{ fontWeight: 600, color: '#374151' }}>{fmt(totalObligacion)}</span>
+                    </div>
+                    {pagadoPrevio > 0.001 && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#6b7280' }}>
+                            <span>Abonado</span><span style={{ fontWeight: 600, color: '#16a34a' }}>-{fmt(pagadoPrevio)}</span>
+                        </div>
+                    )}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', borderTop: '1px solid #dbeafe', paddingTop: '6px' }}>
+                        <span style={{ color: '#1e40af', fontWeight: 600 }}>Saldo pendiente</span>
+                        <span style={{ color: '#1e40af', fontWeight: 700 }}>{cargandoPagos ? '…' : fmt(saldo)}</span>
+                    </div>
+                </div>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
                     {/* Fecha pago */}
@@ -492,7 +594,7 @@ function ModalPagarGasto({ gasto, tasas, onPagado, onCerrar }) {
                     <div style={{ display: 'flex', gap: '10px', marginTop: '4px' }}>
                         <button onClick={confirmar} disabled={guardando}
                             style={{ flex: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '11px', fontSize: '14px', fontWeight: 600, cursor: 'pointer', opacity: guardando ? 0.6 : 1 }}>
-                            <Check size={16} /> {guardando ? 'Guardando...' : 'Confirmar pago'}
+                            <Check size={16} /> {guardando ? 'Guardando...' : 'Confirmar abono'}
                         </button>
                         <button onClick={onCerrar}
                             style={{ flex: 1, padding: '11px', borderRadius: '8px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: '#374151', fontSize: '14px', cursor: 'pointer' }}>
@@ -886,10 +988,33 @@ function TiposGasto({ tipos, onActualizado }) {
 
 // ─── Detalle de Gasto ──────────────────────────────────────────
 function DetalleGasto({ gasto: g, tasas, onVolver }) {
+    const { perfil } = useAuth()
     const estado = g.estado || 'pagado'
-    const sem = estado === 'pendiente' ? semaforo(g.fecha_vencimiento) : null
+    const esPorPagar = estado === 'pendiente' || estado === 'parcial'
+    const sem = esPorPagar ? semaforo(g.fecha_vencimiento) : null
     const tasa = Number(tasas[g.tipo_tasa] || tasas.tasa_bcv || 1)
-    const totalUsd = Number(g.monto_usd || 0) + Number(g.monto_bs || 0) / tasa
+    const totalUsd = Number(g.monto || 0) > 0
+        ? Number(g.monto)
+        : Number(g.monto_usd || 0) + Number(g.monto_bs || 0) / tasa
+
+    const [pagos, setPagos] = useState([])
+    useEffect(() => {
+        if (!perfil?.empresa_id) return
+        supabase.from('pagos')
+            .select('id, fecha, monto_usd, monto_bs, tasa_cambio, tipo_tasa, metodo_usd, nota')
+            .eq('empresa_id', perfil.empresa_id)
+            .eq('origen_tipo', 'gasto').eq('origen_id', g.id)
+            .order('fecha', { ascending: true })
+            .then(({ data }) => setPagos(data || []))
+    }, [perfil?.empresa_id, g.id])
+
+    const pagoEnUsd = p => Number(p.monto_usd || 0) + Number(p.monto_bs || 0) / (Number(p.tasa_cambio) || 1)
+    const pagadoUsd = pagos.reduce((s, p) => s + pagoEnUsd(p), 0)
+    const saldoUsd = Math.max(0, totalUsd - pagadoUsd)
+
+    const estadoLabel = estado === 'pagado' ? 'Pagado' : estado === 'parcial' ? 'Parcial' : 'Pendiente'
+    const estadoBg = estado === 'pagado' ? '#f0fdf4' : estado === 'parcial' ? '#dbeafe' : (sem?.bg || '#fffbeb')
+    const estadoColor = estado === 'pagado' ? '#16a34a' : estado === 'parcial' ? '#1e40af' : (sem?.color || '#d97706')
 
     const card = { backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '12px', padding: '20px 24px', marginBottom: '16px' }
     const label = { fontSize: '11px', fontWeight: 500, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 4px' }
@@ -904,9 +1029,8 @@ function DetalleGasto({ gasto: g, tasas, onVolver }) {
                     Detalle de Gasto
                 </h1>
                 <span style={{ marginLeft: 'auto', padding: '4px 12px', borderRadius: '20px', fontSize: '12px', fontWeight: 600,
-                    backgroundColor: estado === 'pagado' ? '#f0fdf4' : (sem?.bg || '#fffbeb'),
-                    color: estado === 'pagado' ? '#16a34a' : (sem?.color || '#d97706') }}>
-                    {estado === 'pagado' ? 'Pagado' : 'Pendiente'}
+                    backgroundColor: estadoBg, color: estadoColor }}>
+                    {estadoLabel}
                 </span>
                 <button onClick={() => window.print()} style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '8px 14px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}>🖨️ Imprimir</button>
             </div>
@@ -975,8 +1099,8 @@ function DetalleGasto({ gasto: g, tasas, onVolver }) {
                         <p style={value}>{g.metodo_pago || '—'}</p>
                     </div>
                     <div>
-                        <p style={label}>{estado === 'pendiente' ? 'Fecha vencimiento' : 'Estado'}</p>
-                        {estado === 'pendiente' && sem
+                        <p style={label}>{esPorPagar ? 'Fecha vencimiento' : 'Estado'}</p>
+                        {esPorPagar && sem
                             ? <p style={{ ...value, color: sem.color }}>{sem.dot} {sem.label}</p>
                             : <p style={{ ...value, color: '#16a34a' }}>Pagado</p>}
                     </div>
@@ -986,6 +1110,39 @@ function DetalleGasto({ gasto: g, tasas, onVolver }) {
                     </div>
                 </div>
             </div>
+
+            {/* Historial de abonos */}
+            {pagos.length > 0 && (
+                <div style={card}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '14px' }}>
+                        <p style={{ ...label, margin: 0 }}>Historial de abonos ({pagos.length})</p>
+                        <div style={{ display: 'flex', gap: '20px' }}>
+                            <span style={{ fontSize: '12px', color: '#6b7280' }}>Abonado <b style={{ color: '#16a34a' }}>{fmt(pagadoUsd)}</b></span>
+                            <span style={{ fontSize: '12px', color: '#6b7280' }}>Saldo <b style={{ color: saldoUsd > 0.01 ? '#1e40af' : '#16a34a' }}>{fmt(saldoUsd)}</b></span>
+                        </div>
+                    </div>
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead>
+                            <tr style={{ borderBottom: '1px solid #e5e7eb' }}>
+                                {['Fecha', 'Método', 'USD', 'Bs.', 'Equiv. USD'].map((h, i) => (
+                                    <th key={i} style={{ padding: '6px 8px', fontSize: '11px', fontWeight: 500, color: '#9ca3af', textAlign: i > 1 ? 'right' : 'left' }}>{h}</th>
+                                ))}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {pagos.map(p => (
+                                <tr key={p.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                                    <td style={{ padding: '8px', fontSize: '12px', color: '#6b7280' }}>{new Date(p.fecha + 'T00:00:00').toLocaleDateString('es-VE')}</td>
+                                    <td style={{ padding: '8px', fontSize: '12px', color: '#6b7280' }}>{p.metodo_usd || '—'}</td>
+                                    <td style={{ padding: '8px', fontSize: '12px', color: '#374151', textAlign: 'right' }}>{Number(p.monto_usd) > 0 ? fmt(p.monto_usd) : '—'}</td>
+                                    <td style={{ padding: '8px', fontSize: '12px', color: '#374151', textAlign: 'right' }}>{Number(p.monto_bs) > 0 ? fmtBs(p.monto_bs) : '—'}</td>
+                                    <td style={{ padding: '8px', fontSize: '12px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(pagoEnUsd(p))}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            )}
         </div>
     )
 }
