@@ -291,17 +291,24 @@ function TabComercial() {
     }, [facturas, hoy])
 
     // ─── Serie de tiempo: ventas diarias (nivel línea, por monto) ───
+    // Rellena con cero los días sin ventas para que el eje sea continuo (sin saltos).
     const serieDiaria = useMemo(() => {
         const m = {}
         lineasFiltradas.forEach(l => {
             if (!l.fecha) return
-            const k = toYMD(l.fecha)
-            m[k] = (m[k] || 0) + l.lineaTotal
+            m[toYMD(l.fecha)] = (m[toYMD(l.fecha)] || 0) + l.lineaTotal
         })
-        return Object.entries(m)
-            .sort((a, b) => a[0].localeCompare(b[0]))
-            .map(([dia, total]) => ({ dia, total, label: dia.slice(5) })) // label MM-DD
-    }, [lineasFiltradas])
+        const ini = new Date(desde + 'T00:00:00')
+        const fin = new Date(hasta + 'T00:00:00')
+        if (isNaN(ini) || isNaN(fin) || ini > fin) return []
+        const out = []
+        // Tope de seguridad por si el rango es enorme (no dibujar >1 día por px útil)
+        for (let d = new Date(ini), n = 0; d <= fin && n < 1500; d.setDate(d.getDate() + 1), n++) {
+            const dia = toYMD(d)
+            out.push({ dia, total: m[dia] || 0, label: dia.slice(5) }) // label MM-DD
+        }
+        return out
+    }, [lineasFiltradas, desde, hasta])
 
     // ─── Tabla: orden + paginación ───
     const lineasOrdenadas = useMemo(() => {
