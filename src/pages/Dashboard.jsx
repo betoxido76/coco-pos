@@ -3,8 +3,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
+import { X } from 'lucide-react'
 import {
     PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer,
+    LineChart, Line, XAxis, YAxis, CartesianGrid,
 } from 'recharts'
 
 // ─── Formato ───────────────────────────────────────────────────
@@ -95,6 +97,9 @@ function TabComercial() {
     const [sort, setSort] = useState({ col: 'fecha', dir: 'desc' })
     const [pageSize, setPageSize] = useState(25)
     const [page, setPage] = useState(0)
+
+    // Gráfica ampliada (modal)
+    const [expandida, setExpandida] = useState(null)
 
     // ─── Carga desde servidor (rango de fechas en .gte/.lte) ───
     useEffect(() => {
@@ -285,6 +290,19 @@ function TabComercial() {
         return Object.entries(acc).map(([name, value]) => ({ name, value }))
     }, [facturas, hoy])
 
+    // ─── Serie de tiempo: ventas diarias (nivel línea, por monto) ───
+    const serieDiaria = useMemo(() => {
+        const m = {}
+        lineasFiltradas.forEach(l => {
+            if (!l.fecha) return
+            const k = toYMD(l.fecha)
+            m[k] = (m[k] || 0) + l.lineaTotal
+        })
+        return Object.entries(m)
+            .sort((a, b) => a[0].localeCompare(b[0]))
+            .map(([dia, total]) => ({ dia, total, label: dia.slice(5) })) // label MM-DD
+    }, [lineasFiltradas])
+
     // ─── Tabla: orden + paginación ───
     const lineasOrdenadas = useMemo(() => {
         const arr = [...lineasFiltradas]
@@ -330,10 +348,24 @@ function TabComercial() {
 
     const selectStyle = { padding: '8px 12px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', color: '#374151', backgroundColor: '#fff', cursor: 'pointer' }
 
+    // Config de gráficas (para render uniforme + ampliar)
+    const colorIdx = (d, i) => d._otros ? GRIS_OTROS : COLORES[i % COLORES.length]
+    const fila1 = [
+        { id: 'canal', type: 'pie', title: 'Ventas por Canal', data: pieCanal, colorFn: colorIdx, showLegend: true },
+        { id: 'producto', type: 'pie', title: 'Ventas por Producto', data: pieProducto, colorFn: colorIdx, showLegend: false },
+        { id: 'cliente', type: 'pie', title: 'Ventas por Cliente', data: pieCliente, colorFn: colorIdx, showLegend: false },
+    ]
+    const fila2 = [
+        { id: 'estatus', type: 'pie', title: 'Ventas por Estatus', subtitle: 'por monto facturado', data: pieEstatus, colorFn: d => COLOR_ESTATUS[d.name] || GRIS_OTROS, showLegend: true },
+        { id: 'vencida', type: 'pie', title: 'Cartera vencida por antigüedad', subtitle: 'por saldo, solo vencidas', data: pieVencida, colorFn: d => COLOR_VENCIDA[d.name] || GRIS_OTROS, showLegend: true },
+        { id: 'antig', type: 'pie', title: 'Saldo en calle por antigüedad', subtitle: 'por saldo, días desde emisión', data: pieAntig, colorFn: d => COLOR_ANTIG[d.name] || GRIS_OTROS, showLegend: true },
+    ]
+    const serieCfg = { id: 'serie', type: 'line', title: 'Ventas diarias', subtitle: 'monto por día', data: serieDiaria }
+
     return (
         <div>
-            {/* ─── Barra de filtros ─── */}
-            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px 20px', marginBottom: '20px' }}>
+            {/* ─── Barra de filtros (fija al hacer scroll) ─── */}
+            <div style={{ position: 'sticky', top: 0, zIndex: 30, backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px 20px', marginBottom: '20px', boxShadow: '0 4px 12px rgba(0,0,0,0.06)' }}>
                 <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
                     <div>
                         <label style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '4px' }}>Desde</label>
@@ -447,19 +479,24 @@ function TabComercial() {
 
                     {/* ─── Fila 1: composición de ventas por monto ─── */}
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '16px', marginBottom: '16px' }}>
-                        <PieCard title="Ventas por Canal" data={pieCanal} colorFn={(d, i) => d._otros ? GRIS_OTROS : COLORES[i % COLORES.length]} />
-                        <PieCard title="Ventas por Producto" data={pieProducto} showLegend={false} colorFn={(d, i) => d._otros ? GRIS_OTROS : COLORES[i % COLORES.length]} />
-                        <PieCard title="Ventas por Cliente" data={pieCliente} showLegend={false} colorFn={(d, i) => d._otros ? GRIS_OTROS : COLORES[i % COLORES.length]} />
+                        {fila1.map(c => <ChartCard key={c.id} cfg={c} onExpand={setExpandida} />)}
                     </div>
 
                     {/* ─── Fila 2: cartera ─── */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '16px', marginBottom: '16px' }}>
+                        {fila2.map(c => <ChartCard key={c.id} cfg={c} onExpand={setExpandida} />)}
+                    </div>
+
+                    {/* ─── Fila 3: serie de tiempo (+ espacio para 2 gráficas futuras) ─── */}
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '16px' }}>
-                        <PieCard title="Ventas por Estatus" subtitle="por monto facturado" data={pieEstatus} colorFn={d => COLOR_ESTATUS[d.name] || GRIS_OTROS} />
-                        <PieCard title="Cartera vencida por antigüedad" subtitle="por saldo, solo vencidas" data={pieVencida} colorFn={d => COLOR_VENCIDA[d.name] || GRIS_OTROS} />
-                        <PieCard title="Saldo en calle por antigüedad" subtitle="por saldo, días desde emisión" data={pieAntig} colorFn={d => COLOR_ANTIG[d.name] || GRIS_OTROS} />
+                        <ChartCard cfg={serieCfg} onExpand={setExpandida} />
+                        <PlaceholderCard />
+                        <PlaceholderCard />
                     </div>
                 </>
             )}
+
+            {expandida && <ChartModal cfg={expandida} onClose={() => setExpandida(null)} />}
         </div>
     )
 }
@@ -479,27 +516,115 @@ function topN(map, n = 8) {
     return top
 }
 
-// ─── Torta reutilizable ────────────────────────────────────────
-function PieCard({ title, subtitle, data, colorFn, showLegend = true }) {
-    const filtered = (data || []).filter(d => d.value > 0.0001)
+// ─── Render de gráfica según config (reutilizado en tarjeta y modal) ───
+function renderChart(cfg, height, big = false) {
+    if (cfg.type === 'line') {
+        const data = cfg.data || []
+        if (data.length === 0) return <EmptyChart height={height} />
+        return (
+            <ResponsiveContainer width="100%" height={height}>
+                <LineChart data={data} margin={{ top: 10, right: 20, bottom: 4, left: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                    <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#6b7280' }} tickMargin={6} minTickGap={16} />
+                    <YAxis tick={{ fontSize: 11, fill: '#6b7280' }} width={60}
+                        tickFormatter={v => v >= 1000 ? `$${(v / 1000).toFixed(0)}k` : `$${v}`} />
+                    <Tooltip content={<LineTooltip />} />
+                    <Line type="monotone" dataKey="total" stroke={COLORES[0]} strokeWidth={2} dot={{ r: big ? 3 : 2 }} activeDot={{ r: 5 }} />
+                </LineChart>
+            </ResponsiveContainer>
+        )
+    }
+    // pie
+    const filtered = (cfg.data || []).filter(d => d.value > 0.0001)
     const total = filtered.reduce((s, d) => s + d.value, 0)
+    if (filtered.length === 0) return <EmptyChart height={height} />
+    const outer = big ? Math.min(height * 0.36, 180) : 80
+    const inner = big ? outer * 0.55 : 45
+    return (
+        <ResponsiveContainer width="100%" height={height}>
+            <PieChart>
+                <Pie data={filtered} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={inner} outerRadius={outer} paddingAngle={1}>
+                    {filtered.map((d, i) => <Cell key={i} fill={cfg.colorFn(d, i)} />)}
+                </Pie>
+                <Tooltip content={<PieTooltip total={total} />} />
+                {cfg.showLegend && <Legend wrapperStyle={{ fontSize: big ? '12px' : '11px' }} />}
+            </PieChart>
+        </ResponsiveContainer>
+    )
+}
+
+function EmptyChart({ height }) {
+    return <div style={{ height, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9ca3af', fontSize: '13px' }}>Sin datos</div>
+}
+
+// ─── Tarjeta de gráfica (con botón ampliar) ────────────────────
+function ChartCard({ cfg, onExpand }) {
     return (
         <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px 20px' }}>
-            <h3 style={{ fontSize: '14px', fontWeight: 600, color: '#1f2937', margin: 0 }}>{title}</h3>
-            {subtitle && <p style={{ fontSize: '11px', color: '#9ca3af', margin: '2px 0 0' }}>{subtitle}</p>}
-            {filtered.length === 0 ? (
-                <div style={{ height: '240px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9ca3af', fontSize: '13px' }}>Sin datos</div>
-            ) : (
-                <ResponsiveContainer width="100%" height={240}>
-                    <PieChart>
-                        <Pie data={filtered} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={45} outerRadius={80} paddingAngle={1}>
-                            {filtered.map((d, i) => <Cell key={i} fill={colorFn(d, i)} />)}
-                        </Pie>
-                        <Tooltip content={<PieTooltip total={total} />} />
-                        {showLegend && <Legend wrapperStyle={{ fontSize: '11px' }} />}
-                    </PieChart>
-                </ResponsiveContainer>
-            )}
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '8px' }}>
+                <div>
+                    <h3 style={{ fontSize: '14px', fontWeight: 600, color: '#1f2937', margin: 0 }}>{cfg.title}</h3>
+                    {cfg.subtitle && <p style={{ fontSize: '11px', color: '#9ca3af', margin: '2px 0 0' }}>{cfg.subtitle}</p>}
+                </div>
+                <button onClick={() => onExpand(cfg)} title="Ampliar"
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', padding: '2px', display: 'flex', flexShrink: 0 }}
+                    onMouseEnter={e => e.currentTarget.style.color = '#16a34a'}
+                    onMouseLeave={e => e.currentTarget.style.color = '#9ca3af'}>
+                    <ExpandIcon />
+                </button>
+            </div>
+            {renderChart(cfg, 240)}
+        </div>
+    )
+}
+
+// ─── Modal de gráfica ampliada ─────────────────────────────────
+function ChartModal({ cfg, onClose }) {
+    return (
+        <>
+            <div onClick={onClose} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 60 }} />
+            <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', backgroundColor: '#fff', borderRadius: '16px', padding: '24px 28px', width: 'min(92vw, 960px)', zIndex: 70, boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '12px' }}>
+                    <div>
+                        <h2 style={{ fontSize: '17px', fontWeight: 700, color: '#1f2937', margin: 0 }}>{cfg.title}</h2>
+                        {cfg.subtitle && <p style={{ fontSize: '12px', color: '#9ca3af', margin: '2px 0 0' }}>{cfg.subtitle}</p>}
+                    </div>
+                    <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', padding: '4px' }}><X size={22} /></button>
+                </div>
+                {renderChart(cfg, 500, true)}
+            </div>
+        </>
+    )
+}
+
+// ─── Placeholder para gráficas futuras ─────────────────────────
+function PlaceholderCard() {
+    return (
+        <div style={{ backgroundColor: '#fafafa', borderRadius: '12px', border: '1px dashed #e5e7eb', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '292px', color: '#c4c4c4', fontSize: '13px' }}>
+            Próximamente
+        </div>
+    )
+}
+
+function ExpandIcon() {
+    return (
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="15 3 21 3 21 9" />
+            <polyline points="9 21 3 21 3 15" />
+            <line x1="21" y1="3" x2="14" y2="10" />
+            <line x1="3" y1="21" x2="10" y2="14" />
+        </svg>
+    )
+}
+
+function LineTooltip({ active, payload, label }) {
+    if (!active || !payload?.length) return null
+    const p = payload[0]
+    const dia = p.payload?.dia || label
+    return (
+        <div style={{ backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '8px 12px', fontSize: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}>
+            <div style={{ fontWeight: 600, color: '#1f2937', marginBottom: '2px' }}>{dia}</div>
+            <div style={{ color: '#374151' }}>{fmt(p.value)}</div>
         </div>
     )
 }
