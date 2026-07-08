@@ -448,8 +448,8 @@ function TabComercial() {
                     {/* ─── Fila 1: composición de ventas por monto ─── */}
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '16px', marginBottom: '16px' }}>
                         <PieCard title="Ventas por Canal" data={pieCanal} colorFn={(d, i) => d._otros ? GRIS_OTROS : COLORES[i % COLORES.length]} />
-                        <PieCard title="Ventas por Producto" data={pieProducto} colorFn={(d, i) => d._otros ? GRIS_OTROS : COLORES[i % COLORES.length]} />
-                        <PieCard title="Ventas por Cliente" data={pieCliente} colorFn={(d, i) => d._otros ? GRIS_OTROS : COLORES[i % COLORES.length]} />
+                        <PieCard title="Ventas por Producto" data={pieProducto} showLegend={false} colorFn={(d, i) => d._otros ? GRIS_OTROS : COLORES[i % COLORES.length]} />
+                        <PieCard title="Ventas por Cliente" data={pieCliente} showLegend={false} colorFn={(d, i) => d._otros ? GRIS_OTROS : COLORES[i % COLORES.length]} />
                     </div>
 
                     {/* ─── Fila 2: cartera ─── */}
@@ -480,7 +480,7 @@ function topN(map, n = 8) {
 }
 
 // ─── Torta reutilizable ────────────────────────────────────────
-function PieCard({ title, subtitle, data, colorFn }) {
+function PieCard({ title, subtitle, data, colorFn, showLegend = true }) {
     const filtered = (data || []).filter(d => d.value > 0.0001)
     const total = filtered.reduce((s, d) => s + d.value, 0)
     return (
@@ -496,7 +496,7 @@ function PieCard({ title, subtitle, data, colorFn }) {
                             {filtered.map((d, i) => <Cell key={i} fill={colorFn(d, i)} />)}
                         </Pie>
                         <Tooltip content={<PieTooltip total={total} />} />
-                        <Legend wrapperStyle={{ fontSize: '11px' }} />
+                        {showLegend && <Legend wrapperStyle={{ fontSize: '11px' }} />}
                     </PieChart>
                 </ResponsiveContainer>
             )}
