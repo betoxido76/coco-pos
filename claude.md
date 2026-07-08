@@ -254,6 +254,7 @@ ON CONFLICT DO NOTHING;
 | Panel de métricas del operador | Media | En SuperAdmin: pedidos por empresa/mes, módulos más usados, usuarios activos, última actividad. Necesario para soporte, detección de churn y decisiones de producto. |
 | Autoregistro (self-service onboarding) | Media | Un cliente prospecto va a una URL, ingresa nombre/RIF/email y queda activo con plan trial. Hoy el operador es el cuello de botella del onboarding. |
 | Billing integrado | Baja | Cobro recurrente automático, corte de acceso por falta de pago, portal de cliente. Opciones: Stripe + webhooks, o MercadoPago para mercado latinoamericano. |
+| **CxP unificada (compras + gastos)** — Fase 2 del motor de pagos | Media | Consolidar en una sola pantalla de Cuentas por Pagar todas las obligaciones: recepciones de compra **y** gastos programados/parciales. Fase 1 ya creó la tabla genérica `pagos` (`origen_tipo IN ('gasto','compra')`) como cimiento. Fase 2: migrar `pagos_proveedor` → `pagos`, y que CxP liste ambos orígenes con estado derivado (pendiente/parcial/pagado) y un motor de abonos compartido. Objetivo: un único "¿qué debo?" en vez de revisar Gastos y CxP por separado. Solo entran gastos `pendiente`/`parcial` (los de contado no son cuentas por pagar). Ver §17 y §18 (`gastos.estado` ya admite `'parcial'`). |
 
 ---
 
