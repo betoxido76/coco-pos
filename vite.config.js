@@ -3,6 +3,17 @@ import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
 export default defineConfig({
+  build: {
+    rollupOptions: {
+      output: {
+        // Aísla recharts en su propio chunk: no infla el bundle inicial
+        // (importa para la app móvil de fuerza de ventas).
+        manualChunks: {
+          recharts: ['recharts'],
+        },
+      },
+    },
+  },
   plugins: [
     react(),
     VitePWA({
@@ -32,6 +43,8 @@ export default defineConfig({
         ],
       },
       workbox: {
+        // recharts es pesado; sube el límite para que el chunk se precachee igual
+        maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
         // Cachea todos los assets de la app
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
         // Cachea las llamadas a Supabase para offline
