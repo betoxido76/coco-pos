@@ -124,7 +124,7 @@ function TabComercial() {
                 // Líneas de venta con su factura y cliente (paginado por 1000)
                 const SELECT = 'cantidad, precio_unitario, producto_id, venta_id, ' +
                     'productos_terminados(sku, nombre), ' +
-                    'ventas!inner(id, numero_factura, created_at, fecha_vencimiento_pago, total, estado_cobro, cliente_id, usuario_id, pedidos(vendedor_id), clientes(nombre, codigo, cat1_id))'
+                    'ventas!inner(id, numero_factura, created_at, fecha_vencimiento_pago, total, estado_cobro, cliente_id, usuario_id, pedidos!pedido_id(vendedor_id), clientes(nombre, codigo, cat1_id))'
                 const PAGE = 1000
                 let from = 0, all = []
                 while (true) {
@@ -166,7 +166,7 @@ function TabComercial() {
                 const PAGE = 1000
                 // Cartera: TODAS las facturas pendiente/parcial, sin filtro de fecha
                 const CSELECT = 'cantidad, precio_unitario, producto_id, venta_id, ' +
-                    'ventas!inner(id, created_at, fecha_vencimiento_pago, total, estado_cobro, cliente_id, usuario_id, pedidos(vendedor_id), clientes(cat1_id))'
+                    'ventas!inner(id, created_at, fecha_vencimiento_pago, total, estado_cobro, cliente_id, usuario_id, pedidos!pedido_id(vendedor_id), clientes(cat1_id))'
                 let cfrom = 0, call = []
                 while (true) {
                     const { data, error: e } = await supabase.from('venta_items')
