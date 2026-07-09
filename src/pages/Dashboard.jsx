@@ -86,6 +86,7 @@ function TabComercial() {
     const [cobradoMap, setCobradoMap] = useState({}) // { venta_id: cobradoUsd }
     const [catMap, setCatMap] = useState({})         // { cat1_id: nombre }
     const [rawPedidoLineas, setRawPedidoLineas] = useState([]) // líneas de pedidos abiertos
+    const [rawCartera, setRawCartera] = useState([]) // líneas de facturas pendiente/parcial (sin fecha)
     const [userMap, setUserMap] = useState({})       // { usuario_id: nombre }
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState('')
@@ -139,9 +140,48 @@ function TabComercial() {
                     from += PAGE
                 }
 
-                // Cobros solo de facturas 'parcial' (mismo criterio que CuentasCobrar
-                // para no saturar el .in con miles de IDs).
-                const parcialIds = [...new Set(all
+                if (cancel) return
+                setCatMap(cm)
+                setUserMap(um)
+                setRawLineas(all)
+            } catch (e) {
+                if (!cancel) { console.error('Error cargando dashboard comercial:', e); setError(e.message || 'Error cargando datos') }
+            } finally {
+                if (!cancel) setLoading(false)
+            }
+        }
+        cargar()
+        return () => { cancel = true }
+    }, [perfil?.empresa_id, desde, hasta])
+
+    // ─── Carga desacoplada de la fecha: cartera (CxC) + pedidos abiertos ───
+    // Estos indicadores reflejan el estado actual (todo lo pendiente), por eso
+    // NO se filtran por rango de fechas; sí respetan producto/cliente/canal/vendedor
+    // (aplicado client-side más abajo).
+    useEffect(() => {
+        if (!perfil?.empresa_id) return
+        let cancel = false
+        async function cargarEstado() {
+            try {
+                const PAGE = 1000
+                // Cartera: TODAS las facturas pendiente/parcial, sin filtro de fecha
+                const CSELECT = 'cantidad, precio_unitario, producto_id, venta_id, ' +
+                    'ventas!inner(id, created_at, fecha_vencimiento_pago, total, estado_cobro, cliente_id, vendedor_id, clientes(cat1_id))'
+                let cfrom = 0, call = []
+                while (true) {
+                    const { data, error: e } = await supabase.from('venta_items')
+                        .select(CSELECT)
+                        .eq('empresa_id', perfil.empresa_id)
+                        .in('ventas.estado_cobro', ['pendiente', 'parcial'])
+                        .range(cfrom, cfrom + PAGE - 1)
+                    if (e) throw e
+                    call = call.concat(data || [])
+                    if (!data || data.length < PAGE) break
+                    cfrom += PAGE
+                }
+
+                // Cobros solo de facturas 'parcial' (para saldo real)
+                const parcialIds = [...new Set(call
                     .filter(r => r.ventas?.estado_cobro === 'parcial')
                     .map(r => r.venta_id))]
                 const cobrado = {}
@@ -152,19 +192,16 @@ function TabComercial() {
                     cobros?.forEach(c => { cobrado[c.venta_id] = (cobrado[c.venta_id] || 0) + cobroEnUsd(c) })
                 }
 
-                // Líneas de pedidos abiertos (por aprobación/alistar/registrar/despachar).
-                // Filtramos por empresa/estado/fecha en el recurso embebido pedidos!inner.
+                // Pedidos abiertos (por aprobación/alistar/registrar/despachar), sin filtro de fecha
                 const PSELECT = 'cantidad, cantidad_alistada, precio_unitario, descuento_item, unidad_venta, producto_id, pedido_id, ' +
                     'productos_terminados(sku, nombre, unidad_venta_2, factor_conversion_2), ' +
-                    'pedidos!inner(id, estado, created_at, descuento_global, cliente_id, vendedor_id, clientes(nombre, codigo, cat1_id))'
+                    'pedidos!inner(id, estado, descuento_global, cliente_id, vendedor_id, clientes(cat1_id))'
                 let pfrom = 0, pall = []
                 while (true) {
                     const { data, error: e } = await supabase.from('pedido_items')
                         .select(PSELECT)
                         .eq('pedidos.empresa_id', perfil.empresa_id)
                         .in('pedidos.estado', ['pendiente', 'aprobado', 'alistado', 'facturado'])
-                        .gte('pedidos.created_at', desde + 'T00:00:00')
-                        .lte('pedidos.created_at', hasta + 'T23:59:59.999')
                         .range(pfrom, pfrom + PAGE - 1)
                     if (e) throw e
                     pall = pall.concat(data || [])
@@ -173,20 +210,16 @@ function TabComercial() {
                 }
 
                 if (cancel) return
-                setCatMap(cm)
-                setUserMap(um)
-                setRawLineas(all)
+                setRawCartera(call)
                 setCobradoMap(cobrado)
                 setRawPedidoLineas(pall)
             } catch (e) {
-                if (!cancel) { console.error('Error cargando dashboard comercial:', e); setError(e.message || 'Error cargando datos') }
-            } finally {
-                if (!cancel) setLoading(false)
+                if (!cancel) console.error('Error cargando cartera/pedidos dashboard:', e)
             }
         }
-        cargar()
+        cargarEstado()
         return () => { cancel = true }
-    }, [perfil?.empresa_id, desde, hasta])
+    }, [perfil?.empresa_id])
 
     // Reset de página al cambiar filtros/orden/tamaño
     useEffect(() => { setPage(0) }, [fProducto, fCliente, fCanal, fVendedor, sort, pageSize, desde, hasta])
@@ -289,6 +322,42 @@ function TabComercial() {
         (!fVendedor || l.vendedorId === fVendedor)
     ), [pedidoLineas, fProducto, fCliente, fCanal, fVendedor])
 
+    // ─── Cartera (facturas pendiente/parcial, sin filtro de fecha) ───
+    const carteraLineas = useMemo(() => rawCartera.map(r => {
+        const v = r.ventas || {}
+        const cli = v.clientes || {}
+        const cobrado = cobradoMap[r.venta_id] || 0
+        const saldo = v.estado_cobro === 'pagado' ? 0 : Math.max(0, Number(v.total || 0) - cobrado)
+        const fecha = v.created_at ? new Date(v.created_at) : null
+        const fechaVenc = v.fecha_vencimiento_pago ? new Date(v.fecha_vencimiento_pago + 'T00:00:00') : null
+        let estatus = 'sin_vencer'
+        if (v.estado_cobro === 'pagado') estatus = 'pagado'
+        else if (fechaVenc && fechaVenc < hoy) estatus = 'vencido'
+        return {
+            ventaId: r.venta_id, ventaTotal: Number(v.total || 0), estadoCobro: v.estado_cobro,
+            saldo, fecha, fechaVenc, estatus,
+            productoId: r.producto_id, clienteId: v.cliente_id, vendedorId: v.vendedor_id,
+            canal: cli.cat1_id ? (catMap[cli.cat1_id] || 'Sin categoría') : 'Sin categoría',
+        }
+    }), [rawCartera, cobradoMap, catMap, hoy])
+
+    const carteraFacturas = useMemo(() => {
+        const filtradas = carteraLineas.filter(l =>
+            (!fProducto || l.productoId === fProducto) &&
+            (!fCliente || l.clienteId === fCliente) &&
+            (!fCanal || l.canal === fCanal) &&
+            (!fVendedor || l.vendedorId === fVendedor)
+        )
+        const m = new Map()
+        filtradas.forEach(l => {
+            if (!m.has(l.ventaId)) m.set(l.ventaId, {
+                id: l.ventaId, total: l.ventaTotal, estadoCobro: l.estadoCobro,
+                fecha: l.fecha, fechaVenc: l.fechaVenc, saldo: l.saldo, estatus: l.estatus,
+            })
+        })
+        return [...m.values()]
+    }, [carteraLineas, fProducto, fCliente, fCanal, fVendedor])
+
     // Opciones de vendedor (derivadas de ventas + pedidos)
     const opcVendedores = useMemo(() => {
         const ids = new Set()
@@ -311,19 +380,20 @@ function TabComercial() {
 
     // ─── Ventas totales + Días calle ponderado ───
     const ventasTotales = useMemo(() => lineasFiltradas.reduce((s, l) => s + l.lineaTotal, 0), [lineasFiltradas])
+    // Días calle: sobre la cartera completa (sin filtro de fecha)
     const diasCalle = useMemo(() => {
-        const sumSaldo = facturas.reduce((s, f) => s + f.saldo, 0)
+        const sumSaldo = carteraFacturas.reduce((s, f) => s + f.saldo, 0)
         if (sumSaldo <= 0) return '0.0'
-        const num = facturas.reduce((s, f) => {
+        const num = carteraFacturas.reduce((s, f) => {
             const d = f.fecha ? Math.max(0, floorDias(hoy - f.fecha)) : 0
             return s + d * f.saldo
         }, 0)
         return (num / sumSaldo).toFixed(1)
-    }, [facturas, hoy])
+    }, [carteraFacturas, hoy])
 
-    // ─── KPIs de cartera (mismos que CuentasCobrar, sobre facturas filtradas) ───
+    // ─── KPIs de cartera (mismos que CuentasCobrar, sobre cartera completa) ───
     const cxc = useMemo(() => {
-        const pend = facturas.filter(f => f.estatus !== 'pagado')
+        const pend = carteraFacturas.filter(f => f.estatus !== 'pagado')
         const totalPendiente = pend.reduce((s, f) => s + f.saldo, 0)
         const vencidas = pend.filter(f => f.estatus === 'vencido')
         const alDia = pend.filter(f => f.estatus === 'sin_vencer')
@@ -335,7 +405,7 @@ function TabComercial() {
             pctVencido: totalPendiente > 0 ? valorVencido / totalPendiente * 100 : 0,
             pctPorVencer: totalPendiente > 0 ? valorPorVencer / totalPendiente * 100 : 0,
         }
-    }, [facturas])
+    }, [carteraFacturas])
 
     // ─── KPIs de pedidos abiertos por estado (monto USD + nº de pedidos) ───
     const pedidoKpis = useMemo(() => {
