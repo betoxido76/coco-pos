@@ -85,6 +85,8 @@ function TabComercial() {
     const [rawLineas, setRawLineas] = useState([])   // líneas crudas del servidor
     const [cobradoMap, setCobradoMap] = useState({}) // { venta_id: cobradoUsd }
     const [catMap, setCatMap] = useState({})         // { cat1_id: nombre }
+    const [rawPedidoLineas, setRawPedidoLineas] = useState([]) // líneas de pedidos abiertos
+    const [userMap, setUserMap] = useState({})       // { usuario_id: nombre }
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState('')
 
@@ -92,6 +94,7 @@ function TabComercial() {
     const [fProducto, setFProducto] = useState('')
     const [fCliente, setFCliente] = useState('')
     const [fCanal, setFCanal] = useState('')
+    const [fVendedor, setFVendedor] = useState('')
 
     // Tabla
     const [sort, setSort] = useState({ col: 'fecha', dir: 'desc' })
@@ -109,14 +112,18 @@ function TabComercial() {
             setLoading(true); setError('')
             try {
                 // Categorías de cliente → mapa id:nombre (para "Canal")
-                const { data: cats } = await supabase.from('categorias_clientes')
-                    .select('id, nombre').eq('empresa_id', perfil.empresa_id)
+                // Usuarios → mapa id:nombre (para filtro/etiqueta de Vendedor)
+                const [{ data: cats }, { data: users }] = await Promise.all([
+                    supabase.from('categorias_clientes').select('id, nombre').eq('empresa_id', perfil.empresa_id),
+                    supabase.from('usuarios').select('id, nombre').eq('empresa_id', perfil.empresa_id),
+                ])
                 const cm = {}; (cats || []).forEach(c => { cm[c.id] = c.nombre })
+                const um = {}; (users || []).forEach(u => { um[u.id] = u.nombre })
 
                 // Líneas de venta con su factura y cliente (paginado por 1000)
                 const SELECT = 'cantidad, precio_unitario, producto_id, venta_id, ' +
                     'productos_terminados(sku, nombre), ' +
-                    'ventas!inner(id, numero_factura, created_at, fecha_vencimiento_pago, total, estado_cobro, cliente_id, clientes(nombre, codigo, cat1_id))'
+                    'ventas!inner(id, numero_factura, created_at, fecha_vencimiento_pago, total, estado_cobro, cliente_id, vendedor_id, clientes(nombre, codigo, cat1_id))'
                 const PAGE = 1000
                 let from = 0, all = []
                 while (true) {
@@ -145,10 +152,32 @@ function TabComercial() {
                     cobros?.forEach(c => { cobrado[c.venta_id] = (cobrado[c.venta_id] || 0) + cobroEnUsd(c) })
                 }
 
+                // Líneas de pedidos abiertos (por aprobación/alistar/registrar/despachar).
+                // Filtramos por empresa/estado/fecha en el recurso embebido pedidos!inner.
+                const PSELECT = 'cantidad, cantidad_alistada, precio_unitario, descuento_item, unidad_venta, producto_id, pedido_id, ' +
+                    'productos_terminados(sku, nombre, unidad_venta_2, factor_conversion_2), ' +
+                    'pedidos!inner(id, estado, created_at, descuento_global, cliente_id, vendedor_id, clientes(nombre, codigo, cat1_id))'
+                let pfrom = 0, pall = []
+                while (true) {
+                    const { data, error: e } = await supabase.from('pedido_items')
+                        .select(PSELECT)
+                        .eq('pedidos.empresa_id', perfil.empresa_id)
+                        .in('pedidos.estado', ['pendiente', 'aprobado', 'alistado', 'facturado'])
+                        .gte('pedidos.created_at', desde + 'T00:00:00')
+                        .lte('pedidos.created_at', hasta + 'T23:59:59.999')
+                        .range(pfrom, pfrom + PAGE - 1)
+                    if (e) throw e
+                    pall = pall.concat(data || [])
+                    if (!data || data.length < PAGE) break
+                    pfrom += PAGE
+                }
+
                 if (cancel) return
                 setCatMap(cm)
+                setUserMap(um)
                 setRawLineas(all)
                 setCobradoMap(cobrado)
+                setRawPedidoLineas(pall)
             } catch (e) {
                 if (!cancel) { console.error('Error cargando dashboard comercial:', e); setError(e.message || 'Error cargando datos') }
             } finally {
@@ -160,7 +189,7 @@ function TabComercial() {
     }, [perfil?.empresa_id, desde, hasta])
 
     // Reset de página al cambiar filtros/orden/tamaño
-    useEffect(() => { setPage(0) }, [fProducto, fCliente, fCanal, sort, pageSize, desde, hasta])
+    useEffect(() => { setPage(0) }, [fProducto, fCliente, fCanal, fVendedor, sort, pageSize, desde, hasta])
 
     // ─── Aplanado de líneas (independiente de filtros client-side) ───
     const lineas = useMemo(() => rawLineas.map(r => {
@@ -188,6 +217,7 @@ function TabComercial() {
             clienteId: v.cliente_id,
             clienteNombre: cli.nombre || '—',
             clienteCodigo: cli.codigo || '',
+            vendedorId: v.vendedor_id,
             canal,
             productoId: r.producto_id,
             productoSku: prod.sku || '',
@@ -218,8 +248,54 @@ function TabComercial() {
     const lineasFiltradas = useMemo(() => lineas.filter(l =>
         (!fProducto || l.productoId === fProducto) &&
         (!fCliente || l.clienteId === fCliente) &&
-        (!fCanal || l.canal === fCanal)
-    ), [lineas, fProducto, fCliente, fCanal])
+        (!fCanal || l.canal === fCanal) &&
+        (!fVendedor || l.vendedorId === fVendedor)
+    ), [lineas, fProducto, fCliente, fCanal, fVendedor])
+
+    // ─── Líneas de pedidos abiertos (aplanado + filtrado) ───
+    const pedidoLineas = useMemo(() => rawPedidoLineas.map(r => {
+        const p = r.pedidos || {}
+        const cli = p.clientes || {}
+        const prod = r.productos_terminados || {}
+        // Mismo criterio que Pedidos.jsx: alistado/facturado/despachado usan cantidad_alistada
+        const usarAlistada = ['alistado', 'facturado', 'despachado'].includes(p.estado)
+        let cant = usarAlistada ? Number(r.cantidad_alistada ?? r.cantidad) : Number(r.cantidad)
+        if (usarAlistada) {
+            const uv = r.unidad_venta
+            const uv2 = prod.unidad_venta_2
+            const factor = Number(prod.factor_conversion_2 || 1)
+            const esSecundaria = uv === '2' || (uv2 && uv === uv2)
+            if (esSecundaria && factor > 1) cant = cant / factor
+        }
+        const precio = Number(r.precio_unitario || 0)
+        const desc = Number(r.descuento_item || 0)
+        const dg = Number(p.descuento_global || 0)
+        const lineaTotal = (cant || 0) * precio * (1 - desc / 100) * (1 - dg / 100)
+        return {
+            pedidoId: r.pedido_id,
+            estado: p.estado,
+            clienteId: p.cliente_id,
+            canal: cli.cat1_id ? (catMap[cli.cat1_id] || 'Sin categoría') : 'Sin categoría',
+            productoId: r.producto_id,
+            vendedorId: p.vendedor_id,
+            lineaTotal,
+        }
+    }), [rawPedidoLineas, catMap])
+
+    const pedidoLineasFiltradas = useMemo(() => pedidoLineas.filter(l =>
+        (!fProducto || l.productoId === fProducto) &&
+        (!fCliente || l.clienteId === fCliente) &&
+        (!fCanal || l.canal === fCanal) &&
+        (!fVendedor || l.vendedorId === fVendedor)
+    ), [pedidoLineas, fProducto, fCliente, fCanal, fVendedor])
+
+    // Opciones de vendedor (derivadas de ventas + pedidos)
+    const opcVendedores = useMemo(() => {
+        const ids = new Set()
+        lineas.forEach(l => { if (l.vendedorId) ids.add(l.vendedorId) })
+        pedidoLineas.forEach(l => { if (l.vendedorId) ids.add(l.vendedorId) })
+        return [...ids].map(id => [id, userMap[id] || 'Vendedor']).sort((a, b) => String(a[1]).localeCompare(String(b[1])))
+    }, [lineas, pedidoLineas, userMap])
 
     // Facturas únicas dentro del set filtrado (nivel factura)
     const facturas = useMemo(() => {
@@ -244,6 +320,42 @@ function TabComercial() {
         }, 0)
         return (num / sumSaldo).toFixed(1)
     }, [facturas, hoy])
+
+    // ─── KPIs de cartera (mismos que CuentasCobrar, sobre facturas filtradas) ───
+    const cxc = useMemo(() => {
+        const pend = facturas.filter(f => f.estatus !== 'pagado')
+        const totalPendiente = pend.reduce((s, f) => s + f.saldo, 0)
+        const vencidas = pend.filter(f => f.estatus === 'vencido')
+        const alDia = pend.filter(f => f.estatus === 'sin_vencer')
+        const valorVencido = vencidas.reduce((s, f) => s + f.saldo, 0)
+        const valorPorVencer = alDia.reduce((s, f) => s + f.saldo, 0)
+        return {
+            totalPendiente, valorVencido, valorPorVencer,
+            vencidasCount: vencidas.length, alDiaCount: alDia.length,
+            pctVencido: totalPendiente > 0 ? valorVencido / totalPendiente * 100 : 0,
+            pctPorVencer: totalPendiente > 0 ? valorPorVencer / totalPendiente * 100 : 0,
+        }
+    }, [facturas])
+
+    // ─── KPIs de pedidos abiertos por estado (monto USD + nº de pedidos) ───
+    const pedidoKpis = useMemo(() => {
+        const acc = {
+            pendiente: { monto: 0, ids: new Set() },
+            aprobado: { monto: 0, ids: new Set() },
+            alistado: { monto: 0, ids: new Set() },
+            facturado: { monto: 0, ids: new Set() },
+        }
+        pedidoLineasFiltradas.forEach(l => {
+            const a = acc[l.estado]; if (!a) return
+            a.monto += l.lineaTotal; a.ids.add(l.pedidoId)
+        })
+        return {
+            aprobacion: { monto: acc.pendiente.monto, n: acc.pendiente.ids.size },
+            alistar: { monto: acc.aprobado.monto, n: acc.aprobado.ids.size },
+            registrar: { monto: acc.alistado.monto, n: acc.alistado.ids.size },
+            despachar: { monto: acc.facturado.monto, n: acc.facturado.ids.size },
+        }
+    }, [pedidoLineasFiltradas])
 
     // ─── Datos de tortas fila 1 (por monto, nivel línea) ───
     const pieCanal = useMemo(() => topN(agrupar(lineasFiltradas, l => l.canal, l => l.lineaTotal)), [lineasFiltradas])
@@ -337,7 +449,7 @@ function TabComercial() {
 
     function limpiar() {
         setDesde(toYMD(primerDiaMes)); setHasta(toYMD(hoy))
-        setFProducto(''); setFCliente(''); setFCanal('')
+        setFProducto(''); setFCliente(''); setFCanal(''); setFVendedor('')
     }
 
     const COLS = [
@@ -403,15 +515,20 @@ function TabComercial() {
                             {opcCanales.map(c => <option key={c} value={c}>{c}</option>)}
                         </select>
                     </div>
+                    <div>
+                        <label style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '4px' }}>Vendedor</label>
+                        <select value={fVendedor} onChange={e => setFVendedor(e.target.value)} style={{ ...selectStyle, maxWidth: '200px' }}>
+                            <option value="">Todos</option>
+                            {opcVendedores.map(([id, nombre]) => <option key={id} value={id}>{nombre}</option>)}
+                        </select>
+                    </div>
                     <button onClick={limpiar}
                         style={{ padding: '8px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 500, border: '1px solid #e5e7eb', backgroundColor: '#f9fafb', color: '#374151', cursor: 'pointer' }}>
                         Limpiar
                     </button>
                 </div>
-                <div style={{ marginTop: '14px', paddingTop: '12px', borderTop: '1px solid #f3f4f6', fontSize: '13px', color: '#374151' }}>
-                    <strong>{totalLineas.toLocaleString('es-VE')}</strong> líneas ·{' '}
-                    Ventas totales: <strong>{fmt(ventasTotales)}</strong> ·{' '}
-                    Días calle ponderado: <strong style={{ color: '#d97706' }}>{diasCalle} días</strong>
+                <div style={{ marginTop: '14px', paddingTop: '12px', borderTop: '1px solid #f3f4f6', fontSize: '12px', color: '#9ca3af' }}>
+                    {totalLineas.toLocaleString('es-VE')} líneas en el rango filtrado
                 </div>
             </div>
 
@@ -423,6 +540,21 @@ function TabComercial() {
                 <div style={{ padding: '64px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando…</div>
             ) : (
                 <>
+                    {/* ─── Tags / indicadores (afectados por los filtros) ─── */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '12px', marginBottom: '20px' }}>
+                        <TagCard label="Ventas totales" valor={fmt(ventasTotales)} color="#1f2937" />
+                        <TagCard label="Días calle ponderado" valor={`${diasCalle} días`} sub="ponderado por saldo" color="#d97706" />
+                        <TagCard label="Total pendiente" valor={fmt(cxc.totalPendiente)} sub="por cobrar" color="#1f2937" />
+                        <TagCard label="Facturas vencidas" valor={cxc.vencidasCount} sub="requieren atención" color="#ef4444" />
+                        <TagCard label="Facturas al día" valor={cxc.alDiaCount} sub="dentro del plazo" color="#16a34a" />
+                        <TagCard label="Valor vencido" valor={`${fmt(cxc.valorVencido)} (${cxc.pctVencido.toFixed(0)}%)`} color="#ef4444" />
+                        <TagCard label="Valor por vencer" valor={`${fmt(cxc.valorPorVencer)} (${cxc.pctPorVencer.toFixed(0)}%)`} color="#16a34a" />
+                        <TagCard label="Pedidos por aprobación" valor={fmt(pedidoKpis.aprobacion.monto)} sub={`${pedidoKpis.aprobacion.n} pedido${pedidoKpis.aprobacion.n === 1 ? '' : 's'}`} color="#854d0e" />
+                        <TagCard label="Pedidos por alistar" valor={fmt(pedidoKpis.alistar.monto)} sub={`${pedidoKpis.alistar.n} pedido${pedidoKpis.alistar.n === 1 ? '' : 's'}`} color="#1e40af" />
+                        <TagCard label="Pedidos por registrar" valor={fmt(pedidoKpis.registrar.monto)} sub={`${pedidoKpis.registrar.n} pedido${pedidoKpis.registrar.n === 1 ? '' : 's'}`} color="#c2410c" />
+                        <TagCard label="Pedidos por despachar" valor={fmt(pedidoKpis.despachar.monto)} sub={`${pedidoKpis.despachar.n} pedido${pedidoKpis.despachar.n === 1 ? '' : 's'}`} color="#166534" />
+                    </div>
+
                     {/* ─── Tabla de detalle ─── */}
                     <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden', marginBottom: '24px' }}>
                         <div style={{ overflowX: 'auto' }}>
@@ -521,6 +653,17 @@ function topN(map, n = 8) {
     const otros = arr.slice(n).reduce((s, d) => s + d.value, 0)
     if (otros > 0) top.push({ name: 'Otros', value: otros, _otros: true })
     return top
+}
+
+// ─── Tarjeta de indicador (tag) ────────────────────────────────
+function TagCard({ label, valor, sub, color }) {
+    return (
+        <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '14px 16px' }}>
+            <p style={{ fontSize: '11px', color: '#6b7280', margin: '0 0 4px' }}>{label}</p>
+            <p style={{ fontSize: '20px', fontWeight: 700, color: color || '#1f2937', margin: 0, lineHeight: 1.15 }}>{valor}</p>
+            {sub != null && <p style={{ fontSize: '11px', color: '#9ca3af', margin: '3px 0 0' }}>{sub}</p>}
+        </div>
+    )
 }
 
 // ─── Render de gráfica según config (reutilizado en tarjeta y modal) ───
