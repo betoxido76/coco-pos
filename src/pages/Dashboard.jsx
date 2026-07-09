@@ -124,7 +124,7 @@ function TabComercial() {
                 // Líneas de venta con su factura y cliente (paginado por 1000)
                 const SELECT = 'cantidad, precio_unitario, producto_id, venta_id, ' +
                     'productos_terminados(sku, nombre), ' +
-                    'ventas!inner(id, numero_factura, created_at, fecha_vencimiento_pago, total, estado_cobro, cliente_id, usuario_id, clientes(nombre, codigo, cat1_id))'
+                    'ventas!inner(id, numero_factura, created_at, fecha_vencimiento_pago, total, estado_cobro, cliente_id, usuario_id, pedidos(vendedor_id), clientes(nombre, codigo, cat1_id))'
                 const PAGE = 1000
                 let from = 0, all = []
                 while (true) {
@@ -166,7 +166,7 @@ function TabComercial() {
                 const PAGE = 1000
                 // Cartera: TODAS las facturas pendiente/parcial, sin filtro de fecha
                 const CSELECT = 'cantidad, precio_unitario, producto_id, venta_id, ' +
-                    'ventas!inner(id, created_at, fecha_vencimiento_pago, total, estado_cobro, cliente_id, usuario_id, clientes(cat1_id))'
+                    'ventas!inner(id, created_at, fecha_vencimiento_pago, total, estado_cobro, cliente_id, usuario_id, pedidos(vendedor_id), clientes(cat1_id))'
                 let cfrom = 0, call = []
                 while (true) {
                     const { data, error: e } = await supabase.from('venta_items')
@@ -250,7 +250,7 @@ function TabComercial() {
             clienteId: v.cliente_id,
             clienteNombre: cli.nombre || '—',
             clienteCodigo: cli.codigo || '',
-            vendedorId: v.usuario_id,
+            vendedorId: v.pedidos?.vendedor_id || v.usuario_id,
             canal,
             productoId: r.producto_id,
             productoSku: prod.sku || '',
@@ -336,7 +336,7 @@ function TabComercial() {
         return {
             ventaId: r.venta_id, ventaTotal: Number(v.total || 0), estadoCobro: v.estado_cobro,
             saldo, fecha, fechaVenc, estatus,
-            productoId: r.producto_id, clienteId: v.cliente_id, vendedorId: v.usuario_id,
+            productoId: r.producto_id, clienteId: v.cliente_id, vendedorId: v.pedidos?.vendedor_id || v.usuario_id,
             canal: cli.cat1_id ? (catMap[cli.cat1_id] || 'Sin categoría') : 'Sin categoría',
         }
     }), [rawCartera, cobradoMap, catMap, hoy])
