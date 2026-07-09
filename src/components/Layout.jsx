@@ -207,7 +207,7 @@ export default function Layout() {
                 </div>
             </aside>
 
-            <main style={{ flex: 1, minWidth: 0, overflowY: 'auto' }}>
+            <main style={{ flex: 1, minWidth: 0, height: '100vh', overflowY: 'auto' }}>
                 <Outlet key={empresaActiva?.id || 'own'} />
             </main>
 
