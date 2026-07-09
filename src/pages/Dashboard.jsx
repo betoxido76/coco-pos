@@ -86,7 +86,7 @@ function TabComercial() {
     const [cobradoMap, setCobradoMap] = useState({}) // { venta_id: cobradoUsd }
     const [catMap, setCatMap] = useState({})         // { cat1_id: nombre }
     const [rawPedidoLineas, setRawPedidoLineas] = useState([]) // líneas de pedidos abiertos
-    const [rawCartera, setRawCartera] = useState([]) // líneas de facturas pendiente/parcial (sin fecha)
+    const [rawCartera, setRawCartera] = useState([]) // facturas pendiente/parcial (nivel factura, sin fecha)
     const [userMap, setUserMap] = useState({})       // { usuario_id: nombre }
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState('')
@@ -164,15 +164,18 @@ function TabComercial() {
         async function cargarEstado() {
             try {
                 const PAGE = 1000
-                // Cartera: TODAS las facturas pendiente/parcial, sin filtro de fecha
-                const CSELECT = 'cantidad, precio_unitario, producto_id, venta_id, ' +
-                    'ventas!inner(id, created_at, fecha_vencimiento_pago, total, estado_cobro, cliente_id, usuario_id, pedidos!pedido_id(vendedor_id), clientes(cat1_id))'
+                // Cartera: TODAS las facturas pendiente/parcial, sin filtro de fecha.
+                // Se consulta ventas directamente (igual que CuentasCobrar.jsx) para
+                // que los tags cuadren exactamente; cliente/canal/vendedor son atributos
+                // a nivel factura y se filtran client-side.
+                const CSELECT = 'id, created_at, fecha_vencimiento_pago, total, estado_cobro, cliente_id, usuario_id, ' +
+                    'pedidos!pedido_id(vendedor_id), clientes(cat1_id)'
                 let cfrom = 0, call = []
                 while (true) {
-                    const { data, error: e } = await supabase.from('venta_items')
+                    const { data, error: e } = await supabase.from('ventas')
                         .select(CSELECT)
                         .eq('empresa_id', perfil.empresa_id)
-                        .in('ventas.estado_cobro', ['pendiente', 'parcial'])
+                        .in('estado_cobro', ['pendiente', 'parcial'])
                         .range(cfrom, cfrom + PAGE - 1)
                     if (e) throw e
                     call = call.concat(data || [])
@@ -182,8 +185,8 @@ function TabComercial() {
 
                 // Cobros solo de facturas 'parcial' (para saldo real)
                 const parcialIds = [...new Set(call
-                    .filter(r => r.ventas?.estado_cobro === 'parcial')
-                    .map(r => r.venta_id))]
+                    .filter(v => v.estado_cobro === 'parcial')
+                    .map(v => v.id))]
                 const cobrado = {}
                 for (let i = 0; i < parcialIds.length; i += 300) {
                     const chunk = parcialIds.slice(i, i + 300)
@@ -323,40 +326,34 @@ function TabComercial() {
     ), [pedidoLineas, fProducto, fCliente, fCanal, fVendedor])
 
     // ─── Cartera (facturas pendiente/parcial, sin filtro de fecha) ───
-    const carteraLineas = useMemo(() => rawCartera.map(r => {
-        const v = r.ventas || {}
-        const cli = v.clientes || {}
-        const cobrado = cobradoMap[r.venta_id] || 0
-        const saldo = v.estado_cobro === 'pagado' ? 0 : Math.max(0, Number(v.total || 0) - cobrado)
-        const fecha = v.created_at ? new Date(v.created_at) : null
-        const fechaVenc = v.fecha_vencimiento_pago ? new Date(v.fecha_vencimiento_pago + 'T00:00:00') : null
-        let estatus = 'sin_vencer'
-        if (v.estado_cobro === 'pagado') estatus = 'pagado'
-        else if (fechaVenc && fechaVenc < hoy) estatus = 'vencido'
-        return {
-            ventaId: r.venta_id, ventaTotal: Number(v.total || 0), estadoCobro: v.estado_cobro,
-            saldo, fecha, fechaVenc, estatus,
-            productoId: r.producto_id, clienteId: v.cliente_id, vendedorId: v.pedidos?.vendedor_id || v.usuario_id,
-            canal: cli.cat1_id ? (catMap[cli.cat1_id] || 'Sin categoría') : 'Sin categoría',
-        }
-    }), [rawCartera, cobradoMap, catMap, hoy])
-
+    // Replica EXACTAMENTE la lógica de CuentasCobrar.jsx para que los tags cuadren:
+    // ahora = new Date() (no medianoche) y fecha_vencimiento_pago se parsea en UTC
+    // (new Date('YYYY-MM-DD') sin sufijo de hora). Filtra por cliente/canal/vendedor
+    // (nivel factura); NO por producto — el saldo no es descomponible por producto,
+    // igual que en CxC.
     const carteraFacturas = useMemo(() => {
-        const filtradas = carteraLineas.filter(l =>
-            (!fProducto || l.productoId === fProducto) &&
-            (!fCliente || l.clienteId === fCliente) &&
-            (!fCanal || l.canal === fCanal) &&
-            (!fVendedor || l.vendedorId === fVendedor)
+        const ahora = new Date()
+        return rawCartera.map(v => {
+            const cli = v.clientes || {}
+            const cobrado = cobradoMap[v.id] || 0
+            const saldo = v.estado_cobro === 'pagado' ? 0 : Math.max(0, Number(v.total || 0) - cobrado)
+            const fecha = v.created_at ? new Date(v.created_at) : null
+            const fechaVenc = v.fecha_vencimiento_pago ? new Date(v.fecha_vencimiento_pago) : null
+            let estatus = 'sin_vencer'
+            if (v.estado_cobro === 'pagado') estatus = 'pagado'
+            else if (fechaVenc && fechaVenc < ahora) estatus = 'vencido'
+            return {
+                id: v.id, total: Number(v.total || 0), estadoCobro: v.estado_cobro,
+                saldo, fecha, fechaVenc, estatus,
+                clienteId: v.cliente_id, vendedorId: v.pedidos?.vendedor_id || v.usuario_id,
+                canal: cli.cat1_id ? (catMap[cli.cat1_id] || 'Sin categoría') : 'Sin categoría',
+            }
+        }).filter(f =>
+            (!fCliente || f.clienteId === fCliente) &&
+            (!fCanal || f.canal === fCanal) &&
+            (!fVendedor || f.vendedorId === fVendedor)
         )
-        const m = new Map()
-        filtradas.forEach(l => {
-            if (!m.has(l.ventaId)) m.set(l.ventaId, {
-                id: l.ventaId, total: l.ventaTotal, estadoCobro: l.estadoCobro,
-                fecha: l.fecha, fechaVenc: l.fechaVenc, saldo: l.saldo, estatus: l.estatus,
-            })
-        })
-        return [...m.values()]
-    }, [carteraLineas, fProducto, fCliente, fCanal, fVendedor])
+    }, [rawCartera, cobradoMap, catMap, fCliente, fCanal, fVendedor])
 
     // Opciones de vendedor (derivadas de ventas + pedidos)
     const opcVendedores = useMemo(() => {
@@ -380,16 +377,18 @@ function TabComercial() {
 
     // ─── Ventas totales + Días calle ponderado ───
     const ventasTotales = useMemo(() => lineasFiltradas.reduce((s, l) => s + l.lineaTotal, 0), [lineasFiltradas])
-    // Días calle: sobre la cartera completa (sin filtro de fecha)
+    // Días calle: sobre la cartera completa (sin filtro de fecha).
+    // Igual que CuentasCobrar: usa new Date() (ahora), no medianoche.
     const diasCalle = useMemo(() => {
+        const ahora = new Date()
         const sumSaldo = carteraFacturas.reduce((s, f) => s + f.saldo, 0)
         if (sumSaldo <= 0) return '0.0'
         const num = carteraFacturas.reduce((s, f) => {
-            const d = f.fecha ? Math.max(0, floorDias(hoy - f.fecha)) : 0
+            const d = f.fecha ? Math.max(0, floorDias(ahora - f.fecha)) : 0
             return s + d * f.saldo
         }, 0)
         return (num / sumSaldo).toFixed(1)
-    }, [carteraFacturas, hoy])
+    }, [carteraFacturas])
 
     // ─── KPIs de cartera (mismos que CuentasCobrar, sobre cartera completa) ───
     const cxc = useMemo(() => {
