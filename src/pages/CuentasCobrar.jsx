@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
-import { X, DollarSign, CheckSquare, FileText } from 'lucide-react'
+import { X, DollarSign, CheckSquare, FileText, Ban } from 'lucide-react'
 
 const fmt = n => `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const fmtBs = n => `${Number(n).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`
@@ -22,6 +22,8 @@ const PAGE_SIZE = 50
 
 export default function CuentasCobrar() {
     const { perfil } = useAuth()
+    // Solo finanzas/administración pueden anular notas no despachadas
+    const puedeAnular = ['admin', 'finanzas', 'superadmin'].includes(perfil?.rol)
     const [ventas, setVentas] = useState([])
     const [kpiData, setKpiData] = useState([])
     const [cobradoKpi, setCobradoKpi] = useState({})
@@ -181,11 +183,13 @@ export default function CuentasCobrar() {
                 <div>
                     <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Cuentas por cobrar</h1>
                     <p style={{ fontSize: '13px', color: '#6b7280', margin: '4px 0 0' }}>
-                        {vista === 'cxc' ? 'Seguimiento de facturas a crédito' : 'Historial de notas de crédito emitidas'}
+                        {vista === 'cxc' ? 'Seguimiento de facturas a crédito'
+                            : vista === 'nc' ? 'Historial de notas de crédito emitidas'
+                            : 'Anular notas de entrega facturadas que no serán despachadas'}
                     </p>
                 </div>
                 <div style={{ display: 'flex', gap: '4px', backgroundColor: '#f3f4f6', borderRadius: '10px', padding: '4px' }}>
-                    {[['cxc', 'Facturas CxC'], ['nc', 'Notas de Crédito']].map(([v, lbl]) => (
+                    {[['cxc', 'Facturas CxC'], ['nc', 'Notas de Crédito'], ...(puedeAnular ? [['anular', 'Anular NE']] : [])].map(([v, lbl]) => (
                         <button key={v} onClick={() => setVista(v)}
                             style={{ padding: '7px 18px', borderRadius: '8px', fontSize: '13px', fontWeight: 500, border: 'none', cursor: 'pointer', transition: 'all 0.15s', backgroundColor: vista === v ? '#fff' : 'transparent', color: vista === v ? '#1f2937' : '#6b7280', boxShadow: vista === v ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}>
                             {lbl}
@@ -386,6 +390,9 @@ export default function CuentasCobrar() {
                             )}
                 </div>
             </>)}
+
+            {/* ─── Vista Anular NE (solo finanzas/admin) ─── */}
+            {vista === 'anular' && puedeAnular && <TabAnularNE />}
 
             {/* Modals */}
             {modalVenta && (
@@ -936,7 +943,7 @@ function ModalCobroMultiple({ ventas, tasas, onCerrar, onCobrado }) {
 }
 
 function BadgeCobro({ estado }) {
-    const e = { pendiente: ['#fef9c3', '#854d0e'], parcial: ['#dbeafe', '#1e40af'], pagado: ['#dcfce7', '#166534'] }
+    const e = { pendiente: ['#fef9c3', '#854d0e'], parcial: ['#dbeafe', '#1e40af'], pagado: ['#dcfce7', '#166534'], anulado: ['#f3f4f6', '#6b7280'] }
     const [bg, color] = e[estado] || e.pendiente
     return <span style={{ backgroundColor: bg, color, padding: '2px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 500 }}>{estado}</span>
 }
@@ -1176,6 +1183,176 @@ function ModalLiquidarNC({ nc, onCerrar, onLiquidado }) {
                 <button onClick={confirmar} disabled={guardando}
                     style={{ width: '100%', backgroundColor: tipo === 'reembolso' ? '#1d4ed8' : '#6b7280', color: '#fff', border: 'none', borderRadius: '10px', padding: '13px', fontSize: '15px', fontWeight: 700, cursor: guardando ? 'default' : 'pointer', opacity: guardando ? 0.7 : 1 }}>
                     {guardando ? 'Guardando...' : tipo === 'reembolso' ? `Confirmar reembolso de ${fmt(nc.monto_devuelto)}` : 'Confirmar anulación'}
+                </button>
+            </div>
+        </>
+    )
+}
+
+// ══════════════════════════════════════════════════════════════
+// Tab Anular NE — anular notas de entrega facturadas NO despachadas
+// (solo finanzas/administración; el gate de rol está en el componente raíz)
+// ══════════════════════════════════════════════════════════════
+function TabAnularNE() {
+    const { perfil } = useAuth()
+    const [rows, setRows] = useState([])
+    const [loading, setLoading] = useState(true)
+    const [modal, setModal] = useState(null) // fila a anular
+
+    async function cargar() {
+        setLoading(true)
+        // Candidatos = pedidos facturados (aún no despachados) y su venta/NE
+        const { data: peds } = await supabase.from('pedidos')
+            .select('id, numero_pedido, venta_id, cliente_id, clientes(nombre)')
+            .eq('empresa_id', perfil.empresa_id)
+            .eq('estado', 'facturado')
+            .not('venta_id', 'is', null)
+            .order('created_at', { ascending: false })
+        const ventaIds = [...new Set((peds || []).map(p => p.venta_id).filter(Boolean))]
+        let ventasMap = {}
+        if (ventaIds.length > 0) {
+            const { data: vts } = await supabase.from('ventas')
+                .select('id, numero_factura, total, estado_cobro, created_at')
+                .in('id', ventaIds)
+            vts?.forEach(v => { ventasMap[v.id] = v })
+        }
+        const filas = (peds || []).map(p => {
+            const v = ventasMap[p.venta_id]
+            return v ? {
+                pedidoId: p.id, numeroPedido: p.numero_pedido,
+                clienteNombre: p.clientes?.nombre || '—',
+                ventaId: v.id, numeroFactura: v.numero_factura,
+                total: v.total, estadoCobro: v.estado_cobro, fecha: v.created_at,
+            } : null
+        }).filter(Boolean)
+        setRows(filas)
+        setLoading(false)
+    }
+    useEffect(() => { cargar() }, [])
+
+    return (
+        <>
+            <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: '10px', padding: '12px 16px', marginBottom: '16px', fontSize: '13px', color: '#92400e' }}>
+                Notas de entrega ya <strong>facturadas</strong> (contabilizadas en CxC e inventario) que <strong>no serán despachadas</strong>.
+                Al anular se revierte el inventario al almacén que elijas, se eliminan los cobros y la nota sale de CxC.
+            </div>
+
+            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                {loading ? <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
+                    : rows.length === 0 ? <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>No hay notas facturadas pendientes de despacho</div>
+                        : (
+                            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                <thead>
+                                    <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                                        {['Nota de Entrega', 'N° Pedido', 'Cliente', 'Emisión', 'Total', 'Estado', ''].map((h, i) => (
+                                            <th key={i} style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: i === 4 ? 'right' : 'left', whiteSpace: 'nowrap' }}>{h}</th>
+                                        ))}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {rows.map(r => (
+                                        <tr key={r.ventaId} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                                            <td style={{ padding: '12px 14px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>{r.numeroFactura}</td>
+                                            <td style={{ padding: '12px 14px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>{r.numeroPedido || '—'}</td>
+                                            <td style={{ padding: '12px 14px', fontSize: '13px', color: '#1f2937' }}>{r.clienteNombre}</td>
+                                            <td style={{ padding: '12px 14px', fontSize: '13px', color: '#6b7280' }}>{new Date(r.fecha).toLocaleDateString('es-VE')}</td>
+                                            <td style={{ padding: '12px 14px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(r.total)}</td>
+                                            <td style={{ padding: '12px 14px' }}><BadgeCobro estado={r.estadoCobro} /></td>
+                                            <td style={{ padding: '12px 14px' }}>
+                                                <button onClick={() => setModal(r)}
+                                                    style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: '#dc2626', color: '#fff', border: 'none', borderRadius: '6px', padding: '5px 12px', fontSize: '12px', fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                                    <Ban size={12} /> Anular
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        )}
+            </div>
+
+            {modal && <ModalAnularNE fila={modal} onCerrar={() => setModal(null)} onAnulada={() => { setModal(null); cargar() }} />}
+        </>
+    )
+}
+
+function ModalAnularNE({ fila, onCerrar, onAnulada }) {
+    const { perfil } = useAuth()
+    const [almacenes, setAlmacenes] = useState([])
+    const [almacenId, setAlmacenId] = useState('')
+    const [motivo, setMotivo] = useState('')
+    const [guardando, setGuardando] = useState(false)
+    const [error, setError] = useState('')
+
+    useEffect(() => {
+        supabase.from('almacenes').select('id, nombre, es_default')
+            .eq('empresa_id', perfil.empresa_id).eq('activo', true).order('nombre')
+            .then(({ data }) => {
+                setAlmacenes(data || [])
+                const def = (data || []).find(a => a.es_default) || (data || [])[0]
+                if (def) setAlmacenId(def.id)
+            })
+    }, [])
+
+    async function confirmar() {
+        if (!almacenId) { setError('Selecciona el almacén destino'); return }
+        if (!motivo.trim()) { setError('El motivo es obligatorio'); return }
+        setGuardando(true); setError('')
+        const { error: err } = await supabase.rpc('anular_nota_no_despachada', {
+            p_venta_id: fila.ventaId,
+            p_almacen_destino_id: almacenId,
+            p_motivo: motivo.trim(),
+        })
+        setGuardando(false)
+        if (err) { setError('Error: ' + err.message); return }
+        onAnulada()
+    }
+
+    return (
+        <>
+            <div onClick={onCerrar} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', zIndex: 40 }} />
+            <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', backgroundColor: '#fff', borderRadius: '16px', padding: '28px', width: '440px', zIndex: 50, boxShadow: '0 20px 60px rgba(0,0,0,0.2)', maxHeight: '90vh', overflowY: 'auto' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                    <h2 style={{ fontSize: '17px', fontWeight: 700, color: '#1f2937', margin: 0 }}>Anular nota de entrega</h2>
+                    <button onClick={onCerrar} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af' }}><X size={20} /></button>
+                </div>
+
+                <div style={{ backgroundColor: '#f9fafb', borderRadius: '10px', padding: '12px 16px', marginBottom: '16px', fontSize: '13px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                        <span style={{ color: '#6b7280' }}>Nota / Pedido</span>
+                        <span style={{ fontFamily: 'monospace', fontWeight: 600, color: '#1f2937' }}>{fila.numeroFactura} · {fila.numeroPedido || '—'}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: '#6b7280' }}>Cliente</span>
+                        <span style={{ color: '#1f2937' }}>{fila.clienteNombre}</span>
+                    </div>
+                </div>
+
+                <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 14px', marginBottom: '16px', fontSize: '12px', color: '#991b1b' }}>
+                    Se reintegrará el inventario al almacén elegido, se eliminarán los cobros de esta nota y la nota + el pedido quedarán <strong>anulados</strong>. Esta acción no se puede deshacer.
+                </div>
+
+                <div style={{ marginBottom: '14px' }}>
+                    <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Almacén destino del inventario</label>
+                    <select value={almacenId} onChange={e => setAlmacenId(e.target.value)}
+                        style={{ width: '100%', padding: '9px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', backgroundColor: '#fff' }}>
+                        <option value="">— Selecciona almacén —</option>
+                        {almacenes.map(a => <option key={a.id} value={a.id}>{a.nombre}</option>)}
+                    </select>
+                </div>
+
+                <div style={{ marginBottom: '16px' }}>
+                    <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Motivo de anulación</label>
+                    <textarea value={motivo} onChange={e => setMotivo(e.target.value)} rows={3}
+                        placeholder="Ej: pedido cancelado por el cliente, error de facturación..."
+                        style={{ width: '100%', padding: '9px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', resize: 'vertical', boxSizing: 'border-box', fontFamily: 'inherit' }} />
+                </div>
+
+                {error && <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px', fontSize: '13px', color: '#dc2626', marginBottom: '12px' }}>{error}</div>}
+
+                <button onClick={confirmar} disabled={guardando}
+                    style={{ width: '100%', backgroundColor: '#dc2626', color: '#fff', border: 'none', borderRadius: '10px', padding: '13px', fontSize: '15px', fontWeight: 700, cursor: guardando ? 'default' : 'pointer', opacity: guardando ? 0.7 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                    <Ban size={16} /> {guardando ? 'Anulando...' : 'Confirmar anulación'}
                 </button>
             </div>
         </>
