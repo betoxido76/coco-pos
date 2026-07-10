@@ -57,7 +57,7 @@ export default function Ventas() {
         setLoading(true)
         const { data } = await supabase
             .from('ventas')
-            .select(`*, clientes(nombre, direccion_fiscal), devoluciones(id)`)
+            .select(`*, clientes(nombre, direccion_fiscal), devoluciones(id), pedidos!pedido_id(numero_pedido)`)
             .eq('empresa_id', perfil.empresa_id)
             .limit(5000)
         if (data) setVentas(data)
@@ -111,6 +111,7 @@ export default function Ventas() {
     const ventasOrdenadas = [...ventas].sort((a, b) => {
         let va, vb
         if (sortCol === 'numero_factura') { va = a.numero_factura || ''; vb = b.numero_factura || '' }
+        else if (sortCol === 'numero_pedido') { va = a.pedidos?.numero_pedido || ''; vb = b.pedidos?.numero_pedido || '' }
         else if (sortCol === 'nro_referencia') { va = a.nro_referencia || ''; vb = b.nro_referencia || '' }
         else if (sortCol === 'cliente') { va = a.clientes?.nombre || ''; vb = b.clientes?.nombre || '' }
         else if (sortCol === 'fecha') { va = new Date(a.fecha_venta || a.created_at); vb = new Date(b.fecha_venta || b.created_at) }
@@ -204,6 +205,7 @@ export default function Ventas() {
                                 <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
                                     {[
                                         { label: 'Nota de Entrega', col: 'numero_factura' },
+                                        { label: 'N° Pedido', col: 'numero_pedido' },
                                         { label: 'Referencia', col: 'nro_referencia' },
                                         { label: 'O/C Cliente', col: null },
                                         { label: 'Cliente', col: 'cliente' },
@@ -233,6 +235,9 @@ export default function Ventas() {
                                                     </span>
                                                 )}
                                             </div>
+                                        </td>
+                                        <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', color: v.pedidos?.numero_pedido ? '#374151' : '#d1d5db' }}>
+                                            {v.pedidos?.numero_pedido || '—'}
                                         </td>
                                         <td style={{ padding: '12px 16px', fontSize: '12px', fontFamily: 'monospace', color: v.nro_referencia ? '#374151' : '#d1d5db' }}>
                                             {v.nro_referencia || '—'}
