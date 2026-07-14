@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
-import { Plus, ChevronRight, X, AlertTriangle, Check, FlaskConical, Package } from 'lucide-react'
+import { Plus, ChevronRight, X, AlertTriangle, Check, FlaskConical, Package, Search } from 'lucide-react'
 
 const fmt = (n, dec = 2) => Number(n || 0).toLocaleString('es-VE', { minimumFractionDigits: dec, maximumFractionDigits: dec })
+
+const PAGE_SIZE_OPTIONS = [25, 50, 100]
 
 // ── Colores y labels por estado ────────────────────────────────
 const ESTADO = {
@@ -52,8 +54,23 @@ export default function Produccion() {
     const [ordenes, setOrdenes] = useState([])
     const [loading, setLoading] = useState(true)
     const [filtroEstado, setFiltroEstado] = useState('todos')
+    const [busqueda, setBusqueda] = useState('')
+    const [fechaDesde, setFechaDesde] = useState('')
+    const [fechaHasta, setFechaHasta] = useState('')
+    const [pagina, setPagina] = useState(0)
+    const [pageSize, setPageSize] = useState(50)
+    const [sortCol, setSortCol] = useState('')
+    const [sortDir, setSortDir] = useState('asc')
 
     useEffect(() => { cargar() }, [filtroEstado])
+    useEffect(() => { setPagina(0) }, [busqueda, fechaDesde, fechaHasta, filtroEstado, pageSize])
+
+    function handleSort(col) {
+        if (!col) return
+        if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+        else { setSortCol(col); setSortDir('asc') }
+        setPagina(0)
+    }
 
     async function cargar() {
         setLoading(true)
@@ -93,6 +110,37 @@ export default function Produccion() {
         if (o.estado !== 'cerrada' || !o.fecha_cierre) return false
         return new Date(o.fecha_cierre).toDateString() === new Date().toDateString()
     }).length
+
+    // Filtros: búsqueda por SKU/descripción + rango sobre fecha_planificada
+    const filtrados = ordenes.filter(o => {
+        if (busqueda.trim()) {
+            const q = busqueda.toLowerCase()
+            if (!getNombreSalida(o).toLowerCase().includes(q) && !getSkuSalida(o).toLowerCase().includes(q)) return false
+        }
+        if (fechaDesde && (!o.fecha_planificada || o.fecha_planificada < fechaDesde)) return false
+        if (fechaHasta && (!o.fecha_planificada || o.fecha_planificada > fechaHasta)) return false
+        return true
+    })
+
+    const ordenados = sortCol ? [...filtrados].sort((a, b) => {
+        let av, bv
+        switch (sortCol) {
+            case 'numero':   av = a.numero_orden || '';               bv = b.numero_orden || '';               break
+            case 'lote':     av = a.numero_lote || '';                bv = b.numero_lote || '';                break
+            case 'producto': av = getNombreSalida(a);                 bv = getNombreSalida(b);                  break
+            case 'planif':   av = Number(a.cantidad_planificada || 0); bv = Number(b.cantidad_planificada || 0); break
+            case 'real':     av = Number(a.cantidad_real || 0);        bv = Number(b.cantidad_real || 0);        break
+            case 'fecha':    av = a.fecha_planificada || '';          bv = b.fecha_planificada || '';          break
+            case 'estado':   av = a.estado || '';                     bv = b.estado || '';                     break
+            default:         return 0
+        }
+        if (typeof av === 'string') return sortDir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av)
+        return sortDir === 'asc' ? av - bv : bv - av
+    }) : filtrados
+
+    const totalPaginas = Math.max(1, Math.ceil(filtrados.length / pageSize))
+    const paginaSegura = Math.min(pagina, totalPaginas - 1)
+    const paginados = ordenados.slice(paginaSegura * pageSize, (paginaSegura + 1) * pageSize)
 
     return (
         <div style={{ padding: '24px' }}>
@@ -136,23 +184,71 @@ export default function Produccion() {
                 ))}
             </div>
 
+            {/* Filtros: búsqueda + rango de fechas */}
+            <div style={{ display: 'flex', gap: '12px', marginBottom: '16px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                <div style={{ flex: 1, minWidth: '220px' }}>
+                    <label style={{ fontSize: '12px', color: '#6b7280', display: 'block', marginBottom: '4px' }}>Buscar por SKU o descripción</label>
+                    <div style={{ position: 'relative' }}>
+                        <Search size={15} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
+                        <input type="text" value={busqueda} onChange={e => setBusqueda(e.target.value)}
+                            placeholder="SKU o nombre del producto..."
+                            style={{ ...inputStyle, paddingLeft: '32px' }} />
+                    </div>
+                </div>
+                <div>
+                    <label style={{ fontSize: '12px', color: '#6b7280', display: 'block', marginBottom: '4px' }}>Fecha planif. desde</label>
+                    <input type="date" value={fechaDesde} onChange={e => setFechaDesde(e.target.value)}
+                        style={{ ...inputStyle, width: 'auto' }} />
+                </div>
+                <div>
+                    <label style={{ fontSize: '12px', color: '#6b7280', display: 'block', marginBottom: '4px' }}>Fecha planif. hasta</label>
+                    <input type="date" value={fechaHasta} onChange={e => setFechaHasta(e.target.value)}
+                        style={{ ...inputStyle, width: 'auto' }} />
+                </div>
+                {(busqueda || fechaDesde || fechaHasta) && (
+                    <button onClick={() => { setBusqueda(''); setFechaDesde(''); setFechaHasta('') }}
+                        style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '8px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: '#6b7280', fontSize: '13px', cursor: 'pointer' }}>
+                        <X size={13} /> Limpiar
+                    </button>
+                )}
+            </div>
+
             {/* Tabla */}
             <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
                 {loading
                     ? <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
-                    : ordenes.length === 0
-                        ? <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>No hay órdenes en este estado</div>
+                    : filtrados.length === 0
+                        ? <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>
+                            {ordenes.length === 0 ? 'No hay órdenes en este estado' : 'No hay órdenes que coincidan con los filtros'}
+                          </div>
                         : (
                             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                                 <thead>
                                     <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                        {['N° Orden', 'Lote', 'Producto', 'Cant. planif.', 'Cant. real', 'Fecha planif.', 'Estado', ''].map(h => (
-                                            <th key={h} style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
+                                        {[
+                                            { key: 'numero',   label: 'N° Orden' },
+                                            { key: 'lote',     label: 'Lote' },
+                                            { key: 'producto', label: 'Producto' },
+                                            { key: 'planif',   label: 'Cant. planif.' },
+                                            { key: 'real',     label: 'Cant. real' },
+                                            { key: 'fecha',    label: 'Fecha planif.' },
+                                            { key: 'estado',   label: 'Estado' },
+                                            { key: '',         label: '' },
+                                        ].map(col => (
+                                            <th key={col.key || 'acc'} onClick={() => handleSort(col.key)}
+                                                style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left', whiteSpace: 'nowrap', cursor: col.key ? 'pointer' : 'default', userSelect: 'none' }}>
+                                                {col.label}{col.key && ' '}
+                                                {col.key && (
+                                                    <span style={{ color: sortCol === col.key ? '#16a34a' : '#d1d5db' }}>
+                                                        {sortCol === col.key ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}
+                                                    </span>
+                                                )}
+                                            </th>
                                         ))}
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {ordenes.map(o => (
+                                    {paginados.map(o => (
                                         <tr key={o.id} style={{ borderBottom: '1px solid #f3f4f6' }}
                                             onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
                                             onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
@@ -191,6 +287,29 @@ export default function Produccion() {
                             </table>
                         )}
             </div>
+
+            {/* Paginación */}
+            {!loading && filtrados.length > 0 && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', marginTop: '16px', fontSize: '13px', color: '#6b7280', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span>Filas por página:</span>
+                        <select value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setPagina(0) }}
+                            style={{ border: '1px solid #d1d5db', borderRadius: '6px', padding: '4px 8px', fontSize: '13px', color: '#374151', backgroundColor: '#fff' }}>
+                            {PAGE_SIZE_OPTIONS.map(n => <option key={n} value={n}>{n}</option>)}
+                        </select>
+                    </div>
+                    <span style={{ color: '#9ca3af' }}>
+                        {paginaSegura * pageSize + 1}–{Math.min((paginaSegura + 1) * pageSize, filtrados.length)} de {filtrados.length}
+                    </span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <button onClick={() => setPagina(p => Math.max(0, p - 1))} disabled={paginaSegura === 0}
+                            style={{ padding: '4px 12px', borderRadius: '6px', border: '1px solid #d1d5db', backgroundColor: '#fff', color: '#374151', cursor: paginaSegura === 0 ? 'default' : 'pointer', opacity: paginaSegura === 0 ? 0.4 : 1 }}>←</button>
+                        <span style={{ padding: '0 12px' }}>Pág. {paginaSegura + 1} / {totalPaginas}</span>
+                        <button onClick={() => setPagina(p => Math.min(totalPaginas - 1, p + 1))} disabled={paginaSegura >= totalPaginas - 1}
+                            style={{ padding: '4px 12px', borderRadius: '6px', border: '1px solid #d1d5db', backgroundColor: '#fff', color: '#374151', cursor: paginaSegura >= totalPaginas - 1 ? 'default' : 'pointer', opacity: paginaSegura >= totalPaginas - 1 ? 0.4 : 1 }}>→</button>
+                    </div>
+                </div>
+            )}
         </div>
     )
 }
