@@ -92,7 +92,7 @@ export default function Gastos() {
         else if (filtroEstado !== 'todos') kpiQ = kpiQ.eq('estado', filtroEstado)
 
         let tablaQ = supabase.from('gastos')
-            .select('*, tipos_gastos(nombre), usuarios(nombre), proveedores(nombre)', { count: 'exact' })
+            .select('*, tipos_gastos(nombre), usuarios!usuario_id(nombre), proveedores(nombre)', { count: 'exact' })
             .eq('empresa_id', perfil.empresa_id)
             .order('fecha', { ascending: false })
             .order('created_at', { ascending: false })
