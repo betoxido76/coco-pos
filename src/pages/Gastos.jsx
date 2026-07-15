@@ -45,6 +45,7 @@ export default function Gastos() {
     const [tasas, setTasas] = useState({ tasa_bcv: 1, tasa_euro: 1, tasa_binance: 1 })
     const [tipos, setTipos] = useState([])
     const [gastoPagando, setGastoPagando] = useState(null)
+    const [gastoAnulando, setGastoAnulando] = useState(null)
     const [gastoVer, setGastoVer] = useState(null)
     const [pagina, setPagina] = useState(0)
     const [totalRegistros, setTotalRegistros] = useState(0)
@@ -323,6 +324,11 @@ export default function Gastos() {
                                                                 Parcial
                                                             </span>
                                                         )}
+                                                        {estado === 'anulado' && (
+                                                            <span style={{ fontSize: '10px', backgroundColor: '#f3f4f6', color: '#6b7280', padding: '2px 8px', borderRadius: '20px', fontWeight: 600, whiteSpace: 'nowrap', textDecoration: 'line-through' }}>
+                                                                Anulado
+                                                            </span>
+                                                        )}
                                                     </div>
                                                 </td>
                                                 <td style={{ padding: '12px 14px', fontSize: '13px', color: '#6b7280' }}>
@@ -358,6 +364,13 @@ export default function Gastos() {
                                                             style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer', whiteSpace: 'nowrap' }}>
                                                             <FileText size={13} /> Ver
                                                         </button>
+                                                        {estado === 'pendiente' && (
+                                                            <button onClick={() => setGastoAnulando(g)}
+                                                                title="Anular gasto"
+                                                                style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #fecaca', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#dc2626', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                                                <X size={13} /> Anular
+                                                            </button>
+                                                        )}
                                                     </div>
                                                 </td>
                                             </tr>
@@ -399,6 +412,15 @@ export default function Gastos() {
                     tasas={tasas}
                     onPagado={() => { setGastoPagando(null); cargarGastos() }}
                     onCerrar={() => setGastoPagando(null)}
+                />
+            )}
+
+            {/* Modal anular gasto */}
+            {gastoAnulando && (
+                <ModalAnularGasto
+                    gasto={gastoAnulando}
+                    onAnulado={() => { setGastoAnulando(null); cargarGastos() }}
+                    onCerrar={() => setGastoAnulando(null)}
                 />
             )}
         </div>
@@ -601,6 +623,84 @@ function ModalPagarGasto({ gasto, tasas, onPagado, onCerrar }) {
                             Cancelar
                         </button>
                     </div>
+                </div>
+            </div>
+        </>
+    )
+}
+
+// ══════════════════════════════════════════════════════════════
+// MODAL ANULAR GASTO
+// ══════════════════════════════════════════════════════════════
+function ModalAnularGasto({ gasto, onAnulado, onCerrar }) {
+    const { perfil } = useAuth()
+    const [motivo, setMotivo] = useState('')
+    const [guardando, setGuardando] = useState(false)
+    const [error, setError] = useState('')
+
+    async function confirmar() {
+        setGuardando(true); setError('')
+
+        // Guarda: no anular gastos con abonos registrados (revertir pagos primero)
+        const { count } = await supabase.from('pagos')
+            .select('id', { count: 'exact', head: true })
+            .eq('empresa_id', perfil.empresa_id)
+            .eq('origen_tipo', 'gasto').eq('origen_id', gasto.id)
+        if (count > 0) {
+            setError('Este gasto tiene abonos registrados. Revierte los pagos antes de anularlo.')
+            setGuardando(false); return
+        }
+
+        const { data: { user } } = await supabase.auth.getUser()
+        const { error: err } = await supabase.from('gastos').update({
+            estado: 'anulado',
+            anulado_por: user?.id || null,
+            fecha_anulacion: new Date().toISOString(),
+            motivo_anulacion: motivo.trim() || null,
+        }).eq('id', gasto.id).eq('empresa_id', perfil.empresa_id)
+
+        if (err) { setError('Error al anular: ' + err.message); setGuardando(false); return }
+        onAnulado()
+    }
+
+    return (
+        <>
+            <div onClick={onCerrar} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', zIndex: 40 }} />
+            <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', backgroundColor: '#fff', borderRadius: '16px', padding: '28px', width: '440px', zIndex: 50, boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
+                    <AlertTriangle size={20} color="#dc2626" />
+                    <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#1f2937', margin: 0 }}>Anular gasto</h3>
+                </div>
+                <p style={{ fontSize: '13px', color: '#6b7280', margin: '0 0 16px' }}>
+                    {gasto.numero_gasto} · {gasto.nombre}
+                </p>
+
+                <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '12px 14px', marginBottom: '16px', fontSize: '13px', color: '#991b1b', lineHeight: 1.5 }}>
+                    El gasto quedará marcado como <b>anulado</b>. Saldrá de Cuentas por Pagar y del filtro "Por pagar", pero seguirá visible en el historial (filtro "Todos") para auditoría.
+                </div>
+
+                <div>
+                    <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Motivo (opcional)</label>
+                    <textarea value={motivo} onChange={e => setMotivo(e.target.value)} rows={2}
+                        placeholder="Ej: Registrado por error"
+                        style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }} />
+                </div>
+
+                {error && (
+                    <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 14px', fontSize: '13px', color: '#dc2626', marginTop: '14px' }}>
+                        {error}
+                    </div>
+                )}
+
+                <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
+                    <button onClick={confirmar} disabled={guardando}
+                        style={{ flex: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', backgroundColor: '#dc2626', color: '#fff', border: 'none', borderRadius: '8px', padding: '11px', fontSize: '14px', fontWeight: 600, cursor: 'pointer', opacity: guardando ? 0.6 : 1 }}>
+                        <X size={16} /> {guardando ? 'Anulando...' : 'Anular gasto'}
+                    </button>
+                    <button onClick={onCerrar}
+                        style={{ flex: 1, padding: '11px', borderRadius: '8px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: '#374151', fontSize: '14px', cursor: 'pointer' }}>
+                        Cancelar
+                    </button>
                 </div>
             </div>
         </>
@@ -1012,9 +1112,9 @@ function DetalleGasto({ gasto: g, tasas, onVolver }) {
     const pagadoUsd = pagos.reduce((s, p) => s + pagoEnUsd(p), 0)
     const saldoUsd = Math.max(0, totalUsd - pagadoUsd)
 
-    const estadoLabel = estado === 'pagado' ? 'Pagado' : estado === 'parcial' ? 'Parcial' : 'Pendiente'
-    const estadoBg = estado === 'pagado' ? '#f0fdf4' : estado === 'parcial' ? '#dbeafe' : (sem?.bg || '#fffbeb')
-    const estadoColor = estado === 'pagado' ? '#16a34a' : estado === 'parcial' ? '#1e40af' : (sem?.color || '#d97706')
+    const estadoLabel = estado === 'pagado' ? 'Pagado' : estado === 'parcial' ? 'Parcial' : estado === 'anulado' ? 'Anulado' : 'Pendiente'
+    const estadoBg = estado === 'pagado' ? '#f0fdf4' : estado === 'parcial' ? '#dbeafe' : estado === 'anulado' ? '#f3f4f6' : (sem?.bg || '#fffbeb')
+    const estadoColor = estado === 'pagado' ? '#16a34a' : estado === 'parcial' ? '#1e40af' : estado === 'anulado' ? '#6b7280' : (sem?.color || '#d97706')
 
     const card = { backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '12px', padding: '20px 24px', marginBottom: '16px' }
     const label = { fontSize: '11px', fontWeight: 500, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 4px' }
@@ -1102,7 +1202,7 @@ function DetalleGasto({ gasto: g, tasas, onVolver }) {
                         <p style={label}>{esPorPagar ? 'Fecha vencimiento' : 'Estado'}</p>
                         {esPorPagar && sem
                             ? <p style={{ ...value, color: sem.color }}>{sem.dot} {sem.label}</p>
-                            : <p style={{ ...value, color: '#16a34a' }}>Pagado</p>}
+                            : <p style={{ ...value, color: estado === 'anulado' ? '#6b7280' : '#16a34a' }}>{estado === 'anulado' ? 'Anulado' : 'Pagado'}</p>}
                     </div>
                     <div>
                         <p style={label}>Registrado por</p>
@@ -1110,6 +1210,23 @@ function DetalleGasto({ gasto: g, tasas, onVolver }) {
                     </div>
                 </div>
             </div>
+
+            {/* Aviso de anulación */}
+            {estado === 'anulado' && (
+                <div style={{ ...card, backgroundColor: '#f9fafb', borderColor: '#e5e7eb' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                        <span style={{ fontSize: '12px', fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Gasto anulado</span>
+                    </div>
+                    {g.fecha_anulacion && (
+                        <p style={{ fontSize: '13px', color: '#6b7280', margin: '0 0 4px' }}>
+                            Anulado el {new Date(g.fecha_anulacion).toLocaleDateString('es-VE', { day: '2-digit', month: 'long', year: 'numeric' })}
+                        </p>
+                    )}
+                    <p style={{ fontSize: '13px', color: '#374151', margin: 0 }}>
+                        <b>Motivo:</b> {g.motivo_anulacion || '—'}
+                    </p>
+                </div>
+            )}
 
             {/* Historial de abonos */}
             {pagos.length > 0 && (
