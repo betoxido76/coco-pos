@@ -364,7 +364,7 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
 
     useEffect(() => {
         supabase.from('pedido_items')
-            .select('*, productos_terminados(nombre, sku, stock_actual, aplica_iva, tipo_producto)')
+            .select('*, productos_terminados(nombre, sku, stock_actual, aplica_iva, tipo_producto, unidad_venta_2, factor_conversion_2)')
             .eq('pedido_id', pedido.id)
             .then(({ data }) => {
                 if (data) {
@@ -469,14 +469,29 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
         if (errVenta) { setError('Error: ' + errVenta.message); setProcesando(false); return }
 
         await supabase.from('venta_items').insert(
-            items.map(i => ({
-                venta_id: venta.id,
-                producto_id: i.producto_id,
-                cantidad: i.cantidad,
-                precio_unitario: Number(i.precio_unitario) * (1 - Number(i.descuento_item || 0) / 100) * (1 - descGlobal / 100),
-                aplica_iva: i.productos_terminados?.aplica_iva ?? true,
-                empresa_id: perfil.empresa_id,
-            }))
+            items.map(i => {
+                const prod = i.productos_terminados || {}
+                const factor = Number(prod.factor_conversion_2 || 1)
+                const esSec = i.unidad_venta && (i.unidad_venta === '2' || (prod.unidad_venta_2 && i.unidad_venta === prod.unidad_venta_2))
+                // Cantidad facturada en unidades primarias:
+                //  - con alistado, cantidad_alistada ya está en primarias
+                //  - sin alistado, usar cantidad_primaria del pedido; último recurso: convertir con el factor
+                const cantidadPrimaria = i.cantidad_alistada != null
+                    ? Number(i.cantidad_alistada)
+                    : (i.cantidad_primaria != null
+                        ? Number(i.cantidad_primaria)
+                        : (esSec && factor > 1 ? Number(i.cantidad) * factor : Number(i.cantidad)))
+                return {
+                    venta_id: venta.id,
+                    producto_id: i.producto_id,
+                    cantidad: i.cantidad,
+                    precio_unitario: Number(i.precio_unitario) * (1 - Number(i.descuento_item || 0) / 100) * (1 - descGlobal / 100),
+                    aplica_iva: i.productos_terminados?.aplica_iva ?? true,
+                    unidad_venta: i.unidad_venta || null,
+                    cantidad_primaria: cantidadPrimaria,
+                    empresa_id: perfil.empresa_id,
+                }
+            })
         )
 
         if (condicion === 'contado') {

@@ -122,7 +122,7 @@ function TabComercial() {
                 const um = {}; (users || []).forEach(u => { um[u.id] = u.nombre })
 
                 // Líneas de venta con su factura y cliente (paginado por 1000)
-                const SELECT = 'cantidad, precio_unitario, producto_id, venta_id, ' +
+                const SELECT = 'cantidad, cantidad_primaria, precio_unitario, producto_id, venta_id, ' +
                     'productos_terminados(sku, nombre), ' +
                     'ventas!inner(id, numero_factura, created_at, fecha_vencimiento_pago, total, estado_cobro, cliente_id, usuario_id, pedidos!pedido_id(vendedor_id), clientes(nombre, codigo, cat1_id))'
                 const PAGE = 1000
@@ -239,6 +239,9 @@ function TabComercial() {
         const canal = cli.cat1_id ? (catMap[cli.cat1_id] || 'Sin categoría') : 'Sin categoría'
         const cantidad = Number(r.cantidad || 0)
         const precio = Number(r.precio_unitario || 0)
+        // Unidades normalizadas a la unidad primaria (Unidad de medida). cantidad_primaria
+        // ya viene normalizada; si falta (registros viejos sin backfill), cae a cantidad.
+        const unidadesPrimarias = r.cantidad_primaria != null ? Number(r.cantidad_primaria) : cantidad
         // Estatus factura: parcial cuenta como pendiente
         let estatus = 'sin_vencer'
         if (v.estado_cobro === 'pagado') estatus = 'pagado'
@@ -258,7 +261,7 @@ function TabComercial() {
             productoId: r.producto_id,
             productoSku: prod.sku || '',
             productoNombre: prod.nombre || '—',
-            cantidad, precio,
+            cantidad, precio, unidadesPrimarias,
             lineaTotal: cantidad * precio,
             diasCredito: (fecha && fechaVenc) ? Math.max(0, floorDias(fechaVenc - fecha)) : null,
             estatus,
@@ -375,8 +378,10 @@ function TabComercial() {
         return [...m.values()]
     }, [lineasFiltradas])
 
-    // ─── Ventas totales + Días calle ponderado ───
+    // ─── Ventas totales + Unidades vendidas + Días calle ponderado ───
     const ventasTotales = useMemo(() => lineasFiltradas.reduce((s, l) => s + l.lineaTotal, 0), [lineasFiltradas])
+    // Unidades vendidas normalizadas a la unidad primaria (respeta todos los filtros vía lineasFiltradas)
+    const unidadesVendidas = useMemo(() => lineasFiltradas.reduce((s, l) => s + l.unidadesPrimarias, 0), [lineasFiltradas])
     // Días calle: sobre la cartera completa (sin filtro de fecha).
     // Igual que CuentasCobrar: usa new Date() (ahora), no medianoche.
     const diasCalle = useMemo(() => {
@@ -612,6 +617,7 @@ function TabComercial() {
                     {/* ─── Tags / indicadores (afectados por los filtros) ─── */}
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '12px', marginBottom: '20px' }}>
                         <TagCard label="Ventas totales" valor={fmt(ventasTotales)} color="#1f2937" />
+                        <TagCard label="Unidades vendidas" valor={fmtNum(unidadesVendidas)} sub="en unidad primaria" color="#1f2937" />
                         <TagCard label="Días calle ponderado" valor={`${diasCalle} días`} sub="ponderado por saldo" color="#d97706" />
                         <TagCard label="Total pendiente" valor={fmt(cxc.totalPendiente)} sub="por cobrar" color="#1f2937" />
                         <TagCard label="Facturas vencidas" valor={cxc.vencidasCount} sub="requieren atención" color="#ef4444" />
