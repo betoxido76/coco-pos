@@ -107,6 +107,8 @@ function TabComercial() {
     const [page, setPage] = useState(0)
     // Tabla inferior (consolidado por sucursal)
     const [sortSuc, setSortSuc] = useState({ col: 'total', dir: 'desc' })
+    const [pageSizeSuc, setPageSizeSuc] = useState(25)
+    const [pageSuc, setPageSuc] = useState(0)
 
     // Gráfica ampliada (modal)
     const [expandida, setExpandida] = useState(null)
@@ -232,6 +234,7 @@ function TabComercial() {
 
     // Reset de página al cambiar filtros/orden/tamaño
     useEffect(() => { setPage(0) }, [fProducto, fCliente, fCanal, fVendedor, sort, pageSize, desde, hasta])
+    useEffect(() => { setPageSuc(0) }, [fProducto, fCliente, fCanal, fVendedor, sortSuc, pageSizeSuc, desde, hasta])
 
     // Puntos de entrega del cliente seleccionado (activa la desagregación por sucursal)
     useEffect(() => {
@@ -463,6 +466,11 @@ function TabComercial() {
         })
         return arr
     }, [sucursalesConsolidado, sortSuc])
+
+    const totalSucursales = sucursalesOrdenadas.length
+    const pageStartSuc = pageSuc * pageSizeSuc
+    const sucursalesPagina = sucursalesOrdenadas.slice(pageStartSuc, pageStartSuc + pageSizeSuc)
+    const maxPageSuc = Math.max(0, Math.ceil(totalSucursales / pageSizeSuc) - 1)
 
     // ─── Ventas totales + Unidades vendidas + Días calle ponderado ───
     const ventasTotales = useMemo(() => lineasFiltradas.reduce((s, l) => s + l.lineaTotal, 0), [lineasFiltradas])
@@ -795,7 +803,7 @@ function TabComercial() {
                             </div>
                             <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden', marginBottom: '24px' }}>
                                 <div style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: '460px' }}>
-                                    {sucursalesOrdenadas.length === 0 ? (
+                                    {totalSucursales === 0 ? (
                                         <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>No hay documentos para los filtros seleccionados</div>
                                     ) : (
                                         <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '520px' }}>
@@ -810,7 +818,7 @@ function TabComercial() {
                                                 </tr>
                                             </thead>
                                             <tbody>
-                                                {sucursalesOrdenadas.map((s, i) => (
+                                                {sucursalesPagina.map((s, i) => (
                                                     <tr key={i} style={{ borderBottom: '1px solid #f3f4f6' }}>
                                                         <td style={{ padding: '10px 14px', fontSize: '13px', color: '#1f2937' }}>{s.sucursal}</td>
                                                         <td style={{ padding: '10px 14px', fontSize: '13px', color: '#374151', textAlign: 'right' }}>{fmtNum(s.unidades)}</td>
@@ -823,6 +831,29 @@ function TabComercial() {
                                         </table>
                                     )}
                                 </div>
+                                {totalSucursales > 0 && (
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderTop: '1px solid #f3f4f6', flexWrap: 'wrap', gap: '8px' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                            <span style={{ fontSize: '13px', color: '#6b7280' }}>
+                                                Mostrando {pageStartSuc + 1}–{Math.min(pageStartSuc + pageSizeSuc, totalSucursales)} de {totalSucursales}
+                                            </span>
+                                            <select value={pageSizeSuc} onChange={e => setPageSizeSuc(Number(e.target.value))}
+                                                style={{ padding: '5px 8px', borderRadius: '6px', fontSize: '12px', border: '1px solid #e5e7eb', color: '#374151', backgroundColor: '#fff', cursor: 'pointer' }}>
+                                                {[25, 50, 100].map(n => <option key={n} value={n}>{n} / pág.</option>)}
+                                            </select>
+                                        </div>
+                                        <div style={{ display: 'flex', gap: '8px' }}>
+                                            <button onClick={() => setPageSuc(p => Math.max(0, p - 1))} disabled={pageSuc === 0}
+                                                style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: pageSuc === 0 ? '#d1d5db' : '#374151', cursor: pageSuc === 0 ? 'default' : 'pointer' }}>
+                                                ← Anterior
+                                            </button>
+                                            <button onClick={() => setPageSuc(p => Math.min(maxPageSuc, p + 1))} disabled={pageSuc >= maxPageSuc}
+                                                style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: pageSuc >= maxPageSuc ? '#d1d5db' : '#374151', cursor: pageSuc >= maxPageSuc ? 'default' : 'pointer' }}>
+                                                Siguiente →
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         </>
                     )}
