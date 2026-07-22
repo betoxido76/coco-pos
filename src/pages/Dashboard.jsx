@@ -433,23 +433,28 @@ function TabComercial() {
         if (!mostrarPorPunto) return []
         const m = new Map()
         facturasPorPunto.forEach(f => {
-            if (!m.has(f.sucursal)) m.set(f.sucursal, { sucursal: f.sucursal, total: 0, saldo: 0, algunVencido: false })
+            if (!m.has(f.sucursal)) m.set(f.sucursal, { sucursal: f.sucursal, unidades: 0, total: 0, saldo: 0, algunVencido: false })
             const a = m.get(f.sucursal)
             a.total += f.total
             a.saldo += f.saldo
             if (f.estatus === 'vencido') a.algunVencido = true
         })
+        // Unidades a nivel línea, normalizadas a la unidad primaria (igual que el tag "Unidades vendidas")
+        lineasFiltradas.forEach(l => {
+            const a = m.get(sucursalNombre(l))
+            if (a) a.unidades += l.unidadesPrimarias
+        })
         return [...m.values()].map(a => ({
-            sucursal: a.sucursal, total: a.total, saldo: a.saldo,
+            sucursal: a.sucursal, unidades: a.unidades, total: a.total, saldo: a.saldo,
             estatus: a.saldo <= 0.01 ? 'pagado' : (a.algunVencido ? 'vencido' : 'sin_vencer'),
         }))
-    }, [mostrarPorPunto, facturasPorPunto])
+    }, [mostrarPorPunto, facturasPorPunto, lineasFiltradas, direccionMap])
 
     // Orden de la tabla inferior (por sucursal)
     const sucursalesOrdenadas = useMemo(() => {
         const arr = [...sucursalesConsolidado]
         const { col, dir } = sortSuc
-        const numericas = new Set(['total', 'saldo'])
+        const numericas = new Set(['unidades', 'total', 'saldo'])
         arr.sort((a, b) => {
             let cmp
             if (numericas.has(col)) cmp = (Number(a[col]) || 0) - (Number(b[col]) || 0)
@@ -623,6 +628,7 @@ function TabComercial() {
 
     const COLS_SUC = [
         { key: 'sucursal', label: 'Sucursal' },
+        { key: 'unidades', label: 'Unidades', num: true },
         { key: 'total', label: 'Total facturado', num: true },
         { key: 'saldo', label: 'Saldo', num: true },
         { key: 'estatus', label: 'Estatus' },
@@ -807,6 +813,7 @@ function TabComercial() {
                                                 {sucursalesOrdenadas.map((s, i) => (
                                                     <tr key={i} style={{ borderBottom: '1px solid #f3f4f6' }}>
                                                         <td style={{ padding: '10px 14px', fontSize: '13px', color: '#1f2937' }}>{s.sucursal}</td>
+                                                        <td style={{ padding: '10px 14px', fontSize: '13px', color: '#374151', textAlign: 'right' }}>{fmtNum(s.unidades)}</td>
                                                         <td style={{ padding: '10px 14px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(s.total)}</td>
                                                         <td style={{ padding: '10px 14px', fontSize: '13px', color: s.saldo > 0.01 ? '#ef4444' : '#16a34a', textAlign: 'right' }}>{fmt(s.saldo)}</td>
                                                         <td style={{ padding: '10px 14px' }}><BadgeEstatus estatus={s.estatus} /></td>
