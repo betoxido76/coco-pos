@@ -101,10 +101,12 @@ function TabComercial() {
     const [direccionMap, setDireccionMap] = useState({}) // { direccion_id: nombre }
     const [numPuntosCliente, setNumPuntosCliente] = useState(0)
 
-    // Tabla
+    // Tabla superior (facturas)
     const [sort, setSort] = useState({ col: 'fecha', dir: 'desc' })
     const [pageSize, setPageSize] = useState(25)
     const [page, setPage] = useState(0)
+    // Tabla inferior (consolidado por sucursal)
+    const [sortSuc, setSortSuc] = useState({ col: 'total', dir: 'desc' })
 
     // Gráfica ampliada (modal)
     const [expandida, setExpandida] = useState(null)
@@ -397,6 +399,7 @@ function TabComercial() {
             if (!m.has(l.ventaId)) m.set(l.ventaId, {
                 id: l.ventaId, total: l.ventaTotal, estadoCobro: l.estadoCobro,
                 fecha: l.fecha, fechaVenc: l.fechaVenc, saldo: l.saldo, estatus: l.estatus,
+                numeroFactura: l.numeroFactura, clienteNombre: l.clienteNombre, diasCredito: l.diasCredito,
             })
         })
         return [...m.values()]
@@ -423,6 +426,38 @@ function TabComercial() {
         })
         return [...m.values()].sort((a, b) => (b.fecha?.getTime() || 0) - (a.fecha?.getTime() || 0))
     }, [mostrarPorPunto, lineasFiltradas, direccionMap])
+
+    // Consolidado por sucursal: suma total facturado y saldo; estatus derivado
+    // (pagado si no hay saldo; vencido si alguna factura de la sucursal está vencida)
+    const sucursalesConsolidado = useMemo(() => {
+        if (!mostrarPorPunto) return []
+        const m = new Map()
+        facturasPorPunto.forEach(f => {
+            if (!m.has(f.sucursal)) m.set(f.sucursal, { sucursal: f.sucursal, total: 0, saldo: 0, algunVencido: false })
+            const a = m.get(f.sucursal)
+            a.total += f.total
+            a.saldo += f.saldo
+            if (f.estatus === 'vencido') a.algunVencido = true
+        })
+        return [...m.values()].map(a => ({
+            sucursal: a.sucursal, total: a.total, saldo: a.saldo,
+            estatus: a.saldo <= 0.01 ? 'pagado' : (a.algunVencido ? 'vencido' : 'sin_vencer'),
+        }))
+    }, [mostrarPorPunto, facturasPorPunto])
+
+    // Orden de la tabla inferior (por sucursal)
+    const sucursalesOrdenadas = useMemo(() => {
+        const arr = [...sucursalesConsolidado]
+        const { col, dir } = sortSuc
+        const numericas = new Set(['total', 'saldo'])
+        arr.sort((a, b) => {
+            let cmp
+            if (numericas.has(col)) cmp = (Number(a[col]) || 0) - (Number(b[col]) || 0)
+            else cmp = String(a[col] ?? '').localeCompare(String(b[col] ?? ''))
+            return dir === 'asc' ? cmp : -cmp
+        })
+        return arr
+    }, [sucursalesConsolidado, sortSuc])
 
     // ─── Ventas totales + Unidades vendidas + Días calle ponderado ───
     const ventasTotales = useMemo(() => lineasFiltradas.reduce((s, l) => s + l.lineaTotal, 0), [lineasFiltradas])
@@ -544,29 +579,31 @@ function TabComercial() {
         return out
     }, [lineasFiltradas, desde, hasta])
 
-    // ─── Tabla: orden + paginación ───
-    const lineasOrdenadas = useMemo(() => {
-        const arr = [...lineasFiltradas]
+    // ─── Tabla superior (nivel factura): orden + paginación ───
+    const facturasOrdenadas = useMemo(() => {
+        const arr = [...facturas]
         const { col, dir } = sort
-        const numericas = new Set(['cantidad', 'precio', 'lineaTotal', 'saldo', 'diasCredito'])
+        const numericas = new Set(['total', 'saldo', 'diasCredito'])
         arr.sort((a, b) => {
-            let va = a[col], vb = b[col]
             let cmp
             if (col === 'fecha') { cmp = (a.fecha?.getTime() || 0) - (b.fecha?.getTime() || 0) }
-            else if (numericas.has(col)) { cmp = (Number(va) || 0) - (Number(vb) || 0) }
-            else { cmp = String(va ?? '').localeCompare(String(vb ?? '')) }
+            else if (numericas.has(col)) { cmp = (Number(a[col]) || 0) - (Number(b[col]) || 0) }
+            else { cmp = String(a[col] ?? '').localeCompare(String(b[col] ?? '')) }
             return dir === 'asc' ? cmp : -cmp
         })
         return arr
-    }, [lineasFiltradas, sort])
+    }, [facturas, sort])
 
-    const totalLineas = lineasOrdenadas.length
+    const totalFacturas = facturasOrdenadas.length
     const pageStart = page * pageSize
-    const lineasPagina = lineasOrdenadas.slice(pageStart, pageStart + pageSize)
-    const maxPage = Math.max(0, Math.ceil(totalLineas / pageSize) - 1)
+    const facturasPagina = facturasOrdenadas.slice(pageStart, pageStart + pageSize)
+    const maxPage = Math.max(0, Math.ceil(totalFacturas / pageSize) - 1)
 
     function toggleSort(col) {
         setSort(s => s.col === col ? { col, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { col, dir: 'asc' })
+    }
+    function toggleSortSuc(col) {
+        setSortSuc(s => s.col === col ? { col, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { col, dir: 'asc' })
     }
 
     function limpiar() {
@@ -578,13 +615,17 @@ function TabComercial() {
         { key: 'fecha', label: 'Fecha' },
         { key: 'numeroFactura', label: 'Factura' },
         { key: 'clienteNombre', label: 'Cliente' },
-        { key: 'productoNombre', label: 'Producto' },
-        { key: 'cantidad', label: 'Cantidad', num: true },
-        { key: 'precio', label: 'Precio', num: true },
-        { key: 'lineaTotal', label: 'Total', num: true },
+        { key: 'total', label: 'Total', num: true },
         { key: 'saldo', label: 'Saldo', num: true },
         { key: 'estatus', label: 'Estatus' },
         { key: 'diasCredito', label: 'Días créd.', num: true },
+    ]
+
+    const COLS_SUC = [
+        { key: 'sucursal', label: 'Sucursal' },
+        { key: 'total', label: 'Total facturado', num: true },
+        { key: 'saldo', label: 'Saldo', num: true },
+        { key: 'estatus', label: 'Estatus' },
     ]
 
     const selectStyle = { padding: '8px 12px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', color: '#374151', backgroundColor: '#fff', cursor: 'pointer' }
@@ -652,7 +693,7 @@ function TabComercial() {
                     </button>
                 </div>
                 <div style={{ marginTop: '14px', paddingTop: '12px', borderTop: '1px solid #f3f4f6', fontSize: '12px', color: '#9ca3af' }}>
-                    {totalLineas.toLocaleString('es-VE')} líneas en el rango filtrado
+                    {totalFacturas.toLocaleString('es-VE')} factura{totalFacturas === 1 ? '' : 's'} en el rango filtrado
                 </div>
             </div>
 
@@ -682,12 +723,12 @@ function TabComercial() {
 
                     {/* ─── Tabla de detalle ─── */}
                     <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden', marginBottom: '24px' }}>
-                        {/* Muestra ~5 filas; el resto de la página se ve con scroll vertical. Header fijo. */}
+                        {/* Muestra ~10 filas; el resto de la página se ve con scroll vertical. Header fijo. */}
                         <div style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: '460px' }}>
-                            {totalLineas === 0 ? (
+                            {totalFacturas === 0 ? (
                                 <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>No hay ventas para los filtros seleccionados</div>
                             ) : (
-                                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '900px' }}>
+                                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '700px' }}>
                                     <thead>
                                         <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
                                             {COLS.map(c => (
@@ -699,29 +740,26 @@ function TabComercial() {
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {lineasPagina.map((l, i) => (
+                                        {facturasPagina.map((f, i) => (
                                             <tr key={i} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                                                <td style={{ padding: '10px 14px', fontSize: '13px', color: '#6b7280', whiteSpace: 'nowrap' }}>{l.fecha ? l.fecha.toLocaleDateString('es-VE') : '—'}</td>
-                                                <td style={{ padding: '10px 14px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>{l.numeroFactura}</td>
-                                                <td style={{ padding: '10px 14px', fontSize: '13px', color: '#1f2937' }}>{l.clienteNombre}</td>
-                                                <td style={{ padding: '10px 14px', fontSize: '13px', color: '#374151' }}>{l.productoNombre}</td>
-                                                <td style={{ padding: '10px 14px', fontSize: '13px', color: '#374151', textAlign: 'right' }}>{fmtNum(l.cantidad)}</td>
-                                                <td style={{ padding: '10px 14px', fontSize: '13px', color: '#374151', textAlign: 'right' }}>{fmt(l.precio)}</td>
-                                                <td style={{ padding: '10px 14px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(l.lineaTotal)}</td>
-                                                <td style={{ padding: '10px 14px', fontSize: '13px', color: l.saldo > 0.01 ? '#ef4444' : '#16a34a', textAlign: 'right' }}>{fmt(l.saldo)}</td>
-                                                <td style={{ padding: '10px 14px' }}><BadgeEstatus estatus={l.estatus} /></td>
-                                                <td style={{ padding: '10px 14px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{l.diasCredito != null ? l.diasCredito : '—'}</td>
+                                                <td style={{ padding: '10px 14px', fontSize: '13px', color: '#6b7280', whiteSpace: 'nowrap' }}>{f.fecha ? f.fecha.toLocaleDateString('es-VE') : '—'}</td>
+                                                <td style={{ padding: '10px 14px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>{f.numeroFactura}</td>
+                                                <td style={{ padding: '10px 14px', fontSize: '13px', color: '#1f2937' }}>{f.clienteNombre}</td>
+                                                <td style={{ padding: '10px 14px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(f.total)}</td>
+                                                <td style={{ padding: '10px 14px', fontSize: '13px', color: f.saldo > 0.01 ? '#ef4444' : '#16a34a', textAlign: 'right' }}>{fmt(f.saldo)}</td>
+                                                <td style={{ padding: '10px 14px' }}><BadgeEstatus estatus={f.estatus} /></td>
+                                                <td style={{ padding: '10px 14px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{f.diasCredito != null ? f.diasCredito : '—'}</td>
                                             </tr>
                                         ))}
                                     </tbody>
                                 </table>
                             )}
                         </div>
-                        {totalLineas > 0 && (
+                        {totalFacturas > 0 && (
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderTop: '1px solid #f3f4f6', flexWrap: 'wrap', gap: '8px' }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                                     <span style={{ fontSize: '13px', color: '#6b7280' }}>
-                                        Mostrando {pageStart + 1}–{Math.min(pageStart + pageSize, totalLineas)} de {totalLineas}
+                                        Mostrando {pageStart + 1}–{Math.min(pageStart + pageSize, totalFacturas)} de {totalFacturas}
                                     </span>
                                     <select value={pageSize} onChange={e => setPageSize(Number(e.target.value))}
                                         style={{ padding: '5px 8px', borderRadius: '6px', fontSize: '12px', border: '1px solid #e5e7eb', color: '#374151', backgroundColor: '#fff', cursor: 'pointer' }}>
@@ -747,44 +785,37 @@ function TabComercial() {
                         <>
                             <div style={{ marginBottom: '10px' }}>
                                 <h3 style={{ fontSize: '14px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Ventas por punto de entrega</h3>
-                                <p style={{ fontSize: '12px', color: '#9ca3af', margin: '2px 0 0' }}>Desagregación por documento del cliente seleccionado · {numPuntosCliente} punto{numPuntosCliente === 1 ? '' : 's'}</p>
+                                <p style={{ fontSize: '12px', color: '#9ca3af', margin: '2px 0 0' }}>Consolidado por sucursal del cliente seleccionado · {numPuntosCliente} punto{numPuntosCliente === 1 ? '' : 's'}</p>
                             </div>
                             <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden', marginBottom: '24px' }}>
                                 <div style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: '460px' }}>
-                                    {facturasPorPunto.length === 0 ? (
+                                    {sucursalesOrdenadas.length === 0 ? (
                                         <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>No hay documentos para los filtros seleccionados</div>
                                     ) : (
-                                        <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '760px' }}>
+                                        <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '520px' }}>
                                             <thead>
                                                 <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                                    {['Fecha', 'Factura', 'Sucursal', 'Total facturado', 'Saldo', 'Estatus', 'Días créd.'].map((h, idx) => (
-                                                        <th key={h} style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: idx >= 3 && idx <= 4 || idx === 6 ? 'right' : 'left', whiteSpace: 'nowrap', position: 'sticky', top: 0, backgroundColor: '#f9fafb', zIndex: 1 }}>{h}</th>
+                                                    {COLS_SUC.map(c => (
+                                                        <th key={c.key} onClick={() => toggleSortSuc(c.key)}
+                                                            style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: c.num ? 'right' : 'left', whiteSpace: 'nowrap', cursor: 'pointer', userSelect: 'none', position: 'sticky', top: 0, backgroundColor: '#f9fafb', zIndex: 1 }}>
+                                                            {c.label}{sortSuc.col === c.key ? (sortSuc.dir === 'asc' ? ' ▲' : ' ▼') : ''}
+                                                        </th>
                                                     ))}
                                                 </tr>
                                             </thead>
                                             <tbody>
-                                                {facturasPorPunto.map((f, i) => (
+                                                {sucursalesOrdenadas.map((s, i) => (
                                                     <tr key={i} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                                                        <td style={{ padding: '10px 14px', fontSize: '13px', color: '#6b7280', whiteSpace: 'nowrap' }}>{f.fecha ? f.fecha.toLocaleDateString('es-VE') : '—'}</td>
-                                                        <td style={{ padding: '10px 14px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>{f.numeroFactura}</td>
-                                                        <td style={{ padding: '10px 14px', fontSize: '13px', color: '#1f2937' }}>{f.sucursal}</td>
-                                                        <td style={{ padding: '10px 14px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(f.total)}</td>
-                                                        <td style={{ padding: '10px 14px', fontSize: '13px', color: f.saldo > 0.01 ? '#ef4444' : '#16a34a', textAlign: 'right' }}>{fmt(f.saldo)}</td>
-                                                        <td style={{ padding: '10px 14px' }}><BadgeEstatus estatus={f.estatus} /></td>
-                                                        <td style={{ padding: '10px 14px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{f.diasCredito != null ? f.diasCredito : '—'}</td>
+                                                        <td style={{ padding: '10px 14px', fontSize: '13px', color: '#1f2937' }}>{s.sucursal}</td>
+                                                        <td style={{ padding: '10px 14px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(s.total)}</td>
+                                                        <td style={{ padding: '10px 14px', fontSize: '13px', color: s.saldo > 0.01 ? '#ef4444' : '#16a34a', textAlign: 'right' }}>{fmt(s.saldo)}</td>
+                                                        <td style={{ padding: '10px 14px' }}><BadgeEstatus estatus={s.estatus} /></td>
                                                     </tr>
                                                 ))}
                                             </tbody>
                                         </table>
                                     )}
                                 </div>
-                            </div>
-
-                            {/* Torta: ventas por sucursal del cliente (sin leyenda; nombres al pasar el mouse) */}
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '16px', marginBottom: '24px' }}>
-                                <ChartCard cfg={sucursalCfg} onExpand={setExpandida} />
-                                <PlaceholderCard />
-                                <PlaceholderCard />
                             </div>
                         </>
                     )}
@@ -799,10 +830,10 @@ function TabComercial() {
                         {fila2.map(c => <ChartCard key={c.id} cfg={c} onExpand={setExpandida} />)}
                     </div>
 
-                    {/* ─── Fila 3: serie de tiempo (+ espacio para 2 gráficas futuras) ─── */}
+                    {/* ─── Fila 3: serie de tiempo + torta por sucursal (si aplica) ─── */}
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '16px' }}>
                         <ChartCard cfg={serieCfg} onExpand={setExpandida} />
-                        <PlaceholderCard />
+                        {mostrarPorPunto ? <ChartCard cfg={sucursalCfg} onExpand={setExpandida} /> : <PlaceholderCard />}
                         <PlaceholderCard />
                     </div>
                 </>
