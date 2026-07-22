@@ -408,7 +408,7 @@ function TabComercial() {
         : (l.direccionTexto || 'Sin punto')
 
     // ¿Mostrar desagregación por sucursal? Solo con un cliente elegido y >1 punto de entrega
-    const mostrarPorPunto = !!fCliente && numPuntosCliente > 1
+    const mostrarPorPunto = !!fCliente && numPuntosCliente >= 1
 
     // Facturas del cliente consolidadas por documento, con su punto de entrega
     const facturasPorPunto = useMemo(() => {
@@ -683,7 +683,7 @@ function TabComercial() {
                     {/* ─── Tabla de detalle ─── */}
                     <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden', marginBottom: '24px' }}>
                         {/* Muestra ~5 filas; el resto de la página se ve con scroll vertical. Header fijo. */}
-                        <div style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: '260px' }}>
+                        <div style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: '460px' }}>
                             {totalLineas === 0 ? (
                                 <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>No hay ventas para los filtros seleccionados</div>
                             ) : (
@@ -747,10 +747,10 @@ function TabComercial() {
                         <>
                             <div style={{ marginBottom: '10px' }}>
                                 <h3 style={{ fontSize: '14px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Ventas por punto de entrega</h3>
-                                <p style={{ fontSize: '12px', color: '#9ca3af', margin: '2px 0 0' }}>Desagregación por documento del cliente seleccionado · {numPuntosCliente} puntos</p>
+                                <p style={{ fontSize: '12px', color: '#9ca3af', margin: '2px 0 0' }}>Desagregación por documento del cliente seleccionado · {numPuntosCliente} punto{numPuntosCliente === 1 ? '' : 's'}</p>
                             </div>
                             <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden', marginBottom: '24px' }}>
-                                <div style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: '260px' }}>
+                                <div style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: '460px' }}>
                                     {facturasPorPunto.length === 0 ? (
                                         <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>No hay documentos para los filtros seleccionados</div>
                                     ) : (
