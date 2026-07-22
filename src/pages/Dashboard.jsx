@@ -97,6 +97,10 @@ function TabComercial() {
     const [fCanal, setFCanal] = useState('')
     const [fVendedor, setFVendedor] = useState('')
 
+    // Puntos de entrega del cliente seleccionado (para desagregación por sucursal)
+    const [direccionMap, setDireccionMap] = useState({}) // { direccion_id: nombre }
+    const [numPuntosCliente, setNumPuntosCliente] = useState(0)
+
     // Tabla
     const [sort, setSort] = useState({ col: 'fecha', dir: 'desc' })
     const [pageSize, setPageSize] = useState(25)
@@ -124,7 +128,7 @@ function TabComercial() {
                 // Líneas de venta con su factura y cliente (paginado por 1000)
                 const SELECT = 'cantidad, cantidad_primaria, precio_unitario, producto_id, venta_id, ' +
                     'productos_terminados(sku, nombre), ' +
-                    'ventas!inner(id, numero_factura, created_at, fecha_vencimiento_pago, total, estado_cobro, cliente_id, usuario_id, pedidos!pedido_id(vendedor_id), clientes(nombre, codigo, cat1_id))'
+                    'ventas!inner(id, numero_factura, created_at, fecha_vencimiento_pago, total, estado_cobro, cliente_id, usuario_id, direccion_entrega_id, direccion_entrega_texto, pedidos!pedido_id(vendedor_id), clientes(nombre, codigo, cat1_id))'
                 const PAGE = 1000
                 let from = 0, all = []
                 while (true) {
@@ -227,6 +231,24 @@ function TabComercial() {
     // Reset de página al cambiar filtros/orden/tamaño
     useEffect(() => { setPage(0) }, [fProducto, fCliente, fCanal, fVendedor, sort, pageSize, desde, hasta])
 
+    // Puntos de entrega del cliente seleccionado (activa la desagregación por sucursal)
+    useEffect(() => {
+        if (!perfil?.empresa_id || !fCliente) { setDireccionMap({}); setNumPuntosCliente(0); return }
+        let cancel = false
+        supabase.from('direcciones_entrega')
+            .select('id, nombre')
+            .eq('empresa_id', perfil.empresa_id)
+            .eq('cliente_id', fCliente)
+            .eq('activo', true)
+            .then(({ data }) => {
+                if (cancel) return
+                const m = {}; (data || []).forEach(d => { m[d.id] = d.nombre })
+                setDireccionMap(m)
+                setNumPuntosCliente((data || []).length)
+            })
+        return () => { cancel = true }
+    }, [perfil?.empresa_id, fCliente])
+
     // ─── Aplanado de líneas (independiente de filtros client-side) ───
     const lineas = useMemo(() => rawLineas.map(r => {
         const v = r.ventas || {}
@@ -256,6 +278,8 @@ function TabComercial() {
             clienteId: v.cliente_id,
             clienteNombre: cli.nombre || '—',
             clienteCodigo: cli.codigo || '',
+            direccionId: v.direccion_entrega_id || null,
+            direccionTexto: v.direccion_entrega_texto || '',
             vendedorId: v.pedidos?.vendedor_id || v.usuario_id,
             canal,
             productoId: r.producto_id,
@@ -378,6 +402,28 @@ function TabComercial() {
         return [...m.values()]
     }, [lineasFiltradas])
 
+    // Nombre de sucursal (punto de entrega) de una línea
+    const sucursalNombre = (l) => l.direccionId
+        ? (direccionMap[l.direccionId] || l.direccionTexto || 'Sin punto')
+        : (l.direccionTexto || 'Sin punto')
+
+    // ¿Mostrar desagregación por sucursal? Solo con un cliente elegido y >1 punto de entrega
+    const mostrarPorPunto = !!fCliente && numPuntosCliente > 1
+
+    // Facturas del cliente consolidadas por documento, con su punto de entrega
+    const facturasPorPunto = useMemo(() => {
+        if (!mostrarPorPunto) return []
+        const m = new Map()
+        lineasFiltradas.forEach(l => {
+            if (!m.has(l.ventaId)) m.set(l.ventaId, {
+                id: l.ventaId, numeroFactura: l.numeroFactura, fecha: l.fecha,
+                total: l.ventaTotal, saldo: l.saldo, estatus: l.estatus,
+                diasCredito: l.diasCredito, sucursal: sucursalNombre(l),
+            })
+        })
+        return [...m.values()].sort((a, b) => (b.fecha?.getTime() || 0) - (a.fecha?.getTime() || 0))
+    }, [mostrarPorPunto, lineasFiltradas, direccionMap])
+
     // ─── Ventas totales + Unidades vendidas + Días calle ponderado ───
     const ventasTotales = useMemo(() => lineasFiltradas.reduce((s, l) => s + l.lineaTotal, 0), [lineasFiltradas])
     // Unidades vendidas normalizadas a la unidad primaria (respeta todos los filtros vía lineasFiltradas)
@@ -435,6 +481,8 @@ function TabComercial() {
     const pieCanal = useMemo(() => topN(agrupar(lineasFiltradas, l => l.canal, l => l.lineaTotal)), [lineasFiltradas])
     const pieProducto = useMemo(() => topN(agrupar(lineasFiltradas, l => `${l.productoSku ? l.productoSku + ' · ' : ''}${l.productoNombre}`, l => l.lineaTotal)), [lineasFiltradas])
     const pieCliente = useMemo(() => topN(agrupar(lineasFiltradas, l => `${l.clienteCodigo ? l.clienteCodigo + ' · ' : ''}${l.clienteNombre}`, l => l.lineaTotal)), [lineasFiltradas])
+    // Ventas por sucursal (punto de entrega) del cliente seleccionado
+    const pieSucursal = useMemo(() => topN(agrupar(lineasFiltradas, sucursalNombre, l => l.lineaTotal)), [lineasFiltradas, direccionMap])
 
     // ─── Datos de tortas fila 2 (nivel factura) ───
     // Estatus: ponderado por TOTAL facturado (para que "Pagado" no desaparezca)
@@ -554,6 +602,8 @@ function TabComercial() {
         { id: 'antig', type: 'pie', title: 'Saldo en calle por antigüedad', subtitle: 'por saldo, días desde emisión', data: pieAntig, colorFn: d => COLOR_ANTIG[d.name] || GRIS_OTROS, showLegend: true },
     ]
     const serieCfg = { id: 'serie', type: 'line', title: 'Ventas diarias', subtitle: 'monto por día', data: serieDiaria }
+    // Torta de ventas por sucursal (sin leyenda; nombres visibles al pasar el mouse)
+    const sucursalCfg = { id: 'sucursal', type: 'pie', title: 'Ventas por Sucursal', subtitle: 'del cliente seleccionado', data: pieSucursal, colorFn: colorIdx, showLegend: false }
 
     return (
         <div>
@@ -632,7 +682,8 @@ function TabComercial() {
 
                     {/* ─── Tabla de detalle ─── */}
                     <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden', marginBottom: '24px' }}>
-                        <div style={{ overflowX: 'auto' }}>
+                        {/* Muestra ~5 filas; el resto de la página se ve con scroll vertical. Header fijo. */}
+                        <div style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: '260px' }}>
                             {totalLineas === 0 ? (
                                 <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>No hay ventas para los filtros seleccionados</div>
                             ) : (
@@ -641,7 +692,7 @@ function TabComercial() {
                                         <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
                                             {COLS.map(c => (
                                                 <th key={c.key} onClick={() => toggleSort(c.key)}
-                                                    style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: c.num ? 'right' : 'left', whiteSpace: 'nowrap', cursor: 'pointer', userSelect: 'none' }}>
+                                                    style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: c.num ? 'right' : 'left', whiteSpace: 'nowrap', cursor: 'pointer', userSelect: 'none', position: 'sticky', top: 0, backgroundColor: '#f9fafb', zIndex: 1 }}>
                                                     {c.label}{sort.col === c.key ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : ''}
                                                 </th>
                                             ))}
@@ -690,6 +741,53 @@ function TabComercial() {
                             </div>
                         )}
                     </div>
+
+                    {/* ─── Desagregación por sucursal (solo cliente con >1 punto de entrega) ─── */}
+                    {mostrarPorPunto && (
+                        <>
+                            <div style={{ marginBottom: '10px' }}>
+                                <h3 style={{ fontSize: '14px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Ventas por punto de entrega</h3>
+                                <p style={{ fontSize: '12px', color: '#9ca3af', margin: '2px 0 0' }}>Desagregación por documento del cliente seleccionado · {numPuntosCliente} puntos</p>
+                            </div>
+                            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden', marginBottom: '24px' }}>
+                                <div style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: '260px' }}>
+                                    {facturasPorPunto.length === 0 ? (
+                                        <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>No hay documentos para los filtros seleccionados</div>
+                                    ) : (
+                                        <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '760px' }}>
+                                            <thead>
+                                                <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                                                    {['Fecha', 'Factura', 'Sucursal', 'Total facturado', 'Saldo', 'Estatus', 'Días créd.'].map((h, idx) => (
+                                                        <th key={h} style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: idx >= 3 && idx <= 4 || idx === 6 ? 'right' : 'left', whiteSpace: 'nowrap', position: 'sticky', top: 0, backgroundColor: '#f9fafb', zIndex: 1 }}>{h}</th>
+                                                    ))}
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {facturasPorPunto.map((f, i) => (
+                                                    <tr key={i} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                                                        <td style={{ padding: '10px 14px', fontSize: '13px', color: '#6b7280', whiteSpace: 'nowrap' }}>{f.fecha ? f.fecha.toLocaleDateString('es-VE') : '—'}</td>
+                                                        <td style={{ padding: '10px 14px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>{f.numeroFactura}</td>
+                                                        <td style={{ padding: '10px 14px', fontSize: '13px', color: '#1f2937' }}>{f.sucursal}</td>
+                                                        <td style={{ padding: '10px 14px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(f.total)}</td>
+                                                        <td style={{ padding: '10px 14px', fontSize: '13px', color: f.saldo > 0.01 ? '#ef4444' : '#16a34a', textAlign: 'right' }}>{fmt(f.saldo)}</td>
+                                                        <td style={{ padding: '10px 14px' }}><BadgeEstatus estatus={f.estatus} /></td>
+                                                        <td style={{ padding: '10px 14px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{f.diasCredito != null ? f.diasCredito : '—'}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Torta: ventas por sucursal del cliente (sin leyenda; nombres al pasar el mouse) */}
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '16px', marginBottom: '24px' }}>
+                                <ChartCard cfg={sucursalCfg} onExpand={setExpandida} />
+                                <PlaceholderCard />
+                                <PlaceholderCard />
+                            </div>
+                        </>
+                    )}
 
                     {/* ─── Fila 1: composición de ventas por monto ─── */}
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '16px', marginBottom: '16px' }}>
