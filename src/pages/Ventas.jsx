@@ -2958,7 +2958,10 @@ function Factura({ venta, onVolver, onDevolucionCreada }) {
                             </tr>
                         </thead>
                         <tbody>
-                            {items.map((item, idx) => (
+                            {items.map((item, idx) => {
+                                // El precio guardado incluye IVA cuando el producto lo aplica; el documento muestra la base
+                                const precioBase = (item.aplica_iva ?? true) ? item.precio_unitario / 1.16 : item.precio_unitario
+                                return (
                                 <tr key={idx} style={{ borderBottom: '1px solid #f3f4f6' }}>
                                     <td style={{ padding: '10px 0', fontSize: '13px', color: '#1f2937' }}>
                                         {item.productos_terminados?.nombre || item.nombre}
@@ -2967,10 +2970,11 @@ function Factura({ venta, onVolver, onDevolucionCreada }) {
                                         </span>
                                     </td>
                                     <td style={{ padding: '10px 0', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{item.cantidad}</td>
-                                    <td style={{ padding: '10px 0', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{fmt(item.precio_unitario)}</td>
-                                    <td style={{ padding: '10px 0', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(item.cantidad * item.precio_unitario)}</td>
+                                    <td style={{ padding: '10px 0', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{fmt(precioBase)}</td>
+                                    <td style={{ padding: '10px 0', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(item.cantidad * precioBase)}</td>
                                 </tr>
-                            ))}
+                                )
+                            })}
                         </tbody>
                     </table>
                 )}
