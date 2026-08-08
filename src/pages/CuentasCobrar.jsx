@@ -26,6 +26,11 @@ const hoyYMD = () => {
 }
 const fmtFechaCorta = (ymd) => new Date(ymd + 'T00:00:00').toLocaleDateString('es-VE', { day: '2-digit', month: 'short', year: 'numeric' })
 
+// `cobros.fecha_cobro` puede venir como 'YYYY-MM-DD' (columna date) o como
+// timestamp completo. La forma corta se parsea a medianoche LOCAL para que no
+// se muestre el día anterior en husos negativos como el de Venezuela.
+const parseFecha = (s) => new Date(String(s).length === 10 ? s + 'T00:00:00' : s)
+
 // Tasas vigentes en una fecha concreta, desde el histórico `tasas_cambio`.
 // Un pago registrado hoy pero recibido hace 3 días debe convertirse con la tasa
 // de ESE día, no con la actual. Devuelve null si la fecha no tiene tasas cargadas.
@@ -103,6 +108,7 @@ export default function CuentasCobrar() {
     const [filtroCliente, setFiltroCliente] = useState('')
     const [categorias1, setCategorias1] = useState([])
     const [filtroCat1, setFiltroCat1] = useState('')
+    const [ultimoPago, setUltimoPago] = useState({})  // { venta_id: fecha del último cobro }
     const [seleccionadas, setSeleccionadas] = useState([]) // ids seleccionados
     const [pagina, setPagina] = useState(0)
     const [totalRegistros, setTotalRegistros] = useState(0)
@@ -164,6 +170,7 @@ export default function CuentasCobrar() {
                 const m = {}; cfg.forEach(r => { m[r.clave] = Number(r.valor) })
                 setTasas({ tasa_bcv: m.tasa_bcv || 1, tasa_euro: m.tasa_euro || 1, tasa_binance: m.tasa_binance || 1 })
             }
+            cargarUltimosPagos(data || [])
         } catch (e) {
             console.error('Error cargando facturas CxC:', e)
         } finally {
@@ -171,6 +178,25 @@ export default function CuentasCobrar() {
         }
 
         cargarKpis()
+    }
+
+    // Fecha del último cobro de cada factura de la página. Una sola query para
+    // las 50 filas (no una por fila). Las pendientes no tienen cobros y quedan
+    // fuera del mapa → la columna se muestra vacía.
+    async function cargarUltimosPagos(filas) {
+        const ids = filas.filter(v => v.estado_cobro !== 'pendiente').map(v => v.id)
+        if (ids.length === 0) { setUltimoPago({}); return }
+        const { data } = await supabase.from('cobros')
+            .select('venta_id, fecha_cobro, created_at').in('venta_id', ids)
+        const m = {}
+        ;(data || []).forEach(c => {
+            // fecha_cobro es la fecha real del pago; created_at cubre los cobros
+            // viejos registrados antes de que se guardara la fecha.
+            const f = c.fecha_cobro || c.created_at
+            if (!f) return
+            if (!m[c.venta_id] || parseFecha(f) > parseFecha(m[c.venta_id])) m[c.venta_id] = f
+        })
+        setUltimoPago(m)
     }
 
     // KPIs de cartera (pendiente + parcial), independientes del filtro de pestaña;
@@ -362,7 +388,7 @@ export default function CuentasCobrar() {
                                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                                     <thead>
                                         <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                            {[mostrarCheckboxes ? '☑' : '', '', 'Factura', 'Cliente', 'Emisión', 'Vencimiento', 'Total', 'Cobrado', 'Saldo', 'Estado', ''].map((h, i) => (
+                                            {[mostrarCheckboxes ? '☑' : '', '', 'Factura', 'Cliente', 'Emisión', 'Últ. pago', 'Vencimiento', 'Total', 'Cobrado', 'Saldo', 'Estado', ''].map((h, i) => (
                                                 <th key={i} style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
                                             ))}
                                         </tr>
@@ -387,6 +413,9 @@ export default function CuentasCobrar() {
                                                     <td style={{ padding: '12px 14px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>{v.numero_factura}</td>
                                                     <td style={{ padding: '12px 14px', fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>{v.clientes?.nombre || '—'}</td>
                                                     <td style={{ padding: '12px 14px', fontSize: '13px', color: '#6b7280' }}>{new Date(v.created_at).toLocaleDateString('es-VE')}</td>
+                                                    <td style={{ padding: '12px 14px', fontSize: '13px', whiteSpace: 'nowrap', color: ultimoPago[v.id] ? '#374151' : '#d1d5db' }}>
+                                                        {ultimoPago[v.id] ? parseFecha(ultimoPago[v.id]).toLocaleDateString('es-VE') : '—'}
+                                                    </td>
                                                     <td style={{ padding: '12px 14px' }}>
                                                         {sem ? <span style={{ fontSize: '12px', fontWeight: 500, color: sem.color }}>{sem.label}</span>
                                                             : <span style={{ fontSize: '12px', color: '#9ca3af' }}>—</span>}
