@@ -141,10 +141,22 @@ produccion, cambios, mermas, administracion, gastos, pedidos_campo, despacho
 
 ## 7. Multimoneda
 
-Las tasas de cambio se guardan en la tabla `configuracion`:
-```
-tasa_bcv, tasa_euro, tasa_binance
-```
+Hay **dos fuentes de tasas y cada una tiene su rol** — no unificar sin leer esto:
+
+| Tabla | Rol | Quién la usa |
+|---|---|---|
+| `configuracion` (clave/valor) | Tasa **vigente** (una foto por empresa): `tasa_bcv`, `tasa_euro`, `tasa_binance` | Ventas, Compras, Gastos, CxP, Bancos, Finanzas, NuevoPedido y los KPIs de CxC |
+| `tasas_cambio` | **Histórico** por fecha: una fila por `(empresa_id, fecha)` con las 3 tasas | Modales de cobro de CxC (individual y múltiple) y Administración → Tasas de Cambio |
+
+`Administracion → Configuracion` escribe SIEMPRE en `tasas_cambio` (upsert sobre
+`empresa_id,fecha`, por eso volver a guardar una fecha la sobreescribe) y
+**solo sincroniza `configuracion` cuando la fecha guardada es la más reciente**
+del histórico — cargar una tasa de días atrás no debe pisar la vigente.
+
+Los cobros se registran con la fecha real del pago (`cobros.fecha_cobro`) y con
+la tasa **de esa fecha**, no la de hoy: un pago recibido hace 3 días se convierte
+con la tasa de hace 3 días. Si la fecha elegida no tiene tasas en `tasas_cambio`,
+el cobro se bloquea (hay que cargarlas primero en Administración).
 
 Los cobros y gastos manejan `monto_usd` + `monto_bs` + `tasa_cambio` + `tipo_tasa`.
 El equivalente en USD = `monto_usd + (monto_bs / tasa)`.
