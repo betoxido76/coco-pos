@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
-import { X } from 'lucide-react'
+import { X, FileText } from 'lucide-react'
+import { Factura } from './Ventas'
 import {
     PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer,
     LineChart, Line, XAxis, YAxis, CartesianGrid,
@@ -112,6 +113,21 @@ function TabComercial() {
 
     // Gráfica ampliada (modal)
     const [expandida, setExpandida] = useState(null)
+
+    // Vista de Nota de Entrega (misma pantalla que el botón "Ver" de Ventas)
+    const [ventaVista, setVentaVista] = useState(null)
+    const [cargandoVenta, setCargandoVenta] = useState(null) // id en curso
+
+    async function abrirFactura(ventaId) {
+        setCargandoVenta(ventaId)
+        const { data, error: e } = await supabase.from('ventas')
+            .select('*, clientes(nombre, direccion_fiscal), devoluciones(id), pedidos!pedido_id(numero_pedido)')
+            .eq('id', ventaId)
+            .single()
+        setCargandoVenta(null)
+        if (e || !data) { setError('No se pudo abrir la nota de entrega'); return }
+        setVentaVista(data)
+    }
 
     // ─── Carga desde servidor (rango de fechas en .gte/.lte) ───
     useEffect(() => {
@@ -660,6 +676,14 @@ function TabComercial() {
     // Torta de ventas por sucursal (sin leyenda; nombres visibles al pasar el mouse)
     const sucursalCfg = { id: 'sucursal', type: 'pie', title: 'Ventas por Sucursal', subtitle: 'del cliente seleccionado', data: pieSucursal, colorFn: colorIdx, showLegend: false }
 
+    // Los filtros y la paginación se conservan: solo cambia lo que se renderiza
+    if (ventaVista)
+        return <Factura
+            venta={ventaVista}
+            onVolver={() => setVentaVista(null)}
+            onDevolucionCreada={() => setVentaVista(null)}
+        />
+
     return (
         <div>
             {/* ─── Barra de filtros (fija al hacer scroll) ─── */}
@@ -751,6 +775,7 @@ function TabComercial() {
                                                     {c.label}{sort.col === c.key ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : ''}
                                                 </th>
                                             ))}
+                                            <th style={{ padding: '10px 14px', position: 'sticky', top: 0, backgroundColor: '#f9fafb', zIndex: 1 }} />
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -763,6 +788,12 @@ function TabComercial() {
                                                 <td style={{ padding: '10px 14px', fontSize: '13px', color: f.saldo > 0.01 ? '#ef4444' : '#16a34a', textAlign: 'right' }}>{fmt(f.saldo)}</td>
                                                 <td style={{ padding: '10px 14px' }}><BadgeEstatus estatus={f.estatus} /></td>
                                                 <td style={{ padding: '10px 14px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{f.diasCredito != null ? f.diasCredito : '—'}</td>
+                                                <td style={{ padding: '10px 14px' }}>
+                                                    <button onClick={() => abrirFactura(f.id)} disabled={cargandoVenta === f.id}
+                                                        style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: cargandoVenta === f.id ? 'default' : 'pointer', whiteSpace: 'nowrap' }}>
+                                                        <FileText size={13} /> {cargandoVenta === f.id ? 'Abriendo…' : 'Ver'}
+                                                    </button>
+                                                </td>
                                             </tr>
                                         ))}
                                     </tbody>

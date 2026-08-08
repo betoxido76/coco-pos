@@ -2789,7 +2789,8 @@ function ModalNuevoCliente({ perfil, onCreado, onCerrar }) {
     )
 }
 
-function Factura({ venta, onVolver, onDevolucionCreada }) {
+// Exportado: el Dashboard reutiliza esta misma vista desde su tabla de facturas
+export function Factura({ venta, onVolver, onDevolucionCreada }) {
     const { perfil } = useAuth()
     const [items, setItems] = useState(venta.items || [])
     const [devoluciones, setDevoluciones] = useState([])
