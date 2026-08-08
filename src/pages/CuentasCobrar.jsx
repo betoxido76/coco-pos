@@ -20,6 +20,73 @@ function semaforo(fechaVenc) {
 
 const PAGE_SIZE = 50
 
+const hoyYMD = () => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+const fmtFechaCorta = (ymd) => new Date(ymd + 'T00:00:00').toLocaleDateString('es-VE', { day: '2-digit', month: 'short', year: 'numeric' })
+
+// Tasas vigentes en una fecha concreta, desde el histórico `tasas_cambio`.
+// Un pago registrado hoy pero recibido hace 3 días debe convertirse con la tasa
+// de ESE día, no con la actual. Devuelve null si la fecha no tiene tasas cargadas.
+function useTasasFecha(empresaId, fecha) {
+    const [tasasFecha, setTasasFecha] = useState(null)
+    const [cargando, setCargando] = useState(true)
+    useEffect(() => {
+        if (!empresaId || !fecha) return
+        let cancel = false
+        setCargando(true)
+        supabase.from('tasas_cambio')
+            .select('tasa_bcv, tasa_euro, tasa_binance')
+            .eq('empresa_id', empresaId).eq('fecha', fecha).maybeSingle()
+            .then(({ data }) => { if (!cancel) { setTasasFecha(data || null); setCargando(false) } })
+        return () => { cancel = true }
+    }, [empresaId, fecha])
+    return { tasasFecha, cargandoTasas: cargando }
+}
+
+// Bloque de fecha + selector de tasa, compartido por el cobro individual y el múltiple.
+function SelectorFechaTasa({ fecha, onFecha, tasasFecha, cargandoTasas, tipoTasa, onTipoTasa, opciones }) {
+    return (
+        <>
+            <div style={{ marginBottom: '16px' }}>
+                <label style={{ fontSize: '12px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Fecha del pago</label>
+                <input type="date" value={fecha} max={hoyYMD()} onChange={e => onFecha(e.target.value)}
+                    style={{ width: '100%', padding: '9px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', color: '#1f2937', backgroundColor: '#fff', boxSizing: 'border-box' }} />
+            </div>
+
+            <div style={{ marginBottom: '16px' }}>
+                <label style={{ fontSize: '12px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    Tasa de cambio del {fmtFechaCorta(fecha)}
+                </label>
+                {cargandoTasas ? (
+                    <div style={{ fontSize: '13px', color: '#9ca3af', padding: '8px 0' }}>Cargando tasas…</div>
+                ) : !tasasFecha ? (
+                    <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '12px 14px', fontSize: '13px', color: '#991b1b' }}>
+                        ⛔ No hay tasas registradas para esta fecha. Cárgalas en <strong>Administración → Tasas de Cambio</strong> eligiendo ese día, o selecciona otra fecha.
+                    </div>
+                ) : (
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                        {opciones.map(op => {
+                            const v = Number(tasasFecha[op.key]) || 0
+                            const activa = tipoTasa === op.key
+                            return (
+                                <button key={op.key} onClick={() => v > 0 && onTipoTasa(op.key)} disabled={v <= 0}
+                                    style={{ flex: 1, padding: '8px 4px', borderRadius: '8px', fontSize: '12px', fontWeight: 500, border: '1px solid', cursor: v > 0 ? 'pointer' : 'not-allowed', borderColor: activa ? '#16a34a' : '#e5e7eb', backgroundColor: activa ? '#f0fdf4' : '#fff', color: v <= 0 ? '#d1d5db' : activa ? '#16a34a' : '#6b7280' }}>
+                                    <div>{op.label}</div>
+                                    <div style={{ fontSize: '11px', marginTop: '2px', fontWeight: 400 }}>
+                                        {v > 0 ? `${v.toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.` : 'sin tasa'}
+                                    </div>
+                                </button>
+                            )
+                        })}
+                    </div>
+                )}
+            </div>
+        </>
+    )
+}
+
 export default function CuentasCobrar() {
     const { perfil } = useAuth()
     // Solo finanzas/administración pueden anular notas no despachadas
@@ -425,14 +492,13 @@ export default function CuentasCobrar() {
 
             {/* Modals */}
             {modalVenta && (
-                <ModalCobro venta={modalVenta} tasas={tasas}
+                <ModalCobro venta={modalVenta}
                     onCerrar={() => setModalVenta(null)}
                     onCobrado={() => { setModalVenta(null); cargar() }} />
             )}
             {modalMultiple && (
                 <ModalCobroMultiple
                     ventas={ventasSeleccionadasObj}
-                    tasas={tasas}
                     onCerrar={() => setModalMultiple(false)}
                     onCobrado={() => { setModalMultiple(false); setSeleccionadas([]); cargar() }} />
             )}
@@ -471,7 +537,7 @@ function SaldoPendiente({ ventaId, total }) {
 }
 
 // ── Modal cobro individual ─────────────────────────────────────
-function ModalCobro({ venta, tasas, onCerrar, onCobrado }) {
+function ModalCobro({ venta, onCerrar, onCobrado }) {
     const { perfil } = useAuth()
     const OPCIONES_TASA = [
         { key: 'tasa_bcv', label: 'USD · BCV' },
@@ -482,6 +548,7 @@ function ModalCobro({ venta, tasas, onCerrar, onCobrado }) {
     const METODOS_BS = ['Pago Móvil', 'Transferencia', 'Punto de Venta', 'Efectivo Bs.']
 
     const [cobradoPrev, setCobradoPrev] = useState(0)
+    const [fechaPago, setFechaPago] = useState(hoyYMD())
     const [tipoTasa, setTipoTasa] = useState('tasa_bcv')
     const [pagoUsd, setPagoUsd] = useState(venta.total)
     const [pagoBs, setPagoBs] = useState(0)
@@ -526,7 +593,11 @@ function ModalCobro({ venta, tasas, onCerrar, onCobrado }) {
         }
     }, [venta.cliente_id, perfil?.empresa_id])
 
-    const tasa = tasas[tipoTasa] || 1
+    const { tasasFecha, cargandoTasas } = useTasasFecha(perfil?.empresa_id, fechaPago)
+    const tasaDia = Number(tasasFecha?.[tipoTasa]) || 0
+    const tasa = tasaDia > 0 ? tasaDia : 1   // evita dividir entre 0 mientras no hay tasa
+    const sinTasa = !cargandoTasas && tasaDia <= 0
+
     const saldo = venta.total - cobradoPrev
     const montoNCs = ncsDisponibles
         .filter(nc => ncsSeleccionadas.has(nc.id))
@@ -535,6 +606,12 @@ function ModalCobro({ venta, tasas, onCerrar, onCobrado }) {
     const abonoEnUsd = pagoUsd + (pagoBs / tasa) + montoNCs
     const excede = abonoEnUsd > saldo + 0.01
     const sinAbono = abonoEnUsd < 0.01
+
+    // Al cambiar de fecha cambia la tasa: se recalcula el Bs. para que siga
+    // equivaliendo al resto del saldo, igual que al cambiar de tipo de tasa.
+    useEffect(() => {
+        if (tasaDia > 0) setPagoBs(parseFloat((Math.max(0, saldoEfectivo - pagoUsd) * tasaDia).toFixed(2)))
+    }, [tasasFecha])
 
     function toggleNc(ncId) {
         setNcsSeleccionadas(prev => {
@@ -550,13 +627,18 @@ function ModalCobro({ venta, tasas, onCerrar, onCobrado }) {
         })
     }
 
-    // Campos independientes: editar USD NO autocompleta Bs, para permitir cobros parciales.
+    // Editar USD completa el Bs. con el equivalente del resto del saldo: dejar
+    // USD en 0 llena el Bs. con el saldo completo a la tasa del día elegido.
     function handleUsdChange(val) {
-        setPagoUsd(Math.max(0, Number(val)))
+        const n = Math.max(0, Number(val))
+        setPagoUsd(n)
+        setPagoBs(parseFloat((Math.max(0, saldoEfectivo - n) * tasa).toFixed(2)))
     }
 
     function handleTasaChange(nuevaTasa) {
         setTipoTasa(nuevaTasa)
+        const t = Number(tasasFecha?.[nuevaTasa]) || 0
+        if (t > 0) setPagoBs(parseFloat((Math.max(0, saldoEfectivo - pagoUsd) * t).toFixed(2)))
     }
 
     // Rellena Bs con lo que falte para cubrir el saldo efectivo, dado el USD ingresado.
@@ -565,11 +647,14 @@ function ModalCobro({ venta, tasas, onCerrar, onCobrado }) {
     }
 
     async function confirmar() {
+        if (sinTasa) { setError('No hay tasa registrada para la fecha del pago'); return }
         if (sinAbono) { setError('Ingresa un monto a cobrar'); return }
         if (excede) { setError('El abono supera el saldo pendiente'); return }
         setGuardando(true); setError('')
 
         const { data: { user } } = await supabase.auth.getUser()
+        // Mediodía para que la fecha no se corra de día al guardarse con zona horaria
+        const fechaCobro = `${fechaPago}T12:00:00`
 
         // Aplicar NCs seleccionadas como cobros
         for (const nc of ncsDisponibles.filter(nc => ncsSeleccionadas.has(nc.id))) {
@@ -579,6 +664,7 @@ function ModalCobro({ venta, tasas, onCerrar, onCobrado }) {
                 monto_bs: 0,
                 tasa_cambio: tasa,
                 tipo_tasa: tipoTasa,
+                fecha_cobro: fechaCobro,
                 metodo_usd: 'Nota de Crédito',
                 metodo_bs: null,
                 nota: `NC ${nc.numero_nc || nc.id.slice(0, 8)}`,
@@ -597,6 +683,7 @@ function ModalCobro({ venta, tasas, onCerrar, onCobrado }) {
                 monto_bs: pagoBs,
                 tasa_cambio: tasa,
                 tipo_tasa: tipoTasa,
+                fecha_cobro: fechaCobro,
                 metodo_usd: metodoUsd,
                 metodo_bs: metodoBs,
                 nota: nota || null,
@@ -645,6 +732,14 @@ function ModalCobro({ venta, tasas, onCerrar, onCobrado }) {
                     </div>
                 </div>
 
+                {/* Fecha del pago + tasas de esa fecha */}
+                <SelectorFechaTasa
+                    fecha={fechaPago} onFecha={setFechaPago}
+                    tasasFecha={tasasFecha} cargandoTasas={cargandoTasas}
+                    tipoTasa={tipoTasa} onTipoTasa={handleTasaChange}
+                    opciones={OPCIONES_TASA}
+                />
+
                 {/* Notas de crédito disponibles */}
                 {ncsDisponibles.length > 0 && (
                     <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '10px', padding: '12px 16px', marginBottom: '16px' }}>
@@ -676,19 +771,6 @@ function ModalCobro({ venta, tasas, onCerrar, onCobrado }) {
                 {/* Sección de pago en efectivo/transferencia — ocultar si NCs cubren todo */}
                 {saldoEfectivo > 0.001 ? (
                     <>
-                        <div style={{ marginBottom: '16px' }}>
-                            <label style={{ fontSize: '12px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tasa de cambio</label>
-                            <div style={{ display: 'flex', gap: '8px' }}>
-                                {OPCIONES_TASA.map(op => (
-                                    <button key={op.key} onClick={() => handleTasaChange(op.key)}
-                                        style={{ flex: 1, padding: '8px 4px', borderRadius: '8px', fontSize: '12px', fontWeight: 500, border: '1px solid', cursor: 'pointer', borderColor: tipoTasa === op.key ? '#16a34a' : '#e5e7eb', backgroundColor: tipoTasa === op.key ? '#f0fdf4' : '#fff', color: tipoTasa === op.key ? '#16a34a' : '#6b7280' }}>
-                                        <div>{op.label}</div>
-                                        <div style={{ fontSize: '11px', marginTop: '2px', fontWeight: 400 }}>{tasas[op.key].toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.</div>
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
-
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
                             <div>
                                 <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Pago en USD ($)</label>
@@ -753,8 +835,9 @@ function ModalCobro({ venta, tasas, onCerrar, onCobrado }) {
                     </div>
                 )}
 
-                <div style={{ borderRadius: '8px', padding: '10px 14px', marginBottom: '16px', fontSize: '13px', textAlign: 'center', fontWeight: 500, backgroundColor: excede ? '#fef2f2' : sinAbono ? '#f9fafb' : '#f0fdf4', color: excede ? '#dc2626' : sinAbono ? '#9ca3af' : '#166534', border: `1px solid ${excede ? '#fecaca' : sinAbono ? '#e5e7eb' : '#bbf7d0'}` }}>
-                    {excede ? '⚠️ El abono supera el saldo pendiente'
+                <div style={{ borderRadius: '8px', padding: '10px 14px', marginBottom: '16px', fontSize: '13px', textAlign: 'center', fontWeight: 500, backgroundColor: sinTasa || excede ? '#fef2f2' : sinAbono ? '#f9fafb' : '#f0fdf4', color: sinTasa || excede ? '#dc2626' : sinAbono ? '#9ca3af' : '#166534', border: `1px solid ${sinTasa || excede ? '#fecaca' : sinAbono ? '#e5e7eb' : '#bbf7d0'}` }}>
+                    {sinTasa ? `⛔ Sin tasa registrada para el ${fmtFechaCorta(fechaPago)}`
+                        : excede ? '⚠️ El abono supera el saldo pendiente'
                         : sinAbono ? 'Ingresa el monto a cobrar'
                         : montoNCs > 0 && saldoEfectivo <= 0.001
                         ? `NC: ${fmt(montoNCs)} · Saldo cubierto completamente`
@@ -763,8 +846,8 @@ function ModalCobro({ venta, tasas, onCerrar, onCobrado }) {
 
                 {error && <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px', fontSize: '13px', color: '#dc2626', marginBottom: '12px' }}>{error}</div>}
 
-                <button onClick={confirmar} disabled={guardando || sinAbono || excede}
-                    style={{ width: '100%', backgroundColor: sinAbono || excede ? '#d1d5db' : '#16a34a', color: '#fff', border: 'none', borderRadius: '10px', padding: '13px', fontSize: '15px', fontWeight: 700, cursor: sinAbono || excede ? 'default' : 'pointer' }}>
+                <button onClick={confirmar} disabled={guardando || sinAbono || excede || sinTasa || cargandoTasas}
+                    style={{ width: '100%', backgroundColor: sinAbono || excede || sinTasa || cargandoTasas ? '#d1d5db' : '#16a34a', color: '#fff', border: 'none', borderRadius: '10px', padding: '13px', fontSize: '15px', fontWeight: 700, cursor: sinAbono || excede || sinTasa || cargandoTasas ? 'default' : 'pointer' }}>
                     {guardando ? 'Registrando...' : 'Confirmar cobro'}
                 </button>
             </div>
@@ -773,7 +856,7 @@ function ModalCobro({ venta, tasas, onCerrar, onCobrado }) {
 }
 
 // ── Modal cobro múltiple ───────────────────────────────────────
-function ModalCobroMultiple({ ventas, tasas, onCerrar, onCobrado }) {
+function ModalCobroMultiple({ ventas, onCerrar, onCobrado }) {
     const { perfil } = useAuth()
     const OPCIONES_TASA = [
         { key: 'tasa_bcv', label: 'USD · BCV' },
@@ -785,6 +868,7 @@ function ModalCobroMultiple({ ventas, tasas, onCerrar, onCobrado }) {
 
     const totalGeneral = ventas.reduce((s, v) => s + (v.total || 0), 0)
 
+    const [fechaPago, setFechaPago] = useState(hoyYMD())
     const [tipoTasa, setTipoTasa] = useState('tasa_bcv')
     const [pagoUsd, setPagoUsd] = useState(totalGeneral)
     const [pagoBs, setPagoBs] = useState(0)
@@ -803,11 +887,20 @@ function ModalCobroMultiple({ ventas, tasas, onCerrar, onCobrado }) {
         }
     }, [perfil?.empresa_id])
 
-    const tasa = tasas[tipoTasa] || 1
+    const { tasasFecha, cargandoTasas } = useTasasFecha(perfil?.empresa_id, fechaPago)
+    const tasaDia = Number(tasasFecha?.[tipoTasa]) || 0
+    const tasa = tasaDia > 0 ? tasaDia : 1
+    const sinTasa = !cargandoTasas && tasaDia <= 0
+
     const abonoEnUsd = pagoUsd + (pagoBs / tasa)
     const cubre = Math.abs(abonoEnUsd - totalGeneral) <= 0.01
     const excede = abonoEnUsd > totalGeneral + 0.01
     const sinAbono = abonoEnUsd < 0.01
+
+    // La tasa del día elegido cambia el equivalente en Bs. del resto
+    useEffect(() => {
+        if (tasaDia > 0) setPagoBs(parseFloat((Math.max(0, totalGeneral - pagoUsd) * tasaDia).toFixed(2)))
+    }, [tasasFecha])
 
     function handleUsdChange(val) {
         const n = Math.max(0, Number(val))
@@ -817,11 +910,12 @@ function ModalCobroMultiple({ ventas, tasas, onCerrar, onCobrado }) {
 
     function handleTasaChange(nuevaTasa) {
         setTipoTasa(nuevaTasa)
-        const t = tasas[nuevaTasa] || 1
-        setPagoBs(parseFloat((Math.max(0, totalGeneral - pagoUsd) * t).toFixed(2)))
+        const t = Number(tasasFecha?.[nuevaTasa]) || 0
+        if (t > 0) setPagoBs(parseFloat((Math.max(0, totalGeneral - pagoUsd) * t).toFixed(2)))
     }
 
     async function confirmar() {
+        if (sinTasa) { setError('No hay tasa registrada para la fecha del pago'); return }
         if (sinAbono) { setError('Ingresa un monto a cobrar'); return }
         if (excede) { setError('El monto supera el total de las facturas'); return }
         if (!cubre) { setError('El monto debe cubrir exactamente el total — no se aceptan pagos parciales en cobro múltiple'); return }
@@ -838,6 +932,7 @@ function ModalCobroMultiple({ ventas, tasas, onCerrar, onCobrado }) {
                 monto_bs: parseFloat((pagoBs * proporcion).toFixed(2)),
                 tasa_cambio: tasa,
                 tipo_tasa: tipoTasa,
+                fecha_cobro: `${fechaPago}T12:00:00`,
                 metodo_usd: metodoUsd,
                 metodo_bs: metodoBs,
                 nota: nota || null,
@@ -885,19 +980,13 @@ function ModalCobroMultiple({ ventas, tasas, onCerrar, onCobrado }) {
                     ⚠️ El monto debe coincidir exactamente con el total. No se aceptan pagos parciales en cobro múltiple.
                 </div>
 
-                {/* Selector de tasa */}
-                <div style={{ marginBottom: '16px' }}>
-                    <label style={{ fontSize: '12px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tasa de cambio</label>
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                        {OPCIONES_TASA.map(op => (
-                            <button key={op.key} onClick={() => handleTasaChange(op.key)}
-                                style={{ flex: 1, padding: '8px 4px', borderRadius: '8px', fontSize: '12px', fontWeight: 500, border: '1px solid', cursor: 'pointer', borderColor: tipoTasa === op.key ? '#16a34a' : '#e5e7eb', backgroundColor: tipoTasa === op.key ? '#f0fdf4' : '#fff', color: tipoTasa === op.key ? '#16a34a' : '#6b7280' }}>
-                                <div>{op.label}</div>
-                                <div style={{ fontSize: '11px', marginTop: '2px', fontWeight: 400 }}>{tasas[op.key].toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.</div>
-                            </button>
-                        ))}
-                    </div>
-                </div>
+                {/* Fecha del pago + tasas de esa fecha */}
+                <SelectorFechaTasa
+                    fecha={fechaPago} onFecha={setFechaPago}
+                    tasasFecha={tasasFecha} cargandoTasas={cargandoTasas}
+                    tipoTasa={tipoTasa} onTipoTasa={handleTasaChange}
+                    opciones={OPCIONES_TASA}
+                />
 
                 {/* Montos */}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
@@ -953,8 +1042,9 @@ function ModalCobroMultiple({ ventas, tasas, onCerrar, onCobrado }) {
                 </div>
 
                 {/* Resumen */}
-                <div style={{ borderRadius: '8px', padding: '10px 14px', marginBottom: '16px', fontSize: '13px', textAlign: 'center', fontWeight: 500, backgroundColor: excede ? '#fef2f2' : sinAbono ? '#f9fafb' : cubre ? '#f0fdf4' : '#fffbeb', color: excede ? '#dc2626' : sinAbono ? '#9ca3af' : cubre ? '#166534' : '#854d0e', border: `1px solid ${excede ? '#fecaca' : sinAbono ? '#e5e7eb' : cubre ? '#bbf7d0' : '#fde68a'}` }}>
-                    {excede ? '⚠️ El monto supera el total de las facturas'
+                <div style={{ borderRadius: '8px', padding: '10px 14px', marginBottom: '16px', fontSize: '13px', textAlign: 'center', fontWeight: 500, backgroundColor: sinTasa || excede ? '#fef2f2' : sinAbono ? '#f9fafb' : cubre ? '#f0fdf4' : '#fffbeb', color: sinTasa || excede ? '#dc2626' : sinAbono ? '#9ca3af' : cubre ? '#166534' : '#854d0e', border: `1px solid ${sinTasa || excede ? '#fecaca' : sinAbono ? '#e5e7eb' : cubre ? '#bbf7d0' : '#fde68a'}` }}>
+                    {sinTasa ? `⛔ Sin tasa registrada para el ${fmtFechaCorta(fechaPago)}`
+                        : excede ? '⚠️ El monto supera el total de las facturas'
                         : sinAbono ? 'Ingresa el monto a cobrar'
                         : cubre ? `✓ Monto exacto — ${ventas.length} facturas quedarán pagadas`
                         : `Faltan ${fmt(totalGeneral - abonoEnUsd)} para cubrir el total`}
@@ -962,8 +1052,8 @@ function ModalCobroMultiple({ ventas, tasas, onCerrar, onCobrado }) {
 
                 {error && <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px', fontSize: '13px', color: '#dc2626', marginBottom: '12px' }}>{error}</div>}
 
-                <button onClick={confirmar} disabled={guardando || !cubre || excede}
-                    style={{ width: '100%', backgroundColor: !cubre || excede ? '#d1d5db' : '#1d4ed8', color: '#fff', border: 'none', borderRadius: '10px', padding: '13px', fontSize: '15px', fontWeight: 700, cursor: !cubre || excede ? 'default' : 'pointer' }}>
+                <button onClick={confirmar} disabled={guardando || !cubre || excede || sinTasa || cargandoTasas}
+                    style={{ width: '100%', backgroundColor: !cubre || excede || sinTasa || cargandoTasas ? '#d1d5db' : '#1d4ed8', color: '#fff', border: 'none', borderRadius: '10px', padding: '13px', fontSize: '15px', fontWeight: 700, cursor: !cubre || excede || sinTasa || cargandoTasas ? 'default' : 'pointer' }}>
                     {guardando ? 'Registrando...' : `Confirmar cobro de ${ventas.length} facturas`}
                 </button>
             </div>
