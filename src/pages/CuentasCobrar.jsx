@@ -34,6 +34,8 @@ export default function CuentasCobrar() {
     const [tasas, setTasas] = useState({ tasa_bcv: 1, tasa_euro: 1, tasa_binance: 1 })
     const [clientes, setClientes] = useState([])
     const [filtroCliente, setFiltroCliente] = useState('')
+    const [categorias1, setCategorias1] = useState([])
+    const [filtroCat1, setFiltroCat1] = useState('')
     const [seleccionadas, setSeleccionadas] = useState([]) // ids seleccionados
     const [pagina, setPagina] = useState(0)
     const [totalRegistros, setTotalRegistros] = useState(0)
@@ -44,29 +46,42 @@ export default function CuentasCobrar() {
     const [modalNc, setModalNc] = useState(null)
     const [modalLiquidar, setModalLiquidar] = useState(null)
 
-    useEffect(() => { setPagina(0) }, [filtro, filtroCliente])
-    useEffect(() => { cargar() }, [filtro, filtroCliente, pagina])
+    useEffect(() => { setPagina(0) }, [filtro, filtroCliente, filtroCat1])
+    useEffect(() => { cargar() }, [filtro, filtroCliente, filtroCat1, pagina])
     // Limpiar selección al cambiar filtro
-    useEffect(() => { setSeleccionadas([]) }, [filtro, filtroCliente])
+    useEffect(() => { setSeleccionadas([]) }, [filtro, filtroCliente, filtroCat1])
 
     useEffect(() => {
-        supabase.from('clientes').select('id, nombre')
+        supabase.from('clientes').select('id, nombre, cat1_id')
             .eq('empresa_id', perfil.empresa_id).eq('activo', true).order('nombre')
             .then(({ data }) => setClientes(data || []))
+        supabase.from('categorias_clientes').select('id, nombre')
+            .eq('empresa_id', perfil.empresa_id).eq('activo', true).eq('nivel', 1).order('nombre')
+            .then(({ data }) => setCategorias1(data || []))
     }, [])
+
+    // El selector de cliente se acota a la categoría elegida
+    const clientesFiltrados = filtroCat1 ? clientes.filter(c => c.cat1_id === filtroCat1) : clientes
 
     async function cargar() {
         setLoading(true)
         const estados = filtro === 'todos' ? ['pendiente', 'parcial', 'pagado'] : [filtro]
 
+        // !inner solo cuando se filtra por categoría: con el embed normal una venta
+        // sin cliente seguiría apareciendo, que es el comportamiento sin filtro.
+        const embedCli = filtroCat1
+            ? 'clientes!inner(nombre, condicion_pago, dias_credito)'
+            : 'clientes(nombre, condicion_pago, dias_credito)'
+
         let tablaQ = supabase
             .from('ventas')
-            .select('*, clientes(nombre, condicion_pago, dias_credito)', { count: 'exact' })
+            .select(`*, ${embedCli}`, { count: 'exact' })
             .eq('empresa_id', perfil.empresa_id)
             .in('estado_cobro', estados)
             .order('fecha_vencimiento_pago', { ascending: true })
             .range(pagina * PAGE_SIZE, (pagina + 1) * PAGE_SIZE - 1)
         if (filtroCliente) tablaQ = tablaQ.eq('cliente_id', filtroCliente)
+        if (filtroCat1) tablaQ = tablaQ.eq('clientes.cat1_id', filtroCat1)
 
         // La tabla (paginada) se resuelve y muestra de inmediato; los KPIs de
         // cartera se cargan aparte para no bloquear el render si la query pesada
@@ -96,12 +111,15 @@ export default function CuentasCobrar() {
     // bloquear la tabla.
     async function cargarKpis() {
         try {
+            const kpiSelect = 'id, total, estado_cobro, fecha_vencimiento_pago, cliente_id, created_at'
+                + (filtroCat1 ? ', clientes!inner(cat1_id)' : '')
             let kpiQ = supabase
                 .from('ventas')
-                .select('id, total, estado_cobro, fecha_vencimiento_pago, cliente_id, created_at')
+                .select(kpiSelect)
                 .eq('empresa_id', perfil.empresa_id)
                 .in('estado_cobro', ['pendiente', 'parcial'])
             if (filtroCliente) kpiQ = kpiQ.eq('cliente_id', filtroCliente)
+            if (filtroCat1) kpiQ = kpiQ.eq('clientes.cat1_id', filtroCat1)
 
             const { data: kpi } = await kpiQ
             if (!kpi) return
@@ -232,7 +250,18 @@ export default function CuentasCobrar() {
                     <select value={filtroCliente} onChange={e => setFiltroCliente(e.target.value)}
                         style={{ padding: '7px 12px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', color: '#374151', backgroundColor: '#fff', cursor: 'pointer' }}>
                         <option value="">Todos los clientes</option>
-                        {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                        {clientesFiltrados.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                    </select>
+                    <select value={filtroCat1}
+                        onChange={e => {
+                            const cat = e.target.value
+                            setFiltroCat1(cat)
+                            // Si el cliente elegido no pertenece a la categoría, se limpia
+                            if (cat && filtroCliente && !clientes.some(c => c.id === filtroCliente && c.cat1_id === cat)) setFiltroCliente('')
+                        }}
+                        style={{ padding: '7px 12px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', color: '#374151', backgroundColor: '#fff', cursor: 'pointer' }}>
+                        <option value="">Todas las categorías</option>
+                        {categorias1.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
                     </select>
                 </div>
 
