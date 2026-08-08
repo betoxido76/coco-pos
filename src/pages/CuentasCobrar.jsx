@@ -8,6 +8,12 @@ const fmtBs = n => `${Number(n).toLocaleString('es-VE', { minimumFractionDigits:
 // Equivalente en USD de un cobro: parte en USD + parte en Bs convertida por su tasa.
 const cobroEnUsd = (c) => Number(c.monto_usd || 0) + Number(c.monto_bs || 0) / Number(c.tasa_cambio || 1)
 
+// Pago registrado en la propia fila de `ventas` (pago_usd/pago_bs), sin fila en
+// `cobros`. Lo usan las ventas migradas desde el POS anterior. Las ventas de
+// contado creadas por la app quedan 'pagado' sin registro de pago en ninguna
+// parte: para esas el estado es el único dato disponible.
+const pagoDirectoEnUsd = (v) => Number(v.pago_usd || 0) + Number(v.pago_bs || 0) / Number(v.tasa_cambio || 1)
+
 function semaforo(fechaVenc) {
     if (!fechaVenc) return null
     const hoy = new Date(); hoy.setHours(0, 0, 0, 0)
@@ -412,8 +418,14 @@ export default function CuentasCobrar() {
                                             const deshabilitada = v.estado_cobro === 'pagado' ||
                                                 (clienteSeleccionado && v.cliente_id !== clienteSeleccionado && !seleccionada)
                                             const cob = cobrosPagina[v.id]
-                                            const cobrado = cob?.cobrado || 0
-                                            const saldoFila = v.total - cobrado
+                                            const esPagada = v.estado_cobro === 'pagado'
+                                            // Lo efectivamente cobrado = abonos en `cobros` + pago directo
+                                            // en la venta. Si la factura está 'pagado' pero no hay ningún
+                                            // registro (ventas de contado), se muestra el total: el estado
+                                            // dice que se cobró completa y su saldo es 0.
+                                            const cobradoReg = (cob?.cobrado || 0) + pagoDirectoEnUsd(v)
+                                            const cobrado = esPagada ? Math.max(cobradoReg, v.total) : cobradoReg
+                                            const saldoFila = esPagada ? 0 : v.total - cobrado
                                             return (
                                                 <tr key={v.id} style={{ borderBottom: '1px solid #f3f4f6', backgroundColor: seleccionada ? '#eff6ff' : sem?.bg || 'transparent', opacity: deshabilitada && mostrarCheckboxes ? 0.45 : 1, outline: seleccionada ? '2px solid #1d4ed8' : 'none', outlineOffset: '-2px' }}>
                                                     <td style={{ padding: '12px 8px 12px 14px' }}>
