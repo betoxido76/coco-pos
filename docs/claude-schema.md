@@ -41,6 +41,8 @@ pedido_items          -- Detalle de pedidos
 cobros                -- Cobros parciales/totales en multimoneda
                       --   nota text (singular, NOT notas), cuenta_bancaria_id uuid
                       --   devolucion_id uuid (NC aplicada como cobro)
+                      --   fecha_cobro = fecha REAL del pago (puede ser anterior a hoy);
+                      --   tasa_cambio/tipo_tasa vienen de tasas_cambio de ESA fecha
 devoluciones          -- Notas de crédito
                       --   numero_nc, cliente_id, nota_liquidacion, fecha_liquidacion
                       --   estado_nc CHECK IN ('pendiente','aplicada','reembolsada','anulada')
@@ -106,8 +108,11 @@ gastos                -- monto_usd, monto_bs, tipo_tasa, metodo_pago,
                       --   estado ('pagado'|'pendiente'), fecha_vencimiento,
                       --   cuenta_bancaria_id → cuentas_bancarias
 tipos_gastos          -- Tipos de gasto personalizables por empresa
-configuracion         -- Tasas: clave/valor por empresa_id
+configuracion         -- Tasa VIGENTE: clave/valor por empresa_id
                       --   claves: tasa_bcv, tasa_euro, tasa_binance
+tasas_cambio          -- HISTÓRICO de tasas por fecha (ver CLAUDE.md §7)
+                      --   empresa_id, fecha date, tasa_bcv, tasa_euro, tasa_binance
+                      --   UNIQUE (empresa_id, fecha) → el upsert sobreescribe el día
 listas_precio
 producto_precios
 visitas_comerciales   -- Visitas de campo desde NuevoPedido
