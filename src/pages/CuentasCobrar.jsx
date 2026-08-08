@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import { X, DollarSign, CheckSquare, FileText, Ban } from 'lucide-react'
@@ -108,7 +108,10 @@ export default function CuentasCobrar() {
     const [filtroCliente, setFiltroCliente] = useState('')
     const [categorias1, setCategorias1] = useState([])
     const [filtroCat1, setFiltroCat1] = useState('')
-    const [ultimoPago, setUltimoPago] = useState({})  // { venta_id: fecha del último cobro }
+    // { venta_id: { cobrado, ultimaFecha } } — cobros de la página en un solo lote
+    const [cobrosPagina, setCobrosPagina] = useState({})
+    const [cobrosListos, setCobrosListos] = useState(false)
+    const cobrosReq = useRef(0)
     const [seleccionadas, setSeleccionadas] = useState([]) // ids seleccionados
     const [pagina, setPagina] = useState(0)
     const [totalRegistros, setTotalRegistros] = useState(0)
@@ -170,7 +173,7 @@ export default function CuentasCobrar() {
                 const m = {}; cfg.forEach(r => { m[r.clave] = Number(r.valor) })
                 setTasas({ tasa_bcv: m.tasa_bcv || 1, tasa_euro: m.tasa_euro || 1, tasa_binance: m.tasa_binance || 1 })
             }
-            cargarUltimosPagos(data || [])
+            cargarCobrosPagina(data || [])
         } catch (e) {
             console.error('Error cargando facturas CxC:', e)
         } finally {
@@ -180,23 +183,32 @@ export default function CuentasCobrar() {
         cargarKpis()
     }
 
-    // Fecha del último cobro de cada factura de la página. Una sola query para
-    // las 50 filas (no una por fila). Las pendientes no tienen cobros y quedan
-    // fuera del mapa → la columna se muestra vacía.
-    async function cargarUltimosPagos(filas) {
-        const ids = filas.filter(v => v.estado_cobro !== 'pendiente').map(v => v.id)
-        if (ids.length === 0) { setUltimoPago({}); return }
+    // Cobros de las facturas de la página en UNA sola query. Antes cada fila
+    // montaba dos componentes que consultaban `cobros` por su cuenta (2 queries
+    // por fila = ~100 por página); ahora se resuelve todo aquí y las celdas solo
+    // leen del mapa. De paso el saldo y el "cobrado" salen de los mismos datos.
+    async function cargarCobrosPagina(filas) {
+        // Al cambiar de página rápido, la respuesta de la página anterior puede
+        // llegar después: solo se aplica la del último pedido.
+        const req = ++cobrosReq.current
+        setCobrosListos(false)
+        const ids = filas.map(v => v.id)
+        if (ids.length === 0) { setCobrosPagina({}); setCobrosListos(true); return }
         const { data } = await supabase.from('cobros')
-            .select('venta_id, fecha_cobro, created_at').in('venta_id', ids)
+            .select('venta_id, monto_usd, monto_bs, tasa_cambio, fecha_cobro, created_at')
+            .in('venta_id', ids)
+        if (req !== cobrosReq.current) return
         const m = {}
         ;(data || []).forEach(c => {
+            const acc = m[c.venta_id] || (m[c.venta_id] = { cobrado: 0, ultimaFecha: null })
+            acc.cobrado += cobroEnUsd(c)
             // fecha_cobro es la fecha real del pago; created_at cubre los cobros
             // viejos registrados antes de que se guardara la fecha.
             const f = c.fecha_cobro || c.created_at
-            if (!f) return
-            if (!m[c.venta_id] || parseFecha(f) > parseFecha(m[c.venta_id])) m[c.venta_id] = f
+            if (f && (!acc.ultimaFecha || parseFecha(f) > parseFecha(acc.ultimaFecha))) acc.ultimaFecha = f
         })
-        setUltimoPago(m)
+        setCobrosPagina(m)
+        setCobrosListos(true)
     }
 
     // KPIs de cartera (pendiente + parcial), independientes del filtro de pestaña;
@@ -399,6 +411,9 @@ export default function CuentasCobrar() {
                                             const seleccionada = seleccionadas.includes(v.id)
                                             const deshabilitada = v.estado_cobro === 'pagado' ||
                                                 (clienteSeleccionado && v.cliente_id !== clienteSeleccionado && !seleccionada)
+                                            const cob = cobrosPagina[v.id]
+                                            const cobrado = cob?.cobrado || 0
+                                            const saldoFila = v.total - cobrado
                                             return (
                                                 <tr key={v.id} style={{ borderBottom: '1px solid #f3f4f6', backgroundColor: seleccionada ? '#eff6ff' : sem?.bg || 'transparent', opacity: deshabilitada && mostrarCheckboxes ? 0.45 : 1, outline: seleccionada ? '2px solid #1d4ed8' : 'none', outlineOffset: '-2px' }}>
                                                     <td style={{ padding: '12px 8px 12px 14px' }}>
@@ -413,16 +428,22 @@ export default function CuentasCobrar() {
                                                     <td style={{ padding: '12px 14px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>{v.numero_factura}</td>
                                                     <td style={{ padding: '12px 14px', fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>{v.clientes?.nombre || '—'}</td>
                                                     <td style={{ padding: '12px 14px', fontSize: '13px', color: '#6b7280' }}>{new Date(v.created_at).toLocaleDateString('es-VE')}</td>
-                                                    <td style={{ padding: '12px 14px', fontSize: '13px', whiteSpace: 'nowrap', color: ultimoPago[v.id] ? '#374151' : '#d1d5db' }}>
-                                                        {ultimoPago[v.id] ? parseFecha(ultimoPago[v.id]).toLocaleDateString('es-VE') : '—'}
+                                                    <td style={{ padding: '12px 14px', fontSize: '13px', whiteSpace: 'nowrap', color: cob?.ultimaFecha ? '#374151' : '#d1d5db' }}>
+                                                        {cob?.ultimaFecha ? parseFecha(cob.ultimaFecha).toLocaleDateString('es-VE') : '—'}
                                                     </td>
                                                     <td style={{ padding: '12px 14px' }}>
                                                         {sem ? <span style={{ fontSize: '12px', fontWeight: 500, color: sem.color }}>{sem.label}</span>
                                                             : <span style={{ fontSize: '12px', color: '#9ca3af' }}>—</span>}
                                                     </td>
                                                     <td style={{ padding: '12px 14px', fontSize: '13px', fontWeight: 600, color: '#1f2937' }}>{fmt(v.total)}</td>
-                                                    <td style={{ padding: '12px 14px', fontSize: '13px', color: '#16a34a' }}><MontoCobrado ventaId={v.id} /></td>
-                                                    <td style={{ padding: '12px 14px', fontSize: '13px', fontWeight: 600, color: '#ef4444' }}><SaldoPendiente ventaId={v.id} total={v.total} /></td>
+                                                    <td style={{ padding: '12px 14px', fontSize: '13px', color: '#16a34a' }}>
+                                                        {cobrosListos ? fmt(cobrado) : '—'}
+                                                    </td>
+                                                    <td style={{ padding: '12px 14px', fontSize: '13px', fontWeight: 600, color: '#ef4444' }}>
+                                                        {!cobrosListos ? '—'
+                                                            : saldoFila > 0.01 ? fmt(saldoFila)
+                                                            : <span style={{ color: '#16a34a' }}>✓ Pagado</span>}
+                                                    </td>
                                                     <td style={{ padding: '12px 14px' }}><BadgeCobro estado={v.estado_cobro} /></td>
                                                     <td style={{ padding: '12px 14px' }}>
                                                         {v.estado_cobro !== 'pagado' && (
@@ -540,30 +561,8 @@ export default function CuentasCobrar() {
     )
 }
 
-// ── Cobrado total de una venta ─────────────────────────────────
-function MontoCobrado({ ventaId }) {
-    const [monto, setMonto] = useState(null)
-    useEffect(() => {
-        supabase.from('cobros').select('monto_usd, monto_bs, tasa_cambio').eq('venta_id', ventaId)
-            .then(({ data }) => {
-                if (data) setMonto(data.reduce((s, c) => s + cobroEnUsd(c), 0))
-            })
-    }, [ventaId])
-    return <span>{monto != null ? fmt(monto) : '—'}</span>
-}
-
-function SaldoPendiente({ ventaId, total }) {
-    const [cobrado, setCobrado] = useState(null)
-    useEffect(() => {
-        supabase.from('cobros').select('monto_usd, monto_bs, tasa_cambio').eq('venta_id', ventaId)
-            .then(({ data }) => {
-                if (data) setCobrado(data.reduce((s, c) => s + cobroEnUsd(c), 0))
-            })
-    }, [ventaId])
-    if (cobrado === null) return <span>—</span>
-    const saldo = total - cobrado
-    return <span>{saldo > 0.01 ? fmt(saldo) : <span style={{ color: '#16a34a' }}>✓ Pagado</span>}</span>
-}
+// Cobrado y saldo por fila salen de `cobrosPagina` (una query por página),
+// antes eran dos componentes que consultaban `cobros` fila por fila.
 
 // ── Modal cobro individual ─────────────────────────────────────
 function ModalCobro({ venta, onCerrar, onCobrado }) {
