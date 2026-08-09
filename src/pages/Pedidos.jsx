@@ -798,6 +798,9 @@ function DetallePedido({ pedido, onVolver }) {
                     precio_unitario: Number(i.precio_unitario) * (1 - Number(i.descuento_item || 0) / 100) * (1 - descGlobal / 100),
                     unidad_venta: i.unidad_venta || null,
                     cantidad_primaria: cantPrimaria(i),
+                    // Sin esto la factura quedaba con aplica_iva NULL y la Nota de
+                    // Entrega, que hace `?? true`, extraía IVA de productos exentos.
+                    aplica_iva: itemAplicaIva(i),
                     empresa_id: perfil.empresa_id,
                 }
             })
