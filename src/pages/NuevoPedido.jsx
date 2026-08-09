@@ -1891,7 +1891,7 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
                 direccion_entrega_nombre: direccionId ? direcciones.find(d => d.id === direccionId)?.nombre || null : null,
                 items: items.map(i => ({
                     producto_id: i.id, nombre_producto: i.nombre, cantidad: i.cantidad,
-                    precio_unitario: (i.aplica_iva ?? true) ? i.precio / 1.16 : i.precio, descuento_item: Number(i.descuento_item) || 0,
+                    precio_unitario: i.precio, descuento_item: Number(i.descuento_item) || 0,
                     subtotal: i.cantidad * i.precio * (1 - Number(i.descuento_item || 0) / 100),
                     ...lineaUnidades(i),
                 })),
@@ -1930,7 +1930,11 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
             items.map(i => ({
                 pedido_id: pedido.id, empresa_id: perfil.empresa_id,
                 producto_id: i.id, nombre_producto: i.nombre,
-                cantidad: i.cantidad, precio_unitario: (i.aplica_iva ?? true) ? i.precio / 1.16 : i.precio,
+                // precio_unitario se guarda como precio de lista (IVA embebido si el
+                // producto lo aplica), igual que Ventas.jsx. Pedidos.jsx extrae la base
+                // al calcular; dividir aquí hacía que los pedidos de campo salieran ~16%
+                // por debajo en el back-office.
+                cantidad: i.cantidad, precio_unitario: i.precio,
                 descuento_item: Number(i.descuento_item) || 0,
                 subtotal: i.cantidad * i.precio * (1 - Number(i.descuento_item || 0) / 100),
                 ...lineaUnidades(i),
