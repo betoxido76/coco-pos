@@ -315,6 +315,8 @@ export default function CuentasCobrar() {
     const diasCalle = totalPendiente > 0 ? (diasCalleNum / totalPendiente).toFixed(1) : '0.0'
 
     const mostrarCheckboxes = filtro === 'pendiente' || filtro === 'parcial'
+    // En Pendientes no hay pagos todavía: la columna sería siempre vacía
+    const mostrarDiasPago = filtro !== 'pendiente'
 
     return (
         <div style={{ padding: '24px' }}>
@@ -417,7 +419,9 @@ export default function CuentasCobrar() {
                                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                                     <thead>
                                         <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                            {[mostrarCheckboxes ? '☑' : '', '', 'Factura', 'Cliente', 'Emisión', 'Últ. pago', 'Días Pago', 'Vencimiento', 'Total', 'Cobrado', 'Saldo', 'Estado', ''].map((h, i) => (
+                                            {[mostrarCheckboxes ? '☑' : '', '', 'Factura', 'Cliente', 'Emisión', 'Últ. pago',
+                                              ...(mostrarDiasPago ? ['Días Pago'] : []),
+                                              'Vencimiento', 'Total', 'Cobrado', 'Saldo', 'Estado', ''].map((h, i) => (
                                                 <th key={i} style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
                                             ))}
                                         </tr>
@@ -456,9 +460,11 @@ export default function CuentasCobrar() {
                                                     <td style={{ padding: '12px 14px', fontSize: '13px', whiteSpace: 'nowrap', color: cob?.ultimaFecha ? '#374151' : '#d1d5db' }}>
                                                         {cob?.ultimaFecha ? parseFecha(cob.ultimaFecha).toLocaleDateString('es-VE') : '—'}
                                                     </td>
-                                                    <td style={{ padding: '12px 14px', fontSize: '13px', whiteSpace: 'nowrap', color: diasPago != null ? '#374151' : '#d1d5db' }}>
-                                                        {diasPago != null ? `${diasPago} d` : '—'}
-                                                    </td>
+                                                    {mostrarDiasPago && (
+                                                        <td style={{ padding: '12px 14px', fontSize: '13px', whiteSpace: 'nowrap', color: diasPago != null ? '#374151' : '#d1d5db' }}>
+                                                            {diasPago != null ? `${diasPago} d` : '—'}
+                                                        </td>
+                                                    )}
                                                     <td style={{ padding: '12px 14px' }}>
                                                         {sem ? <span style={{ fontSize: '12px', fontWeight: 500, color: sem.color }}>{sem.label}</span>
                                                             : <span style={{ fontSize: '12px', color: '#9ca3af' }}>—</span>}
