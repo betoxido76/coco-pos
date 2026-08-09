@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import { PackageCheck, ChevronRight, Check, AlertTriangle, Truck, FileText, Ban, RotateCcw, Search, Plus, X } from 'lucide-react'
+import { itemAplicaIva } from '../lib/iva'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 
@@ -711,7 +712,7 @@ function TotalPedido({ pedidoId, descuentoGlobal, estado }) {
     const [total, setTotal] = useState(null)
     const usarAlistada = ['alistado', 'facturado', 'despachado'].includes(estado)
     useEffect(() => {
-        supabase.from('pedido_items').select('cantidad, cantidad_alistada, precio_unitario, descuento_item, unidad_venta, productos_terminados(aplica_iva, unidad_venta_2, factor_conversion_2)')
+        supabase.from('pedido_items').select('cantidad, cantidad_alistada, precio_unitario, descuento_item, unidad_venta, aplica_iva, productos_terminados(aplica_iva, unidad_venta_2, factor_conversion_2)')
             .eq('pedido_id', pedidoId)
             .then(({ data }) => {
                 if (!data) return
@@ -778,12 +779,12 @@ function VerPedido({ pedido, onVolver }) {
     const subtotalConDescItems = items.reduce((s, i) => {
         const desc = Number(i.descuento_item || 0)
         const precio = Number(i.precio_unitario) * (1 - desc / 100)
-        const aplica = i.productos_terminados?.aplica_iva ?? true
+        const aplica = itemAplicaIva(i)
         return s + cantFn(i) * (aplica ? precio / 1.16 : precio)
     }, 0)
     const subtotalFinal = subtotalConDescItems * (1 - descGlobal / 100)
     const iva = items.reduce((s, i) => {
-        if (!(i.productos_terminados?.aplica_iva ?? true)) return s
+        if (!itemAplicaIva(i)) return s
         const desc = Number(i.descuento_item || 0)
         const base = cantFn(i) * Number(i.precio_unitario) / 1.16 * (1 - desc / 100) * (1 - descGlobal / 100)
         return s + base * 0.16
@@ -1300,7 +1301,9 @@ function RegistrarDevolucion({ onGuardado, onCancelar }) {
                 producto_id: i.producto_id,
                 cantidad_recibida: Number(i.cantidad_recibida),
                 precio_unitario: Number(i.precio_unitario),
-                aplica_iva: i.productos_terminados?.aplica_iva ?? true,
+                // La devolución hereda la condición de IVA de la venta original,
+                // no la que tenga el producto hoy.
+                aplica_iva: itemAplicaIva(i),
             }))
         )
         if (errItems) { setError('Error en ítems: ' + errItems.message); setGuardando(false); return }

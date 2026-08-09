@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import { Plus, Search, Trash2, Check, CheckCircle, FileText, RotateCcw, AlertTriangle, ClipboardList, ChevronRight, Edit, X, MapPin, Star } from 'lucide-react'
 import { opcionesUnidad } from '../lib/unidades'
+import { itemAplicaIva } from '../lib/iva'
 
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
@@ -424,7 +425,7 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
     const total = items.reduce((s, i) => s + Number(i.cantidad) * Number(i.precio_unitario) * (1 - Number(i.descuento_item || 0) / 100), 0) * discountFactor
     const subtotal = items.reduce((s, i) => {
         const lineTotal = Number(i.cantidad) * Number(i.precio_unitario) * (1 - Number(i.descuento_item || 0) / 100) * discountFactor
-        return s + (i.productos_terminados?.aplica_iva ? lineTotal / 1.16 : lineTotal)
+        return s + (itemAplicaIva(i) ? lineTotal / 1.16 : lineTotal)
     }, 0)
     const iva = total - subtotal
     const descGlobalMonto = discountFactor < 1 ? total / discountFactor - total : 0
@@ -497,7 +498,7 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
                     producto_id: i.producto_id,
                     cantidad: i.cantidad,
                     precio_unitario: Number(i.precio_unitario) * (1 - Number(i.descuento_item || 0) / 100) * (1 - descGlobal / 100),
-                    aplica_iva: i.productos_terminados?.aplica_iva ?? true,
+                    aplica_iva: itemAplicaIva(i),
                     unidad_venta: i.unidad_venta || null,
                     cantidad_primaria: cantidadPrimaria,
                     empresa_id: perfil.empresa_id,
@@ -1344,6 +1345,8 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                     subtotal: i.cantidad * i.precio_unitario * (1 - Number(i.descuento_item || 0) / 100),
                     unidad_venta: i.unidadVenta === '2' ? i.unidad_venta_2 : i.unidad_medida,
                     cantidad_primaria: i.unidadVenta === '2' ? i.cantidad * (i.factor_conversion_2 || 1) : i.cantidad,
+                    // Snapshot de la condición de IVA al crear el pedido
+                    aplica_iva: i.aplica_iva ?? true,
                 }))
             )
 

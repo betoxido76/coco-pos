@@ -1859,6 +1859,9 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
         return {
             unidad_venta: esUM2 ? i.unidad_venta_2 : (i.unidad_medida || 'unidad'),
             cantidad_primaria: esUM2 ? i.cantidad * factor : i.cantidad,
+            // Snapshot: si mañana cambia la casilla del producto, este pedido
+            // debe seguir calculándose con la condición que tenía hoy.
+            aplica_iva: i.aplica_iva ?? true,
         }
     }
 

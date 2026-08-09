@@ -9,7 +9,8 @@ usuario_modulos       -- Módulos habilitados por usuario
 
 ### Inventario
 ```
-productos_terminados  -- SKU, stock_actual, costo_promedio
+productos_terminados  -- SKU, stock_actual, costo_promedio, aplica_iva
+                      --   updated_at (trigger set_updated_at) + actualizado_por uuid
 materias_primas       -- Insumos de producción
 materiales_empaque    -- Materiales de empaque
 consumibles           -- Consumibles generales
@@ -38,6 +39,12 @@ pedidos               -- Pedidos de venta (Realtime habilitado: supabase_realtim
                       --   direccion_entrega_id uuid, direccion_entrega_texto text
 pedido_items          -- Detalle de pedidos
                       --   cantidad_alistada numeric (NULL = no alistado aún, 0 = cancelado, >0 = alistado)
+                      --   aplica_iva boolean = snapshot al crear la línea (igual que venta_items).
+                      --   NO leer productos_terminados.aplica_iva al calcular: cambiar la
+                      --   casilla en el catálogo reescribiría totales históricos.
+                      --   Usar siempre itemAplicaIva() de src/lib/iva.js.
+                      --   subtotal es columna ALMACENADA: recalcularla en cada UPDATE
+                      --   (la app del vendedor totaliza desde ella).
 cobros                -- Cobros parciales/totales en multimoneda
                       --   nota text (singular, NOT notas), cuenta_bancaria_id uuid
                       --   devolucion_id uuid (NC aplicada como cobro)

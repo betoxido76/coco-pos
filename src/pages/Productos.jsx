@@ -181,7 +181,12 @@ export default function Productos() {
 
         let err, productoId = editando
         if (editando) {
-            ; ({ error: err } = await supabase.from('productos_terminados').update(payload).eq('id', editando))
+            // Quién tocó el catálogo: `aplica_iva`, precios y unidades cambian el
+            // cálculo de documentos, y sin esto no queda rastro de quién los movió.
+            // `updated_at` lo pone un trigger, así cubre también cambios por SQL.
+            const { data: { user } } = await supabase.auth.getUser()
+            ; ({ error: err } = await supabase.from('productos_terminados')
+                .update({ ...payload, actualizado_por: user?.id || null }).eq('id', editando))
         } else {
             const { data: nuevo, error: insErr } = await supabase.from('productos_terminados').insert({ ...payload, empresa_id: perfil.empresa_id }).select('id').single()
             err = insErr
