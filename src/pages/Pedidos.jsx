@@ -722,6 +722,13 @@ function DetallePedido({ pedido, onVolver }) {
     }
 
     async function convertirEnFactura() {
+        // Red de seguridad además del botón deshabilitado: nunca emitir una
+        // factura sin líneas. Un pedido de muestras sí puede totalizar 0, pero
+        // siempre tiene ítems; cero ítems solo ocurre si algo salió mal.
+        if (items.filter(i => Number(i.cantidad_alistada ?? i.cantidad) > 0).length === 0) {
+            setError('El pedido no tiene ítems por facturar. Recarga la pantalla e intenta de nuevo.')
+            return
+        }
         setProcesando(true); setError('')
 
         const { data: numeroConsecutivo } = await supabase.rpc('obtener_siguiente_ventas_numero', {
@@ -1176,9 +1183,12 @@ function DetallePedido({ pedido, onVolver }) {
                         </div>
                     )}
 
-                    <button onClick={convertirEnFactura} disabled={procesando}
-                        style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#1d4ed8', color: '#fff', border: 'none', borderRadius: '8px', padding: '11px 24px', fontSize: '14px', fontWeight: 600, cursor: 'pointer', opacity: procesando ? 0.6 : 1 }}>
-                        <ChevronRight size={16} /> {procesando ? 'Creando factura...' : 'Convertir en factura'}
+                    {/* disabled con `loading`: sin esto, hacer clic antes de que
+                        carguen los ítems facturaba con `items` vacío → factura en $0
+                        y sin líneas, con la mercancía igual descontada del inventario. */}
+                    <button onClick={convertirEnFactura} disabled={procesando || loading}
+                        style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#1d4ed8', color: '#fff', border: 'none', borderRadius: '8px', padding: '11px 24px', fontSize: '14px', fontWeight: 600, cursor: procesando || loading ? 'default' : 'pointer', opacity: procesando || loading ? 0.6 : 1 }}>
+                        <ChevronRight size={16} /> {loading ? 'Cargando ítems...' : procesando ? 'Creando factura...' : 'Convertir en factura'}
                     </button>
                 </>
             )}
