@@ -724,6 +724,27 @@ function DetallePedido({ pedido, onVolver }) {
             })
         )
 
+        // Contado: la factura nace 'pagado', así que necesita su fila en `cobros`.
+        // Sin esto CxC la mostraba con cobrado $0 y saldo completo, y el pago no
+        // aparecía en ningún flujo de caja. Esta pantalla no pide el detalle del
+        // pago, así que se registra el total en USD y la nota lo deja explícito.
+        if (condicion === 'contado') {
+            const { data: cfg } = await supabase.from('configuracion')
+                .select('clave, valor').eq('empresa_id', perfil.empresa_id).eq('clave', 'tasa_bcv').maybeSingle()
+            await supabase.from('cobros').insert({
+                venta_id: venta.id,
+                monto_usd: total,
+                monto_bs: 0,
+                tasa_cambio: Number(cfg?.valor) || 1,
+                tipo_tasa: 'tasa_bcv',
+                metodo_usd: 'Efectivo',
+                metodo_bs: null,
+                nota: 'Contado — pago no detallado al facturar el pedido',
+                usuario_id: user.id,
+                empresa_id: perfil.empresa_id,
+            })
+        }
+
         // Descontar stock — usar cantidad_alistada (unidades primarias reales despachadas)
         for (const item of itemsDespachar) {
             const cantPrimaria = Number(item.cantidad_alistada ?? item.cantidad)

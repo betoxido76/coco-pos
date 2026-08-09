@@ -496,15 +496,22 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
 
         if (condicion === 'contado') {
             const tasa = tasas[tipoTasa] || 1
+            // Los montos de pago son opcionales en el formulario. Si se dejan en
+            // blanco el cobro entraría en 0 y la factura, ya marcada 'pagado',
+            // aparecería en CxC con el saldo completo. En ese caso se registra
+            // el total en USD, que es lo que implica el estado.
+            const sinDetalle = (Number(pagoUsd) || 0) + (Number(pagoBs) || 0) / tasa < 0.01
+            const montoUsd = sinDetalle ? total : Number(pagoUsd) || 0
+            const montoBs = sinDetalle ? 0 : Number(pagoBs) || 0
             await supabase.from('cobros').insert({
                 venta_id: venta.id,
-                monto_usd: Number(pagoUsd) || 0,
-                monto_bs: Number(pagoBs) || 0,
+                monto_usd: montoUsd,
+                monto_bs: montoBs,
                 tasa_cambio: tasa,
                 tipo_tasa: tipoTasa,
-                metodo_usd: Number(pagoUsd) > 0 ? metodoUsd : null,
-                metodo_bs: Number(pagoBs) > 0 ? metodoBs : null,
-                nota: notaCobro || null,
+                metodo_usd: montoUsd > 0 ? metodoUsd : null,
+                metodo_bs: montoBs > 0 ? metodoBs : null,
+                nota: notaCobro || (sinDetalle ? 'Contado — pago no detallado al facturar' : null),
                 cuenta_bancaria_id: cuentaBancariaId || null,
                 usuario_id: user.id,
                 empresa_id: perfil.empresa_id,
@@ -1212,15 +1219,20 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
 
             if (condicion === 'contado') {
                 const tasa = tasas[tipoTasa] || 1
+                // Ver nota en FacturarPedido: sin detalle de pago se registra el
+                // total en USD para que el cobro no quede en 0.
+                const sinDetalle = (Number(pagoUsd) || 0) + (Number(pagoBs) || 0) / tasa < 0.01
+                const montoUsd = sinDetalle ? total : Number(pagoUsd) || 0
+                const montoBs = sinDetalle ? 0 : Number(pagoBs) || 0
                 await supabase.from('cobros').insert({
                     venta_id: venta.id,
-                    monto_usd: Number(pagoUsd) || 0,
-                    monto_bs: Number(pagoBs) || 0,
+                    monto_usd: montoUsd,
+                    monto_bs: montoBs,
                     tasa_cambio: tasa,
                     tipo_tasa: tipoTasa,
-                    metodo_usd: Number(pagoUsd) > 0 ? metodoUsd : null,
-                    metodo_bs: Number(pagoBs) > 0 ? metodoBs : null,
-                    nota: notaCobro || null,
+                    metodo_usd: montoUsd > 0 ? metodoUsd : null,
+                    metodo_bs: montoBs > 0 ? metodoBs : null,
+                    nota: notaCobro || (sinDetalle ? 'Contado — pago no detallado al facturar' : null),
                     cuenta_bancaria_id: cuentaBancariaId || null,
                     usuario_id: user.id,
                     empresa_id: perfil.empresa_id,

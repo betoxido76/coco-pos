@@ -3,14 +3,16 @@
 --
 -- Síntoma reportado: en CxC → Pagadas salen facturas con Cobrado $0.00 y saldo
 -- igual al total. La columna Cobrado/Saldo se calculaba SOLO desde `cobros`, y
--- hay dos rutas que marcan una venta como pagada sin insertar nada ahí:
+-- una factura de contado puede quedar 'pagado' con cobros en 0 por tres vías:
 --
---   1. Venta de CONTADO creada por la app (Ventas.jsx, Pedidos.jsx):
---      estado_cobro='pagado' de entrada, sin fila en cobros y sin pago_usd/bs.
---   2. Venta MIGRADA del POS anterior (migrate_pos.py):
---      estado_cobro='pagado' fijo, con el monto en ventas.pago_usd/pago_bs.
+--   1. COBRO EN CERO: Ventas.jsx (facturar pedido / venta retail) sí insertaba
+--      la fila en `cobros`, pero con los montos del formulario, que son
+--      opcionales. Si se dejaban en blanco quedaba un cobro de 0.
+--   2. SIN FILA: Pedidos.jsx → "Convertir en factura" no insertaba nada.
+--   3. MIGRADA del POS anterior (migrate_pos.py): estado_cobro='pagado' fijo,
+--      con el monto en ventas.pago_usd/pago_bs y sin filas en `cobros`.
 --
--- Este script separa ambos casos para saber cuál aplica.
+-- Los tres quedan corregidos hacia adelante; este script mide el histórico.
 -- ============================================================================
 
 -- Cliente del reporte: bee65e82-665d-460b-b0b6-7006d3524744
@@ -30,24 +32,32 @@ WHERE v.cliente_id = 'bee65e82-665d-460b-b0b6-7006d3524744'
 
 
 -- ----------------------------------------------------------------------------
--- 2) Cuántas facturas 'pagado' del cliente no tienen cobros, y de qué tipo
---    - "migrada con pago"  → recuperable desde ventas.pago_usd/pago_bs
---    - "contado sin rastro" → solo queda el estado_cobro
+-- 2) Facturas 'pagado' del cliente cuyo cobrado registrado no llega al total,
+--    clasificadas por causa. `cobrado` replica cobroEnUsd() del front:
+--    monto_usd + monto_bs / tasa_cambio.
 -- ----------------------------------------------------------------------------
+WITH v AS (
+    SELECT ventas.*,
+           (SELECT count(*) FROM cobros c WHERE c.venta_id = ventas.id) AS n_cobros,
+           coalesce((SELECT sum(c.monto_usd + c.monto_bs / nullif(c.tasa_cambio, 0))
+                     FROM cobros c WHERE c.venta_id = ventas.id), 0) AS cobrado
+    FROM ventas
+    WHERE cliente_id = 'bee65e82-665d-460b-b0b6-7006d3524744'
+      AND estado_cobro = 'pagado'
+)
 SELECT CASE
-         WHEN coalesce(v.pago_usd, 0) > 0 OR coalesce(v.pago_bs, 0) > 0
-           THEN 'migrada con pago en la venta'
-         ELSE 'contado sin registro de pago'
-       END AS tipo,
+         WHEN n_cobros > 0                                     THEN '1. cobro registrado en 0'
+         WHEN coalesce(pago_usd,0) > 0 OR coalesce(pago_bs,0) > 0 THEN '3. migrada (pago en la venta)'
+         ELSE                                                       '2. sin fila en cobros'
+       END AS causa,
        count(*) AS facturas,
-       sum(v.total) AS monto_total,
-       min(v.created_at)::date AS desde,
-       max(v.created_at)::date AS hasta
-FROM ventas v
-WHERE v.cliente_id = 'bee65e82-665d-460b-b0b6-7006d3524744'
-  AND v.estado_cobro = 'pagado'
-  AND NOT EXISTS (SELECT 1 FROM cobros c WHERE c.venta_id = v.id)
-GROUP BY 1;
+       sum(total) AS monto_total,
+       min(created_at)::date AS desde,
+       max(created_at)::date AS hasta
+FROM v
+WHERE cobrado < total - 0.01
+GROUP BY 1
+ORDER BY 1;
 
 
 -- ----------------------------------------------------------------------------
@@ -55,11 +65,13 @@ GROUP BY 1;
 -- ----------------------------------------------------------------------------
 SELECT v.estado_cobro,
        (EXISTS (SELECT 1 FROM cobros c WHERE c.venta_id = v.id)) AS tiene_cobros,
+       coalesce((SELECT sum(c.monto_usd + c.monto_bs / nullif(c.tasa_cambio, 0))
+                 FROM cobros c WHERE c.venta_id = v.id), 0) >= v.total - 0.01 AS cobros_cubren_total,
        (coalesce(v.pago_usd, 0) > 0 OR coalesce(v.pago_bs, 0) > 0) AS tiene_pago_en_venta,
        count(*) AS facturas,
        sum(v.total) AS monto
 FROM ventas v
 WHERE v.empresa_id = (SELECT empresa_id FROM clientes
                       WHERE id = 'bee65e82-665d-460b-b0b6-7006d3524744')
-GROUP BY 1, 2, 3
-ORDER BY 1, 2, 3;
+GROUP BY 1, 2, 3, 4
+ORDER BY 1, 2, 3, 4;
