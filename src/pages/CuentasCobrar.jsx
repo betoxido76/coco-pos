@@ -163,8 +163,8 @@ export default function CuentasCobrar() {
         // !inner solo cuando se filtra por categoría: con el embed normal una venta
         // sin cliente seguiría apareciendo, que es el comportamiento sin filtro.
         const embedCli = filtroCat1
-            ? 'clientes!inner(nombre, condicion_pago, dias_credito)'
-            : 'clientes(nombre, condicion_pago, dias_credito)'
+            ? 'clientes!inner(nombre, condicion_pago, dias_credito, contribuyente_especial)'
+            : 'clientes(nombre, condicion_pago, dias_credito, contribuyente_especial)'
 
         let tablaQ = supabase
             .from('ventas')
@@ -719,6 +719,8 @@ function ModalCobro({ venta, onCerrar, onCobrado }) {
         const { data: { user } } = await supabase.auth.getUser()
         // Mediodía para que la fecha no se corra de día al guardarse con zona horaria
         const fechaCobro = `${fechaPago}T12:00:00`
+        // Estatus del cliente al momento del pago (puede cambiar con el tiempo)
+        const contribEspecial = venta.clientes?.contribuyente_especial ?? null
 
         // Aplicar NCs seleccionadas como cobros
         for (const nc of ncsDisponibles.filter(nc => ncsSeleccionadas.has(nc.id))) {
@@ -733,6 +735,7 @@ function ModalCobro({ venta, onCerrar, onCobrado }) {
                 metodo_bs: null,
                 nota: `NC ${nc.numero_nc || nc.id.slice(0, 8)}`,
                 devolucion_id: nc.id,
+                contribuyente_especial: contribEspecial,
                 usuario_id: user.id,
                 empresa_id: perfil.empresa_id,
             })
@@ -752,6 +755,7 @@ function ModalCobro({ venta, onCerrar, onCobrado }) {
                 metodo_bs: metodoBs,
                 nota: nota || null,
                 cuenta_bancaria_id: cuentaBancariaId || null,
+                contribuyente_especial: contribEspecial,
                 usuario_id: user.id,
                 empresa_id: perfil.empresa_id,
             })
@@ -1001,6 +1005,8 @@ function ModalCobroMultiple({ ventas, onCerrar, onCobrado }) {
                 metodo_bs: metodoBs,
                 nota: nota || null,
                 cuenta_bancaria_id: cuentaBancariaId || null,
+                // Estatus del cliente al momento del pago
+                contribuyente_especial: venta.clientes?.contribuyente_especial ?? null,
                 usuario_id: user.id,
                 empresa_id: perfil.empresa_id,
             })

@@ -359,6 +359,7 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
     const [metodoBs, setMetodoBs] = useState('Pago Móvil')
     const [notaCobro, setNotaCobro] = useState('')
     const [diasCredito, setDiasCredito] = useState(0)
+    const [contribEspecial, setContribEspecial] = useState(null)
     const [cuentasBancarias, setCuentasBancarias] = useState([])
     const [cuentaBancariaId, setCuentaBancariaId] = useState('')
 
@@ -378,11 +379,12 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
                 }
                 setLoading(false)
             })
-        supabase.from('clientes').select('condicion_pago, dias_credito').eq('id', pedido.cliente_id).single()
+        supabase.from('clientes').select('condicion_pago, dias_credito, contribuyente_especial').eq('id', pedido.cliente_id).single()
             .then(({ data }) => {
                 if (data) {
                     setCondicion(data.condicion_pago || 'credito')
                     setDiasCredito(Number(data.dias_credito) || 0)
+                    setContribEspecial(data.contribuyente_especial ?? null)
                 }
             })
         supabase.from('configuracion').select('clave, valor').eq('empresa_id', perfil.empresa_id)
@@ -520,6 +522,8 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
                 metodo_bs: montoBs > 0 ? metodoBs : null,
                 nota: notaCobro || (contadoSinDetalle ? 'Contado — pago no detallado al facturar' : null),
                 cuenta_bancaria_id: cuentaBancariaId || null,
+                // Estatus del cliente al momento del pago
+                contribuyente_especial: contribEspecial,
                 usuario_id: user.id,
                 empresa_id: perfil.empresa_id,
             })
@@ -895,7 +899,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
     const DRAFT_KEY = `mipos_borrador_venta_${perfil.empresa_id}`
 
     useEffect(() => {
-        supabase.from('clientes').select('id, nombre, rif, descripcion, condicion_pago, dias_credito').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
+        supabase.from('clientes').select('id, nombre, rif, descripcion, condicion_pago, dias_credito, contribuyente_especial').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
             .then(({ data }) => setClientes(data || []))
         supabase.from('listas_precio').select('id, nombre, es_default').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
             .then(({ data }) => {
@@ -1247,6 +1251,8 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                     metodo_bs: montoBs > 0 ? metodoBs : null,
                     nota: notaCobro || (sinDetalle ? 'Contado — pago no detallado al facturar' : null),
                     cuenta_bancaria_id: cuentaBancariaId || null,
+                    // Estatus del cliente al momento del pago
+                    contribuyente_especial: clientes.find(c => c.id === clienteId)?.contribuyente_especial ?? null,
                     usuario_id: user.id,
                     empresa_id: perfil.empresa_id,
                 })
@@ -1986,8 +1992,8 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                     perfil={perfil}
                     onCerrar={() => setMostrarNuevoCliente(false)}
                     onCreado={nuevo => {
-                        setClientes(prev => [...prev, { id: nuevo.id, nombre: nuevo.nombre, rif: nuevo.rif, descripcion: nuevo.descripcion, condicion_pago: nuevo.condicion_pago, dias_credito: nuevo.dias_credito }].sort((a, b) => a.nombre.localeCompare(b.nombre)))
-                        elegirCliente({ id: nuevo.id, nombre: nuevo.nombre, rif: nuevo.rif, descripcion: nuevo.descripcion, condicion_pago: nuevo.condicion_pago, dias_credito: nuevo.dias_credito })
+                        setClientes(prev => [...prev, { id: nuevo.id, nombre: nuevo.nombre, rif: nuevo.rif, descripcion: nuevo.descripcion, condicion_pago: nuevo.condicion_pago, dias_credito: nuevo.dias_credito, contribuyente_especial: nuevo.contribuyente_especial }].sort((a, b) => a.nombre.localeCompare(b.nombre)))
+                        elegirCliente({ id: nuevo.id, nombre: nuevo.nombre, rif: nuevo.rif, descripcion: nuevo.descripcion, condicion_pago: nuevo.condicion_pago, dias_credito: nuevo.dias_credito, contribuyente_especial: nuevo.contribuyente_especial })
                         setMostrarNuevoCliente(false)
                     }}
                 />
@@ -2559,7 +2565,7 @@ function ModalNuevoCliente({ perfil, onCreado, onCerrar }) {
             )
         }
         setGuardando(false)
-        onCreado({ id: nuevoId, nombre: payload.nombre, rif: payload.rif, descripcion: payload.descripcion, condicion_pago: payload.condicion_pago, dias_credito: payload.dias_credito })
+        onCreado({ id: nuevoId, nombre: payload.nombre, rif: payload.rif, descripcion: payload.descripcion, condicion_pago: payload.condicion_pago, dias_credito: payload.dias_credito, contribuyente_especial: payload.contribuyente_especial })
     }
 
     const secStyle = { backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '20px', marginBottom: '16px' }

@@ -43,6 +43,10 @@ cobros                -- Cobros parciales/totales en multimoneda
                       --   devolucion_id uuid (NC aplicada como cobro)
                       --   fecha_cobro = fecha REAL del pago (puede ser anterior a hoy);
                       --   tasa_cambio/tipo_tasa vienen de tasas_cambio de ESA fecha
+                      --   contribuyente_especial boolean = snapshot del estatus del
+                      --   cliente al momento del pago. NULL = no registrado (cobros
+                      --   viejos). NO hacer JOIN a clientes para reportes: el estatus
+                      --   cambia en el tiempo y reescribiría el pasado.
 devoluciones          -- Notas de crédito
                       --   numero_nc, cliente_id, nota_liquidacion, fecha_liquidacion
                       --   estado_nc CHECK IN ('pendiente','aplicada','reembolsada','anulada')

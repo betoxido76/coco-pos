@@ -726,7 +726,7 @@ function DetallePedido({ pedido, onVolver }) {
 
         const { data: clienteData } = await supabase
             .from('clientes')
-            .select('condicion_pago, dias_credito')
+            .select('condicion_pago, dias_credito, contribuyente_especial')
             .eq('id', pedido.cliente_id)
             .single()
 
@@ -810,6 +810,8 @@ function DetallePedido({ pedido, onVolver }) {
                 metodo_bs: montoBs > 0 ? metodoBs : null,
                 nota: notaCobro || (sinDetalle ? 'Contado — pago no detallado al facturar el pedido' : null),
                 cuenta_bancaria_id: cuentaBancariaId || null,
+                // Estatus del cliente al momento del pago
+                contribuyente_especial: clienteData?.contribuyente_especial ?? null,
                 usuario_id: user.id,
                 empresa_id: perfil.empresa_id,
             })
