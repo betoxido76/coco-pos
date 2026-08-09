@@ -37,6 +37,17 @@ const fmtFechaCorta = (ymd) => new Date(ymd + 'T00:00:00').toLocaleDateString('e
 // se muestre el día anterior en husos negativos como el de Venezuela.
 const parseFecha = (s) => new Date(String(s).length === 10 ? s + 'T00:00:00' : s)
 
+// Días entre dos fechas contados por día calendario (no por horas), para que un
+// cobro del mismo día dé 0 y uno del día siguiente dé 1 sin importar la hora.
+const diasEntre = (desde, hasta) => {
+    if (!desde || !hasta) return null
+    const a = parseFecha(desde), b = parseFecha(hasta)
+    if (isNaN(a) || isNaN(b)) return null
+    const d0 = new Date(a.getFullYear(), a.getMonth(), a.getDate())
+    const d1 = new Date(b.getFullYear(), b.getMonth(), b.getDate())
+    return Math.round((d1 - d0) / 86400000)
+}
+
 // Tasas vigentes en una fecha concreta, desde el histórico `tasas_cambio`.
 // Un pago registrado hoy pero recibido hace 3 días debe convertirse con la tasa
 // de ESE día, no con la actual. Devuelve null si la fecha no tiene tasas cargadas.
@@ -406,7 +417,7 @@ export default function CuentasCobrar() {
                                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                                     <thead>
                                         <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                            {[mostrarCheckboxes ? '☑' : '', '', 'Factura', 'Cliente', 'Emisión', 'Últ. pago', 'Vencimiento', 'Total', 'Cobrado', 'Saldo', 'Estado', ''].map((h, i) => (
+                                            {[mostrarCheckboxes ? '☑' : '', '', 'Factura', 'Cliente', 'Emisión', 'Últ. pago', 'Días Pago', 'Vencimiento', 'Total', 'Cobrado', 'Saldo', 'Estado', ''].map((h, i) => (
                                                 <th key={i} style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
                                             ))}
                                         </tr>
@@ -426,6 +437,8 @@ export default function CuentasCobrar() {
                                             const cobradoReg = (cob?.cobrado || 0) + pagoDirectoEnUsd(v)
                                             const cobrado = esPagada ? Math.max(cobradoReg, v.total) : cobradoReg
                                             const saldoFila = esPagada ? 0 : v.total - cobrado
+                                            // Días que tardó en pagarse: emisión → último cobro
+                                            const diasPago = diasEntre(v.created_at, cob?.ultimaFecha)
                                             return (
                                                 <tr key={v.id} style={{ borderBottom: '1px solid #f3f4f6', backgroundColor: seleccionada ? '#eff6ff' : sem?.bg || 'transparent', opacity: deshabilitada && mostrarCheckboxes ? 0.45 : 1, outline: seleccionada ? '2px solid #1d4ed8' : 'none', outlineOffset: '-2px' }}>
                                                     <td style={{ padding: '12px 8px 12px 14px' }}>
@@ -442,6 +455,9 @@ export default function CuentasCobrar() {
                                                     <td style={{ padding: '12px 14px', fontSize: '13px', color: '#6b7280' }}>{new Date(v.created_at).toLocaleDateString('es-VE')}</td>
                                                     <td style={{ padding: '12px 14px', fontSize: '13px', whiteSpace: 'nowrap', color: cob?.ultimaFecha ? '#374151' : '#d1d5db' }}>
                                                         {cob?.ultimaFecha ? parseFecha(cob.ultimaFecha).toLocaleDateString('es-VE') : '—'}
+                                                    </td>
+                                                    <td style={{ padding: '12px 14px', fontSize: '13px', whiteSpace: 'nowrap', color: diasPago != null ? '#374151' : '#d1d5db' }}>
+                                                        {diasPago != null ? `${diasPago} d` : '—'}
                                                     </td>
                                                     <td style={{ padding: '12px 14px' }}>
                                                         {sem ? <span style={{ fontSize: '12px', fontWeight: 500, color: sem.color }}>{sem.label}</span>
