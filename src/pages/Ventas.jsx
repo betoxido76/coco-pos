@@ -427,6 +427,12 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
     const iva = total - subtotal
     const descGlobalMonto = discountFactor < 1 ? total / discountFactor - total : 0
 
+    const tasaContado = tasas[tipoTasa] || 1
+    const abonoContado = (Number(pagoUsd) || 0) + (Number(pagoBs) || 0) / tasaContado
+    // Sin detalle de pago se asume el total (ver el insert del cobro en facturar)
+    const contadoSinDetalle = abonoContado < 0.01
+    const contadoCuadra = contadoSinDetalle || Math.abs(abonoContado - total) <= 0.01
+
     async function facturar() {
         if (condicion === 'credito' && Number(diasCredito) <= 0) {
             setError('El cliente tiene condición de crédito pero no tiene días de crédito configurados. Corrígelo en Administración → Clientes antes de facturar.')
@@ -454,7 +460,10 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
                 numero_factura: numero,
                 subtotal,
                 total,
-                estado_cobro: condicion === 'contado' ? 'pagado' : 'pendiente',
+                // Contado que no cubre el total queda 'parcial': marcarlo 'pagado'
+                // dejaría la diferencia sin registrar en ninguna parte.
+                estado_cobro: condicion !== 'contado' ? 'pendiente'
+                    : (contadoSinDetalle || abonoContado >= total - 0.01) ? 'pagado' : 'parcial',
                 empresa_id: perfil.empresa_id,
                 nro_referencia: nroReferencia.trim() || null,
                 oc_cliente: pedido.oc_cliente || null,
@@ -495,23 +504,21 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
         )
 
         if (condicion === 'contado') {
-            const tasa = tasas[tipoTasa] || 1
             // Los montos de pago son opcionales en el formulario. Si se dejan en
             // blanco el cobro entraría en 0 y la factura, ya marcada 'pagado',
             // aparecería en CxC con el saldo completo. En ese caso se registra
             // el total en USD, que es lo que implica el estado.
-            const sinDetalle = (Number(pagoUsd) || 0) + (Number(pagoBs) || 0) / tasa < 0.01
-            const montoUsd = sinDetalle ? total : Number(pagoUsd) || 0
-            const montoBs = sinDetalle ? 0 : Number(pagoBs) || 0
+            const montoUsd = contadoSinDetalle ? total : Number(pagoUsd) || 0
+            const montoBs = contadoSinDetalle ? 0 : Number(pagoBs) || 0
             await supabase.from('cobros').insert({
                 venta_id: venta.id,
                 monto_usd: montoUsd,
                 monto_bs: montoBs,
-                tasa_cambio: tasa,
+                tasa_cambio: tasaContado,
                 tipo_tasa: tipoTasa,
                 metodo_usd: montoUsd > 0 ? metodoUsd : null,
                 metodo_bs: montoBs > 0 ? metodoBs : null,
-                nota: notaCobro || (sinDetalle ? 'Contado — pago no detallado al facturar' : null),
+                nota: notaCobro || (contadoSinDetalle ? 'Contado — pago no detallado al facturar' : null),
                 cuenta_bancaria_id: cuentaBancariaId || null,
                 usuario_id: user.id,
                 empresa_id: perfil.empresa_id,
@@ -772,6 +779,12 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
                                 </select>
                             </div>
                         )}
+                        <div style={{ borderRadius: '8px', padding: '8px 12px', fontSize: '13px', textAlign: 'center', fontWeight: 500, backgroundColor: contadoCuadra ? '#f0fdf4' : '#fffbeb', color: contadoCuadra ? '#166534' : '#854d0e', border: `1px solid ${contadoCuadra ? '#bbf7d0' : '#fde68a'}` }}>
+                            {contadoSinDetalle ? `Sin detalle — se registrará el total (${fmt(total)}) en USD`
+                                : contadoCuadra ? `✓ El pago cubre el total (${fmt(total)})`
+                                : abonoContado > total ? `⚠️ El pago supera el total por ${fmt(abonoContado - total)}`
+                                : `⚠️ Faltan ${fmt(total - abonoContado)} — la factura quedará parcial`}
+                        </div>
                     </div>
                 )}
             </div>
