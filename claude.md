@@ -146,17 +146,28 @@ Hay **dos fuentes de tasas y cada una tiene su rol** — no unificar sin leer es
 | Tabla | Rol | Quién la usa |
 |---|---|---|
 | `configuracion` (clave/valor) | Tasa **vigente** (una foto por empresa): `tasa_bcv`, `tasa_euro`, `tasa_binance` | Ventas, Compras, Gastos, CxP, Bancos, Finanzas, NuevoPedido y los KPIs de CxC |
-| `tasas_cambio` | **Histórico** por fecha: una fila por `(empresa_id, fecha)` con las 3 tasas | Modales de cobro de CxC (individual y múltiple) y Administración → Tasas de Cambio |
+| `tasas_cambio` | **Histórico** por fecha: una fila por `(empresa_id, fecha)` con las 3 tasas | Todo registro de dinero: CxC, CxP, Gastos, Compras (contado) y Administración → Tasas de Cambio |
 
 `Administracion → Configuracion` escribe SIEMPRE en `tasas_cambio` (upsert sobre
 `empresa_id,fecha`, por eso volver a guardar una fecha la sobreescribe) y
 **solo sincroniza `configuracion` cuando la fecha guardada es la más reciente**
 del histórico — cargar una tasa de días atrás no debe pisar la vigente.
 
-Los cobros se registran con la fecha real del pago (`cobros.fecha_cobro`) y con
-la tasa **de esa fecha**, no la de hoy: un pago recibido hace 3 días se convierte
-con la tasa de hace 3 días. Si la fecha elegida no tiene tasas en `tasas_cambio`,
-el cobro se bloquea (hay que cargarlas primero en Administración).
+**Todo movimiento de dinero se registra con su fecha real y con la tasa de ESA
+fecha**, no la de hoy. Si la fecha elegida no tiene tasas en `tasas_cambio`, el
+guardado se bloquea (hay que cargarlas primero en Administración).
+
+| Módulo | Fecha guardada en |
+|---|---|
+| CxC — cobros (individual y múltiple) | `cobros.fecha_cobro` |
+| CxP — pagos a proveedor | `pagos_proveedor.fecha_pago` |
+| CxP / Gastos — abonos a gastos | `pagos.fecha` · `gastos.fecha` |
+| Gastos — alta del gasto | `gastos.fecha` |
+| Compras — recepción de contado | `compras.fecha_pago` |
+
+La UI es un componente único: `src/components/SelectorFechaTasa.jsx`, que
+exporta también `useTasasFecha`, `OPCIONES_TASA`, `hoyYMD` y `fechaAtimestamp`.
+**No duplicar el selector de tasa en un módulo nuevo** — importarlo de ahí.
 
 Los cobros y gastos manejan `monto_usd` + `monto_bs` + `tasa_cambio` + `tipo_tasa`.
 El equivalente en USD = `monto_usd + (monto_bs / tasa)`.

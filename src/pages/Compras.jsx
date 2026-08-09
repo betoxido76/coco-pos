@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabaseClient'
 import { Plus, Search, Trash2, Check, CheckCircle, FileText, X, AlertTriangle, Truck, ClipboardList, ArrowRight, RotateCcw, Pencil, Ban } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { opcionesUnidad } from '../lib/unidades'
+import SelectorFechaTasa, { useTasasFecha, hoyYMD, fmtFechaCorta } from '../components/SelectorFechaTasa'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 
@@ -2145,14 +2146,10 @@ function ModalNuevoProveedor({ perfil, onCreado, onCerrar }) {
 
 // ─── Modal de Pago Compra ──────────────────────────────────────
 function ModalPagoCompra({ total, condicionInicial = 'contado', diasInicial = 0, onCerrar, onConfirmar }) {
-    const OPCIONES_TASA = [
-        { key: 'tasa_bcv', label: 'USD · BCV' },
-        { key: 'tasa_euro', label: 'EUR · BCV' },
-        { key: 'tasa_binance', label: 'USD · Binance' },
-    ]
+    const { perfil } = useAuth()
+    const [fechaPago, setFechaPago] = useState(hoyYMD())
     const [condicion, setCondicion] = useState(condicionInicial)
     const [diasCredito, setDiasCredito] = useState(diasInicial || 30)
-    const [tasas, setTasas] = useState({ tasa_bcv: 1, tasa_euro: 1, tasa_binance: 1 })
     const [tipoTasa, setTipoTasa] = useState('tasa_bcv')
     const [pagoUsd, setPagoUsd] = useState(total)
     const [pagoBs, setPagoBs] = useState(0)
@@ -2161,28 +2158,28 @@ function ModalPagoCompra({ total, condicionInicial = 'contado', diasInicial = 0,
     const [guardando, setGuardando] = useState(false)
     const [error, setError] = useState('')
 
-    useEffect(() => {
-        supabase.from('configuracion').select('clave, valor').then(({ data }) => {
-            if (data) { const m = {}; data.forEach(r => m[r.clave] = Number(r.valor)); setTasas({ tasa_bcv: m.tasa_bcv || 1, tasa_euro: m.tasa_euro || 1, tasa_binance: m.tasa_binance || 1 }) }
-        })
-    }, [])
-
-    const tasa = tasas[tipoTasa] || 1
+    // La tasa sale de la FECHA DE PAGO elegida, no de la vigente de hoy.
+    // Solo aplica al contado: a crédito el pago se registra después en CxP.
+    const { tasasFecha, cargandoTasas } = useTasasFecha(perfil?.empresa_id, fechaPago)
+    const tasaDia = Number(tasasFecha?.[tipoTasa]) || 0
+    const tasa = tasaDia > 0 ? tasaDia : 1   // evita dividir entre 0 mientras no hay tasa
+    const sinTasa = condicion === 'contado' && !cargandoTasas && tasaDia <= 0
     const fechaVenc = condicion === 'credito' ? new Date(Date.now() + diasCredito * 86400000).toISOString().split('T')[0] : null
 
     function handleUsdChange(val) { const n = Math.max(0, Number(val)); setPagoUsd(n); setPagoBs(parseFloat((Math.max(0, total - n) * tasa).toFixed(2))) }
 
     function handleTasaChange(nuevaTasa) {
         setTipoTasa(nuevaTasa)
-        const t = tasas[nuevaTasa] || 1
+        const t = Number(tasasFecha?.[nuevaTasa]) || 1
         setPagoBs(parseFloat((Math.max(0, total - pagoUsd) * t).toFixed(2)))
     }
 
     async function confirmar() {
+        if (sinTasa) { setError(`No hay tasa registrada para el ${fmtFechaCorta(fechaPago)}`); return }
         const abonoEnUsd = pagoUsd + (pagoBs / tasa)
         if (abonoEnUsd < total - 0.01 && condicion === 'contado') { setError('El monto pagado no cubre el total'); return }
         setGuardando(true); setError('')
-        await onConfirmar({ condicion_pago: condicion, dias_credito: condicion === 'credito' ? diasCredito : 0, fecha_vencimiento_pago: fechaVenc, estado_cobro: condicion === 'contado' ? 'pagado' : 'pendiente', tasa_cambio: tasa, tipo_tasa: tipoTasa, pago_usd: pagoUsd, pago_bs: pagoBs, metodo_usd: metodoUsd, metodo_bs: metodoBs })
+        await onConfirmar({ condicion_pago: condicion, dias_credito: condicion === 'credito' ? diasCredito : 0, fecha_vencimiento_pago: fechaVenc, estado_cobro: condicion === 'contado' ? 'pagado' : 'pendiente', tasa_cambio: tasa, tipo_tasa: tipoTasa, fecha_pago: condicion === 'contado' ? fechaPago : null, pago_usd: pagoUsd, pago_bs: pagoBs, metodo_usd: metodoUsd, metodo_bs: metodoBs })
     }
 
     return (
@@ -2214,19 +2211,15 @@ function ModalPagoCompra({ total, condicionInicial = 'contado', diasInicial = 0,
                     </div>
                 )}
 
-                {/* Selector de tasa */}
-                <div style={{ marginBottom: '16px' }}>
-                    <label style={{ fontSize: '12px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tasa de cambio</label>
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                        {OPCIONES_TASA.map(op => (
-                            <button key={op.key} onClick={() => handleTasaChange(op.key)}
-                                style={{ flex: 1, padding: '8px 4px', borderRadius: '8px', fontSize: '12px', fontWeight: 500, border: '1px solid', cursor: 'pointer', borderColor: tipoTasa === op.key ? '#16a34a' : '#e5e7eb', backgroundColor: tipoTasa === op.key ? '#f0fdf4' : '#fff', color: tipoTasa === op.key ? '#16a34a' : '#6b7280' }}>
-                                <div>{op.label}</div>
-                                <div style={{ fontSize: '11px', marginTop: '2px', fontWeight: 400 }}>{tasas[op.key].toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.</div>
-                            </button>
-                        ))}
-                    </div>
-                </div>
+                {/* Fecha del pago + tasa de esa fecha. A crédito no aplica:
+                    el pago se registra después desde Cuentas por Pagar. */}
+                {condicion === 'contado' && (
+                    <SelectorFechaTasa
+                        fecha={fechaPago} onFecha={setFechaPago}
+                        tasasFecha={tasasFecha} cargandoTasas={cargandoTasas}
+                        tipoTasa={tipoTasa} onTipoTasa={handleTasaChange}
+                    />
+                )}
 
                 {/* Montos */}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
@@ -2244,7 +2237,7 @@ function ModalPagoCompra({ total, condicionInicial = 'contado', diasInicial = 0,
                 )}
 
                 {error && <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px', fontSize: '13px', color: '#dc2626', marginBottom: '12px' }}>{error}</div>}
-                <button onClick={confirmar} disabled={guardando} style={{ width: '100%', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '10px', padding: '13px', fontSize: '15px', fontWeight: 700, cursor: 'pointer' }}>{guardando ? 'Registrando...' : 'Confirmar recepción y pago'}</button>
+                <button onClick={confirmar} disabled={guardando || sinTasa || (condicion === 'contado' && cargandoTasas)} style={{ width: '100%', backgroundColor: sinTasa ? '#d1d5db' : '#16a34a', color: '#fff', border: 'none', borderRadius: '10px', padding: '13px', fontSize: '15px', fontWeight: 700, cursor: 'pointer' }}>{guardando ? 'Registrando...' : 'Confirmar recepción y pago'}</button>
             </div>
         </>
     )

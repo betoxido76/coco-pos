@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import { Plus, X, Check, Pencil, Trash2, AlertTriangle, DollarSign, FileText } from 'lucide-react'
+import SelectorFechaTasa, { useTasasFecha, fmtFechaCorta } from '../components/SelectorFechaTasa'
 
 const fmt = n => `$${Number(n || 0).toFixed(2)}`
 const fmtBs = n => `${Number(n || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`
@@ -477,10 +478,15 @@ function ModalPagarGasto({ gasto, tasas, onPagado, onCerrar }) {
             })
     }, [perfil?.empresa_id, gasto.id])
 
-    const tasa = tasas[tipoTasa] || 1
+    // La tasa sale de la FECHA DE PAGO elegida, no de la vigente de hoy
+    const { tasasFecha, cargandoTasas } = useTasasFecha(perfil?.empresa_id, fecha)
+    const tasaDia = Number(tasasFecha?.[tipoTasa]) || 0
+    const tasa = tasaDia > 0 ? tasaDia : 1   // evita dividir entre 0 mientras no hay tasa
+    const sinTasa = !cargandoTasas && tasaDia <= 0
     const totalEnUsd = Number(montoUsd || 0) + (Number(montoBs || 0) / tasa)
 
     async function confirmar() {
+        if (sinTasa) { setError(`No hay tasa registrada para el ${fmtFechaCorta(fecha)}`); return }
         if (Number(montoUsd) <= 0 && Number(montoBs) <= 0) { setError('Ingresa al menos un monto'); return }
         if (totalEnUsd > saldo + 0.01) { setError(`El abono no puede superar el saldo pendiente de ${fmt(saldo)}`); return }
         setGuardando(true); setError('')
@@ -547,35 +553,19 @@ function ModalPagarGasto({ gasto, tasas, onPagado, onCerrar }) {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
                     {/* Fecha pago */}
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                        <div>
-                            <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Fecha de pago</label>
-                            <input type="date" value={fecha} onChange={e => setFecha(e.target.value)} style={inputStyle} />
+                        <div style={{ gridColumn: '1 / -1' }}>
+                            {/* Fecha + tasa de ESA fecha, compartido con CxC, CxP y Compras */}
+                            <SelectorFechaTasa
+                                fecha={fecha} onFecha={setFecha}
+                                tasasFecha={tasasFecha} cargandoTasas={cargandoTasas}
+                                tipoTasa={tipoTasa} onTipoTasa={setTipoTasa}
+                            />
                         </div>
                         <div>
                             <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Método de pago</label>
                             <select value={metodoPago} onChange={e => setMetodoPago(e.target.value)} style={inputStyle}>
                                 {METODOS_PAGO.map(m => <option key={m} value={m}>{m}</option>)}
                             </select>
-                        </div>
-                    </div>
-
-                    {/* Tasa */}
-                    <div>
-                        <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Tasa de referencia</label>
-                        <div style={{ display: 'flex', gap: '6px' }}>
-                            {OPCIONES_TASA.map(o => (
-                                <button key={o.key} onClick={() => setTipoTasa(o.key)}
-                                    style={{
-                                        flex: 1, padding: '6px 8px', borderRadius: '7px', fontSize: '11px', fontWeight: 500,
-                                        border: '1px solid', cursor: 'pointer',
-                                        borderColor: tipoTasa === o.key ? '#16a34a' : '#e5e7eb',
-                                        backgroundColor: tipoTasa === o.key ? '#f0fdf4' : '#fff',
-                                        color: tipoTasa === o.key ? '#16a34a' : '#6b7280',
-                                    }}>
-                                    {o.label}
-                                    <span style={{ display: 'block', fontSize: '10px', opacity: 0.7 }}>{(tasas[o.key] || 0).toLocaleString('es-VE')}</span>
-                                </button>
-                            ))}
                         </div>
                     </div>
 
@@ -614,8 +604,8 @@ function ModalPagarGasto({ gasto, tasas, onPagado, onCerrar }) {
                     )}
 
                     <div style={{ display: 'flex', gap: '10px', marginTop: '4px' }}>
-                        <button onClick={confirmar} disabled={guardando}
-                            style={{ flex: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '11px', fontSize: '14px', fontWeight: 600, cursor: 'pointer', opacity: guardando ? 0.6 : 1 }}>
+                        <button onClick={confirmar} disabled={guardando || sinTasa || cargandoTasas}
+                            style={{ flex: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', backgroundColor: sinTasa || cargandoTasas ? '#d1d5db' : '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '11px', fontSize: '14px', fontWeight: 600, cursor: sinTasa || cargandoTasas ? 'default' : 'pointer', opacity: guardando ? 0.6 : 1 }}>
                             <Check size={16} /> {guardando ? 'Guardando...' : 'Confirmar abono'}
                         </button>
                         <button onClick={onCerrar}
@@ -741,10 +731,15 @@ function NuevoGasto({ tasas, tipos, onGuardado, onCancelar }) {
         }
     }, [perfil?.empresa_id])
 
-    const tasa = tasas[tipoTasa] || 1
+    // Un gasto fechado días atrás se convierte con la tasa de ESE día
+    const { tasasFecha, cargandoTasas } = useTasasFecha(perfil?.empresa_id, fecha)
+    const tasaDia = Number(tasasFecha?.[tipoTasa]) || 0
+    const tasa = tasaDia > 0 ? tasaDia : 1
+    const sinTasa = !cargandoTasas && tasaDia <= 0
     const totalEnUsd = Number(montoUsd || 0) + (Number(montoBs || 0) / tasa)
 
     async function guardar() {
+        if (sinTasa) { setError(`No hay tasa registrada para el ${fmtFechaCorta(fecha)}`); return }
         if (!nombre.trim()) { setError('El nombre del gasto es obligatorio'); return }
         if (!tipoGastoId) { setError('Selecciona el tipo de gasto'); return }
         if (estadoGasto === 'pagado' && Number(montoUsd) <= 0 && Number(montoBs) <= 0) {
@@ -875,24 +870,32 @@ function NuevoGasto({ tasas, tipos, onGuardado, onCancelar }) {
 
                 {/* Tasa */}
                 <div>
-                    <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '8px' }}>Tasa de referencia</label>
+                    <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '8px' }}>Tasa de referencia del {fmtFechaCorta(fecha)}</label>
                     <div style={{ display: 'flex', gap: '8px' }}>
-                        {OPCIONES_TASA.map(o => (
-                            <button key={o.key} onClick={() => setTipoTasa(o.key)}
+                        {OPCIONES_TASA.map(o => {
+                            const v = Number(tasasFecha?.[o.key]) || 0
+                            return (
+                            <button key={o.key} onClick={() => v > 0 && setTipoTasa(o.key)} disabled={v <= 0}
                                 style={{
                                     padding: '7px 14px', borderRadius: '8px', fontSize: '13px', fontWeight: 500,
-                                    border: '1px solid', cursor: 'pointer',
+                                    border: '1px solid', cursor: v > 0 ? 'pointer' : 'not-allowed',
                                     borderColor: tipoTasa === o.key ? '#16a34a' : '#e5e7eb',
                                     backgroundColor: tipoTasa === o.key ? '#f0fdf4' : '#fff',
-                                    color: tipoTasa === o.key ? '#16a34a' : '#6b7280',
+                                    color: v <= 0 ? '#d1d5db' : tipoTasa === o.key ? '#16a34a' : '#6b7280',
                                 }}>
                                 {o.label}
                                 <span style={{ marginLeft: '6px', fontSize: '11px', opacity: 0.7 }}>
-                                    {tasas[o.key]?.toLocaleString('es-VE')} Bs.
+                                    {v > 0 ? `${v.toLocaleString('es-VE')} Bs.` : 'sin tasa'}
                                 </span>
                             </button>
-                        ))}
+                            )
+                        })}
                     </div>
+                    {sinTasa && (
+                        <div style={{ marginTop: '8px', backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 12px', fontSize: '12px', color: '#991b1b' }}>
+                            ⛔ No hay tasas para el {fmtFechaCorta(fecha)}. Cárgalas en <strong>Administración → Tasas de Cambio</strong> o cambia la fecha.
+                        </div>
+                    )}
                 </div>
 
                 {/* Montos */}

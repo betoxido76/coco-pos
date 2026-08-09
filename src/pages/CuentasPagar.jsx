@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import { AlertTriangle, CheckCircle, Clock, DollarSign, FileText } from 'lucide-react'
+import SelectorFechaTasa, { useTasasFecha, hoyYMD, fmtFechaCorta } from '../components/SelectorFechaTasa'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 const fmtBs = (n, tasa) => `${(Number(n || 0) * Number(tasa || 1)).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`
@@ -487,11 +488,7 @@ export default function CuentasPagar() {
 // ─── Modal de Pago ─────────────────────────────────────────────
 function ModalPago({ compra, saldo, tasas, onCerrar, onPagado }) {
     const { perfil } = useAuth()
-    const OPCIONES_TASA = [
-        { key: 'tasa_bcv', label: 'USD · BCV' },
-        { key: 'tasa_euro', label: 'EUR · BCV' },
-        { key: 'tasa_binance', label: 'USD · Binance' },
-    ]
+    const [fechaPago, setFechaPago] = useState(hoyYMD())
     const [tipoTasa, setTipoTasa] = useState('tasa_bcv')
     const [descPct, setDescPct] = useState(0)
     const [montoUsd, setMontoUsd] = useState(saldo.toFixed(2))
@@ -541,7 +538,11 @@ function ModalPago({ compra, saldo, tasas, onCerrar, onPagado }) {
         })
     }
 
-    const tasa = Number(tasas[tipoTasa] || 1)
+    // La tasa sale de la FECHA DE PAGO elegida, no de la vigente de hoy
+    const { tasasFecha, cargandoTasas } = useTasasFecha(perfil?.empresa_id, fechaPago)
+    const tasaDia = Number(tasasFecha?.[tipoTasa]) || 0
+    const tasa = tasaDia > 0 ? tasaDia : 1   // evita dividir entre 0 mientras no hay tasa
+    const sinTasa = !cargandoTasas && tasaDia <= 0
 
     useEffect(() => {
         setMontoUsd(saldoEfectivo.toFixed(2))
@@ -565,6 +566,7 @@ function ModalPago({ compra, saldo, tasas, onCerrar, onPagado }) {
     }
 
     async function confirmar() {
+        if (sinTasa) { setError(`No hay tasa registrada para el ${fmtFechaCorta(fechaPago)}`); return }
         const totalPago = Number(montoUsd || 0) + Number(montoBs || 0) / tasa
         if (saldoEfectivo > 0.001 && totalPago <= 0.001) { setError('Ingresa un monto válido'); return }
         if (totalPago > saldoEfectivo + 0.01) { setError(`El monto no puede superar el saldo efectivo de ${fmt(saldoEfectivo)}`); return }
@@ -581,7 +583,7 @@ function ModalPago({ compra, saldo, tasas, onCerrar, onPagado }) {
             await supabase.from('pagos_proveedor').insert({
                 compra_id: compra.id, usuario_id: user.id,
                 monto_usd: Number(nd.monto_total), monto_bs: 0,
-                tasa_cambio: tasa, tipo_tasa: tipoTasa,
+                tasa_cambio: tasa, tipo_tasa: tipoTasa, fecha_pago: fechaPago,
                 metodo_usd: 'Nota de Débito', metodo_bs: null,
                 nota: `ND ${nd.numero_nd}`, devolucion_proveedor_id: nd.id,
                 empresa_id: perfil.empresa_id,
@@ -593,7 +595,7 @@ function ModalPago({ compra, saldo, tasas, onCerrar, onPagado }) {
             const { error: errPago } = await supabase.from('pagos_proveedor').insert({
                 compra_id: compra.id, usuario_id: user.id,
                 monto_usd: Number(montoUsd), monto_bs: Number(montoBs || 0),
-                tasa_cambio: tasa, tipo_tasa: tipoTasa,
+                tasa_cambio: tasa, tipo_tasa: tipoTasa, fecha_pago: fechaPago,
                 metodo_usd: metodoUsd, metodo_bs: metodoBs || null,
                 nota: nota || null,
                 cuenta_bancaria_id: cuentaBancariaId || null,
@@ -671,16 +673,11 @@ function ModalPago({ compra, saldo, tasas, onCerrar, onPagado }) {
 
                 {saldoEfectivo > 0.001 && <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
                     <div>
-                        <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Tasa de cambio</label>
-                        <div style={{ display: 'flex', gap: '8px' }}>
-                            {OPCIONES_TASA.map(op => (
-                                <button key={op.key} onClick={() => setTipoTasa(op.key)}
-                                    style={{ flex: 1, padding: '8px 4px', borderRadius: '8px', fontSize: '12px', fontWeight: 500, border: '1px solid', cursor: 'pointer', borderColor: tipoTasa === op.key ? '#16a34a' : '#e5e7eb', backgroundColor: tipoTasa === op.key ? '#f0fdf4' : '#fff', color: tipoTasa === op.key ? '#16a34a' : '#6b7280' }}>
-                                    <div>{op.label}</div>
-                                    <div style={{ fontSize: '11px', marginTop: '2px', fontWeight: 400 }}>{Number(tasas[op.key] || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.</div>
-                                </button>
-                            ))}
-                        </div>
+                        <SelectorFechaTasa
+                            fecha={fechaPago} onFecha={setFechaPago}
+                            tasasFecha={tasasFecha} cargandoTasas={cargandoTasas}
+                            tipoTasa={tipoTasa} onTipoTasa={setTipoTasa}
+                        />
                     </div>
 
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
@@ -758,8 +755,8 @@ function ModalPago({ compra, saldo, tasas, onCerrar, onPagado }) {
                         style={{ flex: 1, padding: '10px', border: '1px solid #e5e7eb', borderRadius: '8px', fontSize: '14px', color: '#374151', backgroundColor: '#fff', cursor: 'pointer' }}>
                         Cancelar
                     </button>
-                    <button onClick={confirmar} disabled={guardando}
-                        style={{ flex: 2, padding: '10px', border: 'none', borderRadius: '8px', fontSize: '14px', fontWeight: 600, color: '#fff', backgroundColor: '#16a34a', cursor: 'pointer', opacity: guardando ? 0.6 : 1 }}>
+                    <button onClick={confirmar} disabled={guardando || sinTasa || cargandoTasas}
+                        style={{ flex: 2, padding: '10px', border: 'none', borderRadius: '8px', fontSize: '14px', fontWeight: 600, color: '#fff', backgroundColor: sinTasa || cargandoTasas ? '#d1d5db' : '#16a34a', cursor: sinTasa || cargandoTasas ? 'default' : 'pointer', opacity: guardando ? 0.6 : 1 }}>
                         {guardando ? 'Procesando...' : 'Confirmar pago'}
                     </button>
                 </div>
@@ -773,11 +770,6 @@ const METODOS_PAGO_GASTO = ['Efectivo USD', 'Efectivo Bs.', 'Zelle', 'Transferen
 
 function ModalPagoGasto({ gasto, tasas, onCerrar, onPagado }) {
     const { perfil } = useAuth()
-    const OPCIONES_TASA = [
-        { key: 'tasa_bcv', label: 'USD · BCV' },
-        { key: 'tasa_euro', label: 'EUR · BCV' },
-        { key: 'tasa_binance', label: 'USD · Binance' },
-    ]
     const [fecha, setFecha] = useState(new Date().toISOString().split('T')[0])
     const [tipoTasa, setTipoTasa] = useState(gasto.tipo_tasa || 'tasa_bcv')
     const [montoUsd, setMontoUsd] = useState(gasto.monto_usd > 0 ? String(gasto.monto_usd) : '')
@@ -795,11 +787,16 @@ function ModalPagoGasto({ gasto, tasas, onCerrar, onPagado }) {
                 .then(({ data }) => setCuentasBancarias(data || []))
     }, [perfil?.empresa_id])
 
-    const tasa = Number(tasas[tipoTasa] || 1)
+    // La tasa sale de la fecha de pago elegida
+    const { tasasFecha, cargandoTasas } = useTasasFecha(perfil?.empresa_id, fecha)
+    const tasaDia = Number(tasasFecha?.[tipoTasa]) || 0
+    const tasa = tasaDia > 0 ? tasaDia : 1
+    const sinTasa = !cargandoTasas && tasaDia <= 0
     const totalEnUsd = Number(montoUsd || 0) + Number(montoBs || 0) / tasa
     const inputS = { width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', color: '#374151', backgroundColor: '#fff', boxSizing: 'border-box' }
 
     async function confirmar() {
+        if (sinTasa) { setError(`No hay tasa registrada para el ${fmtFechaCorta(fecha)}`); return }
         if (Number(montoUsd) <= 0 && Number(montoBs) <= 0) { setError('Ingresa al menos un monto'); return }
         setGuardando(true); setError('')
         const { error: err } = await supabase.from('gastos').update({
@@ -829,32 +826,11 @@ function ModalPagoGasto({ gasto, tasas, onCerrar, onPagado }) {
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                        <div>
-                            <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Fecha de pago</label>
-                            <input type="date" value={fecha} onChange={e => setFecha(e.target.value)} style={inputS} />
-                        </div>
-                        <div>
-                            <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Método de pago</label>
-                            <select value={metodoPago} onChange={e => setMetodoPago(e.target.value)} style={inputS}>
-                                {METODOS_PAGO_GASTO.map(m => <option key={m} value={m}>{m}</option>)}
-                            </select>
-                        </div>
-                    </div>
-
-                    <div>
-                        <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Tasa de cambio</label>
-                        <div style={{ display: 'flex', gap: '8px' }}>
-                            {OPCIONES_TASA.map(op => (
-                                <button key={op.key} onClick={() => setTipoTasa(op.key)}
-                                    style={{ flex: 1, padding: '8px 4px', borderRadius: '8px', fontSize: '12px', fontWeight: 500, border: '1px solid', cursor: 'pointer',
-                                        borderColor: tipoTasa === op.key ? '#16a34a' : '#e5e7eb',
-                                        backgroundColor: tipoTasa === op.key ? '#f0fdf4' : '#fff',
-                                        color: tipoTasa === op.key ? '#16a34a' : '#6b7280' }}>
-                                    <div>{op.label}</div>
-                                    <div style={{ fontSize: '11px', marginTop: '2px', fontWeight: 400 }}>{Number(tasas[op.key] || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.</div>
-                                </button>
-                            ))}
-                        </div>
+                        <SelectorFechaTasa
+                            fecha={fecha} onFecha={setFecha}
+                            tasasFecha={tasasFecha} cargandoTasas={cargandoTasas}
+                            tipoTasa={tipoTasa} onTipoTasa={setTipoTasa}
+                        />
                     </div>
 
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
@@ -888,8 +864,8 @@ function ModalPagoGasto({ gasto, tasas, onCerrar, onPagado }) {
 
                     <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '4px' }}>
                         <button onClick={onCerrar} style={{ padding: '9px 18px', borderRadius: '8px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: '#374151', fontSize: '13px', cursor: 'pointer' }}>Cancelar</button>
-                        <button onClick={confirmar} disabled={guardando}
-                            style={{ padding: '9px 18px', borderRadius: '8px', border: 'none', backgroundColor: '#16a34a', color: '#fff', fontSize: '13px', fontWeight: 500, cursor: guardando ? 'default' : 'pointer', opacity: guardando ? 0.7 : 1 }}>
+                        <button onClick={confirmar} disabled={guardando || sinTasa || cargandoTasas}
+                            style={{ padding: '9px 18px', borderRadius: '8px', border: 'none', backgroundColor: sinTasa || cargandoTasas ? '#d1d5db' : '#16a34a', color: '#fff', fontSize: '13px', fontWeight: 500, cursor: guardando || sinTasa ? 'default' : 'pointer', opacity: guardando ? 0.7 : 1 }}>
                             {guardando ? 'Guardando...' : 'Confirmar pago'}
                         </button>
                     </div>

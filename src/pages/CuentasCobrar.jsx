@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import { X, DollarSign, CheckSquare, FileText, Ban } from 'lucide-react'
+import SelectorFechaTasa, { useTasasFecha, hoyYMD, fmtFechaCorta, fechaAtimestamp, OPCIONES_TASA } from '../components/SelectorFechaTasa'
 
 const fmt = n => `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const fmtBs = n => `${Number(n).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`
@@ -26,12 +27,6 @@ function semaforo(fechaVenc) {
 
 const PAGE_SIZE = 50
 
-const hoyYMD = () => {
-    const d = new Date()
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
-const fmtFechaCorta = (ymd) => new Date(ymd + 'T00:00:00').toLocaleDateString('es-VE', { day: '2-digit', month: 'short', year: 'numeric' })
-
 // `cobros.fecha_cobro` puede venir como 'YYYY-MM-DD' (columna date) o como
 // timestamp completo. La forma corta se parsea a medianoche LOCAL para que no
 // se muestre el día anterior en husos negativos como el de Venezuela.
@@ -46,67 +41,6 @@ const diasEntre = (desde, hasta) => {
     const d0 = new Date(a.getFullYear(), a.getMonth(), a.getDate())
     const d1 = new Date(b.getFullYear(), b.getMonth(), b.getDate())
     return Math.round((d1 - d0) / 86400000)
-}
-
-// Tasas vigentes en una fecha concreta, desde el histórico `tasas_cambio`.
-// Un pago registrado hoy pero recibido hace 3 días debe convertirse con la tasa
-// de ESE día, no con la actual. Devuelve null si la fecha no tiene tasas cargadas.
-function useTasasFecha(empresaId, fecha) {
-    const [tasasFecha, setTasasFecha] = useState(null)
-    const [cargando, setCargando] = useState(true)
-    useEffect(() => {
-        if (!empresaId || !fecha) return
-        let cancel = false
-        setCargando(true)
-        supabase.from('tasas_cambio')
-            .select('tasa_bcv, tasa_euro, tasa_binance')
-            .eq('empresa_id', empresaId).eq('fecha', fecha).maybeSingle()
-            .then(({ data }) => { if (!cancel) { setTasasFecha(data || null); setCargando(false) } })
-        return () => { cancel = true }
-    }, [empresaId, fecha])
-    return { tasasFecha, cargandoTasas: cargando }
-}
-
-// Bloque de fecha + selector de tasa, compartido por el cobro individual y el múltiple.
-function SelectorFechaTasa({ fecha, onFecha, tasasFecha, cargandoTasas, tipoTasa, onTipoTasa, opciones }) {
-    return (
-        <>
-            <div style={{ marginBottom: '16px' }}>
-                <label style={{ fontSize: '12px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Fecha del pago</label>
-                <input type="date" value={fecha} max={hoyYMD()} onChange={e => onFecha(e.target.value)}
-                    style={{ width: '100%', padding: '9px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', color: '#1f2937', backgroundColor: '#fff', boxSizing: 'border-box' }} />
-            </div>
-
-            <div style={{ marginBottom: '16px' }}>
-                <label style={{ fontSize: '12px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                    Tasa de cambio del {fmtFechaCorta(fecha)}
-                </label>
-                {cargandoTasas ? (
-                    <div style={{ fontSize: '13px', color: '#9ca3af', padding: '8px 0' }}>Cargando tasas…</div>
-                ) : !tasasFecha ? (
-                    <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '12px 14px', fontSize: '13px', color: '#991b1b' }}>
-                        ⛔ No hay tasas registradas para esta fecha. Cárgalas en <strong>Administración → Tasas de Cambio</strong> eligiendo ese día, o selecciona otra fecha.
-                    </div>
-                ) : (
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                        {opciones.map(op => {
-                            const v = Number(tasasFecha[op.key]) || 0
-                            const activa = tipoTasa === op.key
-                            return (
-                                <button key={op.key} onClick={() => v > 0 && onTipoTasa(op.key)} disabled={v <= 0}
-                                    style={{ flex: 1, padding: '8px 4px', borderRadius: '8px', fontSize: '12px', fontWeight: 500, border: '1px solid', cursor: v > 0 ? 'pointer' : 'not-allowed', borderColor: activa ? '#16a34a' : '#e5e7eb', backgroundColor: activa ? '#f0fdf4' : '#fff', color: v <= 0 ? '#d1d5db' : activa ? '#16a34a' : '#6b7280' }}>
-                                    <div>{op.label}</div>
-                                    <div style={{ fontSize: '11px', marginTop: '2px', fontWeight: 400 }}>
-                                        {v > 0 ? `${v.toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.` : 'sin tasa'}
-                                    </div>
-                                </button>
-                            )
-                        })}
-                    </div>
-                )}
-            </div>
-        </>
-    )
 }
 
 export default function CuentasCobrar() {
@@ -603,11 +537,6 @@ export default function CuentasCobrar() {
 // ── Modal cobro individual ─────────────────────────────────────
 function ModalCobro({ venta, onCerrar, onCobrado }) {
     const { perfil } = useAuth()
-    const OPCIONES_TASA = [
-        { key: 'tasa_bcv', label: 'USD · BCV' },
-        { key: 'tasa_euro', label: 'EUR · BCV' },
-        { key: 'tasa_binance', label: 'USD · Binance' },
-    ]
     const METODOS_USD = ['Efectivo', 'Zelle', 'Transferencia USD', 'Otros']
     const METODOS_BS = ['Pago Móvil', 'Transferencia', 'Punto de Venta', 'Efectivo Bs.']
 
@@ -718,7 +647,7 @@ function ModalCobro({ venta, onCerrar, onCobrado }) {
 
         const { data: { user } } = await supabase.auth.getUser()
         // Mediodía para que la fecha no se corra de día al guardarse con zona horaria
-        const fechaCobro = `${fechaPago}T12:00:00`
+        const fechaCobro = fechaAtimestamp(fechaPago)
         // Estatus del cliente al momento del pago (puede cambiar con el tiempo)
         const contribEspecial = venta.clientes?.contribuyente_especial ?? null
 
@@ -926,11 +855,6 @@ function ModalCobro({ venta, onCerrar, onCobrado }) {
 // ── Modal cobro múltiple ───────────────────────────────────────
 function ModalCobroMultiple({ ventas, onCerrar, onCobrado }) {
     const { perfil } = useAuth()
-    const OPCIONES_TASA = [
-        { key: 'tasa_bcv', label: 'USD · BCV' },
-        { key: 'tasa_euro', label: 'EUR · BCV' },
-        { key: 'tasa_binance', label: 'USD · Binance' },
-    ]
     const METODOS_USD = ['Efectivo', 'Zelle', 'Transferencia USD', 'Otros']
     const METODOS_BS = ['Pago Móvil', 'Transferencia', 'Punto de Venta', 'Efectivo Bs.']
 
@@ -1000,7 +924,7 @@ function ModalCobroMultiple({ ventas, onCerrar, onCobrado }) {
                 monto_bs: parseFloat((pagoBs * proporcion).toFixed(2)),
                 tasa_cambio: tasa,
                 tipo_tasa: tipoTasa,
-                fecha_cobro: `${fechaPago}T12:00:00`,
+                fecha_cobro: fechaAtimestamp(fechaPago),
                 metodo_usd: metodoUsd,
                 metodo_bs: metodoBs,
                 nota: nota || null,
