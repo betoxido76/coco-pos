@@ -694,11 +694,17 @@ function DetallePedido({ pedido, onVolver }) {
             // cantidad va en unidad de venta → cantidad_primaria siempre normalizada a UM1
             const cantidad = Number(item._cantidad)
             const factor = Number(item.productos_terminados?.factor_conversion_2 || 1)
+            const precio = Math.max(0, Number(item._precio) || 0)
+            const desc = Math.min(100, Math.max(0, Number(item._descuento) || 0))
             const { error: err } = await supabase.from('pedido_items').update({
                 cantidad,
                 cantidad_primaria: (esUM2(item) && factor > 1) ? cantidad * factor : cantidad,
-                precio_unitario: Math.max(0, Number(item._precio) || 0),
-                descuento_item: Math.min(100, Math.max(0, Number(item._descuento) || 0)),
+                precio_unitario: precio,
+                descuento_item: desc,
+                // `subtotal` es columna almacenada, no derivada: la app del vendedor
+                // calcula sus totales desde ella. Sin recalcularla aquí, editar el
+                // pedido dejaba al vendedor viendo el monto anterior.
+                subtotal: cantidad * precio * (1 - desc / 100),
             }).eq('id', item.id)
             if (err) { setError('Error al guardar: ' + err.message); setGuardandoEdit(false); return }
         }

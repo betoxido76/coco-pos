@@ -22,7 +22,7 @@ WITH afectados AS (
     FROM pedido_items pi
     WHERE pi.subtotal / NULLIF(pi.cantidad * pi.precio_unitario
                                * (1 - COALESCE(pi.descuento_item, 0) / 100.0), 0)
-          BETWEEN 1.14 AND 1.18
+          BETWEEN 1.158 AND 1.162
 )
 SELECT v.estado_cobro,
        count(*)                                  AS facturas,
@@ -44,7 +44,7 @@ WITH afectados AS (
     FROM pedido_items pi
     WHERE pi.subtotal / NULLIF(pi.cantidad * pi.precio_unitario
                                * (1 - COALESCE(pi.descuento_item, 0) / 100.0), 0)
-          BETWEEN 1.14 AND 1.18
+          BETWEEN 1.158 AND 1.162
 )
 SELECT cl.nombre AS cliente,
        count(*)                               AS facturas,

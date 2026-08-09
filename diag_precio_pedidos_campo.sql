@@ -42,7 +42,7 @@ SELECT e.nombre AS empresa, it.estado,
        round(sum(it.subtotal)::numeric, 2) AS subtotal_afectado
 FROM it
 JOIN empresas e ON e.id = it.emp_id
-WHERE it.ratio BETWEEN 1.14 AND 1.18
+WHERE it.ratio BETWEEN 1.158 AND 1.162
 GROUP BY e.nombre, it.estado
 ORDER BY e.nombre, it.estado;
 
@@ -75,7 +75,7 @@ WITH afectados AS (
     FROM pedido_items pi
     WHERE pi.subtotal / NULLIF(pi.cantidad * pi.precio_unitario
                                * (1 - COALESCE(pi.descuento_item, 0) / 100.0), 0)
-          BETWEEN 1.14 AND 1.18
+          BETWEEN 1.158 AND 1.162
 )
 SELECT p.numero_pedido, cl.nombre AS cliente, p.fecha_pedido::date AS fecha,
        p.estado, v.numero_factura, v.total AS total_facturado, v.estado_cobro
@@ -100,7 +100,7 @@ ORDER BY p.fecha_pedido DESC;
 --   AND p.estado NOT IN ('facturado', 'despachado', 'anulado', 'rechazado')
 --   AND pi.subtotal / NULLIF(pi.cantidad * pi.precio_unitario
 --                            * (1 - COALESCE(pi.descuento_item, 0) / 100.0), 0)
---       BETWEEN 1.14 AND 1.18;
+--       BETWEEN 1.158 AND 1.162;
 
 
 -- ----------------------------------------------------------------------------
@@ -111,7 +111,7 @@ FROM pedido_items pi
 JOIN pedidos p ON p.id = pi.pedido_id
 WHERE pi.subtotal / NULLIF(pi.cantidad * pi.precio_unitario
                            * (1 - COALESCE(pi.descuento_item, 0) / 100.0), 0)
-      BETWEEN 1.14 AND 1.18
+      BETWEEN 1.158 AND 1.162
 GROUP BY p.estado
 ORDER BY p.estado;
 
