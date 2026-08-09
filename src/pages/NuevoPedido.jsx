@@ -657,7 +657,7 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
                 .limit(5),
 
             supabase.from('pedidos')
-                .select('id, numero_pedido, fecha_pedido, estado, descuento_global, pedido_items(id, producto_id, nombre_producto, cantidad, precio_unitario, descuento_item, subtotal)', { count: 'exact' })
+                .select('id, numero_pedido, fecha_pedido, estado, descuento_global, pedido_items(id, producto_id, nombre_producto, cantidad, precio_unitario, descuento_item, subtotal, unidad_venta)', { count: 'exact' })
                 .eq('cliente_id', cliente.id)
                 .eq('empresa_id', perfil.empresa_id)
                 .order('fecha_pedido', { ascending: false })
@@ -723,7 +723,7 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
 
     async function cargarPedidos(pag) {
         const { data, count } = await supabase.from('pedidos')
-            .select('id, numero_pedido, fecha_pedido, estado, descuento_global, pedido_items(id, producto_id, nombre_producto, cantidad, precio_unitario, descuento_item, subtotal)', { count: 'exact' })
+            .select('id, numero_pedido, fecha_pedido, estado, descuento_global, pedido_items(id, producto_id, nombre_producto, cantidad, precio_unitario, descuento_item, subtotal, unidad_venta)', { count: 'exact' })
             .eq('cliente_id', cliente.id)
             .eq('empresa_id', perfil.empresa_id)
             .order('fecha_pedido', { ascending: false })
@@ -1743,7 +1743,25 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
             setProductos(prods)
             if (itemsIniciales && !itemsPreloaded.current) {
                 const preloaded = itemsIniciales
-                    .map(ii => { const prod = prods.find(p => p.id === ii.producto_id); if (!prod) return null; return { ...prod, cantidad: ii.cantidad, descuento_item: String(ii.descuento_item || '') } })
+                    .map(ii => {
+                        const prod = prods.find(p => p.id === ii.producto_id)
+                        if (!prod) return null
+                        // Al repetir un pedido hay que restaurar la unidad de venta.
+                        // Sin esto el ítem quedaba sin `unidadVenta` y se guardaba como
+                        // unidad primaria: `cantidad_primaria` sin multiplicar por el
+                        // factor, que es lo que descuadraba las unidades del dashboard.
+                        // `precioBase` es el precio de lista (UM1); el toggle lo necesita.
+                        const factor = prod.factor_conversion_2 || 1
+                        const esUM2 = !!prod.unidad_venta_2 && (ii.unidad_venta === '2' || ii.unidad_venta === prod.unidad_venta_2)
+                        return {
+                            ...prod,
+                            cantidad: ii.cantidad,
+                            descuento_item: String(ii.descuento_item || ''),
+                            unidadVenta: esUM2 ? '2' : '1',
+                            precioBase: prod.precio,
+                            precio: esUM2 ? prod.precio * factor : prod.precio,
+                        }
+                    })
                     .filter(Boolean)
                 if (preloaded.length > 0) { setItems(preloaded); itemsPreloaded.current = true }
             }
@@ -1831,6 +1849,19 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
 
     function eliminarItem(id) { setItems(prev => prev.filter(i => i.id !== id)) }
 
+    // Misma convención que Ventas.jsx: `cantidad` va en la unidad de venta y
+    // `cantidad_primaria` SIEMPRE normalizada a la unidad primaria. Una sola
+    // función para el pedido en línea y el de la cola offline, para que no se
+    // puedan desincronizar.
+    const lineaUnidades = (i) => {
+        const esUM2 = i.unidadVenta === '2' && !!i.unidad_venta_2
+        const factor = i.factor_conversion_2 || 1
+        return {
+            unidad_venta: esUM2 ? i.unidad_venta_2 : (i.unidad_medida || 'unidad'),
+            cantidad_primaria: esUM2 ? i.cantidad * factor : i.cantidad,
+        }
+    }
+
     const totalConDescItems = items.reduce((s, i) => s + i.cantidad * i.precio * (1 - Number(i.descuento_item || 0) / 100), 0)
     const total = totalConDescItems * (1 - Number(descuentoGlobal || 0) / 100)
     const subtotal = items.reduce((s, i) => {
@@ -1862,8 +1893,7 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
                     producto_id: i.id, nombre_producto: i.nombre, cantidad: i.cantidad,
                     precio_unitario: (i.aplica_iva ?? true) ? i.precio / 1.16 : i.precio, descuento_item: Number(i.descuento_item) || 0,
                     subtotal: i.cantidad * i.precio * (1 - Number(i.descuento_item || 0) / 100),
-                    unidad_venta: i.unidadVenta === '2' ? i.unidad_venta_2 : (i.unidad_medida || 'unidad'),
-                    cantidad_primaria: i.unidadVenta === '2' ? i.cantidad * (i.factor_conversion_2 || 1) : i.cantidad,
+                    ...lineaUnidades(i),
                 })),
             }
             savePendingQueue([...getPendingQueue(), pedidoOffline])
@@ -1903,8 +1933,7 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
                 cantidad: i.cantidad, precio_unitario: (i.aplica_iva ?? true) ? i.precio / 1.16 : i.precio,
                 descuento_item: Number(i.descuento_item) || 0,
                 subtotal: i.cantidad * i.precio * (1 - Number(i.descuento_item || 0) / 100),
-                unidad_venta: i.unidadVenta === '2' ? i.unidad_venta_2 : (i.unidad_medida || 'unidad'),
-                cantidad_primaria: i.unidadVenta === '2' ? i.cantidad * (i.factor_conversion_2 || 1) : i.cantidad,
+                ...lineaUnidades(i),
             }))
         )
         setGuardando(false); setPedidoCreado(pedido)
