@@ -4,7 +4,13 @@
 -- Hipótesis: sí están marcados, pero sus pagos nunca generaron filas en
 -- `cobros` (ventas de contado antes del arreglo, o ventas migradas del POS
 -- anterior). El paso 2 partía de `cobros`, así que no podía verlos.
+--
+-- CORRECCIÓN: la primera versión no filtraba por empresa, así que sus cifras
+-- (386 false / 51 true, 2.101 ventas) abarcaban TODA la base. Si hay más de una
+-- empresa, esos números estaban inflados. Ahora se acota a la empresa indicada.
 -- ============================================================================
+
+-- Empresa bajo análisis: bee65e82-665d-460b-b0b6-7006d3524744
 
 
 -- ----------------------------------------------------------------------------
@@ -12,6 +18,7 @@
 -- ----------------------------------------------------------------------------
 SELECT contribuyente_especial, count(*) AS clientes
 FROM clientes
+WHERE empresa_id = 'bee65e82-665d-460b-b0b6-7006d3524744'
 GROUP BY 1
 ORDER BY 1;
 
@@ -29,6 +36,7 @@ FROM clientes cl
 LEFT JOIN ventas v ON v.cliente_id = cl.id
 LEFT JOIN cobros c ON c.venta_id  = v.id
 WHERE cl.contribuyente_especial IS TRUE
+  AND cl.empresa_id = 'bee65e82-665d-460b-b0b6-7006d3524744'
 GROUP BY cl.nombre, cl.rif
 ORDER BY ventas DESC;
 
@@ -43,5 +51,6 @@ SELECT cl.contribuyente_especial,
        count(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM cobros c WHERE c.venta_id = v.id)) AS sin_cobros
 FROM ventas v
 JOIN clientes cl ON cl.id = v.cliente_id
+WHERE v.empresa_id = 'bee65e82-665d-460b-b0b6-7006d3524744'
 GROUP BY 1
 ORDER BY 1;

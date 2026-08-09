@@ -10,17 +10,23 @@
 --
 -- Este script mide el histórico. No modifica nada.
 --
--- NOTA: la versión anterior filtraba por un cliente_id que no existe, y por eso
--- devolvía cero filas en todo. Ahora recorre toda la base.
+-- NOTA: bee65e82-665d-460b-b0b6-7006d3524744 es un **empresa_id**, no un
+-- cliente_id. La versión anterior lo buscaba en `clientes`, la subconsulta
+-- devolvía NULL y todo salía vacío. Ahora se filtra directo por empresa.
 -- ============================================================================
 
+-- Empresa bajo análisis: bee65e82-665d-460b-b0b6-7006d3524744
+
 
 -- ----------------------------------------------------------------------------
--- 0) Verificación rápida del ID que se usó antes (debe devolver 1 fila si existe)
+-- 0) ¿Cuántas empresas hay en la base? Los diagnósticos previos no filtraban
+--    por empresa: si aquí hay más de una, esas cifras estaban infladas.
 -- ----------------------------------------------------------------------------
-SELECT id, nombre, rif
-FROM clientes
-WHERE id = 'bee65e82-665d-460b-b0b6-7006d3524744';
+SELECT e.id, e.nombre,
+       (SELECT count(*) FROM ventas   v WHERE v.empresa_id = e.id) AS ventas,
+       (SELECT count(*) FROM clientes c WHERE c.empresa_id = e.id) AS clientes
+FROM empresas e
+ORDER BY ventas DESC;
 
 
 -- ----------------------------------------------------------------------------
@@ -34,6 +40,7 @@ WITH v AS (
            coalesce((SELECT sum(c.monto_usd + c.monto_bs / nullif(c.tasa_cambio, 0))
                      FROM cobros c WHERE c.venta_id = ventas.id), 0) AS cobrado
     FROM ventas
+    WHERE empresa_id = 'bee65e82-665d-460b-b0b6-7006d3524744'
 )
 SELECT estado_cobro,
        count(*)                                            AS facturas,
@@ -57,6 +64,7 @@ WITH v AS (
                      FROM cobros c WHERE c.venta_id = ventas.id), 0) AS cobrado
     FROM ventas
     WHERE estado_cobro = 'pagado'
+      AND empresa_id = 'bee65e82-665d-460b-b0b6-7006d3524744'
 )
 SELECT CASE
          WHEN n_cobros > 0                                          THEN '1. cobro registrado en 0'
@@ -82,6 +90,7 @@ SELECT v.numero_factura, cl.nombre AS cliente, v.created_at::date AS emision,
 FROM ventas v
 JOIN clientes cl ON cl.id = v.cliente_id
 WHERE v.estado_cobro = 'pagado'
+  AND v.empresa_id = 'bee65e82-665d-460b-b0b6-7006d3524744'
   AND coalesce((SELECT sum(c.monto_usd + c.monto_bs / nullif(c.tasa_cambio, 0))
                 FROM cobros c WHERE c.venta_id = v.id), 0) < v.total - 0.01
 ORDER BY v.created_at DESC
