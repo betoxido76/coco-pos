@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import { X, FileText } from 'lucide-react'
 import { Factura } from './Ventas'
+import TabResumen from './DashboardResumen'
 import {
     PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer,
     LineChart, Line, XAxis, YAxis, CartesianGrid,
@@ -61,11 +62,7 @@ export default function Dashboard() {
             </div>
 
             {tab === 'comercial' && <TabComercial />}
-            {tab === 'resumen' && (
-                <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px', backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb' }}>
-                    Próximamente los KPIs aquí
-                </div>
-            )}
+            {tab === 'resumen' && <TabResumen />}
         </div>
     )
 }
