@@ -23,19 +23,25 @@
 --    El estado importa: un pedido ya facturado arrastró el precio malo a la
 --    factura, y eso NO se arregla corrigiendo pedido_items (ver consulta 3).
 -- ----------------------------------------------------------------------------
+-- Nota: columnas explícitas, no `pi.*`. `pedido_items` y `pedidos` tienen ambas
+-- una columna `empresa_id`, y con el asterisco la CTE queda con el nombre
+-- duplicado → "column reference empresa_id is ambiguous".
 WITH it AS (
-    SELECT pi.*, p.empresa_id, p.estado, p.origen,
+    SELECT pi.pedido_id,
+           pi.subtotal,
+           p.empresa_id AS emp_id,
+           p.estado,
            pi.subtotal / NULLIF(pi.cantidad * pi.precio_unitario
                                 * (1 - COALESCE(pi.descuento_item, 0) / 100.0), 0) AS ratio
     FROM pedido_items pi
     JOIN pedidos p ON p.id = pi.pedido_id
 )
 SELECT e.nombre AS empresa, it.estado,
-       count(*)                          AS items_afectados,
-       count(DISTINCT it.pedido_id)      AS pedidos,
+       count(*)                            AS items_afectados,
+       count(DISTINCT it.pedido_id)        AS pedidos,
        round(sum(it.subtotal)::numeric, 2) AS subtotal_afectado
 FROM it
-JOIN empresas e ON e.id = it.empresa_id
+JOIN empresas e ON e.id = it.emp_id
 WHERE it.ratio BETWEEN 1.14 AND 1.18
 GROUP BY e.nombre, it.estado
 ORDER BY e.nombre, it.estado;
