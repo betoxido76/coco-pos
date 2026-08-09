@@ -1,57 +1,70 @@
 -- ============================================================================
--- Diagnóstico: facturas 'pagado' sin ninguna fila en `cobros`
+-- Facturas marcadas 'pagado' sin respaldo suficiente en `cobros`
 --
--- Síntoma reportado: en CxC → Pagadas salen facturas con Cobrado $0.00 y saldo
--- igual al total. La columna Cobrado/Saldo se calculaba SOLO desde `cobros`, y
--- una factura de contado puede quedar 'pagado' con cobros en 0 por tres vías:
---
---   1. COBRO EN CERO: Ventas.jsx (facturar pedido / venta retail) sí insertaba
---      la fila en `cobros`, pero con los montos del formulario, que son
---      opcionales. Si se dejaban en blanco quedaba un cobro de 0.
+-- Tres vías producen ese estado (las tres ya corregidas hacia adelante):
+--   1. COBRO EN CERO: Ventas.jsx insertaba la fila con los montos del
+--      formulario, que son opcionales; en blanco quedaba un cobro de 0.
 --   2. SIN FILA: Pedidos.jsx → "Convertir en factura" no insertaba nada.
---   3. MIGRADA del POS anterior (migrate_pos.py): estado_cobro='pagado' fijo,
---      con el monto en ventas.pago_usd/pago_bs y sin filas en `cobros`.
+--   3. MIGRADA del POS anterior: estado_cobro='pagado' fijo, con el monto en
+--      ventas.pago_usd/pago_bs y sin filas en `cobros`.
 --
--- Los tres quedan corregidos hacia adelante; este script mide el histórico.
+-- Este script mide el histórico. No modifica nada.
+--
+-- NOTA: la versión anterior filtraba por un cliente_id que no existe, y por eso
+-- devolvía cero filas en todo. Ahora recorre toda la base.
 -- ============================================================================
 
--- Cliente del reporte: bee65e82-665d-460b-b0b6-7006d3524744
+
+-- ----------------------------------------------------------------------------
+-- 0) Verificación rápida del ID que se usó antes (debe devolver 1 fila si existe)
+-- ----------------------------------------------------------------------------
+SELECT id, nombre, rif
+FROM clientes
+WHERE id = 'bee65e82-665d-460b-b0b6-7006d3524744';
 
 
 -- ----------------------------------------------------------------------------
--- 1) El caso puntual: NE-000028
---    (numero_factura puede estar guardado como FAC-000028 y mostrarse como NE-)
--- ----------------------------------------------------------------------------
-SELECT v.numero_factura, v.estado_cobro, v.total,
-       v.pago_usd, v.pago_bs, v.tasa_cambio, v.metodo_usd, v.metodo_bs,
-       v.created_at, v.pedido_id,
-       (SELECT count(*) FROM cobros c WHERE c.venta_id = v.id) AS filas_en_cobros
-FROM ventas v
-WHERE v.cliente_id = 'bee65e82-665d-460b-b0b6-7006d3524744'
-  AND v.numero_factura IN ('NE-000028', 'FAC-000028');
-
-
--- ----------------------------------------------------------------------------
--- 2) Facturas 'pagado' del cliente cuyo cobrado registrado no llega al total,
---    clasificadas por causa. `cobrado` replica cobroEnUsd() del front:
---    monto_usd + monto_bs / tasa_cambio.
+-- 1) Panorama: todas las ventas por estado y por respaldo en `cobros`.
+--    `cobrado` replica cobroEnUsd() del front: monto_usd + monto_bs/tasa.
 -- ----------------------------------------------------------------------------
 WITH v AS (
-    SELECT ventas.*,
+    SELECT ventas.id, ventas.total, ventas.estado_cobro, ventas.created_at,
+           ventas.pago_usd, ventas.pago_bs, ventas.empresa_id,
            (SELECT count(*) FROM cobros c WHERE c.venta_id = ventas.id) AS n_cobros,
            coalesce((SELECT sum(c.monto_usd + c.monto_bs / nullif(c.tasa_cambio, 0))
                      FROM cobros c WHERE c.venta_id = ventas.id), 0) AS cobrado
     FROM ventas
-    WHERE cliente_id = 'bee65e82-665d-460b-b0b6-7006d3524744'
-      AND estado_cobro = 'pagado'
+)
+SELECT estado_cobro,
+       count(*)                                            AS facturas,
+       count(*) FILTER (WHERE cobrado >= total - 0.01)      AS cobros_cubren_total,
+       count(*) FILTER (WHERE cobrado < total - 0.01)       AS cobros_no_cubren,
+       sum(total)                                           AS monto_total
+FROM v
+GROUP BY estado_cobro
+ORDER BY estado_cobro;
+
+
+-- ----------------------------------------------------------------------------
+-- 2) EL NÚMERO QUE IMPORTA: facturas 'pagado' cuyo cobrado no llega al total,
+--    clasificadas por causa.
+-- ----------------------------------------------------------------------------
+WITH v AS (
+    SELECT ventas.id, ventas.total, ventas.created_at,
+           ventas.pago_usd, ventas.pago_bs,
+           (SELECT count(*) FROM cobros c WHERE c.venta_id = ventas.id) AS n_cobros,
+           coalesce((SELECT sum(c.monto_usd + c.monto_bs / nullif(c.tasa_cambio, 0))
+                     FROM cobros c WHERE c.venta_id = ventas.id), 0) AS cobrado
+    FROM ventas
+    WHERE estado_cobro = 'pagado'
 )
 SELECT CASE
-         WHEN n_cobros > 0                                     THEN '1. cobro registrado en 0'
-         WHEN coalesce(pago_usd,0) > 0 OR coalesce(pago_bs,0) > 0 THEN '3. migrada (pago en la venta)'
-         ELSE                                                       '2. sin fila en cobros'
+         WHEN n_cobros > 0                                          THEN '1. cobro registrado en 0'
+         WHEN coalesce(pago_usd,0) > 0 OR coalesce(pago_bs,0) > 0    THEN '3. migrada (pago en la venta)'
+         ELSE                                                            '2. sin fila en cobros'
        END AS causa,
-       count(*) AS facturas,
-       sum(total) AS monto_total,
+       count(*)              AS facturas,
+       sum(total)            AS monto_sin_respaldo,
        min(created_at)::date AS desde,
        max(created_at)::date AS hasta
 FROM v
@@ -61,17 +74,15 @@ ORDER BY 1;
 
 
 -- ----------------------------------------------------------------------------
--- 3) Lo mismo a nivel de toda la empresa, para dimensionar el alcance
+-- 3) Muestra de 20 casos para revisar a mano antes de decidir el backfill
 -- ----------------------------------------------------------------------------
-SELECT v.estado_cobro,
-       (EXISTS (SELECT 1 FROM cobros c WHERE c.venta_id = v.id)) AS tiene_cobros,
-       coalesce((SELECT sum(c.monto_usd + c.monto_bs / nullif(c.tasa_cambio, 0))
-                 FROM cobros c WHERE c.venta_id = v.id), 0) >= v.total - 0.01 AS cobros_cubren_total,
-       (coalesce(v.pago_usd, 0) > 0 OR coalesce(v.pago_bs, 0) > 0) AS tiene_pago_en_venta,
-       count(*) AS facturas,
-       sum(v.total) AS monto
+SELECT v.numero_factura, cl.nombre AS cliente, v.created_at::date AS emision,
+       v.total, v.pago_usd, v.pago_bs,
+       (SELECT count(*) FROM cobros c WHERE c.venta_id = v.id) AS n_cobros
 FROM ventas v
-WHERE v.empresa_id = (SELECT empresa_id FROM clientes
-                      WHERE id = 'bee65e82-665d-460b-b0b6-7006d3524744')
-GROUP BY 1, 2, 3, 4
-ORDER BY 1, 2, 3, 4;
+JOIN clientes cl ON cl.id = v.cliente_id
+WHERE v.estado_cobro = 'pagado'
+  AND coalesce((SELECT sum(c.monto_usd + c.monto_bs / nullif(c.tasa_cambio, 0))
+                FROM cobros c WHERE c.venta_id = v.id), 0) < v.total - 0.01
+ORDER BY v.created_at DESC
+LIMIT 20;
