@@ -49,7 +49,9 @@ export default function TabResumen() {
     const [mesBase, setMesBase] = useState(new Date().getMonth()) // 0-11
     const [ventas, setVentas] = useState([])       // { anio, mes, total, cat1 }
     const [unidades, setUnidades] = useState({})   // { venta_id: unidades }
-    const [catMap, setCatMap] = useState({})
+    const [items, setItems] = useState([])         // líneas de venta, para el detalle por producto
+    const [pagProd, setPagProd] = useState(0)
+    const [tamProd, setTamProd] = useState(25)
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState('')
 
@@ -83,7 +85,7 @@ export default function TabResumen() {
                 let ifrom = 0, iAll = []
                 while (true) {
                     const { data, error: e } = await supabase.from('venta_items')
-                        .select('venta_id, cantidad, cantidad_primaria, ventas!inner(created_at)')
+                        .select('venta_id, producto_id, cantidad, cantidad_primaria, precio_unitario, ventas!inner(created_at, estado_cobro), productos_terminados(nombre, sku)')
                         .eq('empresa_id', perfil.empresa_id)
                         .gte('ventas.created_at', desde).lte('ventas.created_at', hasta)
                         .range(ifrom, ifrom + PAGE - 1)
@@ -94,12 +96,26 @@ export default function TabResumen() {
                 }
 
                 if (cancel) return
+                // Línea a línea: hace falta el detalle por producto además del
+                // total de unidades por venta.
+                const lineas = iAll
+                    .filter(i => i.ventas?.estado_cobro !== 'anulado')
+                    .map(i => {
+                        const d = new Date(i.ventas.created_at)
+                        const cant = Number(i.cantidad || 0)
+                        return {
+                            ventaId: i.venta_id,
+                            anio: d.getFullYear(), mes: d.getMonth(),
+                            productoId: i.producto_id,
+                            nombre: i.productos_terminados?.nombre || 'Sin nombre',
+                            sku: i.productos_terminados?.sku || '',
+                            unidades: i.cantidad_primaria != null ? Number(i.cantidad_primaria) : cant,
+                            facturacion: cant * Number(i.precio_unitario || 0),
+                        }
+                    })
                 const u = {}
-                iAll.forEach(i => {
-                    const n = i.cantidad_primaria != null ? Number(i.cantidad_primaria) : Number(i.cantidad || 0)
-                    u[i.venta_id] = (u[i.venta_id] || 0) + n
-                })
-                setCatMap(cm)
+                lineas.forEach(l => { u[l.ventaId] = (u[l.ventaId] || 0) + l.unidades })
+                setItems(lineas)
                 setUnidades(u)
                 setVentas(vAll
                     .filter(v => v.estado_cobro !== 'anulado')
@@ -222,6 +238,26 @@ export default function TabResumen() {
     const pieP = useMemo(() => agrupar('pedidos'), [porMesCat, categorias, colorPorCat])
     const pieF = useMemo(() => agrupar('facturacion'), [porMesCat, categorias, colorPorCat])
 
+    // ─── Facturación por producto del mes seleccionado ───
+    const productos = useMemo(() => {
+        const m = {}
+        items.filter(l => l.anio === anio && l.mes === mesBase).forEach(l => {
+            const a = m[l.productoId] || (m[l.productoId] = { nombre: l.nombre, sku: l.sku, unidades: 0, facturacion: 0 })
+            a.unidades += l.unidades
+            a.facturacion += l.facturacion
+        })
+        return Object.values(m).sort((a, b) => b.facturacion - a.facturacion)
+    }, [items, anio, mesBase])
+
+    const totalProd = productos.reduce((s, p) => ({
+        unidades: s.unidades + p.unidades, facturacion: s.facturacion + p.facturacion,
+    }), { unidades: 0, facturacion: 0 })
+    const paginaProd = productos.slice(pagProd * tamProd, (pagProd + 1) * tamProd)
+    const maxPagProd = Math.max(0, Math.ceil(productos.length / tamProd) - 1)
+
+    // Al cambiar de mes o año la página vuelve al inicio
+    useEffect(() => { setPagProd(0) }, [anio, mesBase, tamProd])
+
     const aniosDisponibles = Array.from({ length: 5 }, (_, i) => anioActual - i)
 
     if (loading) return <div style={{ padding: '64px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando…</div>
@@ -329,6 +365,80 @@ export default function TabResumen() {
                 categorias={categorias} celdaCat={celdaCat} campo="pedidos" colorPorCat={colorPorCat}
                 formato={fmtNum} pieData={pieP} pieTitulo="Participación en número de pedidos"
             />
+
+            {/* ─── Facturación por producto ─── */}
+            <Titulo sub={`Ordenado de mayor a menor facturación · los % son sobre el total del mes`}>
+                Facturación por producto · {MESES[mesBase]} {anio}
+            </Titulo>
+            <div style={card}>
+                <div style={{ overflowX: 'auto' }}>
+                    {productos.length === 0 ? (
+                        <div style={{ padding: '40px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>
+                            No hay ventas en {MESES[mesBase].toLowerCase()} de {anio}
+                        </div>
+                    ) : (
+                        <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '640px' }}>
+                            <thead>
+                                <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                                    <th style={{ ...th, textAlign: 'left' }}>Producto</th>
+                                    <th style={{ ...th, textAlign: 'right' }}>Unidades</th>
+                                    <th style={{ ...th, textAlign: 'right' }}>% Unidades</th>
+                                    <th style={{ ...th, textAlign: 'right' }}>Facturación (USD)</th>
+                                    <th style={{ ...th, textAlign: 'right' }}>% Facturación</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {paginaProd.map((p, i) => (
+                                    <tr key={p.sku || i} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                                        <td style={{ ...td, textAlign: 'left', whiteSpace: 'normal' }}>
+                                            {p.nombre}
+                                            {p.sku && <span style={{ fontSize: '11px', color: '#9ca3af', marginLeft: '6px', fontFamily: 'monospace' }}>{p.sku}</span>}
+                                        </td>
+                                        <td style={{ ...td, textAlign: 'right' }}>{fmtNum(p.unidades)}</td>
+                                        <td style={{ ...td, textAlign: 'right', color: '#9ca3af' }}>
+                                            {totalProd.unidades > 0 ? `${(p.unidades / totalProd.unidades * 100).toFixed(1)}%` : '—'}
+                                        </td>
+                                        <td style={{ ...td, textAlign: 'right', fontWeight: 600, color: '#1f2937' }}>{fmt(p.facturacion)}</td>
+                                        <td style={{ ...td, textAlign: 'right', color: '#9ca3af' }}>
+                                            {totalProd.facturacion > 0 ? `${(p.facturacion / totalProd.facturacion * 100).toFixed(1)}%` : '—'}
+                                        </td>
+                                    </tr>
+                                ))}
+                                <tr style={{ backgroundColor: '#f9fafb', borderTop: '2px solid #e5e7eb' }}>
+                                    <td style={{ ...td, textAlign: 'left', fontWeight: 700 }}>TOTALES ({productos.length} productos)</td>
+                                    <td style={{ ...td, textAlign: 'right', fontWeight: 700 }}>{fmtNum(totalProd.unidades)}</td>
+                                    <td style={{ ...td, textAlign: 'right', fontWeight: 600, color: '#6b7280' }}>100%</td>
+                                    <td style={{ ...td, textAlign: 'right', fontWeight: 700, color: '#1f2937' }}>{fmt(totalProd.facturacion)}</td>
+                                    <td style={{ ...td, textAlign: 'right', fontWeight: 600, color: '#6b7280' }}>100%</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    )}
+                </div>
+                {productos.length > 0 && (
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderTop: '1px solid #f3f4f6', flexWrap: 'wrap', gap: '8px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <span style={{ fontSize: '13px', color: '#6b7280' }}>
+                                {pagProd * tamProd + 1}–{Math.min((pagProd + 1) * tamProd, productos.length)} de {productos.length}
+                            </span>
+                            <select value={tamProd} onChange={e => setTamProd(Number(e.target.value))}
+                                style={{ ...selectStyle, padding: '5px 8px', fontSize: '12px' }}>
+                                {[25, 50, 100].map(n => <option key={n} value={n}>{n} / pág.</option>)}
+                            </select>
+                        </div>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                            <button onClick={() => setPagProd(p => Math.max(0, p - 1))} disabled={pagProd === 0}
+                                style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: pagProd === 0 ? '#d1d5db' : '#374151', cursor: pagProd === 0 ? 'default' : 'pointer' }}>
+                                ← Anterior
+                            </button>
+                            <button onClick={() => setPagProd(p => Math.min(maxPagProd, p + 1))} disabled={pagProd >= maxPagProd}
+                                style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: pagProd >= maxPagProd ? '#d1d5db' : '#374151', cursor: pagProd >= maxPagProd ? 'default' : 'pointer' }}>
+                                Siguiente →
+                            </button>
+                        </div>
+                    </div>
+                )}
+            </div>
 
             <TablaCategoria
                 titulo={`Facturación por categoría de cliente · ${anio}`}
