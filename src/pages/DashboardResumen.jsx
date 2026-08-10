@@ -18,6 +18,12 @@ const PAGE = 1000
 
 // Variación relativa. null cuando la base es 0: un crecimiento porcentual sobre
 // cero no significa nada y mostrar "∞" o "100%" engañaría.
+// Equivalente en USD de un cobro y del pago directo asentado en la venta.
+// Mismo criterio que CuentasCobrar: las ventas de contado y las migradas del POS
+// anterior no tienen filas en `cobros`, su pago vive en la propia venta.
+const cobroEnUsd = (c) => Number(c.monto_usd || 0) + Number(c.monto_bs || 0) / Number(c.tasa_cambio || 1)
+const pagoDirectoEnUsd = (v) => Number(v.pagoUsd || 0) + Number(v.pagoBs || 0) / Number(v.tasaCambio || 1)
+
 const variacion = (nuevo, viejo) => (!viejo || viejo === 0) ? null : (nuevo - viejo) / viejo
 
 const th = { padding: '9px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', whiteSpace: 'nowrap' }
@@ -49,8 +55,11 @@ export default function TabResumen() {
     const [mesBase, setMesBase] = useState(new Date().getMonth()) // 0-11
     const [ventas, setVentas] = useState([])       // { anio, mes, total, cat1 }
     const [unidades, setUnidades] = useState({})   // { venta_id: unidades }
+    const [cobros, setCobros] = useState({})       // { venta_id: cobrado USD }
     const [items, setItems] = useState([])         // líneas de venta, para el detalle por producto
     const [pagProd, setPagProd] = useState(0)
+    const [pagCli, setPagCli] = useState(0)
+    const [tamCli, setTamCli] = useState(25)
     const [tamProd, setTamProd] = useState(25)
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState('')
@@ -72,7 +81,7 @@ export default function TabResumen() {
                 let from = 0, vAll = []
                 while (true) {
                     const { data, error: e } = await supabase.from('ventas')
-                        .select('id, created_at, total, estado_cobro, clientes(cat1_id)')
+                        .select('id, created_at, total, estado_cobro, fecha_vencimiento_pago, pago_usd, pago_bs, tasa_cambio, cliente_id, clientes(nombre, cat1_id)')
                         .eq('empresa_id', perfil.empresa_id)
                         .gte('created_at', desde).lte('created_at', hasta)
                         .range(from, from + PAGE - 1)
@@ -113,6 +122,20 @@ export default function TabResumen() {
                             facturacion: cant * Number(i.precio_unitario || 0),
                         }
                     })
+                // Cobros de las ventas del año elegido (los del año anterior no
+                // hacen falta: cobranzas solo reporta el año del filtro).
+                const idsAnio = vAll
+                    .filter(v => new Date(v.created_at).getFullYear() === anio && v.estado_cobro !== 'anulado')
+                    .map(v => v.id)
+                const cob = {}
+                for (let i = 0; i < idsAnio.length; i += 300) {
+                    const { data: cs } = await supabase.from('cobros')
+                        .select('venta_id, monto_usd, monto_bs, tasa_cambio')
+                        .in('venta_id', idsAnio.slice(i, i + 300))
+                    cs?.forEach(c => { cob[c.venta_id] = (cob[c.venta_id] || 0) + cobroEnUsd(c) })
+                }
+                setCobros(cob)
+
                 const u = {}
                 lineas.forEach(l => { u[l.ventaId] = (u[l.ventaId] || 0) + l.unidades })
                 setItems(lineas)
@@ -124,6 +147,11 @@ export default function TabResumen() {
                         return {
                             id: v.id, anio: d.getFullYear(), mes: d.getMonth(),
                             total: Number(v.total || 0),
+                            estadoCobro: v.estado_cobro,
+                            fechaVenc: v.fecha_vencimiento_pago,
+                            pagoUsd: v.pago_usd, pagoBs: v.pago_bs, tasaCambio: v.tasa_cambio,
+                            clienteId: v.cliente_id,
+                            cliente: v.clientes?.nombre || 'Sin cliente',
                             cat1: v.clientes?.cat1_id ? (cm[v.clientes.cat1_id] || SIN_CAT) : SIN_CAT,
                         }
                     }))
@@ -258,6 +286,51 @@ export default function TabResumen() {
     // Al cambiar de mes o año la página vuelve al inicio
     useEffect(() => { setPagProd(0) }, [anio, mesBase, tamProd])
 
+    // ─── Cobranzas del año seleccionado ───
+    // El saldo se deriva igual que en CxC: una venta 'pagado' tiene saldo 0
+    // aunque no tenga cobros registrados (contado y ventas migradas).
+    const cobranzas = useMemo(() => {
+        const ahora = new Date()
+        const total = { facturado: 0, cobrado: 0, porCobrar: 0, vigente: 0, vencido: 0 }
+        const porCliente = {}
+
+        ventas.filter(v => v.anio === anio).forEach(v => {
+            const registrado = (cobros[v.id] || 0) + pagoDirectoEnUsd(v)
+            const pagada = v.estadoCobro === 'pagado'
+            const cobrado = pagada ? Math.max(registrado, v.total) : Math.min(registrado, v.total)
+            const saldo = pagada ? 0 : Math.max(0, v.total - cobrado)
+            // Sin fecha de vencimiento no se puede decir que esté vencida
+            const vencida = saldo > 0.01 && v.fechaVenc && new Date(v.fechaVenc) < ahora
+
+            total.facturado += v.total
+            total.cobrado += cobrado
+            total.porCobrar += saldo
+            if (vencida) total.vencido += saldo; else total.vigente += saldo
+
+            const c = porCliente[v.clienteId] || (porCliente[v.clienteId] = {
+                nombre: v.cliente, facturado: 0, cobrado: 0, porCobrar: 0, vigente: 0, vencido: 0,
+            })
+            c.facturado += v.total
+            c.cobrado += cobrado
+            c.porCobrar += saldo
+            if (vencida) c.vencido += saldo; else c.vigente += saldo
+        })
+
+        return {
+            total,
+            clientes: Object.values(porCliente).sort((a, b) => b.facturado - a.facturado),
+        }
+    }, [ventas, cobros, anio])
+
+    const cbz = cobranzas.total
+    const pctPorCobrar = cbz.facturado > 0 ? cbz.porCobrar / cbz.facturado : 0
+    const pctVencido = cbz.porCobrar > 0 ? cbz.vencido / cbz.porCobrar : 0
+    const pctVigente = cbz.porCobrar > 0 ? cbz.vigente / cbz.porCobrar : 0
+
+    const paginaCli = cobranzas.clientes.slice(pagCli * tamCli, (pagCli + 1) * tamCli)
+    const maxPagCli = Math.max(0, Math.ceil(cobranzas.clientes.length / tamCli) - 1)
+    useEffect(() => { setPagCli(0) }, [anio, tamCli])
+
     const aniosDisponibles = Array.from({ length: 5 }, (_, i) => anioActual - i)
 
     if (loading) return <div style={{ padding: '64px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando…</div>
@@ -365,6 +438,133 @@ export default function TabResumen() {
                 categorias={categorias} celdaCat={celdaCat} campo="pedidos" colorPorCat={colorPorCat}
                 formato={fmtNum} pieData={pieP} pieTitulo="Participación en número de pedidos"
             />
+
+            {/* ─── Cobranzas ─── */}
+            <Titulo sub={`Sobre las notas de entrega del año ${anio}, no del mes · el vencido se mide contra la fecha de vencimiento de cada factura`}>
+                Cobranzas {anio}
+            </Titulo>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px', marginBottom: '24px' }}>
+                <div style={{ ...card, marginBottom: 0 }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <tbody>
+                            {[
+                                { l: 'Facturación', v: fmt(cbz.facturado), b: true },
+                                { l: 'Cobrado', v: fmt(cbz.cobrado), c: '#16a34a' },
+                                { l: 'Por cobrar', v: fmt(cbz.porCobrar), c: '#e34948', b: true },
+                                { l: '% Por cobrar', v: `${(pctPorCobrar * 100).toFixed(1)}%`, c: '#6b7280' },
+                            ].map(f => (
+                                <tr key={f.l} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                                    <td style={{ ...td, textAlign: 'left', color: '#6b7280' }}>{f.l}</td>
+                                    <td style={{ ...td, textAlign: 'right', fontWeight: f.b ? 700 : 600, color: f.c || '#1f2937' }}>{f.v}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+
+                <div style={{ ...card, marginBottom: 0 }}>
+                    <div style={{ padding: '12px 16px', borderBottom: '1px solid #f3f4f6', fontSize: '12px', color: '#6b7280' }}>
+                        Composición de lo por cobrar
+                    </div>
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <tbody>
+                            {[
+                                { l: 'Vigente', m: cbz.vigente, pc: pctVigente, c: '#16a34a' },
+                                { l: 'Vencido', m: cbz.vencido, pc: pctVencido, c: '#e34948' },
+                            ].map(f => (
+                                <tr key={f.l} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                                    <td style={{ ...td, textAlign: 'left', color: '#6b7280' }}>{f.l}</td>
+                                    <td style={{ ...td, textAlign: 'right', fontWeight: 600, color: f.c }}>{fmt(f.m)}</td>
+                                    <td style={{ ...td, textAlign: 'right', fontWeight: 700, color: f.c }}>{(f.pc * 100).toFixed(1)}%</td>
+                                </tr>
+                            ))}
+                            <tr style={{ backgroundColor: '#f9fafb' }}>
+                                <td style={{ ...td, textAlign: 'left', fontWeight: 700 }}>Total por cobrar</td>
+                                <td style={{ ...td, textAlign: 'right', fontWeight: 700 }}>{fmt(cbz.porCobrar)}</td>
+                                <td style={{ ...td, textAlign: 'right', fontWeight: 700, color: '#6b7280' }}>100%</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            {/* Cobranzas por cliente */}
+            <Titulo sub="Ordenado de mayor a menor facturación del año">Cobranzas por cliente · {anio}</Titulo>
+            <div style={card}>
+                <div style={{ overflowX: 'auto' }}>
+                    {cobranzas.clientes.length === 0 ? (
+                        <div style={{ padding: '40px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>
+                            No hay ventas registradas en {anio}
+                        </div>
+                    ) : (
+                        <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '860px' }}>
+                            <thead>
+                                <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                                    <th style={{ ...th, textAlign: 'left' }}>Cliente</th>
+                                    <th style={{ ...th, textAlign: 'right' }}>Facturado</th>
+                                    <th style={{ ...th, textAlign: 'right' }}>Cobrado</th>
+                                    <th style={{ ...th, textAlign: 'right' }}>Por cobrar</th>
+                                    <th style={{ ...th, textAlign: 'right' }}>Vigente</th>
+                                    <th style={{ ...th, textAlign: 'right' }}>Vencido</th>
+                                    <th style={{ ...th, textAlign: 'right' }}>% por cobrar</th>
+                                    <th style={{ ...th, textAlign: 'right' }}>% del total x cobrar</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {paginaCli.map((c, i) => (
+                                    <tr key={i} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                                        <td style={{ ...td, textAlign: 'left', whiteSpace: 'normal', color: '#1f2937', fontWeight: 500 }}>{c.nombre}</td>
+                                        <td style={{ ...td, textAlign: 'right', fontWeight: 600 }}>{fmt(c.facturado)}</td>
+                                        <td style={{ ...td, textAlign: 'right', color: '#16a34a' }}>{fmt(c.cobrado)}</td>
+                                        <td style={{ ...td, textAlign: 'right', fontWeight: 600, color: c.porCobrar > 0.01 ? '#e34948' : '#9ca3af' }}>{fmt(c.porCobrar)}</td>
+                                        <td style={{ ...td, textAlign: 'right' }}>{fmt(c.vigente)}</td>
+                                        <td style={{ ...td, textAlign: 'right', color: c.vencido > 0.01 ? '#e34948' : '#9ca3af' }}>{fmt(c.vencido)}</td>
+                                        <td style={{ ...td, textAlign: 'right', color: '#9ca3af' }}>
+                                            {c.facturado > 0 ? `${(c.porCobrar / c.facturado * 100).toFixed(1)}%` : '—'}
+                                        </td>
+                                        <td style={{ ...td, textAlign: 'right', color: '#9ca3af' }}>
+                                            {cbz.porCobrar > 0 ? `${(c.porCobrar / cbz.porCobrar * 100).toFixed(1)}%` : '—'}
+                                        </td>
+                                    </tr>
+                                ))}
+                                <tr style={{ backgroundColor: '#f9fafb', borderTop: '2px solid #e5e7eb' }}>
+                                    <td style={{ ...td, textAlign: 'left', fontWeight: 700 }}>TOTALES ({cobranzas.clientes.length} clientes)</td>
+                                    <td style={{ ...td, textAlign: 'right', fontWeight: 700 }}>{fmt(cbz.facturado)}</td>
+                                    <td style={{ ...td, textAlign: 'right', fontWeight: 700, color: '#16a34a' }}>{fmt(cbz.cobrado)}</td>
+                                    <td style={{ ...td, textAlign: 'right', fontWeight: 700, color: '#e34948' }}>{fmt(cbz.porCobrar)}</td>
+                                    <td style={{ ...td, textAlign: 'right', fontWeight: 700 }}>{fmt(cbz.vigente)}</td>
+                                    <td style={{ ...td, textAlign: 'right', fontWeight: 700, color: '#e34948' }}>{fmt(cbz.vencido)}</td>
+                                    <td style={{ ...td, textAlign: 'right', fontWeight: 600, color: '#6b7280' }}>{(pctPorCobrar * 100).toFixed(1)}%</td>
+                                    <td style={{ ...td, textAlign: 'right', fontWeight: 600, color: '#6b7280' }}>100%</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    )}
+                </div>
+                {cobranzas.clientes.length > 0 && (
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderTop: '1px solid #f3f4f6', flexWrap: 'wrap', gap: '8px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <span style={{ fontSize: '13px', color: '#6b7280' }}>
+                                {pagCli * tamCli + 1}–{Math.min((pagCli + 1) * tamCli, cobranzas.clientes.length)} de {cobranzas.clientes.length}
+                            </span>
+                            <select value={tamCli} onChange={e => setTamCli(Number(e.target.value))}
+                                style={{ ...selectStyle, padding: '5px 8px', fontSize: '12px' }}>
+                                {[25, 50, 100].map(n => <option key={n} value={n}>{n} / pág.</option>)}
+                            </select>
+                        </div>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                            <button onClick={() => setPagCli(x => Math.max(0, x - 1))} disabled={pagCli === 0}
+                                style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: pagCli === 0 ? '#d1d5db' : '#374151', cursor: pagCli === 0 ? 'default' : 'pointer' }}>
+                                ← Anterior
+                            </button>
+                            <button onClick={() => setPagCli(x => Math.min(maxPagCli, x + 1))} disabled={pagCli >= maxPagCli}
+                                style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: pagCli >= maxPagCli ? '#d1d5db' : '#374151', cursor: pagCli >= maxPagCli ? 'default' : 'pointer' }}>
+                                Siguiente →
+                            </button>
+                        </div>
+                    </div>
+                )}
+            </div>
 
             {/* ─── Facturación por producto ─── */}
             <Titulo sub={`Ordenado de mayor a menor facturación · los % son sobre el total del mes`}>
