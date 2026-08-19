@@ -655,11 +655,13 @@ function NuevaOrden({ onCreada, onCancelar }) {
         Promise.all([
             supabase.from('materias_primas').select('id, nombre, codigo, stock_actual, unidad_medida, costo_compra_promedio, aplica_iva').eq('activo', true),
             supabase.from('materiales_empaque').select('id, nombre, codigo, stock_actual, unidad_medida, costo_compra_promedio, aplica_iva').eq('activo', true),
+            supabase.from('consumibles').select('id, nombre, codigo, stock_actual, unidad_medida, costo_compra_promedio, aplica_iva').eq('activo', true),
             supabase.from('productos_terminados').select('id, nombre, sku, stock_actual, unidad_medida, costo_promedio, tipo_producto, aplica_iva').eq('activo', true)
-        ]).then(([mp, emp, pt]) => {
+        ]).then(([mp, emp, con, pt]) => {
             const unidos = [
                 ...(mp.data || []).map(i => ({ ...i, tipo: 'materias_primas', costo: i.costo_compra_promedio })),
                 ...(emp.data || []).map(i => ({ ...i, tipo: 'materiales_empaque', costo: i.costo_compra_promedio })),
+                ...(con.data || []).map(i => ({ ...i, tipo: 'consumibles', costo: i.costo_compra_promedio })),
                 ...(pt.data || []).filter(p => p.tipo_producto === 'comprado').map(i => ({ ...i, tipo: 'productos_terminados', costo: i.costo_promedio, codigo: i.sku }))
             ]
             setInsumos(unidos)
@@ -2698,7 +2700,7 @@ function NuevaDevolucion({ onCreada, onCancelar }) {
             supabase.from('almacenes').select('id, nombre, es_default').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('nombre'),
             supabase.from('materias_primas').select('id, nombre, codigo, stock_actual, costo_compra_promedio, aplica_iva').eq('empresa_id', perfil.empresa_id).eq('activo', true),
             supabase.from('materiales_empaque').select('id, nombre, codigo, stock_actual, costo_compra_promedio, aplica_iva').eq('empresa_id', perfil.empresa_id).eq('activo', true),
-            supabase.from('consumibles').select('id, nombre, codigo, stock_actual, costo_promedio, aplica_iva').eq('empresa_id', perfil.empresa_id).eq('activo', true),
+            supabase.from('consumibles').select('id, nombre, codigo, stock_actual, costo_compra_promedio, aplica_iva').eq('empresa_id', perfil.empresa_id).eq('activo', true),
             supabase.from('productos_terminados').select('id, nombre, sku, stock_actual, costo_promedio, aplica_iva').eq('empresa_id', perfil.empresa_id).eq('activo', true),
         ]).then(([provs, alms, mp, me, cons, pt]) => {
             setProveedores(provs.data || [])
@@ -2708,7 +2710,7 @@ function NuevaDevolucion({ onCreada, onCancelar }) {
             const todos = [
                 ...(mp.data || []).map(i => ({ ...i, tipo: 'materias_primas', costo: i.costo_compra_promedio })),
                 ...(me.data || []).map(i => ({ ...i, tipo: 'materiales_empaque', costo: i.costo_compra_promedio })),
-                ...(cons.data || []).map(i => ({ ...i, tipo: 'consumibles', costo: i.costo_promedio })),
+                ...(cons.data || []).map(i => ({ ...i, tipo: 'consumibles', costo: i.costo_compra_promedio })),
                 ...(pt.data || []).map(i => ({ ...i, tipo: 'productos_terminados', costo: i.costo_promedio })),
             ]
             setInsumos(todos)
@@ -3049,10 +3051,11 @@ function EditarOrden({ oc, onGuardada, onCancelar }) {
 
     async function cargarDatos() {
         setCargando(true)
-        const [provRes, mpRes, meRes, ptRes, itemsRes] = await Promise.all([
+        const [provRes, mpRes, meRes, conRes, ptRes, itemsRes] = await Promise.all([
             supabase.from('proveedores').select('id, nombre').eq('activo', true).order('nombre'),
             supabase.from('materias_primas').select('id, nombre, codigo, aplica_iva, costo_compra_promedio').eq('activo', true),
             supabase.from('materiales_empaque').select('id, nombre, codigo, aplica_iva, costo_compra_promedio').eq('activo', true),
+            supabase.from('consumibles').select('id, nombre, codigo, aplica_iva, costo_compra_promedio').eq('activo', true),
             supabase.from('productos_terminados').select('id, nombre, sku, aplica_iva, costo_promedio, tipo_producto').eq('activo', true),
             supabase.from('orden_compra_items').select('*').eq('orden_id', oc.id),
         ])
@@ -3060,6 +3063,7 @@ function EditarOrden({ oc, onGuardada, onCancelar }) {
         const insumosUnidos = [
             ...(mpRes.data || []).map(i => ({ ...i, tipo: 'materias_primas', costo: i.costo_compra_promedio })),
             ...(meRes.data || []).map(i => ({ ...i, tipo: 'materiales_empaque', costo: i.costo_compra_promedio })),
+            ...(conRes.data || []).map(i => ({ ...i, tipo: 'consumibles', costo: i.costo_compra_promedio })),
             ...(ptRes.data || []).filter(p => p.tipo_producto === 'comprado').map(i => ({ ...i, tipo: 'productos_terminados', costo: i.costo_promedio, codigo: i.sku })),
         ]
         setProveedores(provRes.data || [])
