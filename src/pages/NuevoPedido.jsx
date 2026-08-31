@@ -703,6 +703,22 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
             return { ...v, saldo_pendiente }
         })
 
+        // Saldo a favor: crédito vivo del cliente. Las NC 'pendiente' aportan su
+        // monto completo; las 'parcial' solo el remanente, que se deriva de las
+        // aplicaciones registradas en `cobros`.
+        const ncsVivas = (ncsData || []).filter(n => ['pendiente', 'parcial'].includes(n.estado_nc))
+        const idsParciales = ncsVivas.filter(n => n.estado_nc === 'parcial').map(n => n.id)
+        let aplicadoNc = {}
+        if (idsParciales.length) {
+            const { data: aplic } = await supabase.from('cobros')
+                .select('devolucion_id, monto_usd').in('devolucion_id', idsParciales)
+            aplic?.forEach(a => {
+                aplicadoNc[a.devolucion_id] = (aplicadoNc[a.devolucion_id] || 0) + Number(a.monto_usd || 0)
+            })
+        }
+        const saldoFavor = ncsVivas.reduce(
+            (s, n) => s + Math.max(0, Number(n.monto_devuelto || 0) - (aplicadoNc[n.id] || 0)), 0)
+
         setDatos({
             cxc: ventasConSaldo,
             cobros: cobrosData || [],
@@ -710,6 +726,7 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
             tasa: config?.tasa_bcv || null,
             visitas: visitasData || [],
             ncs: ncsData || [],
+            saldoFavor,
         })
         setLoading(false)
     }
@@ -919,12 +936,30 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
                                     <p style={{ fontSize: '20px', fontWeight: 800, color: montoVencido > 0 ? '#dc2626' : '#16a34a', margin: '0 0 2px' }}>{fmt(montoVencido)}</p>
                                     <p style={{ fontSize: '11px', color: '#9ca3af', margin: 0 }}>{facturasVencidas.length} factura(s) vencida(s)</p>
                                 </div>
+                                {Number(datos.saldoFavor || 0) > 0.01 && (<>
+                                    <div style={{ backgroundColor: '#fffbeb', borderRadius: '12px', border: '2px solid #fcd34d', padding: '14px' }}>
+                                        <p style={{ fontSize: '11px', fontWeight: 600, color: '#b45309', textTransform: 'uppercase', margin: '0 0 6px' }}>Saldo a favor</p>
+                                        <p style={{ fontSize: '20px', fontWeight: 800, color: '#d97706', margin: '0 0 2px' }}>{fmt(datos.saldoFavor)}</p>
+                                        <p style={{ fontSize: '11px', color: '#b45309', margin: 0 }}>notas de crédito sin aplicar</p>
+                                    </div>
+                                    <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '2px solid #e5e7eb', padding: '14px' }}>
+                                        <p style={{ fontSize: '11px', fontWeight: 600, color: '#9ca3af', textTransform: 'uppercase', margin: '0 0 6px' }}>Deuda neta</p>
+                                        <p style={{ fontSize: '20px', fontWeight: 800, color: totalCxC - datos.saldoFavor > 0 ? '#dc2626' : '#16a34a', margin: '0 0 2px' }}>
+                                            {fmt(Math.max(0, totalCxC - datos.saldoFavor))}
+                                        </p>
+                                        <p style={{ fontSize: '11px', color: '#9ca3af', margin: 0 }}>CxC menos crédito</p>
+                                    </div>
+                                </>)}
                             </div>
 
                             {/* Uso de crédito — solo si es cliente a crédito con límite definido */}
                             {cliente.condicion_pago === 'credito' && cliente.limite_credito > 0 && (() => {
                                 const limite = Number(cliente.limite_credito)
-                                const usado = totalCxC
+                                // El crédito sin aplicar reduce la exposición real:
+                                // esa plata ya es del cliente aunque nadie la haya
+                                // descontado todavía de una factura.
+                                const saldoFavor = Number(datos?.saldoFavor || 0)
+                                const usado = Math.max(0, totalCxC - saldoFavor)
                                 const disponible = Math.max(0, limite - usado)
                                 const pct = Math.min(100, (usado / limite) * 100)
                                 const barColor = pct >= 90 ? '#dc2626' : pct >= 70 ? '#d97706' : '#16a34a'
@@ -941,7 +976,7 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
                                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
                                             {[
                                                 { label: 'Límite total', value: fmt(limite), color: '#1f2937' },
-                                                { label: 'Usado', value: fmt(usado), color: usado > 0 ? '#dc2626' : '#6b7280' },
+                                                { label: saldoFavor > 0.01 ? 'Usado (neto NC)' : 'Usado', value: fmt(usado), color: usado > 0 ? '#dc2626' : '#6b7280' },
                                                 { label: 'Disponible', value: fmt(disponible), color: agotado ? '#dc2626' : '#16a34a' },
                                             ].map(({ label, value, color }) => (
                                                 <div key={label} style={{ textAlign: 'center' }}>
@@ -1621,6 +1656,7 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
     const [busquedaDireccion, setBusquedaDireccion] = useState('')
     const [showDirDropdown, setShowDirDropdown] = useState(false)
     const [cxcVencido, setCxcVencido] = useState(0)
+    const [saldoFavor, setSaldoFavor] = useState(0)
     const [ultimaCompra, setUltimaCompra] = useState({})
 
     // Paso 2 — Productos
@@ -1675,6 +1711,27 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
                 }, 0)
             setCxcVencido(vencido)
         }
+
+        // Crédito vivo del cliente, para que no se le bloquee un pedido por un
+        // límite que en realidad tiene cubierto con notas de crédito.
+        const { data: ncs } = await supabase.from('devoluciones')
+            .select('id, monto_devuelto, estado_nc')
+            .eq('cliente_id', clienteId).eq('empresa_id', perfil.empresa_id)
+            .eq('genera_credito', true).in('estado_nc', ['pendiente', 'parcial'])
+        let favor = 0
+        if (ncs?.length) {
+            const parciales = ncs.filter(n => n.estado_nc === 'parcial').map(n => n.id)
+            const aplicado = {}
+            if (parciales.length) {
+                const { data: aplic } = await supabase.from('cobros')
+                    .select('devolucion_id, monto_usd').in('devolucion_id', parciales)
+                aplic?.forEach(a => {
+                    aplicado[a.devolucion_id] = (aplicado[a.devolucion_id] || 0) + Number(a.monto_usd || 0)
+                })
+            }
+            favor = ncs.reduce((sum, n) => sum + Math.max(0, Number(n.monto_devuelto || 0) - (aplicado[n.id] || 0)), 0)
+        }
+        setSaldoFavor(favor)
         if (ultimosPedidos?.[0]?.pedido_items) {
             const map = {}
             ultimosPedidos[0].pedido_items.forEach(i => {
@@ -1797,7 +1854,7 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
 
     async function seleccionarCliente(c) {
         setClienteSel(c); setBusqCliente(''); setDireccionId(''); setBusquedaDireccion(''); setShowDirDropdown(false)
-        setCxcVencido(0); setUltimaCompra({})
+        setCxcVencido(0); setSaldoFavor(0); setUltimaCompra({})
         await cargarDatosCliente(c.id)
     }
 
@@ -2323,12 +2380,24 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
                         <AlertCircle size={20} color="#dc2626" style={{ flexShrink: 0 }} />
                         <div>
                             <p style={{ fontSize: '13px', fontWeight: 700, color: '#dc2626', margin: '0 0 2px' }}>Cliente con deuda vencida</p>
-                            <p style={{ fontSize: '12px', color: '#ef4444', margin: 0 }}>{fmt(cxcVencido)} pendientes de cobro</p>
+                            <p style={{ fontSize: '12px', color: '#ef4444', margin: 0 }}>
+                                {fmt(cxcVencido)} pendientes de cobro
+                                {saldoFavor > 0.01 && ` · ${fmt(Math.max(0, cxcVencido - saldoFavor))} neto de NC`}
+                            </p>
+                        </div>
+                    </div>
+                )}
+                {saldoFavor > 0.01 && (
+                    <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '12px', padding: '12px 16px', display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '12px' }}>
+                        <FileText size={20} color="#d97706" style={{ flexShrink: 0 }} />
+                        <div>
+                            <p style={{ fontSize: '13px', fontWeight: 700, color: '#b45309', margin: '0 0 2px' }}>Cliente con saldo a favor</p>
+                            <p style={{ fontSize: '12px', color: '#d97706', margin: 0 }}>{fmt(saldoFavor)} en notas de crédito sin aplicar</p>
                         </div>
                     </div>
                 )}
                 {clienteSel?.condicion_pago === 'credito' && clienteSel?.limite_credito > 0 && (() => {
-                    const disponible = Math.max(0, Number(clienteSel.limite_credito) - cxcVencido)
+                    const disponible = Math.max(0, Number(clienteSel.limite_credito) - Math.max(0, cxcVencido - saldoFavor))
                     const excede = total > disponible
                     if (!excede) return null
                     return (

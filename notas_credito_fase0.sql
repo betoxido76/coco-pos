@@ -166,6 +166,14 @@ SET genera_credito = false
 WHERE tipo_devolucion = 'reposicion_stock'
   AND created_at < DATE '2026-08-31';
 
+-- `fecha_emision` nació con DEFAULT CURRENT_DATE, así que las filas anteriores
+-- quedaron todas con la fecha en que se corrió esta migración. Su fecha real es
+-- `fecha`, y los reportes por mes agrupan por fecha_emision: sin este ajuste
+-- las 9 NC históricas se amontonarían en el mes de la migración.
+UPDATE devoluciones
+SET fecha_emision = fecha::date
+WHERE fecha_emision <> fecha::date;
+
 
 -- ----------------------------------------------------------------------------
 -- PASO 5 — `devolucion_items`: líneas de valor sin producto.

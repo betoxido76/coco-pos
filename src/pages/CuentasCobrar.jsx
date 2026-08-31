@@ -51,6 +51,7 @@ export default function CuentasCobrar() {
     const [ventas, setVentas] = useState([])
     const [kpiData, setKpiData] = useState([])
     const [cobradoKpi, setCobradoKpi] = useState({})
+    const [saldoFavor, setSaldoFavor] = useState(0)
     const [loading, setLoading] = useState(true)
     const [filtro, setFiltro] = useState('pendiente')
     const [modalVenta, setModalVenta] = useState(null)       // cobro individual
@@ -135,6 +136,7 @@ export default function CuentasCobrar() {
         }
 
         cargarKpis()
+        cargarSaldoFavor()
     }
 
     // Cobros de las facturas de la página en UNA sola query. Antes cada fila
@@ -199,6 +201,43 @@ export default function CuentasCobrar() {
         }
     }
 
+    // Crédito del cliente aún sin aplicar: NC vivas menos lo ya descontado de
+    // facturas. Es deuda negativa — sin esto, una NC emitida por más de lo que
+    // el cliente debe deja plata que no figura en ningún lado hasta que alguien
+    // cobre otra factura.
+    async function cargarSaldoFavor() {
+        try {
+            const ncSelect = 'id, monto_devuelto, estado_nc' + (filtroCat1 ? ', clientes!inner(cat1_id)' : '')
+            let ncQ = supabase.from('devoluciones')
+                .select(ncSelect)
+                .eq('empresa_id', perfil.empresa_id)
+                .eq('genera_credito', true)
+                .in('estado_nc', ['pendiente', 'parcial'])
+            if (filtroCliente) ncQ = ncQ.eq('cliente_id', filtroCliente)
+            if (filtroCat1) ncQ = ncQ.eq('clientes.cat1_id', filtroCat1)
+
+            const { data: ncs } = await ncQ
+            if (!ncs?.length) { setSaldoFavor(0); return }
+
+            // Solo las 'parcial' tienen aplicaciones; acotar el .in() a ellas evita
+            // un IN gigante, igual que con las facturas parciales de arriba.
+            const parciales = ncs.filter(n => n.estado_nc === 'parcial').map(n => n.id)
+            let aplicado = {}
+            if (parciales.length) {
+                const { data: aplic } = await supabase.from('cobros')
+                    .select('devolucion_id, monto_usd').in('devolucion_id', parciales)
+                aplic?.forEach(a => {
+                    aplicado[a.devolucion_id] = (aplicado[a.devolucion_id] || 0) + Number(a.monto_usd || 0)
+                })
+            }
+
+            setSaldoFavor(ncs.reduce(
+                (s, n) => s + Math.max(0, Number(n.monto_devuelto || 0) - (aplicado[n.id] || 0)), 0))
+        } catch (e) {
+            console.error('Error cargando saldo a favor:', e)
+        }
+    }
+
     async function cargarNcs() {
         setLoadingNcs(true)
         let q = supabase.from('devoluciones')
@@ -243,6 +282,8 @@ export default function CuentasCobrar() {
     const totalPendiente = kpiData.reduce((s, v) => s + saldoKpi(v), 0)
     const valorVencido = kpiData.filter(esVencidaKpi).reduce((s, v) => s + saldoKpi(v), 0)
     const valorPorVencer = kpiData.filter(v => !esVencidaKpi(v)).reduce((s, v) => s + saldoKpi(v), 0)
+    // Puede quedar negativa: el cliente tiene más crédito que deuda.
+    const deudaNeta = totalPendiente - saldoFavor
     const pctVencido = totalPendiente > 0 ? (valorVencido / totalPendiente) * 100 : 0
     const pctPorVencer = totalPendiente > 0 ? (valorPorVencer / totalPendiente) * 100 : 0
 
@@ -286,11 +327,13 @@ export default function CuentasCobrar() {
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '24px' }}>
                     {[
                         { label: 'Total pendiente', valor: fmt(totalPendiente), sub: fmtBs(totalPendiente * tasas.tasa_bcv), color: '#1f2937' },
+                        { label: 'Saldo a favor (NC)', valor: fmt(saldoFavor), sub: saldoFavor > 0.01 ? 'crédito del cliente sin aplicar' : 'sin notas de crédito vivas', color: '#d97706' },
+                        { label: 'Deuda neta', valor: fmt(deudaNeta), sub: 'pendiente menos crédito', color: deudaNeta > 0 ? '#1f2937' : '#16a34a' },
                         { label: 'Facturas vencidas', valor: kpiData.filter(esVencidaKpi).length, sub: 'requieren atención', color: '#ef4444' },
                         { label: 'Facturas al día', valor: kpiData.filter(v => !esVencidaKpi(v)).length, sub: 'dentro del plazo', color: '#16a34a' },
+                        { label: 'Días calle ponderado', valor: `${diasCalle} días`, sub: 'promedio ponderado por saldo', color: '#d97706' },
                         { label: 'Valor vencido', valor: fmt(valorVencido), pct: `${pctVencido.toFixed(0)}%`, sub: fmtBs(valorVencido * tasas.tasa_bcv), color: '#ef4444' },
                         { label: 'Valor por vencer', valor: fmt(valorPorVencer), pct: `${pctPorVencer.toFixed(0)}%`, sub: fmtBs(valorPorVencer * tasas.tasa_bcv), color: '#16a34a' },
-                        { label: 'Días calle ponderado', valor: `${diasCalle} días`, sub: 'promedio ponderado por saldo', color: '#d97706' },
                     ].map(k => (
                         <div key={k.label} style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px 20px' }}>
                             <p style={{ fontSize: '12px', color: '#6b7280', margin: '0 0 4px' }}>{k.label}</p>

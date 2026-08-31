@@ -61,6 +61,7 @@ export default function TabResumen() {
     const [pagCli, setPagCli] = useState(0)
     const [tamCli, setTamCli] = useState(25)
     const [tamProd, setTamProd] = useState(25)
+    const [ncs, setNcs] = useState([])           // notas de crédito del año, con su motivo
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState('')
 
@@ -162,6 +163,63 @@ export default function TabResumen() {
         cargar()
         return () => { cancel = true }
     }, [perfil?.empresa_id, anio])
+
+    // ─── Notas de crédito del año ───
+    // Se cargan aparte del bloque de ventas porque no dependen del año anterior
+    // ni de la paginación de items: son pocas filas y se agrupan por motivo.
+    useEffect(() => {
+        if (!perfil?.empresa_id) return
+        let cancel = false
+        async function cargarNcs() {
+            const { data } = await supabase.from('devoluciones')
+                .select('id, monto_devuelto, estado_nc, fecha_emision, origen, genera_credito, motivo, motivos_nc(nombre)')
+                .eq('empresa_id', perfil.empresa_id)
+                .eq('genera_credito', true)
+                .gte('fecha_emision', `${anio}-01-01`)
+                .lte('fecha_emision', `${anio}-12-31`)
+            if (cancel) return
+            if (!data?.length) { setNcs([]); return }
+
+            // Lo aplicado sale de `cobros`, igual que en CxC: el saldo de una NC
+            // es su monto menos lo que ya se descontó de facturas.
+            const parciales = data.filter(n => n.estado_nc === 'parcial').map(n => n.id)
+            const aplicadas = data.filter(n => n.estado_nc === 'aplicada').map(n => n.id)
+            const conAplicacion = [...parciales, ...aplicadas]
+            const aplicado = {}
+            if (conAplicacion.length) {
+                const { data: aplic } = await supabase.from('cobros')
+                    .select('devolucion_id, monto_usd').in('devolucion_id', conAplicacion)
+                aplic?.forEach(a => {
+                    aplicado[a.devolucion_id] = (aplicado[a.devolucion_id] || 0) + Number(a.monto_usd || 0)
+                })
+            }
+            if (cancel) return
+            setNcs(data.map(n => ({
+                ...n,
+                mes: new Date(n.fecha_emision + 'T00:00:00').getMonth(),
+                monto: Number(n.monto_devuelto || 0),
+                aplicado: aplicado[n.id] || 0,
+            })))
+        }
+        cargarNcs()
+        return () => { cancel = true }
+    }, [perfil?.empresa_id, anio])
+
+    // ─── Notas de crédito por motivo ───
+    // El motivo del catálogo manda; las NC nacidas de una devolución no lo
+    // tienen y caen en "Devolución de mercancía".
+    const ncPorMotivo = useMemo(() => {
+        const filas = {}
+        const total = { cantidad: 0, monto: 0, aplicado: 0, disponible: 0 }
+        for (const n of ncs) {
+            const clave = n.motivos_nc?.nombre || (n.origen === 'manual' ? 'Sin motivo' : 'Devolución de mercancía')
+            const f = filas[clave] || (filas[clave] = { motivo: clave, cantidad: 0, monto: 0, aplicado: 0, disponible: 0 })
+            const disponible = Math.max(0, n.monto - n.aplicado)
+            f.cantidad += 1; f.monto += n.monto; f.aplicado += n.aplicado; f.disponible += disponible
+            total.cantidad += 1; total.monto += n.monto; total.aplicado += n.aplicado; total.disponible += disponible
+        }
+        return { filas: Object.values(filas).sort((a, b) => b.monto - a.monto), total }
+    }, [ncs])
 
     // ─── Agregados por (año, mes) ───
     const porMes = useMemo(() => {
@@ -438,6 +496,53 @@ export default function TabResumen() {
                 categorias={categorias} celdaCat={celdaCat} campo="pedidos" colorPorCat={colorPorCat}
                 formato={fmtNum} pieData={pieP} pieTitulo="Participación en número de pedidos"
             />
+
+            {/* ─── Notas de crédito ─── */}
+            <Titulo sub={`Emitidas en ${anio} · solo las que generan crédito aplicable, no las reposiciones de mercancía`}>
+                Notas de crédito {anio}
+            </Titulo>
+            <div style={card}>
+                {ncPorMotivo.filas.length === 0 ? (
+                    <div style={{ padding: '32px', textAlign: 'center', color: '#9ca3af', fontSize: '13px' }}>
+                        No se emitieron notas de crédito en {anio}
+                    </div>
+                ) : (
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead>
+                            <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                                <th style={{ ...th, textAlign: 'left' }}>Motivo</th>
+                                <th style={{ ...th, textAlign: 'right' }}>Cantidad</th>
+                                <th style={{ ...th, textAlign: 'right' }}>Monto emitido</th>
+                                <th style={{ ...th, textAlign: 'right' }}>Aplicado</th>
+                                <th style={{ ...th, textAlign: 'right' }}>Disponible</th>
+                                <th style={{ ...th, textAlign: 'right' }}>% del total</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {ncPorMotivo.filas.map(f => (
+                                <tr key={f.motivo} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                                    <td style={{ ...td, textAlign: 'left' }}>{f.motivo}</td>
+                                    <td style={{ ...td, textAlign: 'right' }}>{fmtNum(f.cantidad)}</td>
+                                    <td style={{ ...td, textAlign: 'right', fontWeight: 600 }}>{fmt(f.monto)}</td>
+                                    <td style={{ ...td, textAlign: 'right', color: '#16a34a' }}>{fmt(f.aplicado)}</td>
+                                    <td style={{ ...td, textAlign: 'right', color: '#d97706' }}>{fmt(f.disponible)}</td>
+                                    <td style={{ ...td, textAlign: 'right', color: '#6b7280' }}>
+                                        {ncPorMotivo.total.monto > 0 ? `${((f.monto / ncPorMotivo.total.monto) * 100).toFixed(1)}%` : '—'}
+                                    </td>
+                                </tr>
+                            ))}
+                            <tr style={{ backgroundColor: '#f9fafb', borderTop: '2px solid #e5e7eb' }}>
+                                <td style={{ ...td, textAlign: 'left', fontWeight: 700 }}>Total</td>
+                                <td style={{ ...td, textAlign: 'right', fontWeight: 700 }}>{fmtNum(ncPorMotivo.total.cantidad)}</td>
+                                <td style={{ ...td, textAlign: 'right', fontWeight: 700 }}>{fmt(ncPorMotivo.total.monto)}</td>
+                                <td style={{ ...td, textAlign: 'right', fontWeight: 700, color: '#16a34a' }}>{fmt(ncPorMotivo.total.aplicado)}</td>
+                                <td style={{ ...td, textAlign: 'right', fontWeight: 700, color: '#d97706' }}>{fmt(ncPorMotivo.total.disponible)}</td>
+                                <td style={{ ...td, textAlign: 'right', fontWeight: 700, color: '#6b7280' }}>100%</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                )}
+            </div>
 
             {/* ─── Cobranzas ─── */}
             <Titulo sub={`Sobre las notas de entrega del año ${anio}, no del mes · el vencido se mide contra la fecha de vencimiento de cada factura`}>
