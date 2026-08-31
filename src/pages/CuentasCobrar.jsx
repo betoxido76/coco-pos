@@ -581,6 +581,10 @@ function ModalCobro({ venta, onCerrar, onCobrado }) {
                 .eq('empresa_id', perfil.empresa_id)
                 .eq('cliente_id', venta.cliente_id)
                 .eq('estado_nc', 'pendiente')
+                // Una devolución resuelta con reposición de mercancía NO es crédito:
+                // al cliente ya se le compensó en producto. Sin este filtro se le
+                // ofrecía además el descuento, regalando la compensación dos veces.
+                .eq('genera_credito', true)
                 .order('created_at', { ascending: false })
                 .then(({ data }) => setNcsDisponibles(data || []))
         }
