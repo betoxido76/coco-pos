@@ -17,17 +17,29 @@ import { crearNotaCredito, calcularTotalesNC } from '../lib/notasCredito'
 import { itemAplicaIva } from '../lib/iva'
 import SelectorFechaTasa, { useTasasFecha, hoyYMD } from './SelectorFechaTasa'
 
-const fmt = n => `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+export const fmt = n => `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
-const inputStyle = {
+// Mismos roles que ya pueden anular notas de entrega en CxC.
+export const ROLES_APROBADORES = ['admin', 'finanzas', 'superadmin']
+export const esAprobadorNC = (perfil) => ROLES_APROBADORES.includes(perfil?.rol)
+
+// Umbral de aprobación de la empresa. Vacío o cero = control apagado, que es
+// como nace: sin configurarlo el flujo es idéntico al de antes de la Fase 4.
+export async function leerUmbralNC(empresaId) {
+    const { data } = await supabase.from('configuracion')
+        .select('valor').eq('empresa_id', empresaId).eq('clave', 'umbral_aprobacion_nc').maybeSingle()
+    return Number(data?.valor) || 0
+}
+
+export const inputStyle = {
     width: '100%', padding: '9px 12px', border: '1px solid #d1d5db', borderRadius: '8px',
     fontSize: '14px', color: '#1f2937', backgroundColor: '#fff', boxSizing: 'border-box',
 }
-const labelStyle = {
+export const labelStyle = {
     fontSize: '12px', fontWeight: 500, color: '#6b7280', display: 'block',
     marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em',
 }
-const seccionStyle = {
+export const seccionStyle = {
     fontSize: '12px', fontWeight: 600, color: '#374151', margin: '0 0 12px',
     paddingBottom: '8px', borderBottom: '1px solid #e5e7eb',
 }
@@ -64,6 +76,7 @@ export function ModalEmitirNC({ onCerrar, onEmitida }) {
     const tasaDia = Number(tasasFecha?.[tipoTasa]) || 0
     const sinTasa = !cargandoTasas && tasaDia <= 0
 
+    const [umbral, setUmbral] = useState(0)
     const [guardando, setGuardando] = useState(false)
     const [error, setError] = useState('')
 
@@ -73,6 +86,7 @@ export function ModalEmitirNC({ onCerrar, onEmitida }) {
         const eid = perfil.empresa_id
         supabase.from('clientes').select('id, nombre').eq('empresa_id', eid).order('nombre')
             .then(({ data }) => setClientes(data || []))
+        leerUmbralNC(eid).then(setUmbral)
         supabase.from('motivos_nc')
             .select('id, nombre, descripcion, afecta_inventario_default, genera_credito_default')
             .eq('empresa_id', eid).eq('activo', true).order('orden')
@@ -202,6 +216,12 @@ export function ModalEmitirNC({ onCerrar, onEmitida }) {
     const totales = useMemo(() => calcularTotalesNC(lineas), [lineas])
     const hayProductos = lineas.some(l => l.tipo_linea === 'producto')
 
+    // Quien ya es aprobador se auto-aprueba: en una operación donde el admin
+    // emite, exigir un segundo usuario trabaría el sistema. El umbral solo
+    // frena a quien no tiene ese rol.
+    const puedeAprobar = esAprobadorNC(perfil)
+    const requiereAprobacion = umbral > 0 && totales.total > umbral && !puedeAprobar
+
     // Una línea de valor sin concepto viola el CHECK de devolucion_items.
     const lineasInvalidas = lineas.some(l =>
         (l.tipo_linea === 'valor' && !String(l.concepto || '').trim()) ||
@@ -238,6 +258,8 @@ export function ModalEmitirNC({ onCerrar, onEmitida }) {
             fechaEmision: fecha,
             tasaCambio: tasaDia,
             tipoTasa,
+            estadoInicial: requiereAprobacion ? 'en_revision' : 'pendiente',
+            aprobadaPor: requiereAprobacion ? null : (puedeAprobar ? user.id : null),
             lineas,
         })
 
@@ -462,6 +484,11 @@ export function ModalEmitirNC({ onCerrar, onEmitida }) {
                         <span style={{ color: '#6b7280' }}>Total <strong style={{ color: '#1f2937', fontSize: '15px' }}>{fmt(totales.total)}</strong></span>
                     </div>
 
+                    {requiereAprobacion && (
+                        <div style={{ backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '8px', padding: '9px 12px', fontSize: '12px', color: '#1e40af', marginBottom: '12px' }}>
+                            Supera el umbral de aprobación de {fmt(umbral)}: la nota quedará <strong>por aprobar</strong> y no será crédito aplicable hasta que finanzas la autorice.
+                        </div>
+                    )}
                     {!generaCredito && lineas.length > 0 && (
                         <div style={{ backgroundColor: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '9px 12px', fontSize: '12px', color: '#6b7280', marginBottom: '12px' }}>
                             Este documento no lleva N° de NC ni podrá aplicarse a facturas: queda solo como registro de la devolución.
@@ -475,7 +502,7 @@ export function ModalEmitirNC({ onCerrar, onEmitida }) {
                         <button onClick={onCerrar} style={{ flex: 1, padding: '10px', border: '1px solid #e5e7eb', borderRadius: '8px', backgroundColor: '#fff', color: '#374151', fontSize: '14px', cursor: 'pointer' }}>Cancelar</button>
                         <button onClick={emitir} disabled={guardando}
                             style={{ flex: 2, padding: '10px', border: 'none', borderRadius: '8px', backgroundColor: '#d97706', color: '#fff', fontSize: '14px', fontWeight: 600, cursor: guardando ? 'default' : 'pointer', opacity: guardando ? 0.6 : 1 }}>
-                            {guardando ? 'Emitiendo…' : 'Emitir nota de crédito'}
+                            {guardando ? 'Emitiendo…' : requiereAprobacion ? 'Enviar a aprobación' : 'Emitir nota de crédito'}
                         </button>
                     </div>
                 </div>
@@ -492,13 +519,39 @@ export function ModalMotivosNC({ onCerrar }) {
     const [nuevo, setNuevo] = useState({ nombre: '', descripcion: '', afecta: false, credito: true })
     const [editando, setEditando] = useState(null)
     const [error, setError] = useState('')
+    const [umbral, setUmbral] = useState('')
+    const [guardandoUmbral, setGuardandoUmbral] = useState(false)
+    const [umbralOk, setUmbralOk] = useState(false)
 
     async function cargar() {
         const { data } = await supabase.from('motivos_nc')
             .select('*').eq('empresa_id', perfil.empresa_id).order('orden')
         setMotivos(data || []); setLoading(false)
     }
-    useEffect(() => { if (perfil?.empresa_id) cargar() }, [perfil?.empresa_id])
+    useEffect(() => {
+        if (!perfil?.empresa_id) return
+        cargar()
+        leerUmbralNC(perfil.empresa_id).then(u => setUmbral(u > 0 ? String(u) : ''))
+    }, [perfil?.empresa_id])
+
+    // Vacío o cero desactiva el control. Se guarda en `configuracion`, que es
+    // donde el proyecto lleva los ajustes clave/valor por empresa.
+    async function guardarUmbral() {
+        setGuardandoUmbral(true); setError(''); setUmbralOk(false)
+        // `configuracion` no tiene id: su PK es (clave, empresa_id), y `valor` es
+        // numeric NOT NULL. El upsert va sobre esa clave compuesta.
+        const valor = Number(umbral) > 0 ? Number(umbral) : 0
+        const { error: err } = await supabase.from('configuracion').upsert({
+            empresa_id: perfil.empresa_id,
+            clave: 'umbral_aprobacion_nc',
+            valor,
+            actualizado_at: new Date().toISOString(),
+        }, { onConflict: 'clave,empresa_id' })
+        setGuardandoUmbral(false)
+        if (err) { setError(err.message); return }
+        setUmbralOk(true)
+        setTimeout(() => setUmbralOk(false), 2500)
+    }
 
     async function agregar() {
         if (!nuevo.nombre.trim()) return
@@ -556,7 +609,7 @@ export function ModalMotivosNC({ onCerrar }) {
 
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '24px 28px 12px' }}>
                     <div>
-                        <h2 style={{ fontSize: '17px', fontWeight: 700, color: '#1f2937', margin: 0 }}>Motivos de nota de crédito</h2>
+                        <h2 style={{ fontSize: '17px', fontWeight: 700, color: '#1f2937', margin: 0 }}>Motivos y aprobación</h2>
                         <p style={{ fontSize: '12px', color: '#6b7280', margin: '4px 0 0' }}>
                             Cada motivo precarga el comportamiento del documento al emitirlo.
                         </p>
@@ -565,6 +618,28 @@ export function ModalMotivosNC({ onCerrar }) {
                 </div>
 
                 <div style={{ padding: '0 28px', overflowY: 'auto', flex: 1 }}>
+                    {/* Umbral de aprobación */}
+                    <div style={{ backgroundColor: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '14px 16px', marginBottom: '18px' }}>
+                        <label style={labelStyle}>Umbral de aprobación</label>
+                        <p style={{ fontSize: '12px', color: '#6b7280', margin: '0 0 10px' }}>
+                            Las NC por encima de este monto quedan <strong>por aprobar</strong> y no son crédito
+                            aplicable hasta que las autorice un usuario con rol admin o finanzas. Déjalo vacío
+                            para desactivar el control: quien emite, emite directo.
+                        </p>
+                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            <span style={{ fontSize: '14px', color: '#6b7280' }}>$</span>
+                            <input type="number" min="0" step="0.01" value={umbral}
+                                onChange={e => setUmbral(e.target.value)} placeholder="Sin umbral"
+                                style={{ ...inputStyle, width: '140px' }} />
+                            <button onClick={guardarUmbral} disabled={guardandoUmbral}
+                                style={{ padding: '9px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 500, border: 'none', backgroundColor: '#374151', color: '#fff', cursor: 'pointer', opacity: guardandoUmbral ? 0.6 : 1 }}>
+                                {guardandoUmbral ? 'Guardando…' : 'Guardar'}
+                            </button>
+                            {umbralOk && <span style={{ fontSize: '13px', color: '#16a34a', fontWeight: 500 }}>✓ Guardado</span>}
+                        </div>
+                    </div>
+
+                    <p style={seccionStyle}>Motivos</p>
                     {loading ? <p style={{ color: '#9ca3af', fontSize: '13px' }}>Cargando…</p> : (
                         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                             <thead>

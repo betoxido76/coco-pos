@@ -43,8 +43,11 @@ async function reponerStock({ empresaId, almacenId, lineas }) {
         if (cantidad <= 0) continue
 
         const { data: prod } = await supabase.from('productos_terminados')
-            .select('stock_actual, nombre, sku').eq('id', l.producto_id).single()
+            .select('stock_actual, nombre, sku, tipo_producto').eq('id', l.producto_id).single()
         if (!prod) continue
+        // Un servicio no lleva inventario: reponerle stock genera existencias
+        // fantasma. Mismo criterio que anular_nota_no_despachada.
+        if (prod.tipo_producto === 'servicio') continue
 
         const stockAnterior = Number(prod.stock_actual || 0)
         const nuevoStock = stockAnterior + cantidad
@@ -112,6 +115,12 @@ export async function crearNotaCredito({
     fechaEmision = null,
     tasaCambio = null, tipoTasa = null,
     esTotal = false,
+    // 'en_revision' cuando el monto supera el umbral de aprobación de la empresa
+    // y quien emite no es aprobador. En ese estado la NC existe y tiene número,
+    // pero no es crédito: las consultas de crédito filtran por
+    // estado IN ('pendiente','parcial'), así que queda fuera hasta aprobarse.
+    estadoInicial = 'pendiente',
+    aprobadaPor = null,
     lineas = [],
 }) {
     if (!lineas.length) return { data: null, error: { message: 'La nota de crédito no tiene líneas' } }
@@ -143,7 +152,11 @@ export async function crearNotaCredito({
         afecta_inventario: afectaInventario,
         genera_credito: generaCredito,
         numero_nc: numeroNc,
-        estado_nc: 'pendiente',
+        estado_nc: estadoInicial,
+        aprobada_por: aprobadaPor,
+        fecha_aprobacion: aprobadaPor ? new Date().toISOString() : null,
+        // Necesario para poder revertir el reingreso si la NC se anula.
+        almacen_id: afectaInventario ? almacenId : null,
         monto_devuelto: total,
         subtotal,
         iva,

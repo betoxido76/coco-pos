@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { X, DollarSign, CheckSquare, FileText, Ban } from 'lucide-react'
 import SelectorFechaTasa, { useTasasFecha, hoyYMD, fmtFechaCorta, fechaAtimestamp, OPCIONES_TASA } from '../components/SelectorFechaTasa'
 import { ModalEmitirNC, ModalMotivosNC } from '../components/NotasCredito'
+import ModalAnularNC from '../components/ModalAnularNC'
 
 const fmt = n => `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const fmtBs = n => `${Number(n).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`
@@ -76,6 +77,8 @@ export default function CuentasCobrar() {
     const [modalLiquidar, setModalLiquidar] = useState(null)
     const [modalEmitirNc, setModalEmitirNc] = useState(false)
     const [modalMotivosNc, setModalMotivosNc] = useState(false)
+    const [modalAnularNc, setModalAnularNc] = useState(null)   // { nc, esRechazo }
+    const [aprobando, setAprobando] = useState(null)
 
     useEffect(() => { setPagina(0) }, [filtro, filtroCliente, filtroCat1])
     useEffect(() => { cargar() }, [filtro, filtroCliente, filtroCat1, pagina])
@@ -205,6 +208,20 @@ export default function CuentasCobrar() {
     // facturas. Es deuda negativa — sin esto, una NC emitida por más de lo que
     // el cliente debe deja plata que no figura en ningún lado hasta que alguien
     // cobre otra factura.
+    // Aprobar una NC en revisión la convierte en crédito aplicable. El rechazo
+    // no vive aquí: reutiliza el motor de anulación, porque rechazar es revertir.
+    async function aprobarNc(nc) {
+        setAprobando(nc.id)
+        const { data: { user } } = await supabase.auth.getUser()
+        const { error } = await supabase.from('devoluciones').update({
+            estado_nc: 'pendiente',
+            aprobada_por: user.id,
+            fecha_aprobacion: new Date().toISOString(),
+        }).eq('id', nc.id)
+        setAprobando(null)
+        if (!error) { cargarNcs(); cargarSaldoFavor() }
+    }
+
     async function cargarSaldoFavor() {
         try {
             const ncSelect = 'id, monto_devuelto, estado_nc' + (filtroCat1 ? ', clientes!inner(cat1_id)' : '')
@@ -241,7 +258,7 @@ export default function CuentasCobrar() {
     async function cargarNcs() {
         setLoadingNcs(true)
         let q = supabase.from('devoluciones')
-            .select('id, numero_nc, monto_devuelto, subtotal, iva, estado_nc, tipo_devolucion, origen, es_total, motivo, referencia_fiscal, fecha_emision, created_at, cliente_id, venta_id, nota_liquidacion, fecha_liquidacion, clientes(nombre), ventas(numero_factura)')
+            .select('id, numero_nc, monto_devuelto, subtotal, iva, estado_nc, tipo_devolucion, origen, es_total, motivo, referencia_fiscal, fecha_emision, created_at, cliente_id, venta_id, afecta_inventario, almacen_id, motivo_anulacion, nota_liquidacion, fecha_liquidacion, clientes(nombre), ventas(numero_factura)')
             .eq('empresa_id', perfil.empresa_id)
             .not('numero_nc', 'is', null)
             .order('created_at', { ascending: false })
@@ -503,7 +520,7 @@ export default function CuentasCobrar() {
             {vista === 'nc' && (<>
                 {/* Filtro estado + emisión */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
-                    {[['todas', 'Todas'], ['disponible', 'Disponibles'], ['aplicada', 'Aplicadas'], ['liquidada', 'Liquidadas']].map(([val, lbl]) => (
+                    {[['todas', 'Todas'], ['en_revision', 'Por aprobar'], ['disponible', 'Disponibles'], ['aplicada', 'Aplicadas'], ['liquidada', 'Liquidadas']].map(([val, lbl]) => (
                         <button key={val} onClick={() => setFiltroNcEstado(val)}
                             style={{ padding: '7px 16px', borderRadius: '8px', fontSize: '13px', border: '1px solid', cursor: 'pointer', borderColor: filtroNcEstado === val ? '#d97706' : '#e5e7eb', backgroundColor: filtroNcEstado === val ? '#d97706' : '#fff', color: filtroNcEstado === val ? '#fff' : '#6b7280' }}>
                             {lbl}
@@ -548,10 +565,26 @@ export default function CuentasCobrar() {
                                                             style={{ padding: '5px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 500, border: '1px solid #e5e7eb', backgroundColor: '#fff', color: '#374151', cursor: 'pointer' }}>
                                                             Ver
                                                         </button>
+                                                        {nc.estado_nc === 'en_revision' && puedeAnular && (<>
+                                                            <button onClick={() => aprobarNc(nc)} disabled={aprobando === nc.id}
+                                                                style={{ padding: '5px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 500, border: 'none', backgroundColor: '#16a34a', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap', opacity: aprobando === nc.id ? 0.6 : 1 }}>
+                                                                {aprobando === nc.id ? '…' : 'Aprobar'}
+                                                            </button>
+                                                            <button onClick={() => setModalAnularNc({ nc, esRechazo: true })}
+                                                                style={{ padding: '5px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 500, border: '1px solid #fecaca', backgroundColor: '#fff', color: '#dc2626', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                                                Rechazar
+                                                            </button>
+                                                        </>)}
                                                         {['pendiente', 'parcial'].includes(nc.estado_nc) && (
                                                             <button onClick={() => setModalLiquidar(nc)}
                                                                 style={{ padding: '5px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 500, border: '1px solid #bfdbfe', backgroundColor: '#eff6ff', color: '#1d4ed8', cursor: 'pointer', whiteSpace: 'nowrap' }}>
                                                                 Liquidar
+                                                            </button>
+                                                        )}
+                                                        {puedeAnular && !['anulada', 'en_revision'].includes(nc.estado_nc) && (
+                                                            <button onClick={() => setModalAnularNc({ nc, esRechazo: false })}
+                                                                style={{ padding: '5px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 500, border: '1px solid #fecaca', backgroundColor: '#fff', color: '#dc2626', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                                                Anular
                                                             </button>
                                                         )}
                                                     </div>
@@ -589,6 +622,11 @@ export default function CuentasCobrar() {
                     onEmitida={() => { setModalEmitirNc(false); cargarNcs() }} />
             )}
             {modalMotivosNc && <ModalMotivosNC onCerrar={() => setModalMotivosNc(false)} />}
+            {modalAnularNc && (
+                <ModalAnularNC nc={modalAnularNc.nc} esRechazo={modalAnularNc.esRechazo}
+                    onCerrar={() => setModalAnularNc(null)}
+                    onAnulada={() => { setModalAnularNc(null); cargarNcs(); cargarSaldoFavor(); cargar() }} />
+            )}
         </div>
     )
 }
@@ -1218,6 +1256,7 @@ function BadgeCobro({ estado }) {
 
 function BadgeNC({ estado }) {
     const cfg = {
+        en_revision: { bg: '#eff6ff', color: '#1e40af', label: 'Por aprobar' },
         pendiente:   { bg: '#fffbeb', color: '#854d0e', label: 'Pendiente' },
         parcial:     { bg: '#fef3c7', color: '#92400e', label: 'Parcial' },
         aplicada:    { bg: '#dcfce7', color: '#166534', label: 'Aplicada' },
@@ -1334,6 +1373,7 @@ function DetalleNC({ nc, onCerrar }) {
                     {(nc.estado_nc === 'reembolsada' || nc.estado_nc === 'anulada') && nc.nota_liquidacion && (
                         <Row label="Detalle" value={nc.nota_liquidacion} />
                     )}
+                    {nc.motivo_anulacion && <Row label="Motivo de anulación" value={nc.motivo_anulacion} />}
                 </div>
 
                 {/* Productos incluidos */}
