@@ -681,10 +681,13 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
                 .eq('empresa_id', perfil.empresa_id),
 
             supabase.from('devoluciones')
-                .select('id, numero_nc, monto_devuelto, estado_nc, tipo_devolucion, motivo, created_at, ventas(numero_factura)')
+                .select('id, numero_nc, monto_devuelto, estado_nc, tipo_devolucion, es_total, motivo, fecha_emision, created_at, ventas(numero_factura)')
                 .eq('cliente_id', cliente.id)
                 .eq('empresa_id', perfil.empresa_id)
                 .not('numero_nc', 'is', null)
+                // Una reposición de mercancía no es crédito del cliente: se le
+                // compensó en producto, no debe figurar como saldo a su favor.
+                .eq('genera_credito', true)
                 .order('created_at', { ascending: false }),
         ])
 
@@ -1200,7 +1203,7 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
                                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                                 <div>
                                                     <p style={{ fontSize: '12px', color: '#9ca3af', margin: 0 }}>
-                                                        {fmtFecha(nc.created_at)} · {nc.tipo_devolucion === 'total' ? 'Total' : 'Parcial'}
+                                                        {fmtFecha(nc.fecha_emision || nc.created_at)} · {nc.es_total ? 'Total' : 'Parcial'}
                                                     </p>
                                                     {nc.ventas?.numero_factura && (
                                                         <p style={{ fontSize: '11px', color: '#9ca3af', margin: '2px 0 0', fontFamily: 'monospace' }}>

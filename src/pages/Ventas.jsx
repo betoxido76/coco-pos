@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { Plus, Search, Trash2, Check, CheckCircle, FileText, RotateCcw, AlertTriangle, ClipboardList, ChevronRight, Edit, X, MapPin, Star } from 'lucide-react'
 import { opcionesUnidad } from '../lib/unidades'
 import { itemAplicaIva } from '../lib/iva'
+import { crearNotaCredito } from '../lib/notasCredito'
 
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
@@ -3113,81 +3114,32 @@ function FormDevolucion({ venta, items, onCancelar, onConfirmada }) {
 
         const { data: { user } } = await supabase.auth.getUser()
 
-        const { data: ncNum } = await supabase.rpc('obtener_siguiente_nc_numero', { p_empresa_id: perfil.empresa_id })
-
-        const { data: dev, error: errDev } = await supabase
-            .from('devoluciones')
-            .insert({ venta_id: venta.id, usuario_id: user.id, motivo, tipo_devolucion: tipoDevolucion, monto_devuelto: montoDevuelto, es_total: esTotal, empresa_id: perfil.empresa_id, numero_nc: ncNum, estado_nc: 'pendiente', cliente_id: venta.cliente_id })
-            .select()
-            .single()
+        // La mercancía vuelve al almacén elegido; el crédito depende del tipo:
+        // una reposición compensa en producto y no debe generar además una NC.
+        const { error: errDev } = await crearNotaCredito({
+            empresaId: perfil.empresa_id,
+            usuarioId: user.id,
+            clienteId: venta.cliente_id,
+            ventaId: venta.id,
+            origen: 'devolucion',
+            motivo,
+            tipoDevolucion,
+            afectaInventario: true,
+            generaCredito: tipoDevolucion !== 'reposicion_stock',
+            almacenId,
+            esTotal,
+            lineas: itemsADevolver.map(i => ({
+                tipo_linea: 'producto',
+                producto_id: i.producto_id || i.productos_terminados?.id || i.id,
+                cantidad: i.cantidad_devuelta,
+                precio_unitario: i.precio_unitario,
+                aplica_iva: itemAplicaIva(i),
+                nombre: i.productos_terminados?.nombre || i.nombre,
+                sku: i.productos_terminados?.sku || i.sku || '',
+            })),
+        })
 
         if (errDev) { setError('Error: ' + errDev.message); setGuardando(false); return }
-
-        await supabase.from('devolucion_items').insert(
-            itemsADevolver.map(i => ({
-                devolucion_id: dev.id,
-                producto_id: i.producto_id || i.productos_terminados?.id || i.id,
-                cantidad_devuelta: i.cantidad_devuelta,
-                precio_unitario: i.precio_unitario,
-                empresa_id: perfil.empresa_id,
-            }))
-        )
-
-        // Reponer stock — 4 pasos de la invariante por producto
-        for (const item of itemsADevolver) {
-            const prodId = item.producto_id || item.productos_terminados?.id
-            const { data: prod } = await supabase.from('productos_terminados')
-                .select('stock_actual').eq('id', prodId).single()
-            if (!prod) continue
-
-            const stockAnterior = prod.stock_actual
-            const nuevoStock = stockAnterior + item.cantidad_devuelta
-
-            // 1. stock_actual
-            await supabase.from('productos_terminados')
-                .update({ stock_actual: nuevoStock })
-                .eq('id', prodId)
-
-            // 2. stock_ubicacion (SELECT + UPDATE/INSERT, nunca UPSERT con NULL)
-            const { data: su } = await supabase
-                .from('stock_ubicacion')
-                .select('id, cantidad')
-                .eq('tipo_item', 'producto_terminado')
-                .eq('item_id', prodId)
-                .eq('almacen_id', almacenId)
-                .is('almacen_ubicacion_id', null)
-                .maybeSingle()
-
-            if (su) {
-                await supabase.from('stock_ubicacion')
-                    .update({ cantidad: Number(su.cantidad) + item.cantidad_devuelta })
-                    .eq('id', su.id)
-            } else {
-                await supabase.from('stock_ubicacion').insert({
-                    tipo_item: 'producto_terminado',
-                    item_id: prodId,
-                    almacen_id: almacenId,
-                    cantidad: item.cantidad_devuelta,
-                    empresa_id: perfil.empresa_id,
-                })
-            }
-
-            // 3. movimiento
-            await supabase.from('movimientos_inventario').insert({
-                empresa_id: perfil.empresa_id,
-                tipo_item: 'producto_terminado',
-                item_id: prodId,
-                item_nombre: item.productos_terminados?.nombre || item.nombre,
-                item_codigo: item.productos_terminados?.sku || item.sku || '',
-                tipo_movimiento: 'entrada',
-                cantidad: item.cantidad_devuelta,
-                stock_anterior: stockAnterior,
-                stock_actual: nuevoStock,
-                almacen_id: almacenId,
-                origen: 'devolucion',
-                fecha: new Date().toISOString()
-            })
-        }
 
         const nuevoEstado = esTotal ? 'anulado' : venta.estado_cobro
         await supabase.from('ventas').update({ estado_cobro: nuevoEstado }).eq('id', venta.id)
@@ -3460,69 +3412,35 @@ function AutorizarDevolucion({ solicitud, onAutorizada, onCancelar }) {
         setGuardando(true); setError('')
         const { data: { user } } = await supabase.auth.getUser()
 
-        const { data: ncNum } = await supabase.rpc('obtener_siguiente_nc_numero', { p_empresa_id: perfil.empresa_id })
-        const montoDevuelto = items.reduce((s, i) => s + Number(i.cantidad_recibida) * Number(i.precio_unitario), 0)
-
-        const { data: dev, error: errDev } = await supabase.from('devoluciones').insert({
-            empresa_id: perfil.empresa_id,
-            venta_id: solicitud.venta_id,
-            cliente_id: solicitud.cliente_id,
-            numero_nc: ncNum || 'NC-000001',
-            tipo_devolucion: tipoDevolucion,
+        // La mercancía ya entró físicamente al almacén — el flujo SDR nace de esa
+        // recepción — así que el reingreso de stock siempre aplica. Lo que depende
+        // del tipo es el crédito: si al cliente se le compensa con mercancía de
+        // reposición, no debe recibir ADEMÁS una NC aplicable a sus facturas.
+        const { error: errDev } = await crearNotaCredito({
+            empresaId: perfil.empresa_id,
+            usuarioId: user.id,
+            clienteId: solicitud.cliente_id,
+            ventaId: solicitud.venta_id,
+            solicitudId: solicitud.id,
+            origen: 'devolucion',
             motivo: solicitud.notas_almacen || 'Devolución recibida en almacén',
-            monto_devuelto: montoDevuelto,
-            es_total: false,
-            estado_nc: 'pendiente',
-            usuario_id: user.id,
-            solicitud_id: solicitud.id,
-        }).select().single()
+            tipoDevolucion,
+            afectaInventario: true,
+            generaCredito: tipoDevolucion !== 'reposicion_stock',
+            almacenId: solicitud.almacen_id,
+            lineas: items
+                .filter(i => Number(i.cantidad_recibida) > 0)
+                .map(i => ({
+                    tipo_linea: 'producto',
+                    producto_id: i.producto_id,
+                    cantidad: Number(i.cantidad_recibida),
+                    precio_unitario: Number(i.precio_unitario),
+                    aplica_iva: itemAplicaIva(i),
+                    nombre: i.productos_terminados?.nombre,
+                    sku: i.productos_terminados?.sku,
+                })),
+        })
         if (errDev) { setError('Error al crear NC: ' + errDev.message); setGuardando(false); return }
-
-        await supabase.from('devolucion_items').insert(
-            items.map(i => ({
-                devolucion_id: dev.id,
-                producto_id: i.producto_id,
-                cantidad_devuelta: Number(i.cantidad_recibida),
-                precio_unitario: Number(i.precio_unitario),
-                empresa_id: perfil.empresa_id,
-            }))
-        )
-
-        for (const item of items) {
-            if (Number(item.cantidad_recibida) <= 0) continue
-            const { data: prod } = await supabase.from('productos_terminados').select('stock_actual').eq('id', item.producto_id).single()
-            const stockAnterior = Number(prod?.stock_actual || 0)
-            const nuevoStock = stockAnterior + Number(item.cantidad_recibida)
-            await supabase.from('productos_terminados').update({ stock_actual: nuevoStock }).eq('id', item.producto_id)
-
-            const { data: su } = await supabase.from('stock_ubicacion')
-                .select('id, cantidad').eq('tipo_item', 'producto_terminado')
-                .eq('item_id', item.producto_id).eq('almacen_id', solicitud.almacen_id).maybeSingle()
-            if (su) {
-                await supabase.from('stock_ubicacion').update({ cantidad: Number(su.cantidad) + Number(item.cantidad_recibida) }).eq('id', su.id)
-            } else {
-                await supabase.from('stock_ubicacion').insert({
-                    tipo_item: 'producto_terminado', item_id: item.producto_id,
-                    almacen_id: solicitud.almacen_id, cantidad: Number(item.cantidad_recibida),
-                    empresa_id: perfil.empresa_id,
-                })
-            }
-
-            await supabase.from('movimientos_inventario').insert({
-                empresa_id: perfil.empresa_id,
-                tipo_item: 'producto_terminado',
-                item_id: item.producto_id,
-                item_nombre: item.productos_terminados?.nombre || '',
-                item_codigo: item.productos_terminados?.sku || '',
-                tipo_movimiento: 'entrada',
-                cantidad: Number(item.cantidad_recibida),
-                stock_anterior: stockAnterior,
-                stock_actual: nuevoStock,
-                almacen_id: solicitud.almacen_id,
-                origen: 'devolucion',
-                fecha: new Date().toISOString(),
-            })
-        }
 
         await supabase.from('solicitudes_devolucion').update({
             estado: 'autorizada',

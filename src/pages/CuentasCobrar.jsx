@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import { X, DollarSign, CheckSquare, FileText, Ban } from 'lucide-react'
 import SelectorFechaTasa, { useTasasFecha, hoyYMD, fmtFechaCorta, fechaAtimestamp, OPCIONES_TASA } from '../components/SelectorFechaTasa'
+import { ModalEmitirNC, ModalMotivosNC } from '../components/NotasCredito'
 
 const fmt = n => `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const fmtBs = n => `${Number(n).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`
@@ -72,6 +73,8 @@ export default function CuentasCobrar() {
     const [filtroNcEstado, setFiltroNcEstado] = useState('todas')
     const [modalNc, setModalNc] = useState(null)
     const [modalLiquidar, setModalLiquidar] = useState(null)
+    const [modalEmitirNc, setModalEmitirNc] = useState(false)
+    const [modalMotivosNc, setModalMotivosNc] = useState(false)
 
     useEffect(() => { setPagina(0) }, [filtro, filtroCliente, filtroCat1])
     useEffect(() => { cargar() }, [filtro, filtroCliente, filtroCat1, pagina])
@@ -199,7 +202,7 @@ export default function CuentasCobrar() {
     async function cargarNcs() {
         setLoadingNcs(true)
         let q = supabase.from('devoluciones')
-            .select('id, numero_nc, monto_devuelto, estado_nc, tipo_devolucion, motivo, created_at, cliente_id, venta_id, nota_liquidacion, fecha_liquidacion, clientes(nombre), ventas(numero_factura)')
+            .select('id, numero_nc, monto_devuelto, subtotal, iva, estado_nc, tipo_devolucion, origen, es_total, motivo, referencia_fiscal, fecha_emision, created_at, cliente_id, venta_id, nota_liquidacion, fecha_liquidacion, clientes(nombre), ventas(numero_factura)')
             .eq('empresa_id', perfil.empresa_id)
             .not('numero_nc', 'is', null)
             .order('created_at', { ascending: false })
@@ -452,14 +455,22 @@ export default function CuentasCobrar() {
 
             {/* ─── Vista NC ─── */}
             {vista === 'nc' && (<>
-                {/* Filtro estado */}
-                <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+                {/* Filtro estado + emisión */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
                     {[['todas', 'Todas'], ['pendiente', 'Pendientes'], ['aplicada', 'Aplicadas'], ['liquidada', 'Liquidadas']].map(([val, lbl]) => (
                         <button key={val} onClick={() => setFiltroNcEstado(val)}
                             style={{ padding: '7px 16px', borderRadius: '8px', fontSize: '13px', border: '1px solid', cursor: 'pointer', borderColor: filtroNcEstado === val ? '#d97706' : '#e5e7eb', backgroundColor: filtroNcEstado === val ? '#d97706' : '#fff', color: filtroNcEstado === val ? '#fff' : '#6b7280' }}>
                             {lbl}
                         </button>
                     ))}
+                    <button onClick={() => setModalMotivosNc(true)}
+                        style={{ marginLeft: 'auto', padding: '7px 16px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: '#374151', cursor: 'pointer' }}>
+                        Motivos
+                    </button>
+                    <button onClick={() => setModalEmitirNc(true)}
+                        style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 500, border: 'none', backgroundColor: '#d97706', color: '#fff', cursor: 'pointer' }}>
+                        <FileText size={14} /> Nueva NC
+                    </button>
                 </div>
 
                 {/* Tabla NC */}
@@ -470,7 +481,7 @@ export default function CuentasCobrar() {
                                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                                     <thead>
                                         <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                            {['N° NC', 'Cliente', 'Factura origen', 'Tipo', 'Fecha', 'Monto', 'Estado', ''].map((h, i) => (
+                                            {['N° NC', 'Cliente', 'Factura origen', 'Origen', 'Fecha', 'Monto', 'Estado', ''].map((h, i) => (
                                                 <th key={i} style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: i === 5 ? 'right' : 'left', whiteSpace: 'nowrap' }}>{h}</th>
                                             ))}
                                         </tr>
@@ -481,8 +492,8 @@ export default function CuentasCobrar() {
                                                 <td style={{ padding: '12px 14px', fontSize: '13px', fontFamily: 'monospace', fontWeight: 600, color: '#374151' }}>{nc.numero_nc || '—'}</td>
                                                 <td style={{ padding: '12px 14px', fontSize: '13px', color: '#1f2937' }}>{nc.clientes?.nombre || '—'}</td>
                                                 <td style={{ padding: '12px 14px', fontSize: '13px', fontFamily: 'monospace', color: '#6b7280' }}>{nc.ventas?.numero_factura || '—'}</td>
-                                                <td style={{ padding: '12px 14px', fontSize: '12px', color: '#6b7280' }}>{nc.tipo_devolucion === 'total' ? 'Total' : 'Parcial'}</td>
-                                                <td style={{ padding: '12px 14px', fontSize: '13px', color: '#6b7280' }}>{new Date(nc.created_at).toLocaleDateString('es-VE')}</td>
+                                                <td style={{ padding: '12px 14px', fontSize: '12px', color: '#6b7280' }}>{nc.origen === 'manual' ? 'Manual' : 'Devolución'}</td>
+                                                <td style={{ padding: '12px 14px', fontSize: '13px', color: '#6b7280' }}>{new Date(nc.fecha_emision || nc.created_at).toLocaleDateString('es-VE')}</td>
                                                 <td style={{ padding: '12px 14px', fontSize: '13px', fontWeight: 700, color: '#1f2937', textAlign: 'right' }}>{fmt(nc.monto_devuelto)}</td>
                                                 <td style={{ padding: '12px 14px' }}><BadgeNC estado={nc.estado_nc} /></td>
                                                 <td style={{ padding: '12px 14px' }}>
@@ -527,6 +538,11 @@ export default function CuentasCobrar() {
                 <ModalLiquidarNC nc={modalLiquidar} onCerrar={() => setModalLiquidar(null)}
                     onLiquidado={() => { setModalLiquidar(null); cargarNcs() }} />
             )}
+            {modalEmitirNc && (
+                <ModalEmitirNC onCerrar={() => setModalEmitirNc(false)}
+                    onEmitida={() => { setModalEmitirNc(false); cargarNcs() }} />
+            )}
+            {modalMotivosNc && <ModalMotivosNC onCerrar={() => setModalMotivosNc(false)} />}
         </div>
     )
 }
@@ -1078,6 +1094,7 @@ function BadgeNC({ estado }) {
 
 // ── Detalle de Nota de Crédito ─────────────────────────────────
 function DetalleNC({ nc, onCerrar }) {
+    const { perfil } = useAuth()
     const [items, setItems] = useState([])
     const [facturaAplicada, setFacturaAplicada] = useState(null)
     const [loading, setLoading] = useState(true)
@@ -1086,18 +1103,30 @@ function DetalleNC({ nc, onCerrar }) {
         async function cargar() {
             const [{ data: itemsData }, { data: cobroData }] = await Promise.all([
                 supabase.from('devolucion_items')
-                    .select('cantidad_devuelta, precio_unitario, productos_terminados(nombre, sku)')
+                    .select('cantidad_devuelta, precio_unitario, tipo_linea, concepto, aplica_iva, productos_terminados(nombre, sku)')
                     .eq('devolucion_id', nc.id),
-                nc.estado_nc === 'aplicada'
-                    ? supabase.from('cobros').select('venta_id, ventas(numero_factura)').eq('devolucion_id', nc.id).maybeSingle()
+                // Una NC aplicada puede tener varios cobros si se repartió entre
+                // facturas: se muestra a cuál se aplicó cuando fue una sola.
+                nc.estado_nc === 'aplicada' || nc.estado_nc === 'parcial'
+                    ? supabase.from('cobros').select('venta_id, ventas(numero_factura)').eq('devolucion_id', nc.id)
                     : Promise.resolve({ data: null }),
             ])
             setItems(itemsData || [])
-            if (cobroData?.ventas?.numero_factura) setFacturaAplicada(cobroData.ventas.numero_factura)
+            const facturas = [...new Set((cobroData || []).map(c => c.ventas?.numero_factura).filter(Boolean))]
+            if (facturas.length) setFacturaAplicada(facturas.join(', '))
             setLoading(false)
         }
         cargar()
     }, [nc.id])
+
+    // Los montos guardados mandan; el fallback cubre las NC anteriores a Fase 0,
+    // que no tienen subtotal/iva desglosados.
+    const total = Number(nc.monto_devuelto || 0)
+    const subtotal = nc.subtotal != null ? Number(nc.subtotal) : items.reduce((s, i) => {
+        const linea = Number(i.cantidad_devuelta || 0) * Number(i.precio_unitario || 0)
+        return s + ((i.aplica_iva ?? true) ? linea / 1.16 : linea)
+    }, 0)
+    const iva = nc.iva != null ? Number(nc.iva) : total - subtotal
 
     const Row = ({ label, value, mono, bold }) => (
         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
@@ -1108,7 +1137,7 @@ function DetalleNC({ nc, onCerrar }) {
 
     return (
         <>
-            <style>{`@media print { .no-print { display: none !important; } .print-target { max-width: none !important; box-shadow: none !important; position: static !important; transform: none !important; border-radius: 0 !important; } }`}</style>
+            <style>{`@media print { .no-print { display: none !important; } .solo-print { display: flex !important; } .print-target { max-width: none !important; box-shadow: none !important; position: static !important; transform: none !important; border-radius: 0 !important; max-height: none !important; overflow: visible !important; } }`}</style>
             <div className="no-print" onClick={onCerrar} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', zIndex: 40 }} />
             <div className="print-target" style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', backgroundColor: '#fff', borderRadius: '16px', padding: '28px', width: '540px', zIndex: 50, boxShadow: '0 20px 60px rgba(0,0,0,0.2)', maxHeight: '90vh', overflowY: 'auto' }}>
 
@@ -1123,16 +1152,32 @@ function DetalleNC({ nc, onCerrar }) {
                     <button onClick={onCerrar} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af' }}><X size={20} /></button>
                 </div>
 
+                {/* Membrete — solo al imprimir, para que el papel sea un documento */}
+                <div className="solo-print" style={{ display: 'none', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
+                    <div>
+                        <div style={{ fontSize: '16px', fontWeight: 700, color: '#1f2937' }}>{perfil?.empresas?.nombre || 'Mi Empresa'}</div>
+                        <div style={{ fontSize: '12px', color: '#6b7280' }}>RIF: {perfil?.empresas?.rif || ''}</div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontSize: '14px', fontWeight: 600, color: '#6b7280' }}>Nota de Crédito</div>
+                        <div style={{ fontSize: '20px', fontWeight: 700, color: '#d97706', fontFamily: 'monospace' }}>{nc.numero_nc || '—'}</div>
+                    </div>
+                </div>
+
                 {/* Info general */}
                 <div style={{ backgroundColor: '#f9fafb', borderRadius: '10px', padding: '14px 16px', marginBottom: '20px', display: 'flex', flexDirection: 'column', gap: '7px' }}>
                     <Row label="N° Nota de Crédito" value={nc.numero_nc || '—'} mono />
                     <Row label="Cliente" value={nc.clientes?.nombre || '—'} />
                     <Row label="Factura origen" value={nc.ventas?.numero_factura || '—'} mono />
-                    <Row label="Fecha emisión" value={new Date(nc.created_at).toLocaleDateString('es-VE')} />
-                    <Row label="Tipo devolución" value={nc.tipo_devolucion === 'total' ? 'Total' : 'Parcial'} />
+                    {nc.referencia_fiscal && <Row label="Referencia fiscal" value={nc.referencia_fiscal} mono />}
+                    <Row label="Fecha emisión" value={new Date(nc.fecha_emision || nc.created_at).toLocaleDateString('es-VE')} />
+                    <Row label="Origen" value={nc.origen === 'manual' ? 'Emisión manual' : 'Devolución de mercancía'} />
+                    <Row label="Alcance" value={nc.es_total ? 'Total' : 'Parcial'} />
                     {nc.motivo && <Row label="Motivo" value={nc.motivo} />}
                     <div style={{ height: '1px', backgroundColor: '#e5e7eb', margin: '2px 0' }} />
-                    <Row label="Monto NC" value={fmt(nc.monto_devuelto)} bold />
+                    <Row label="Base imponible" value={fmt(subtotal)} />
+                    <Row label="IVA" value={fmt(iva)} />
+                    <Row label="Monto NC" value={fmt(total)} bold />
                     {nc.estado_nc === 'aplicada' && facturaAplicada && (
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginTop: '2px' }}>
                             <span style={{ color: '#6b7280' }}>Aplicada a factura</span>
@@ -1152,13 +1197,14 @@ function DetalleNC({ nc, onCerrar }) {
                     ? <div style={{ textAlign: 'center', color: '#9ca3af', padding: '20px', fontSize: '13px' }}>Cargando...</div>
                     : items.length > 0 && (
                         <div>
-                            <p style={{ fontSize: '12px', fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 10px' }}>Productos devueltos</p>
+                            <p style={{ fontSize: '12px', fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 10px' }}>Detalle</p>
                             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                                 <thead>
                                     <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                        <th style={{ padding: '8px 12px', textAlign: 'left', color: '#6b7280', fontWeight: 500 }}>Producto</th>
+                                        <th style={{ padding: '8px 12px', textAlign: 'left', color: '#6b7280', fontWeight: 500 }}>Concepto</th>
                                         <th style={{ padding: '8px 12px', textAlign: 'right', color: '#6b7280', fontWeight: 500 }}>Cant.</th>
                                         <th style={{ padding: '8px 12px', textAlign: 'right', color: '#6b7280', fontWeight: 500 }}>P. Unit.</th>
+                                        <th style={{ padding: '8px 12px', textAlign: 'center', color: '#6b7280', fontWeight: 500 }}>IVA</th>
                                         <th style={{ padding: '8px 12px', textAlign: 'right', color: '#6b7280', fontWeight: 500 }}>Subtotal</th>
                                     </tr>
                                 </thead>
@@ -1166,13 +1212,16 @@ function DetalleNC({ nc, onCerrar }) {
                                     {items.map((it, i) => (
                                         <tr key={i} style={{ borderBottom: '1px solid #f3f4f6' }}>
                                             <td style={{ padding: '10px 12px', color: '#1f2937' }}>
-                                                {it.productos_terminados?.nombre || '—'}
-                                                {it.productos_terminados?.sku && (
+                                                {it.tipo_linea === 'valor'
+                                                    ? it.concepto || '—'
+                                                    : it.productos_terminados?.nombre || '—'}
+                                                {it.tipo_linea !== 'valor' && it.productos_terminados?.sku && (
                                                     <span style={{ display: 'block', fontSize: '11px', color: '#9ca3af', fontFamily: 'monospace' }}>{it.productos_terminados.sku}</span>
                                                 )}
                                             </td>
                                             <td style={{ padding: '10px 12px', textAlign: 'right', color: '#374151' }}>{it.cantidad_devuelta}</td>
                                             <td style={{ padding: '10px 12px', textAlign: 'right', color: '#374151' }}>{fmt(it.precio_unitario)}</td>
+                                            <td style={{ padding: '10px 12px', textAlign: 'center', color: '#6b7280', fontSize: '12px' }}>{(it.aplica_iva ?? true) ? '16%' : 'Exento'}</td>
                                             <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 600, color: '#1f2937' }}>{fmt((it.cantidad_devuelta || 0) * (it.precio_unitario || 0))}</td>
                                         </tr>
                                     ))}
