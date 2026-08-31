@@ -207,6 +207,9 @@ export default function CuentasCobrar() {
             .not('numero_nc', 'is', null)
             .order('created_at', { ascending: false })
         if (filtroNcEstado === 'liquidada') q = q.in('estado_nc', ['reembolsada', 'anulada'])
+        // "Disponibles" son las que aún tienen saldo: nunca aplicadas o aplicadas
+        // en parte a otra factura.
+        else if (filtroNcEstado === 'disponible') q = q.in('estado_nc', ['pendiente', 'parcial'])
         else if (filtroNcEstado !== 'todas') q = q.eq('estado_nc', filtroNcEstado)
         const { data } = await q
         setNcs(data || [])
@@ -457,7 +460,7 @@ export default function CuentasCobrar() {
             {vista === 'nc' && (<>
                 {/* Filtro estado + emisión */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
-                    {[['todas', 'Todas'], ['pendiente', 'Pendientes'], ['aplicada', 'Aplicadas'], ['liquidada', 'Liquidadas']].map(([val, lbl]) => (
+                    {[['todas', 'Todas'], ['disponible', 'Disponibles'], ['aplicada', 'Aplicadas'], ['liquidada', 'Liquidadas']].map(([val, lbl]) => (
                         <button key={val} onClick={() => setFiltroNcEstado(val)}
                             style={{ padding: '7px 16px', borderRadius: '8px', fontSize: '13px', border: '1px solid', cursor: 'pointer', borderColor: filtroNcEstado === val ? '#d97706' : '#e5e7eb', backgroundColor: filtroNcEstado === val ? '#d97706' : '#fff', color: filtroNcEstado === val ? '#fff' : '#6b7280' }}>
                             {lbl}
@@ -502,7 +505,7 @@ export default function CuentasCobrar() {
                                                             style={{ padding: '5px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 500, border: '1px solid #e5e7eb', backgroundColor: '#fff', color: '#374151', cursor: 'pointer' }}>
                                                             Ver
                                                         </button>
-                                                        {nc.estado_nc === 'pendiente' && (
+                                                        {['pendiente', 'parcial'].includes(nc.estado_nc) && (
                                                             <button onClick={() => setModalLiquidar(nc)}
                                                                 style={{ padding: '5px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 500, border: '1px solid #bfdbfe', backgroundColor: '#eff6ff', color: '#1d4ed8', cursor: 'pointer', whiteSpace: 'nowrap' }}>
                                                                 Liquidar
@@ -568,8 +571,10 @@ function ModalCobro({ venta, onCerrar, onCobrado }) {
     const [error, setError] = useState('')
     const [cuentasBancarias, setCuentasBancarias] = useState([])
     const [cuentaBancariaId, setCuentaBancariaId] = useState('')
+    // Cada NC lleva su saldo disponible, no su monto original: una NC puede
+    // haberse aplicado parcialmente a otra factura y conservar un remanente.
     const [ncsDisponibles, setNcsDisponibles] = useState([])
-    const [ncsSeleccionadas, setNcsSeleccionadas] = useState(new Set())
+    const [ncsAplicadas, setNcsAplicadas] = useState({})   // { ncId: monto a aplicar ahora }
 
     useEffect(() => {
         if (perfil?.empresa_id) {
@@ -591,19 +596,43 @@ function ModalCobro({ venta, onCerrar, onCobrado }) {
     }, [venta.id])
 
     useEffect(() => {
-        if (venta.cliente_id && perfil?.empresa_id) {
-            supabase.from('devoluciones')
+        if (!venta.cliente_id || !perfil?.empresa_id) return
+        async function cargarNcs() {
+            const { data: ncs } = await supabase.from('devoluciones')
                 .select('id, numero_nc, monto_devuelto, created_at')
                 .eq('empresa_id', perfil.empresa_id)
                 .eq('cliente_id', venta.cliente_id)
-                .eq('estado_nc', 'pendiente')
+                // 'parcial' = ya se aplicó a otra factura pero le queda remanente.
+                .in('estado_nc', ['pendiente', 'parcial'])
                 // Una devolución resuelta con reposición de mercancía NO es crédito:
                 // al cliente ya se le compensó en producto. Sin este filtro se le
                 // ofrecía además el descuento, regalando la compensación dos veces.
                 .eq('genera_credito', true)
                 .order('created_at', { ascending: false })
-                .then(({ data }) => setNcsDisponibles(data || []))
+
+            if (!ncs?.length) { setNcsDisponibles([]); return }
+
+            // El saldo de una NC se deriva de sus aplicaciones, igual que el saldo
+            // de una factura se deriva de sus cobros. Aplicar una NC es insertar un
+            // cobro con su devolucion_id, así que `cobros` es el libro de ambos.
+            const { data: aplicaciones } = await supabase.from('cobros')
+                .select('devolucion_id, monto_usd')
+                .in('devolucion_id', ncs.map(n => n.id))
+
+            const aplicado = {}
+            for (const a of aplicaciones || []) {
+                aplicado[a.devolucion_id] = (aplicado[a.devolucion_id] || 0) + Number(a.monto_usd || 0)
+            }
+
+            setNcsDisponibles(
+                ncs.map(nc => ({
+                    ...nc,
+                    aplicado: aplicado[nc.id] || 0,
+                    saldo: Number(nc.monto_devuelto || 0) - (aplicado[nc.id] || 0),
+                })).filter(nc => nc.saldo > 0.01)
+            )
         }
+        cargarNcs()
     }, [venta.cliente_id, perfil?.empresa_id])
 
     const { tasasFecha, cargandoTasas } = useTasasFecha(perfil?.empresa_id, fechaPago)
@@ -612,9 +641,7 @@ function ModalCobro({ venta, onCerrar, onCobrado }) {
     const sinTasa = !cargandoTasas && tasaDia <= 0
 
     const saldo = venta.total - cobradoPrev
-    const montoNCs = ncsDisponibles
-        .filter(nc => ncsSeleccionadas.has(nc.id))
-        .reduce((s, nc) => s + (nc.monto_devuelto || 0), 0)
+    const montoNCs = Object.values(ncsAplicadas).reduce((s, m) => s + Number(m || 0), 0)
     const saldoEfectivo = Math.max(0, saldo - montoNCs)
     const abonoEnUsd = pagoUsd + (pagoBs / tasa) + montoNCs
     const excede = abonoEnUsd > saldo + 0.01
@@ -626,18 +653,44 @@ function ModalCobro({ venta, onCerrar, onCobrado }) {
         if (tasaDia > 0) setPagoBs(parseFloat((Math.max(0, saldoEfectivo - pagoUsd) * tasaDia).toFixed(2)))
     }, [tasasFecha])
 
+    // Tras cambiar lo aplicado en NCs, el efectivo se reajusta al resto del saldo.
+    function aplicarNcs(next) {
+        const nuevoMontoNCs = Object.values(next).reduce((s, m) => s + Number(m || 0), 0)
+        setNcsAplicadas(next)
+        setPagoUsd(parseFloat(Math.max(0, saldo - nuevoMontoNCs).toFixed(2)))
+        setPagoBs(0)
+    }
+
+    // Marcar una NC aplica lo máximo que sirve aquí: ni más de lo que le queda a
+    // la NC, ni más de lo que falta por cubrir en esta factura. El remanente
+    // queda vivo en la NC para la próxima.
     function toggleNc(ncId) {
-        setNcsSeleccionadas(prev => {
-            const next = new Set(prev)
-            if (next.has(ncId)) next.delete(ncId); else next.add(ncId)
-            const nuevoMontoNCs = ncsDisponibles
-                .filter(nc => next.has(nc.id))
-                .reduce((s, nc) => s + (nc.monto_devuelto || 0), 0)
-            const nuevoSaldoEfectivo = Math.max(0, saldo - nuevoMontoNCs)
-            setPagoUsd(parseFloat(nuevoSaldoEfectivo.toFixed(2)))
-            setPagoBs(0)
-            return next
-        })
+        const nc = ncsDisponibles.find(n => n.id === ncId)
+        if (!nc) return
+        const next = { ...ncsAplicadas }
+        if (ncId in next) {
+            delete next[ncId]
+        } else {
+            const yaAplicado = Object.entries(next).reduce((s, [, m]) => s + Number(m || 0), 0)
+            const cabe = Math.max(0, saldo - yaAplicado)
+            const monto = Math.min(nc.saldo, cabe)
+            if (monto <= 0.01) return
+            next[ncId] = parseFloat(monto.toFixed(2))
+        }
+        aplicarNcs(next)
+    }
+
+    // Monto editable: el tope real es el menor entre el saldo de la NC y lo que
+    // falta por cubrir de la factura sin contar esta misma NC.
+    function setMontoNc(ncId, valor) {
+        const nc = ncsDisponibles.find(n => n.id === ncId)
+        if (!nc) return
+        const otras = Object.entries(ncsAplicadas)
+            .filter(([id]) => id !== ncId)
+            .reduce((s, [, m]) => s + Number(m || 0), 0)
+        const tope = Math.min(nc.saldo, Math.max(0, saldo - otras))
+        const n = Math.max(0, Math.min(Number(valor) || 0, tope))
+        aplicarNcs({ ...ncsAplicadas, [ncId]: parseFloat(n.toFixed(2)) })
     }
 
     // Editar USD completa el Bs. con el equivalente del resto del saldo: dejar
@@ -671,11 +724,16 @@ function ModalCobro({ venta, onCerrar, onCobrado }) {
         // Estatus del cliente al momento del pago (puede cambiar con el tiempo)
         const contribEspecial = venta.clientes?.contribuyente_especial ?? null
 
-        // Aplicar NCs seleccionadas como cobros
-        for (const nc of ncsDisponibles.filter(nc => ncsSeleccionadas.has(nc.id))) {
+        // Aplicar NCs como cobros, por el monto elegido en cada una.
+        for (const [ncId, montoStr] of Object.entries(ncsAplicadas)) {
+            const monto = Number(montoStr || 0)
+            if (monto <= 0.001) continue
+            const nc = ncsDisponibles.find(n => n.id === ncId)
+            if (!nc) continue
+
             await supabase.from('cobros').insert({
                 venta_id: venta.id,
-                monto_usd: nc.monto_devuelto,
+                monto_usd: monto,
                 monto_bs: 0,
                 tasa_cambio: tasa,
                 tipo_tasa: tipoTasa,
@@ -683,12 +741,18 @@ function ModalCobro({ venta, onCerrar, onCobrado }) {
                 metodo_usd: 'Nota de Crédito',
                 metodo_bs: null,
                 nota: `NC ${nc.numero_nc || nc.id.slice(0, 8)}`,
-                devolucion_id: nc.id,
+                devolucion_id: ncId,
                 contribuyente_especial: contribEspecial,
                 usuario_id: user.id,
                 empresa_id: perfil.empresa_id,
             })
-            await supabase.from('devoluciones').update({ estado_nc: 'aplicada' }).eq('id', nc.id)
+
+            // La NC solo se agota cuando el remanente llega a cero; si sobra,
+            // queda 'parcial' y vuelve a ofrecerse en la próxima cobranza.
+            const remanente = nc.saldo - monto
+            await supabase.from('devoluciones')
+                .update({ estado_nc: remanente > 0.01 ? 'parcial' : 'aplicada' })
+                .eq('id', ncId)
         }
 
         // Cobro en efectivo/transferencia (si hay monto)
@@ -766,17 +830,45 @@ function ModalCobro({ venta, onCerrar, onCobrado }) {
                                 Notas de crédito disponibles
                             </span>
                         </div>
-                        {ncsDisponibles.map((nc, i) => (
-                            <label key={nc.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '6px 0', cursor: 'pointer', borderBottom: i < ncsDisponibles.length - 1 ? '1px solid #fde68a' : 'none' }}>
-                                <input type="checkbox" checked={ncsSeleccionadas.has(nc.id)} onChange={() => toggleNc(nc.id)}
-                                    style={{ width: '15px', height: '15px', accentColor: '#d97706', cursor: 'pointer', flexShrink: 0 }} />
-                                <span style={{ fontSize: '13px', color: '#92400e', fontFamily: 'monospace' }}>
-                                    {nc.numero_nc || `NC-${nc.id.slice(0, 8)}`}
-                                </span>
-                                <span style={{ marginLeft: 'auto', fontSize: '13px', fontWeight: 700, color: '#92400e' }}>{fmt(nc.monto_devuelto)}</span>
-                            </label>
-                        ))}
-                        {ncsSeleccionadas.size > 0 && (
+                        {ncsDisponibles.map((nc, i) => {
+                            const activa = nc.id in ncsAplicadas
+                            const aplicandoTodo = activa && Number(ncsAplicadas[nc.id]) >= nc.saldo - 0.01
+                            return (
+                                <div key={nc.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '7px 0', borderBottom: i < ncsDisponibles.length - 1 ? '1px solid #fde68a' : 'none' }}>
+                                    <input type="checkbox" checked={activa} onChange={() => toggleNc(nc.id)}
+                                        style={{ width: '15px', height: '15px', accentColor: '#d97706', cursor: 'pointer', flexShrink: 0 }} />
+                                    <div style={{ minWidth: 0 }}>
+                                        <div style={{ fontSize: '13px', color: '#92400e', fontFamily: 'monospace' }}>
+                                            {nc.numero_nc || `NC-${nc.id.slice(0, 8)}`}
+                                        </div>
+                                        <div style={{ fontSize: '11px', color: '#b45309' }}>
+                                            {nc.aplicado > 0.01
+                                                ? `Disponible ${fmt(nc.saldo)} de ${fmt(nc.monto_devuelto)}`
+                                                : `Disponible ${fmt(nc.saldo)}`}
+                                        </div>
+                                    </div>
+                                    <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                        {activa ? (
+                                            <>
+                                                <span style={{ fontSize: '12px', color: '#b45309' }}>Aplicar</span>
+                                                <input type="number" min="0" step="0.01" max={nc.saldo}
+                                                    value={ncsAplicadas[nc.id]}
+                                                    onChange={e => setMontoNc(nc.id, e.target.value)}
+                                                    style={{ width: '92px', padding: '5px 8px', border: '1px solid #fcd34d', borderRadius: '6px', fontSize: '13px', fontWeight: 700, color: '#92400e', textAlign: 'right', backgroundColor: '#fff', boxSizing: 'border-box' }} />
+                                            </>
+                                        ) : (
+                                            <span style={{ fontSize: '13px', fontWeight: 700, color: '#92400e' }}>{fmt(nc.saldo)}</span>
+                                        )}
+                                    </div>
+                                    {activa && !aplicandoTodo && (
+                                        <span title="Queda remanente en la NC" style={{ fontSize: '11px', color: '#b45309', whiteSpace: 'nowrap' }}>
+                                            resto {fmt(nc.saldo - Number(ncsAplicadas[nc.id] || 0))}
+                                        </span>
+                                    )}
+                                </div>
+                            )
+                        })}
+                        {Object.keys(ncsAplicadas).length > 0 && (
                             <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '8px', marginTop: '4px', fontSize: '13px', fontWeight: 700, borderTop: '1px solid #fcd34d' }}>
                                 <span style={{ color: '#d97706' }}>Total NCs aplicadas</span>
                                 <span style={{ color: '#d97706' }}>{fmt(montoNCs)}</span>
@@ -846,9 +938,9 @@ function ModalCobro({ venta, onCerrar, onCobrado }) {
                                 style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', boxSizing: 'border-box' }} />
                         </div>
                     </>
-                ) : ncsSeleccionadas.size > 0 && (
+                ) : Object.keys(ncsAplicadas).length > 0 && (
                     <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '12px', marginBottom: '16px', fontSize: '13px', textAlign: 'center', color: '#166534', fontWeight: 500 }}>
-                        Las notas de crédito seleccionadas cubren el saldo completo
+                        Las notas de crédito aplicadas cubren el saldo completo
                     </div>
                 )}
 
@@ -1084,6 +1176,7 @@ function BadgeCobro({ estado }) {
 function BadgeNC({ estado }) {
     const cfg = {
         pendiente:   { bg: '#fffbeb', color: '#854d0e', label: 'Pendiente' },
+        parcial:     { bg: '#fef3c7', color: '#92400e', label: 'Parcial' },
         aplicada:    { bg: '#dcfce7', color: '#166534', label: 'Aplicada' },
         reembolsada: { bg: '#dbeafe', color: '#1e40af', label: 'Reembolsada' },
         anulada:     { bg: '#f3f4f6', color: '#6b7280', label: 'Anulada' },
@@ -1097,6 +1190,7 @@ function DetalleNC({ nc, onCerrar }) {
     const { perfil } = useAuth()
     const [items, setItems] = useState([])
     const [facturaAplicada, setFacturaAplicada] = useState(null)
+    const [aplicado, setAplicado] = useState(0)
     const [loading, setLoading] = useState(true)
 
     useEffect(() => {
@@ -1108,12 +1202,13 @@ function DetalleNC({ nc, onCerrar }) {
                 // Una NC aplicada puede tener varios cobros si se repartió entre
                 // facturas: se muestra a cuál se aplicó cuando fue una sola.
                 nc.estado_nc === 'aplicada' || nc.estado_nc === 'parcial'
-                    ? supabase.from('cobros').select('venta_id, ventas(numero_factura)').eq('devolucion_id', nc.id)
+                    ? supabase.from('cobros').select('venta_id, monto_usd, ventas(numero_factura)').eq('devolucion_id', nc.id)
                     : Promise.resolve({ data: null }),
             ])
             setItems(itemsData || [])
             const facturas = [...new Set((cobroData || []).map(c => c.ventas?.numero_factura).filter(Boolean))]
             if (facturas.length) setFacturaAplicada(facturas.join(', '))
+            setAplicado((cobroData || []).reduce((s, c) => s + Number(c.monto_usd || 0), 0))
             setLoading(false)
         }
         cargar()
@@ -1127,6 +1222,8 @@ function DetalleNC({ nc, onCerrar }) {
         return s + ((i.aplica_iva ?? true) ? linea / 1.16 : linea)
     }, 0)
     const iva = nc.iva != null ? Number(nc.iva) : total - subtotal
+    // Saldo derivado de las aplicaciones, igual que el saldo de una factura.
+    const disponible = Math.max(0, total - aplicado)
 
     const Row = ({ label, value, mono, bold }) => (
         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
@@ -1178,7 +1275,11 @@ function DetalleNC({ nc, onCerrar }) {
                     <Row label="Base imponible" value={fmt(subtotal)} />
                     <Row label="IVA" value={fmt(iva)} />
                     <Row label="Monto NC" value={fmt(total)} bold />
-                    {nc.estado_nc === 'aplicada' && facturaAplicada && (
+                    {aplicado > 0.01 && <>
+                        <Row label="Aplicado" value={`− ${fmt(aplicado)}`} />
+                        <Row label="Disponible" value={fmt(disponible)} bold />
+                    </>}
+                    {facturaAplicada && (
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginTop: '2px' }}>
                             <span style={{ color: '#6b7280' }}>Aplicada a factura</span>
                             <span style={{ color: '#16a34a', fontWeight: 600, fontFamily: 'monospace' }}>{facturaAplicada}</span>
@@ -1230,9 +1331,11 @@ function DetalleNC({ nc, onCerrar }) {
                         </div>
                     )}
 
-                {nc.estado_nc === 'pendiente' && (
+                {['pendiente', 'parcial'].includes(nc.estado_nc) && (
                     <div style={{ marginTop: '16px', backgroundColor: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '8px', padding: '10px 14px', fontSize: '13px', color: '#854d0e' }}>
-                        Esta NC está pendiente. Aparecerá disponible al cobrar cualquier factura del cliente, o puede liquidarse directamente desde la lista.
+                        {nc.estado_nc === 'parcial'
+                            ? `Esta NC se aplicó en parte y le quedan ${fmt(disponible)} disponibles. Vuelve a ofrecerse al cobrar otra factura del cliente, o puede liquidarse desde la lista.`
+                            : 'Esta NC está pendiente. Aparecerá disponible al cobrar cualquier factura del cliente, o puede liquidarse directamente desde la lista.'}
                     </div>
                 )}
                 {nc.estado_nc === 'reembolsada' && (
