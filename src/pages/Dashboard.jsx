@@ -6,6 +6,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { X, FileText } from 'lucide-react'
 import { Factura } from './Ventas'
 import TabResumen from './DashboardResumen'
+import { unidadesDeLinea } from '../lib/productos'
 import {
     PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer,
     LineChart, Line, XAxis, YAxis, CartesianGrid,
@@ -144,7 +145,7 @@ function TabComercial() {
 
                 // Líneas de venta con su factura y cliente (paginado por 1000)
                 const SELECT = 'cantidad, cantidad_primaria, precio_unitario, producto_id, venta_id, ' +
-                    'productos_terminados(sku, nombre), ' +
+                    'productos_terminados(sku, nombre, tipo_producto), ' +
                     'ventas!inner(id, numero_factura, created_at, fecha_vencimiento_pago, total, estado_cobro, cliente_id, usuario_id, direccion_entrega_id, direccion_entrega_texto, pedidos!pedido_id(vendedor_id), clientes(nombre, codigo, cat1_id))'
                 const PAGE = 1000
                 let from = 0, all = []
@@ -279,9 +280,10 @@ function TabComercial() {
         const canal = cli.cat1_id ? (catMap[cli.cat1_id] || 'Sin categoría') : 'Sin categoría'
         const cantidad = Number(r.cantidad || 0)
         const precio = Number(r.precio_unitario || 0)
-        // Unidades normalizadas a la unidad primaria (Unidad de medida). cantidad_primaria
-        // ya viene normalizada; si falta (registros viejos sin backfill), cae a cantidad.
-        const unidadesPrimarias = r.cantidad_primaria != null ? Number(r.cantidad_primaria) : cantidad
+        // Unidades normalizadas a la unidad primaria (Unidad de medida). Los servicios
+        // (fletes, despacho express) aportan 0 unidades pero sí suman a `lineaTotal`:
+        // no son mercancía, pero su facturación es ingreso real. Ver lib/productos.js.
+        const unidadesPrimarias = unidadesDeLinea(r)
         // Estatus factura: parcial cuenta como pendiente
         let estatus = 'sin_vencer'
         if (v.estado_cobro === 'pagado') estatus = 'pagado'
@@ -743,7 +745,7 @@ function TabComercial() {
                     {/* ─── Tags / indicadores (afectados por los filtros) ─── */}
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '12px', marginBottom: '20px' }}>
                         <TagCard label="Ventas totales" valor={fmt(ventasTotales)} color="#1f2937" />
-                        <TagCard label="Unidades vendidas" valor={fmtNum(unidadesVendidas)} sub="en unidad primaria" color="#1f2937" />
+                        <TagCard label="Unidades vendidas" valor={fmtNum(unidadesVendidas)} sub="en unidad primaria · sin servicios" color="#1f2937" />
                         <TagCard label="Días calle ponderado" valor={`${diasCalle} días`} sub="ponderado por saldo" color="#d97706" />
                         <TagCard label="Total pendiente" valor={fmt(cxc.totalPendiente)} sub="por cobrar" color="#1f2937" />
                         <TagCard label="Facturas vencidas" valor={cxc.vencidasCount} sub="requieren atención" color="#ef4444" />

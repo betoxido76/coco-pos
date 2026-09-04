@@ -3,12 +3,13 @@
 //
 // Fuentes: `ventas` para facturación y número de NE; `venta_items` para unidades
 // (cantidad_primaria, ya normalizada a la unidad primaria). Se excluyen las
-// ventas anuladas.
+// ventas anuladas, y los servicios no suman unidades (sí facturación).
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import { fmt, fmtNum, GRIS_OTROS, colorCategoria } from '../lib/dataviz'
+import { unidadesDeLinea } from '../lib/productos'
 
 const MESES = ['ENERO', 'FEBRERO', 'MARZO', 'ABRIL', 'MAYO', 'JUNIO',
     'JULIO', 'AGOSTO', 'SEPTIEMBRE', 'OCTUBRE', 'NOVIEMBRE', 'DICIEMBRE']
@@ -95,7 +96,7 @@ export default function TabResumen() {
                 let ifrom = 0, iAll = []
                 while (true) {
                     const { data, error: e } = await supabase.from('venta_items')
-                        .select('venta_id, producto_id, cantidad, cantidad_primaria, precio_unitario, ventas!inner(created_at, estado_cobro), productos_terminados(nombre, sku)')
+                        .select('venta_id, producto_id, cantidad, cantidad_primaria, precio_unitario, ventas!inner(created_at, estado_cobro), productos_terminados(nombre, sku, tipo_producto)')
                         .eq('empresa_id', perfil.empresa_id)
                         .gte('ventas.created_at', desde).lte('ventas.created_at', hasta)
                         .range(ifrom, ifrom + PAGE - 1)
@@ -119,7 +120,9 @@ export default function TabResumen() {
                             productoId: i.producto_id,
                             nombre: i.productos_terminados?.nombre || 'Sin nombre',
                             sku: i.productos_terminados?.sku || '',
-                            unidades: i.cantidad_primaria != null ? Number(i.cantidad_primaria) : cant,
+                            // Un servicio no es mercancía: 0 unidades, pero su
+                            // facturación sí cuenta. Ver lib/productos.js.
+                            unidades: unidadesDeLinea(i),
                             facturacion: cant * Number(i.precio_unitario || 0),
                         }
                     })
@@ -410,7 +413,7 @@ export default function TabResumen() {
                     </select>
                 </div>
                 <div style={{ fontSize: '12px', color: '#9ca3af', paddingBottom: '9px' }}>
-                    Excluye ventas anuladas · unidades en unidad primaria
+                    Excluye ventas anuladas · unidades en unidad primaria, sin servicios
                 </div>
             </div>
 
