@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import { AlertTriangle, CheckCircle, Clock, DollarSign, FileText } from 'lucide-react'
-import SelectorFechaTasa, { useTasasFecha, hoyYMD, fmtFechaCorta } from '../components/SelectorFechaTasa'
+import ModalPagoObligacion from '../components/ModalPagoObligacion'
+import ModalPagoGasto from '../components/ModalPagoGasto'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 const fmtBs = (n, tasa) => `${(Number(n || 0) * Number(tasa || 1)).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`
@@ -64,6 +65,7 @@ export default function CuentasPagar() {
     const [totalRegistros, setTotalRegistros] = useState(0)
     const [tabSeccion, setTabSeccion] = useState('compras')
     const [gastosPend, setGastosPend] = useState([])
+    const [abonosGasto, setAbonosGasto] = useState({})
     const [loadingGastos, setLoadingGastos] = useState(false)
     const [gastoPagando, setGastoPagando] = useState(null)
     const [compraVer, setCompraVer] = useState(null)
@@ -187,11 +189,32 @@ export default function CuentasPagar() {
             .from('gastos')
             .select('*, tipos_gastos(nombre)')
             .eq('empresa_id', perfil.empresa_id)
-            .eq('estado', 'pendiente')
+            .in('estado', ['pendiente', 'parcial'])
             .order('fecha_vencimiento', { ascending: true })
         setGastosPend(data || [])
+
+        // Abonos de cada gasto: un gasto 'parcial' ya tiene pagos y su saldo
+        // es total - abonos, no el monto original.
+        const ids = (data || []).map(g => g.id)
+        const mapa = {}
+        if (ids.length > 0) {
+            const { data: abonos } = await supabase.from('pagos')
+                .select('origen_id, monto_usd, monto_bs, tasa_cambio')
+                .eq('empresa_id', perfil.empresa_id)
+                .eq('origen_tipo', 'gasto').in('origen_id', ids)
+            ;(abonos || []).forEach(a => {
+                mapa[a.origen_id] = (mapa[a.origen_id] || 0) + pagoEnUsd(a)
+            })
+        }
+        setAbonosGasto(mapa)
         setLoadingGastos(false)
     }
+
+    // Total de la obligación (USD) y saldo pendiente de un gasto
+    const totalGasto = g => Number(g.monto || 0) > 0
+        ? Number(g.monto)
+        : Number(g.monto_usd || 0) + Number(g.monto_bs || 0) / (tasas[g.tipo_tasa] || tasas.tasa_bcv || 1)
+    const saldoGasto = g => Math.max(0, totalGasto(g) - (abonosGasto[g.id] || 0))
 
     function abrirModal(compra) {
         setCompraSeleccionada(compra)
@@ -349,15 +372,16 @@ export default function CuentasPagar() {
                         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                             <thead>
                                 <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                    {['', 'Documento', 'Nombre', 'Tipo', 'Vencimiento', 'Monto USD', 'Monto Bs.', ''].map((h, i) => (
-                                        <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: [5, 6].includes(i) ? 'right' : 'left', width: i === 0 ? '28px' : undefined }}>{h}</th>
+                                    {['', 'Documento', 'Nombre', 'Tipo', 'Vencimiento', 'Total', 'Abonado', 'Saldo', 'Estado', ''].map((h, i) => (
+                                        <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: [5, 6, 7].includes(i) ? 'right' : 'left', width: i === 0 ? '28px' : undefined }}>{h}</th>
                                     ))}
                                 </tr>
                             </thead>
                             <tbody>
                                 {gastosPend.map(g => {
-                                    const tasa = Number(tasas[g.tipo_tasa] || tasas.tasa_bcv || 1)
-                                    const totalUsd = Number(g.monto_usd || 0) + Number(g.monto_bs || 0) / tasa
+                                    const total = totalGasto(g)
+                                    const abonado = abonosGasto[g.id] || 0
+                                    const saldo = saldoGasto(g)
                                     return (
                                         <tr key={g.id} style={{ borderBottom: '1px solid #f3f4f6' }}
                                             onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
@@ -375,13 +399,15 @@ export default function CuentasPagar() {
                                                 <div style={{ marginBottom: '2px' }}>{g.fecha_vencimiento ? new Date(g.fecha_vencimiento + 'T00:00:00').toLocaleDateString('es-VE') : '—'}</div>
                                                 <BadgeVencimiento fecha={g.fecha_vencimiento ? g.fecha_vencimiento + 'T00:00:00' : null} />
                                             </td>
-                                            <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#dc2626', textAlign: 'right' }}>{Number(g.monto_usd) > 0 ? fmt(g.monto_usd) : '—'}</td>
-                                            <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#d97706', textAlign: 'right' }}>{Number(g.monto_bs) > 0 ? fmtBs(g.monto_bs, 1) : '—'}</td>
+                                            <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(total)}</td>
+                                            <td style={{ padding: '12px 16px', fontSize: '13px', color: '#16a34a', textAlign: 'right' }}>{fmt(abonado)}</td>
+                                            <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: saldo > 0 ? '#dc2626' : '#16a34a', textAlign: 'right' }}>{fmt(saldo)}</td>
+                                            <td style={{ padding: '12px 16px' }}><BadgeEstado estado={g.estado} /></td>
                                             <td style={{ padding: '12px 16px' }}>
                                                 <div style={{ display: 'flex', gap: '6px' }}>
                                                     <button onClick={() => setGastoPagando(g)}
                                                         style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', padding: '5px 10px', fontSize: '12px', cursor: 'pointer' }}>
-                                                        <DollarSign size={12} /> Pagar
+                                                        <DollarSign size={12} /> {g.estado === 'parcial' ? 'Abonar' : 'Pagar'}
                                                     </button>
                                                     <button onClick={() => setGastoVerCxp(g)}
                                                         style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
@@ -461,7 +487,6 @@ export default function CuentasPagar() {
                 <ModalPago
                     compra={compraSeleccionada}
                     saldo={calcularSaldo(compraSeleccionada)}
-                    tasas={tasas}
                     onCerrar={() => { setMostrarModal(false); setCompraSeleccionada(null) }}
                     onPagado={() => { setMostrarModal(false); setCompraSeleccionada(null); cargarDatos() }}
                 />
@@ -485,30 +510,16 @@ export default function CuentasPagar() {
     )
 }
 
-// ─── Modal de Pago ─────────────────────────────────────────────
-function ModalPago({ compra, saldo, tasas, onCerrar, onPagado }) {
+// ─── Modal de Pago (recepciones) ───────────────────────────────
+// El formulario (fecha + tasa, montos, métodos, cuenta, nota) vive en
+// ModalPagoObligacion, compartido con Gastos para que la ventana de pago sea la
+// misma en todo el sistema. Aquí queda solo lo propio de una recepción:
+// descuento por pronto pago, notas de débito del proveedor y el estado de la compra.
+function ModalPago({ compra, saldo, onCerrar, onPagado }) {
     const { perfil } = useAuth()
-    const [fechaPago, setFechaPago] = useState(hoyYMD())
-    const [tipoTasa, setTipoTasa] = useState('tasa_bcv')
     const [descPct, setDescPct] = useState(0)
-    const [montoUsd, setMontoUsd] = useState(saldo.toFixed(2))
-    const [montoBs, setMontoBs] = useState('')
-    const [metodoUsd, setMetodoUsd] = useState('transferencia')
-    const [metodoBs, setMetodoBs] = useState('')
-    const [nota, setNota] = useState('')
-    const [guardando, setGuardando] = useState(false)
-    const [error, setError] = useState('')
-    const [cuentasBancarias, setCuentasBancarias] = useState([])
-    const [cuentaBancariaId, setCuentaBancariaId] = useState('')
     const [ndsDisponibles, setNdsDisponibles] = useState([])
     const [ndsSeleccionadas, setNdsSeleccionadas] = useState(new Set())
-
-    useEffect(() => {
-        if (perfil?.empresa_id) {
-            supabase.from('cuentas_bancarias').select('id, nombre, banco, moneda').eq('empresa_id', perfil.empresa_id).eq('activa', true)
-                .then(({ data }) => setCuentasBancarias(data || []))
-        }
-    }, [perfil?.empresa_id])
 
     useEffect(() => {
         if (perfil?.empresa_id && compra.proveedor_id) {
@@ -528,6 +539,7 @@ function ModalPago({ compra, saldo, tasas, onCerrar, onPagado }) {
     const descMonto = saldo * (Number(descPct) / 100)
     const saldoConDesc = Math.max(0, saldo - descMonto)
     const saldoEfectivo = Math.max(0, saldoConDesc - montoNDs)
+    const pagadoPrevio = Math.max(0, Number(compra.total || 0) - Number(compra.descuento_pago || 0) - saldo)
 
     function toggleNd(ndId) {
         setNdsSeleccionadas(prev => {
@@ -538,40 +550,7 @@ function ModalPago({ compra, saldo, tasas, onCerrar, onPagado }) {
         })
     }
 
-    // La tasa sale de la FECHA DE PAGO elegida, no de la vigente de hoy
-    const { tasasFecha, cargandoTasas } = useTasasFecha(perfil?.empresa_id, fechaPago)
-    const tasaDia = Number(tasasFecha?.[tipoTasa]) || 0
-    const tasa = tasaDia > 0 ? tasaDia : 1   // evita dividir entre 0 mientras no hay tasa
-    const sinTasa = !cargandoTasas && tasaDia <= 0
-
-    useEffect(() => {
-        setMontoUsd(saldoEfectivo.toFixed(2))
-        setMontoBs('0')
-    }, [ndsSeleccionadas.size, descPct])
-
-    // Campos independientes: editar uno NO autocompleta el otro, para permitir pagos parciales.
-    function handleUsdChange(val) {
-        setMontoUsd(val)
-    }
-
-    function handleBsChange(val) {
-        setMontoBs(val)
-    }
-
-    // Rellena Bs con lo que falte para saldar el saldo efectivo, dado el USD ya ingresado.
-    function saldarRestoEnBs() {
-        const usd = Number(montoUsd) || 0
-        const resto = (saldoEfectivo - usd) * tasa
-        setMontoBs(resto > 0 ? resto.toFixed(2) : '0')
-    }
-
-    async function confirmar() {
-        if (sinTasa) { setError(`No hay tasa registrada para el ${fmtFechaCorta(fechaPago)}`); return }
-        const totalPago = Number(montoUsd || 0) + Number(montoBs || 0) / tasa
-        if (saldoEfectivo > 0.001 && totalPago <= 0.001) { setError('Ingresa un monto válido'); return }
-        if (totalPago > saldoEfectivo + 0.01) { setError(`El monto no puede superar el saldo efectivo de ${fmt(saldoEfectivo)}`); return }
-        setGuardando(true); setError('')
-
+    async function confirmar({ fecha, tipoTasa, tasa, montoUsd, montoBs, metodoUsd, metodoBs, cuentaBancariaId, nota }) {
         const { data: { user } } = await supabase.auth.getUser()
 
         // El descuento reduce el valor de la factura; NO se registra como pago.
@@ -583,7 +562,7 @@ function ModalPago({ compra, saldo, tasas, onCerrar, onPagado }) {
             await supabase.from('pagos_proveedor').insert({
                 compra_id: compra.id, usuario_id: user.id,
                 monto_usd: Number(nd.monto_total), monto_bs: 0,
-                tasa_cambio: tasa, tipo_tasa: tipoTasa, fecha_pago: fechaPago,
+                tasa_cambio: tasa, tipo_tasa: tipoTasa, fecha_pago: fecha,
                 metodo_usd: 'Nota de Débito', metodo_bs: null,
                 nota: `ND ${nd.numero_nd}`, devolucion_proveedor_id: nd.id,
                 empresa_id: perfil.empresa_id,
@@ -594,14 +573,13 @@ function ModalPago({ compra, saldo, tasas, onCerrar, onPagado }) {
         if (saldoEfectivo > 0.001) {
             const { error: errPago } = await supabase.from('pagos_proveedor').insert({
                 compra_id: compra.id, usuario_id: user.id,
-                monto_usd: Number(montoUsd), monto_bs: Number(montoBs || 0),
-                tasa_cambio: tasa, tipo_tasa: tipoTasa, fecha_pago: fechaPago,
-                metodo_usd: metodoUsd, metodo_bs: metodoBs || null,
-                nota: nota || null,
-                cuenta_bancaria_id: cuentaBancariaId || null,
+                monto_usd: montoUsd, monto_bs: montoBs,
+                tasa_cambio: tasa, tipo_tasa: tipoTasa, fecha_pago: fecha,
+                metodo_usd: metodoUsd, metodo_bs: metodoBs,
+                nota, cuenta_bancaria_id: cuentaBancariaId,
                 empresa_id: perfil.empresa_id,
             })
-            if (errPago) { setError('Error: ' + errPago.message); setGuardando(false); return }
+            if (errPago) return 'Error: ' + errPago.message
         }
 
         const { data: todosPagos } = await supabase
@@ -612,270 +590,69 @@ function ModalPago({ compra, saldo, tasas, onCerrar, onPagado }) {
         const { error: errCompra } = await supabase.from('compras')
             .update({ estado_cobro: nuevoEstado, descuento_pago: parseFloat(descuentoTotal.toFixed(2)) })
             .eq('id', compra.id)
-        if (errCompra) { setError('Error al actualizar la factura: ' + errCompra.message); setGuardando(false); return }
+        if (errCompra) return 'Error al actualizar la factura: ' + errCompra.message
 
-        setGuardando(false)
         onPagado()
     }
 
-    return (
-        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }}>
-            <div style={{ backgroundColor: '#fff', borderRadius: '16px', padding: '28px', width: '100%', maxWidth: '460px', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
-
-                <div style={{ marginBottom: '20px' }}>
-                    <h2 style={{ fontSize: '17px', fontWeight: 600, color: '#1f2937', margin: '0 0 4px' }}>Registrar pago</h2>
-                    <p style={{ fontSize: '13px', color: '#6b7280', margin: 0 }}>{compra.numero_doc} · {compra.proveedores?.nombre}</p>
-                </div>
-
-                <div style={{ backgroundColor: '#eff6ff', borderRadius: '8px', padding: '12px 16px', marginBottom: '12px', display: 'flex', justifyContent: 'space-between' }}>
-                    <span style={{ fontSize: '13px', color: '#16a34a' }}>Saldo pendiente</span>
-                    <span style={{ fontSize: '15px', fontWeight: 700, color: '#16a34a' }}>{fmt(saldo)}</span>
-                </div>
-
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: ndsDisponibles.length > 0 ? '12px' : '20px' }}>
-                    <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', whiteSpace: 'nowrap' }}>Descuento (%)</label>
-                    <input type="number" min="0" max="100" step="0.1" value={descPct || ''} placeholder="0"
-                        onChange={e => setDescPct(Math.min(100, Math.max(0, Number(e.target.value) || 0)))}
-                        style={{ width: '80px', padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', textAlign: 'right' }} />
-                    {descMonto > 0.001 && (
-                        <span style={{ fontSize: '13px', color: '#dc2626', fontWeight: 500 }}>
-                            -{fmt(descMonto)} · A pagar: {fmt(saldoConDesc)}
-                        </span>
-                    )}
-                </div>
-
-                {ndsDisponibles.length > 0 && (
-                    <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: '10px', padding: '12px 16px', marginBottom: '20px' }}>
-                        <p style={{ fontSize: '12px', fontWeight: 600, color: '#92400e', margin: '0 0 8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Notas de Débito disponibles</p>
-                        {ndsDisponibles.map(nd => (
-                            <label key={nd.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', padding: '6px 0', cursor: 'pointer', borderBottom: '1px solid #fde68a' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                    <input type="checkbox" checked={ndsSeleccionadas.has(nd.id)} onChange={() => toggleNd(nd.id)} />
-                                    <span style={{ fontSize: '13px', color: '#78350f', fontFamily: 'monospace' }}>{nd.numero_nd}</span>
-                                    {nd.motivo && <span style={{ fontSize: '11px', color: '#92400e' }}>{nd.motivo}</span>}
-                                </div>
-                                <span style={{ fontSize: '13px', fontWeight: 600, color: '#dc2626' }}>{fmt(nd.monto_total)}</span>
-                            </label>
-                        ))}
-                        {montoNDs > 0 && (
-                            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px', fontSize: '13px' }}>
-                                <span style={{ color: '#92400e' }}>Crédito aplicado:</span>
-                                <span style={{ fontWeight: 600, color: '#dc2626' }}>-{fmt(montoNDs)}</span>
-                            </div>
-                        )}
-                        {saldoEfectivo <= 0.001 && (
-                            <div style={{ marginTop: '8px', backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '6px', padding: '8px 12px', fontSize: '13px', color: '#166534', fontWeight: 500 }}>
-                                ✓ Saldo cubierto completamente por notas de débito
-                            </div>
-                        )}
-                    </div>
-                )}
-
-                {saldoEfectivo > 0.001 && <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                    <div>
-                        <SelectorFechaTasa
-                            fecha={fechaPago} onFecha={setFechaPago}
-                            tasasFecha={tasasFecha} cargandoTasas={cargandoTasas}
-                            tipoTasa={tipoTasa} onTipoTasa={setTipoTasa}
-                        />
-                    </div>
-
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                        <div>
-                            <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Monto USD</label>
-                            <input type="number" value={montoUsd} onChange={e => handleUsdChange(e.target.value)} step="0.01"
-                                style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', boxSizing: 'border-box' }} />
-                        </div>
-                        <div>
-                            <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Método USD</label>
-                            <select value={metodoUsd} onChange={e => setMetodoUsd(e.target.value)}
-                                style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', backgroundColor: '#fff' }}>
-                                <option value="transferencia">Transferencia</option>
-                                <option value="efectivo">Efectivo</option>
-                                <option value="zelle">Zelle</option>
-                                <option value="cheque">Cheque</option>
-                            </select>
-                        </div>
-                    </div>
-
-                    <div style={{ fontSize: '12px', color: '#6b7280', backgroundColor: '#f9fafb', borderRadius: '6px', padding: '8px 12px' }}>
-                        Equivalente: {(Number(montoUsd || 0) * tasa).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.
-                    </div>
-
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                        <div>
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '5px' }}>
-                                <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151' }}>Monto Bs. (opcional)</label>
-                                <button type="button" onClick={saldarRestoEnBs}
-                                    style={{ fontSize: '11px', color: '#16a34a', background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontWeight: 500 }}>
-                                    Saldar resto
-                                </button>
-                            </div>
-                            <input type="number" value={montoBs} onChange={e => handleBsChange(e.target.value)} placeholder="0.00"
-                                style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', boxSizing: 'border-box' }} />
-                        </div>
-                        <div>
-                            <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Método Bs.</label>
-                            <select value={metodoBs} onChange={e => setMetodoBs(e.target.value)}
-                                style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', backgroundColor: '#fff' }}>
-                                <option value="">— ninguno —</option>
-                                <option value="transferencia">Transferencia</option>
-                                <option value="efectivo">Efectivo</option>
-                                <option value="pago_movil">Pago móvil</option>
-                            </select>
-                        </div>
-                    </div>
-
-                    {cuentasBancarias.length > 0 && (
-                        <div>
-                            <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Cuenta bancaria (opcional)</label>
-                            <select value={cuentaBancariaId} onChange={e => setCuentaBancariaId(e.target.value)}
-                                style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', backgroundColor: '#fff' }}>
-                                <option value="">— Efectivo / sin cuenta —</option>
-                                {cuentasBancarias.map(c => <option key={c.id} value={c.id}>{c.nombre} ({c.banco} · {c.moneda})</option>)}
-                            </select>
-                        </div>
-                    )}
-
-                    <div>
-                        <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Nota (opcional)</label>
-                        <input type="text" value={nota} onChange={e => setNota(e.target.value)} placeholder="Referencia, observación..."
-                            style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', boxSizing: 'border-box' }} />
-                    </div>
-                </div>}
-
-                {error && (
-                    <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', color: '#dc2626', marginTop: '14px' }}>
-                        {error}
-                    </div>
-                )}
-
-                <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
-                    <button onClick={onCerrar}
-                        style={{ flex: 1, padding: '10px', border: '1px solid #e5e7eb', borderRadius: '8px', fontSize: '14px', color: '#374151', backgroundColor: '#fff', cursor: 'pointer' }}>
-                        Cancelar
-                    </button>
-                    <button onClick={confirmar} disabled={guardando || sinTasa || cargandoTasas}
-                        style={{ flex: 2, padding: '10px', border: 'none', borderRadius: '8px', fontSize: '14px', fontWeight: 600, color: '#fff', backgroundColor: sinTasa || cargandoTasas ? '#d1d5db' : '#16a34a', cursor: sinTasa || cargandoTasas ? 'default' : 'pointer', opacity: guardando ? 0.6 : 1 }}>
-                        {guardando ? 'Procesando...' : 'Confirmar pago'}
-                    </button>
-                </div>
-            </div>
-        </div>
-    )
-}
-
-// ─── Modal Pago de Gasto ────────────────────────────────────────
-const METODOS_PAGO_GASTO = ['Efectivo USD', 'Efectivo Bs.', 'Zelle', 'Transferencia', 'Pago Móvil', 'Punto de Venta', 'Otro']
-
-function ModalPagoGasto({ gasto, tasas, onCerrar, onPagado }) {
-    const { perfil } = useAuth()
-    const [fecha, setFecha] = useState(new Date().toISOString().split('T')[0])
-    const [tipoTasa, setTipoTasa] = useState(gasto.tipo_tasa || 'tasa_bcv')
-    const [montoUsd, setMontoUsd] = useState(gasto.monto_usd > 0 ? String(gasto.monto_usd) : '')
-    const [montoBs, setMontoBs] = useState(gasto.monto_bs > 0 ? String(gasto.monto_bs) : '')
-    const [metodoPago, setMetodoPago] = useState(gasto.metodo_pago || 'Efectivo USD')
-    const [cuentaBancariaId, setCuentaBancariaId] = useState(gasto.cuenta_bancaria_id || '')
-    const [cuentasBancarias, setCuentasBancarias] = useState([])
-    const [guardando, setGuardando] = useState(false)
-    const [error, setError] = useState('')
-
-    useEffect(() => {
-        if (perfil?.empresa_id)
-            supabase.from('cuentas_bancarias').select('id, nombre, banco, moneda')
-                .eq('empresa_id', perfil.empresa_id).eq('activa', true)
-                .then(({ data }) => setCuentasBancarias(data || []))
-    }, [perfil?.empresa_id])
-
-    // La tasa sale de la fecha de pago elegida
-    const { tasasFecha, cargandoTasas } = useTasasFecha(perfil?.empresa_id, fecha)
-    const tasaDia = Number(tasasFecha?.[tipoTasa]) || 0
-    const tasa = tasaDia > 0 ? tasaDia : 1
-    const sinTasa = !cargandoTasas && tasaDia <= 0
-    const totalEnUsd = Number(montoUsd || 0) + Number(montoBs || 0) / tasa
-    const inputS = { width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', color: '#374151', backgroundColor: '#fff', boxSizing: 'border-box' }
-
-    async function confirmar() {
-        if (sinTasa) { setError(`No hay tasa registrada para el ${fmtFechaCorta(fecha)}`); return }
-        if (Number(montoUsd) <= 0 && Number(montoBs) <= 0) { setError('Ingresa al menos un monto'); return }
-        setGuardando(true); setError('')
-        const { error: err } = await supabase.from('gastos').update({
-            estado: 'pagado',
-            fecha,
-            monto_usd: Number(montoUsd || 0),
-            monto_bs: Number(montoBs || 0),
-            tasa_cambio: tasa,
-            tipo_tasa: tipoTasa,
-            metodo_pago: metodoPago,
-            cuenta_bancaria_id: cuentaBancariaId || null,
-            monto: totalEnUsd,
-        }).eq('id', gasto.id)
-        if (err) { setError('Error: ' + err.message); setGuardando(false); return }
-        onPagado()
-    }
-
-    return (
+    const extras = (
         <>
-            <div onClick={onCerrar} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', zIndex: 40 }} />
-            <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', backgroundColor: '#fff', borderRadius: '16px', padding: '28px', width: '460px', zIndex: 50, boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
-                <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#1f2937', margin: '0 0 4px' }}>Registrar pago de gasto</h3>
-                <p style={{ fontSize: '13px', color: '#6b7280', margin: '0 0 20px' }}>
-                    {gasto.numero_gasto && <span style={{ fontFamily: 'monospace', marginRight: '8px' }}>{gasto.numero_gasto}</span>}
-                    {gasto.nombre}
-                </p>
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                        <SelectorFechaTasa
-                            fecha={fecha} onFecha={setFecha}
-                            tasasFecha={tasasFecha} cargandoTasas={cargandoTasas}
-                            tipoTasa={tipoTasa} onTipoTasa={setTipoTasa}
-                        />
-                    </div>
-
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                        <div>
-                            <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Monto USD</label>
-                            <input type="number" value={montoUsd} onChange={e => setMontoUsd(e.target.value)} step="0.01" placeholder="0.00" style={inputS} />
-                        </div>
-                        <div>
-                            <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Monto Bs. (opcional)</label>
-                            <input type="number" value={montoBs} onChange={e => setMontoBs(e.target.value)} step="1" placeholder="0.00" style={inputS} />
-                        </div>
-                    </div>
-
-                    {cuentasBancarias.length > 0 && (
-                        <div>
-                            <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Cuenta bancaria</label>
-                            <select value={cuentaBancariaId} onChange={e => setCuentaBancariaId(e.target.value)} style={inputS}>
-                                <option value="">— Sin especificar —</option>
-                                {cuentasBancarias.map(c => <option key={c.id} value={c.id}>{c.banco} · {c.nombre} ({c.moneda})</option>)}
-                            </select>
-                        </div>
-                    )}
-
-                    {(Number(montoUsd) > 0 || Number(montoBs) > 0) && (
-                        <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '10px 14px', fontSize: '13px', color: '#166534', fontWeight: 600 }}>
-                            Total equivalente: {fmt(totalEnUsd)}
-                        </div>
-                    )}
-
-                    {error && <p style={{ color: '#dc2626', fontSize: '13px', margin: 0 }}>{error}</p>}
-
-                    <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '4px' }}>
-                        <button onClick={onCerrar} style={{ padding: '9px 18px', borderRadius: '8px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: '#374151', fontSize: '13px', cursor: 'pointer' }}>Cancelar</button>
-                        <button onClick={confirmar} disabled={guardando || sinTasa || cargandoTasas}
-                            style={{ padding: '9px 18px', borderRadius: '8px', border: 'none', backgroundColor: sinTasa || cargandoTasas ? '#d1d5db' : '#16a34a', color: '#fff', fontSize: '13px', fontWeight: 500, cursor: guardando || sinTasa ? 'default' : 'pointer', opacity: guardando ? 0.7 : 1 }}>
-                            {guardando ? 'Guardando...' : 'Confirmar pago'}
-                        </button>
-                    </div>
-                </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: ndsDisponibles.length > 0 ? '12px' : '20px' }}>
+                <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', whiteSpace: 'nowrap' }}>Descuento (%)</label>
+                <input type="number" min="0" max="100" step="0.1" value={descPct || ''} placeholder="0"
+                    onChange={e => setDescPct(Math.min(100, Math.max(0, Number(e.target.value) || 0)))}
+                    style={{ width: '80px', padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', textAlign: 'right' }} />
+                {descMonto > 0.001 && (
+                    <span style={{ fontSize: '13px', color: '#dc2626', fontWeight: 500 }}>
+                        -{fmt(descMonto)} · A pagar: {fmt(saldoConDesc)}
+                    </span>
+                )}
             </div>
+
+            {ndsDisponibles.length > 0 && (
+                <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: '10px', padding: '12px 16px', marginBottom: '20px' }}>
+                    <p style={{ fontSize: '12px', fontWeight: 600, color: '#92400e', margin: '0 0 8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Notas de Débito disponibles</p>
+                    {ndsDisponibles.map(nd => (
+                        <label key={nd.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', padding: '6px 0', cursor: 'pointer', borderBottom: '1px solid #fde68a' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <input type="checkbox" checked={ndsSeleccionadas.has(nd.id)} onChange={() => toggleNd(nd.id)} />
+                                <span style={{ fontSize: '13px', color: '#78350f', fontFamily: 'monospace' }}>{nd.numero_nd}</span>
+                                {nd.motivo && <span style={{ fontSize: '11px', color: '#92400e' }}>{nd.motivo}</span>}
+                            </div>
+                            <span style={{ fontSize: '13px', fontWeight: 600, color: '#dc2626' }}>{fmt(nd.monto_total)}</span>
+                        </label>
+                    ))}
+                    {montoNDs > 0 && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px', fontSize: '13px' }}>
+                            <span style={{ color: '#92400e' }}>Crédito aplicado:</span>
+                            <span style={{ fontWeight: 600, color: '#dc2626' }}>-{fmt(montoNDs)}</span>
+                        </div>
+                    )}
+                    {saldoEfectivo <= 0.001 && (
+                        <div style={{ marginTop: '8px', backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '6px', padding: '8px 12px', fontSize: '13px', color: '#166534', fontWeight: 500 }}>
+                            ✓ Saldo cubierto completamente por notas de débito
+                        </div>
+                    )}
+                </div>
+            )}
         </>
     )
+
+    return (
+        <ModalPagoObligacion
+            titulo="Registrar pago"
+            subtitulo={[compra.numero_doc, compra.proveedores?.nombre].filter(Boolean).join(' · ')}
+            total={Number(compra.total || 0)}
+            abonado={pagadoPrevio}
+            saldo={saldo}
+            saldoEfectivo={saldoEfectivo}
+            extras={extras}
+            onConfirmar={confirmar}
+            onCerrar={onCerrar}
+        />
+    )
 }
 
-// ─── Detalle Recepción (desde CxP) ─────────────────────────────
 function DetalleRecepcionCxP({ compra, onVolver }) {
     const { perfil } = useAuth()
     const [items, setItems] = useState([])

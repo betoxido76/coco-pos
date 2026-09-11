@@ -169,6 +169,27 @@ La UI es un componente único: `src/components/SelectorFechaTasa.jsx`, que
 exporta también `useTasasFecha`, `OPCIONES_TASA`, `hoyYMD` y `fechaAtimestamp`.
 **No duplicar el selector de tasa en un módulo nuevo** — importarlo de ahí.
 
+### Ventana de pago única (cuentas por pagar)
+
+`src/components/ModalPagoObligacion.jsx` es la ÚNICA ventana de "registrar
+pago" del sistema: resumen (total / abonado / saldo), fecha + tasa de esa fecha,
+monto USD + método, equivalente en Bs., monto Bs. + "Saldar resto" + método,
+cuenta bancaria y nota. Maneja todo el formulario y sus validaciones; el
+llamador solo recibe los datos en `onConfirmar(datos)` y escribe en BD
+(devolver un string = mensaje de error a mostrar).
+
+- `saldoEfectivo` es el tope del abono y prellena Monto USD (saldo menos
+  descuentos y créditos aplicados).
+- `extras` inyecta los bloques propios del dominio (descuento por pronto pago,
+  notas de débito) entre el resumen y el formulario.
+- `METODOS_USD` / `METODOS_BS` / `labelMetodo` son el vocabulario compartido de
+  métodos de pago.
+
+La usan `CuentasPagar → ModalPago` (recepciones) y
+`src/components/ModalPagoGasto.jsx` (gastos), este último montado tanto desde
+**Gastos** como desde **CxP → tab Gastos** para que pagar un gasto se vea y
+funcione igual desde ambos lados. **No escribir una ventana de pago nueva.**
+
 Los cobros y gastos manejan `monto_usd` + `monto_bs` + `tasa_cambio` + `tipo_tasa`.
 El equivalente en USD = `monto_usd + (monto_bs / tasa)`.
 

@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import { Plus, X, Check, Pencil, Trash2, AlertTriangle, DollarSign, FileText } from 'lucide-react'
-import SelectorFechaTasa, { useTasasFecha, fmtFechaCorta } from '../components/SelectorFechaTasa'
+import { useTasasFecha, fmtFechaCorta } from '../components/SelectorFechaTasa'
+import ModalPagoGasto from '../components/ModalPagoGasto'
+import { labelMetodo } from '../components/ModalPagoObligacion'
 
 const fmt = n => `$${Number(n || 0).toFixed(2)}`
 const fmtBs = n => `${Number(n || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`
@@ -408,7 +410,7 @@ export default function Gastos() {
 
             {/* Modal pagar gasto programado */}
             {gastoPagando && (
-                <ModalPagarGasto
+                <ModalPagoGasto
                     gasto={gastoPagando}
                     tasas={tasas}
                     onPagado={() => { setGastoPagando(null); cargarGastos() }}
@@ -425,197 +427,6 @@ export default function Gastos() {
                 />
             )}
         </div>
-    )
-}
-
-// ══════════════════════════════════════════════════════════════
-// MODAL PAGAR GASTO PROGRAMADO
-// ══════════════════════════════════════════════════════════════
-function ModalPagarGasto({ gasto, tasas, onPagado, onCerrar }) {
-    const { perfil } = useAuth()
-    const [fecha, setFecha] = useState(new Date().toISOString().split('T')[0])
-    const [tipoTasa, setTipoTasa] = useState(gasto.tipo_tasa || 'tasa_bcv')
-    const [pagosPrevios, setPagosPrevios] = useState([])
-    const [cargandoPagos, setCargandoPagos] = useState(true)
-    const [montoUsd, setMontoUsd] = useState('')
-    const [montoBs, setMontoBs] = useState('')
-    const [metodoPago, setMetodoPago] = useState(gasto.metodo_pago || 'Efectivo USD')
-    const [guardando, setGuardando] = useState(false)
-    const [error, setError] = useState('')
-    const [cuentasBancarias, setCuentasBancarias] = useState([])
-    const [cuentaBancariaId, setCuentaBancariaId] = useState(gasto.cuenta_bancaria_id || '')
-
-    // Total de la obligación en USD (congelado; NO se toca al abonar)
-    const totalObligacion = Number(gasto.monto || 0) > 0
-        ? Number(gasto.monto)
-        : Number(gasto.monto_usd || 0) + Number(gasto.monto_bs || 0) / (tasas[gasto.tipo_tasa] || 1)
-
-    const pagoEnUsd = p => Number(p.monto_usd || 0) + Number(p.monto_bs || 0) / (Number(p.tasa_cambio) || 1)
-    const pagadoPrevio = pagosPrevios.reduce((s, p) => s + pagoEnUsd(p), 0)
-    const saldo = Math.max(0, totalObligacion - pagadoPrevio)
-
-    useEffect(() => {
-        if (!perfil?.empresa_id) return
-        supabase.from('cuentas_bancarias').select('id, nombre, banco, moneda').eq('empresa_id', perfil.empresa_id).eq('activa', true)
-            .then(({ data }) => setCuentasBancarias(data || []))
-    }, [perfil?.empresa_id])
-
-    // Cargar abonos previos y prellenar el input con el saldo pendiente (no el total)
-    useEffect(() => {
-        if (!perfil?.empresa_id) return
-        setCargandoPagos(true)
-        supabase.from('pagos')
-            .select('monto_usd, monto_bs, tasa_cambio')
-            .eq('empresa_id', perfil.empresa_id)
-            .eq('origen_tipo', 'gasto').eq('origen_id', gasto.id)
-            .then(({ data }) => {
-                const previos = data || []
-                setPagosPrevios(previos)
-                const pagado = previos.reduce((s, p) => s + pagoEnUsd(p), 0)
-                const saldoPend = Math.max(0, totalObligacion - pagado)
-                setMontoUsd(saldoPend > 0 ? saldoPend.toFixed(2) : '')
-                setCargandoPagos(false)
-            })
-    }, [perfil?.empresa_id, gasto.id])
-
-    // La tasa sale de la FECHA DE PAGO elegida, no de la vigente de hoy
-    const { tasasFecha, cargandoTasas } = useTasasFecha(perfil?.empresa_id, fecha)
-    const tasaDia = Number(tasasFecha?.[tipoTasa]) || 0
-    const tasa = tasaDia > 0 ? tasaDia : 1   // evita dividir entre 0 mientras no hay tasa
-    const sinTasa = !cargandoTasas && tasaDia <= 0
-    const totalEnUsd = Number(montoUsd || 0) + (Number(montoBs || 0) / tasa)
-
-    async function confirmar() {
-        if (sinTasa) { setError(`No hay tasa registrada para el ${fmtFechaCorta(fecha)}`); return }
-        if (Number(montoUsd) <= 0 && Number(montoBs) <= 0) { setError('Ingresa al menos un monto'); return }
-        if (totalEnUsd > saldo + 0.01) { setError(`El abono no puede superar el saldo pendiente de ${fmt(saldo)}`); return }
-        setGuardando(true); setError('')
-
-        const { data: { user } } = await supabase.auth.getUser()
-
-        // 1) El abono es una fila nueva en `pagos` — la obligación (gasto) queda intacta
-        const { error: errPago } = await supabase.from('pagos').insert({
-            empresa_id: perfil.empresa_id,
-            origen_tipo: 'gasto',
-            origen_id: gasto.id,
-            fecha,
-            monto_usd: Number(montoUsd || 0),
-            monto_bs: Number(montoBs || 0),
-            tasa_cambio: tasa,
-            tipo_tasa: tipoTasa,
-            metodo_usd: metodoPago,
-            cuenta_bancaria_id: cuentaBancariaId || null,
-            usuario_id: user.id,
-        })
-        if (errPago) { setError('Error: ' + errPago.message); setGuardando(false); return }
-
-        // 2) Estado derivado: releer todos los pagos y comparar contra la obligación
-        const { data: todos } = await supabase.from('pagos')
-            .select('monto_usd, monto_bs, tasa_cambio')
-            .eq('empresa_id', perfil.empresa_id)
-            .eq('origen_tipo', 'gasto').eq('origen_id', gasto.id)
-        const pagadoTotal = (todos || []).reduce((s, p) => s + pagoEnUsd(p), 0)
-        const nuevoEstado = pagadoTotal >= totalObligacion - 0.01 ? 'pagado' : 'parcial'
-
-        const { error: err } = await supabase.from('gastos').update({
-            estado: nuevoEstado,
-            metodo_pago: metodoPago,
-            cuenta_bancaria_id: cuentaBancariaId || null,
-        }).eq('id', gasto.id)
-
-        if (err) { setError('Error al actualizar el gasto: ' + err.message); setGuardando(false); return }
-        onPagado()
-    }
-
-    return (
-        <>
-            <div onClick={onCerrar} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', zIndex: 40 }} />
-            <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', backgroundColor: '#fff', borderRadius: '16px', padding: '28px', width: '460px', zIndex: 50, boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
-                <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#1f2937', margin: '0 0 4px' }}>Registrar abono</h3>
-                <p style={{ fontSize: '13px', color: '#6b7280', margin: '0 0 16px' }}>{gasto.nombre}</p>
-
-                {/* Resumen de la obligación */}
-                <div style={{ backgroundColor: '#eff6ff', borderRadius: '8px', padding: '12px 16px', marginBottom: '16px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#6b7280' }}>
-                        <span>Total del gasto</span><span style={{ fontWeight: 600, color: '#374151' }}>{fmt(totalObligacion)}</span>
-                    </div>
-                    {pagadoPrevio > 0.001 && (
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#6b7280' }}>
-                            <span>Abonado</span><span style={{ fontWeight: 600, color: '#16a34a' }}>-{fmt(pagadoPrevio)}</span>
-                        </div>
-                    )}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', borderTop: '1px solid #dbeafe', paddingTop: '6px' }}>
-                        <span style={{ color: '#1e40af', fontWeight: 600 }}>Saldo pendiente</span>
-                        <span style={{ color: '#1e40af', fontWeight: 700 }}>{cargandoPagos ? '…' : fmt(saldo)}</span>
-                    </div>
-                </div>
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                    {/* Fecha pago */}
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                        <div style={{ gridColumn: '1 / -1' }}>
-                            {/* Fecha + tasa de ESA fecha, compartido con CxC, CxP y Compras */}
-                            <SelectorFechaTasa
-                                fecha={fecha} onFecha={setFecha}
-                                tasasFecha={tasasFecha} cargandoTasas={cargandoTasas}
-                                tipoTasa={tipoTasa} onTipoTasa={setTipoTasa}
-                            />
-                        </div>
-                        <div>
-                            <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Método de pago</label>
-                            <select value={metodoPago} onChange={e => setMetodoPago(e.target.value)} style={inputStyle}>
-                                {METODOS_PAGO.map(m => <option key={m} value={m}>{m}</option>)}
-                            </select>
-                        </div>
-                    </div>
-
-                    {/* Montos */}
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                        <div>
-                            <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Monto USD</label>
-                            <input type="number" min="0" step="0.01" value={montoUsd} onChange={e => setMontoUsd(e.target.value)} placeholder="0.00" style={inputStyle} />
-                        </div>
-                        <div>
-                            <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Monto Bs.</label>
-                            <input type="number" min="0" step="1" value={montoBs} onChange={e => setMontoBs(e.target.value)} placeholder="0.00" style={inputStyle} />
-                        </div>
-                    </div>
-
-                    {(Number(montoUsd) > 0 || Number(montoBs) > 0) && (
-                        <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '10px 14px', fontSize: '13px', color: '#166534', fontWeight: 600 }}>
-                            Total equivalente: {fmt(totalEnUsd)}
-                        </div>
-                    )}
-
-                    {cuentasBancarias.length > 0 && (
-                        <div>
-                            <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Cuenta bancaria (opcional)</label>
-                            <select value={cuentaBancariaId} onChange={e => setCuentaBancariaId(e.target.value)} style={inputStyle}>
-                                <option value="">— Efectivo / sin cuenta —</option>
-                                {cuentasBancarias.map(c => <option key={c.id} value={c.id}>{c.nombre} ({c.banco} · {c.moneda})</option>)}
-                            </select>
-                        </div>
-                    )}
-
-                    {error && (
-                        <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 14px', fontSize: '13px', color: '#dc2626' }}>
-                            {error}
-                        </div>
-                    )}
-
-                    <div style={{ display: 'flex', gap: '10px', marginTop: '4px' }}>
-                        <button onClick={confirmar} disabled={guardando || sinTasa || cargandoTasas}
-                            style={{ flex: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', backgroundColor: sinTasa || cargandoTasas ? '#d1d5db' : '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '11px', fontSize: '14px', fontWeight: 600, cursor: sinTasa || cargandoTasas ? 'default' : 'pointer', opacity: guardando ? 0.6 : 1 }}>
-                            <Check size={16} /> {guardando ? 'Guardando...' : 'Confirmar abono'}
-                        </button>
-                        <button onClick={onCerrar}
-                            style={{ flex: 1, padding: '11px', borderRadius: '8px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: '#374151', fontSize: '14px', cursor: 'pointer' }}>
-                            Cancelar
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </>
     )
 }
 
@@ -1104,7 +915,7 @@ function DetalleGasto({ gasto: g, tasas, onVolver }) {
     useEffect(() => {
         if (!perfil?.empresa_id) return
         supabase.from('pagos')
-            .select('id, fecha, monto_usd, monto_bs, tasa_cambio, tipo_tasa, metodo_usd, nota')
+            .select('id, fecha, monto_usd, monto_bs, tasa_cambio, tipo_tasa, metodo_usd, metodo_bs, nota')
             .eq('empresa_id', perfil.empresa_id)
             .eq('origen_tipo', 'gasto').eq('origen_id', g.id)
             .order('fecha', { ascending: true })
@@ -1253,7 +1064,7 @@ function DetalleGasto({ gasto: g, tasas, onVolver }) {
                             {pagos.map(p => (
                                 <tr key={p.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
                                     <td style={{ padding: '8px', fontSize: '12px', color: '#6b7280' }}>{new Date(p.fecha + 'T00:00:00').toLocaleDateString('es-VE')}</td>
-                                    <td style={{ padding: '8px', fontSize: '12px', color: '#6b7280' }}>{p.metodo_usd || '—'}</td>
+                                    <td style={{ padding: '8px', fontSize: '12px', color: '#6b7280' }}>{[labelMetodo(p.metodo_usd), labelMetodo(p.metodo_bs)].filter(Boolean).join(' / ') || '—'}</td>
                                     <td style={{ padding: '8px', fontSize: '12px', color: '#374151', textAlign: 'right' }}>{Number(p.monto_usd) > 0 ? fmt(p.monto_usd) : '—'}</td>
                                     <td style={{ padding: '8px', fontSize: '12px', color: '#374151', textAlign: 'right' }}>{Number(p.monto_bs) > 0 ? fmtBs(p.monto_bs) : '—'}</td>
                                     <td style={{ padding: '8px', fontSize: '12px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(pagoEnUsd(p))}</td>
