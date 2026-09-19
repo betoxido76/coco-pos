@@ -178,8 +178,16 @@ cuenta bancaria y nota. Maneja todo el formulario y sus validaciones; el
 llamador solo recibe los datos en `onConfirmar(datos)` y escribe en BD
 (devolver un string = mensaje de error a mostrar).
 
-- `saldoEfectivo` es el tope del abono y prellena Monto USD (saldo menos
-  descuentos y créditos aplicados).
+- `saldoEfectivo` es el tope del abono (saldo menos descuentos y créditos
+  aplicados). Los montos arrancan **vacíos** (prellenar el saldo provocaba
+  pagos parciales registrados como totales) y antes de guardar se muestra
+  `ConfirmacionPago` (exportado del mismo archivo): "Pago TOTAL" o "Pago
+  PARCIAL — queda pendiente $X". La recepción de Compras (`ModalPagoCompra`)
+  usa la misma confirmación; un contado parcial pasa a crédito y el anticipo
+  queda como primer abono en `pagos_proveedor`.
+- Los pagos a proveedor se anulan (lógicamente) desde CxP → Ver recepción →
+  Pagos registrados, vía RPC `anular_pago_proveedor` (`anular_pago_proveedor.sql`).
+  **Todo lector de `pagos_proveedor` debe filtrar `.eq('anulado', false)`.**
 - `extras` inyecta los bloques propios del dominio (descuento por pronto pago,
   notas de débito) entre el resumen y el formulario.
 - `METODOS_USD` / `METODOS_BS` / `labelMetodo` son el vocabulario compartido de

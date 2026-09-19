@@ -77,6 +77,10 @@ compra_items          -- Detalle de recepciones
                       --   tipo_insumo CHECK IN ('materia_prima','empaque','material_empaque','consumible','producto_terminado')
 pagos_proveedor       -- Pagos a proveedores
                       --   devolucion_proveedor_id → devoluciones_proveedor (ND)
+                      --   anulado boolean (default false), motivo_anulacion,
+                      --   anulado_por → usuarios, fecha_anulacion. Anulación lógica
+                      --   vía RPC anular_pago_proveedor. FILTRAR anulado=false.
+                      --   2 FKs a usuarios → embed con hint usuarios!usuario_id
 devoluciones_proveedor     -- Notas de débito a proveedor
 devolucion_proveedor_items -- Detalle de ND
 ```

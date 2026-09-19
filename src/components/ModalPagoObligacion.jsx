@@ -12,7 +12,12 @@
 // El llamador aporta:
 //   - el resumen de la obligación (total, abonado, saldo)
 //   - `saldoEfectivo`: cuánto queda por pagar EN DINERO tras descuentos y
-//     créditos (NDs). Es el tope del abono y el valor que prellena Monto USD.
+//     créditos (NDs). Es el tope del abono.
+//
+// Los montos arrancan VACÍOS a propósito: prellenar el saldo hacía que un
+// "Confirmar" distraído registrara el pago total aunque se hubiera pagado solo
+// una parte. Por lo mismo, antes de guardar se muestra una confirmación que
+// dice si la obligación queda saldada o cuánto queda pendiente.
 //   - `extras`: bloques propios del dominio (descuento por pronto pago, notas
 //     de débito) que se dibujan entre el resumen y el formulario.
 //   - `proveedorId` (opcional): habilita el botón "Cuentas del proveedor", una
@@ -145,15 +150,7 @@ export default function ModalPagoObligacion({
             .then(({ data }) => setCuentasBancarias(data || []))
     }, [perfil?.empresa_id])
 
-    // El monto propuesto es siempre el saldo efectivo: cambia al cargar los
-    // abonos previos, al aplicar un descuento o al marcar una nota de débito.
-    // Se compara redondeado para no reescribir el input por ruido de coma flotante.
-    const topeKey = tope.toFixed(2)
-    useEffect(() => {
-        if (cargandoSaldo) return
-        setMontoUsd(tope > 0.001 ? tope.toFixed(2) : '')
-        setMontoBs('')
-    }, [topeKey, cargandoSaldo])   // eslint-disable-line react-hooks/exhaustive-deps
+    const [confirmando, setConfirmando] = useState(false)
 
     // La tasa sale de la FECHA DE PAGO elegida, no de la vigente de hoy.
     const { tasasFecha, cargandoTasas } = useTasasFecha(perfil?.empresa_id, fecha)
@@ -168,11 +165,17 @@ export default function ModalPagoObligacion({
         setMontoBs(resto > 0 ? resto.toFixed(2) : '0')
     }
 
-    async function confirmar() {
+    // Paso 1: validar y mostrar el resumen (saldada / queda pendiente).
+    function revisar() {
         if (sinTasa) { setError(`No hay tasa registrada para el ${fmtFechaCorta(fecha)}`); return }
-        if (tope > 0.001 && totalEnUsd <= 0.001) { setError('Ingresa un monto válido'); return }
+        if (tope > 0.001 && totalEnUsd <= 0.001) { setError('Ingresa el monto pagado'); return }
         if (totalEnUsd > tope + 0.01) { setError(`El monto no puede superar el saldo pendiente de ${fmt(tope)}`); return }
+        setError('')
+        setConfirmando(true)
+    }
 
+    // Paso 2: el usuario vio el resumen y confirma.
+    async function confirmar() {
         setGuardando(true); setError('')
         const msg = await onConfirmar({
             fecha, tipoTasa, tasa,
@@ -186,8 +189,11 @@ export default function ModalPagoObligacion({
             cuentaBancariaId: cuentaBancariaId || null,
             nota: nota || null,
         })
-        if (msg) { setError(msg); setGuardando(false) }
+        if (msg) { setError(msg); setGuardando(false); setConfirmando(false) }
     }
+
+    const pendienteTras = Math.max(0, tope - totalEnUsd)
+    const quedaSaldada = pendienteTras <= 0.01
 
     const hayResumenExtendido = total !== undefined && total !== null
 
@@ -242,7 +248,13 @@ export default function ModalPagoObligacion({
 
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                         <div>
-                            <label style={labelS}>Monto USD</label>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '5px' }}>
+                                <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151' }}>Monto USD</label>
+                                <button type="button" onClick={() => { setMontoUsd(tope.toFixed(2)); setMontoBs('') }}
+                                    style={{ fontSize: '11px', color: '#16a34a', background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontWeight: 500 }}>
+                                    Saldo completo
+                                </button>
+                            </div>
                             <input type="number" min="0" step="0.01" value={montoUsd} placeholder="0.00"
                                 onChange={e => setMontoUsd(e.target.value)} style={inputS} />
                         </div>
@@ -311,9 +323,88 @@ export default function ModalPagoObligacion({
                         style={{ flex: 1, padding: '10px', border: '1px solid #e5e7eb', borderRadius: '8px', fontSize: '14px', color: '#374151', backgroundColor: '#fff', cursor: 'pointer' }}>
                         Cancelar
                     </button>
-                    <button onClick={confirmar} disabled={guardando || sinTasa || cargandoTasas || cargandoSaldo}
+                    <button onClick={revisar} disabled={guardando || sinTasa || cargandoTasas || cargandoSaldo}
                         style={{ flex: 2, padding: '10px', border: 'none', borderRadius: '8px', fontSize: '14px', fontWeight: 600, color: '#fff', backgroundColor: sinTasa || cargandoTasas || cargandoSaldo ? '#d1d5db' : '#16a34a', cursor: sinTasa || cargandoTasas || cargandoSaldo ? 'default' : 'pointer', opacity: guardando ? 0.6 : 1 }}>
                         {guardando ? 'Procesando...' : textoConfirmar}
+                    </button>
+                </div>
+            </div>
+
+            {confirmando && (
+                <ConfirmacionPago
+                    saldo={tope} pago={totalEnUsd} pendiente={pendienteTras} saldada={quedaSaldada}
+                    montoUsd={Number(montoUsd || 0)} montoBs={Number(montoBs || 0)} tasa={tasa} fecha={fecha}
+                    guardando={guardando}
+                    onVolver={() => setConfirmando(false)} onConfirmar={confirmar} />
+            )}
+        </div>
+    )
+}
+
+// Segundo paso del pago: deja explícito si la obligación queda saldada o cuánto
+// queda pendiente, antes de escribir nada en la base de datos. También la usa
+// la recepción de Compras (contado total, contado parcial y crédito sin pago).
+export function ConfirmacionPago({
+    saldo, pago, pendiente, saldada, montoUsd, montoBs, tasa, fecha, guardando, onVolver, onConfirmar,
+    titulo = '¿Confirmas el pago?', aviso = null, textoBoton = 'Sí, registrar pago',
+}) {
+    const fila = (label, valor, fuerte) => (
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: fuerte ? '14px' : '13px', fontWeight: fuerte ? 700 : 500, color: '#1f2937' }}>
+            <span style={{ color: fuerte ? '#1f2937' : '#6b7280', fontWeight: fuerte ? 700 : 400 }}>{label}</span><span>{valor}</span>
+        </div>
+    )
+    const cubiertoSinDinero = saldo <= 0.001
+    const sinPago = !cubiertoSinDinero && pago <= 0.001
+    return (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: '16px' }}>
+            <div style={{ backgroundColor: '#fff', borderRadius: '16px', padding: '24px', width: '100%', maxWidth: '400px', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+                <h2 style={{ fontSize: '17px', fontWeight: 600, color: '#1f2937', margin: '0 0 16px' }}>{titulo}</h2>
+
+                {!cubiertoSinDinero && !sinPago && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
+                        {fila('Saldo pendiente', fmt(saldo))}
+                        {fila('Fecha del pago', fmtFechaCorta(fecha))}
+                        {montoUsd > 0 && fila('En USD', fmt(montoUsd))}
+                        {montoBs > 0 && fila('En Bs.', `${montoBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs. (${fmt(montoBs / tasa)})`)}
+                        <div style={{ height: '1px', backgroundColor: '#e5e7eb' }} />
+                        {fila('Este pago', fmt(pago), true)}
+                    </div>
+                )}
+
+                <div style={{ borderRadius: '10px', padding: '12px 14px', marginBottom: '18px', backgroundColor: saldada ? '#f0fdf4' : '#fffbeb', border: `1px solid ${saldada ? '#bbf7d0' : '#fde68a'}` }}>
+                    {cubiertoSinDinero ? (
+                        <div style={{ fontSize: '14px', fontWeight: 600, color: '#166534' }}>El saldo queda cubierto por los créditos aplicados.</div>
+                    ) : sinPago ? (
+                        <>
+                            <div style={{ fontSize: '14px', fontWeight: 700, color: '#92400e' }}>SIN PAGO</div>
+                            <div style={{ fontSize: '13px', color: '#92400e', marginTop: '2px' }}>
+                                Queda pendiente: <strong>{fmt(pendiente)}</strong>
+                            </div>
+                        </>
+                    ) : saldada ? (
+                        <>
+                            <div style={{ fontSize: '14px', fontWeight: 700, color: '#166534' }}>Pago TOTAL</div>
+                            <div style={{ fontSize: '13px', color: '#166534', marginTop: '2px' }}>La obligación queda saldada.</div>
+                        </>
+                    ) : (
+                        <>
+                            <div style={{ fontSize: '14px', fontWeight: 700, color: '#92400e' }}>Pago PARCIAL</div>
+                            <div style={{ fontSize: '13px', color: '#92400e', marginTop: '2px' }}>
+                                Queda pendiente: <strong>{fmt(pendiente)}</strong>
+                            </div>
+                        </>
+                    )}
+                    {aviso && <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '8px' }}>{aviso}</div>}
+                </div>
+
+                <div style={{ display: 'flex', gap: '10px' }}>
+                    <button onClick={onVolver} disabled={guardando}
+                        style={{ flex: 1, padding: '10px', border: '1px solid #e5e7eb', borderRadius: '8px', fontSize: '14px', color: '#374151', backgroundColor: '#fff', cursor: 'pointer' }}>
+                        Corregir
+                    </button>
+                    <button onClick={onConfirmar} disabled={guardando}
+                        style={{ flex: 2, padding: '10px', border: 'none', borderRadius: '8px', fontSize: '14px', fontWeight: 600, color: '#fff', backgroundColor: '#16a34a', cursor: guardando ? 'default' : 'pointer', opacity: guardando ? 0.6 : 1 }}>
+                        {guardando ? 'Registrando...' : textoBoton}
                     </button>
                 </div>
             </div>

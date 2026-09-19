@@ -22,7 +22,7 @@ async function calcularSaldoCuenta(cuentaId, moneda, saldoInicial) {
     const [{ data: cobros }, { data: movs }, { data: pagos }, { data: gastos }] = await Promise.all([
         supabase.from('cobros').select('monto_usd, monto_bs').eq('cuenta_bancaria_id', cuentaId),
         supabase.from('movimientos_financieros').select('monto_usd, monto_bs, tipo').eq('cuenta_bancaria_id', cuentaId).eq('estado', 'pagado'),
-        supabase.from('pagos_proveedor').select('monto_usd, monto_bs').eq('cuenta_bancaria_id', cuentaId),
+        supabase.from('pagos_proveedor').select('monto_usd, monto_bs').eq('cuenta_bancaria_id', cuentaId).eq('anulado', false),
         supabase.from('gastos').select('monto_usd, monto_bs').eq('cuenta_bancaria_id', cuentaId).eq('estado', 'pagado'),
     ])
 
@@ -242,6 +242,7 @@ function VistaDetalle({ cuenta, tasas, onVolver }) {
             supabase.from('pagos_proveedor')
                 .select('id, monto_usd, monto_bs, created_at, compras(numero_doc, proveedores(nombre))')
                 .eq('cuenta_bancaria_id', cuenta.id)
+                .eq('anulado', false)
                 .gte('created_at', desde).lte('created_at', hasta + 'T23:59:59'),
 
             supabase.from('gastos')

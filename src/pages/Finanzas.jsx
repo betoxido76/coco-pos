@@ -117,6 +117,7 @@ export default function Finanzas() {
             supabase.from('pagos_proveedor')
                 .select('*, compras(proveedores(nombre))')
                 .eq('empresa_id', perfil.empresa_id)
+                .eq('anulado', false)
                 .gte('created_at', desde + 'T00:00:00')
                 .lte('created_at', hasta + 'T23:59:59'),
 

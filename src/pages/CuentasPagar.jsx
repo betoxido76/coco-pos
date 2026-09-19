@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import { AlertTriangle, CheckCircle, Clock, DollarSign, FileText } from 'lucide-react'
-import ModalPagoObligacion from '../components/ModalPagoObligacion'
+import ModalPagoObligacion, { labelMetodo } from '../components/ModalPagoObligacion'
 import ModalPagoGasto from '../components/ModalPagoGasto'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
@@ -123,7 +123,7 @@ export default function CuentasPagar() {
             const kpiIds = kpi.map(c => c.id)
             if (kpiIds.length > 0) {
                 const { data: kpiPagos } = await supabase
-                    .from('pagos_proveedor').select('compra_id, monto_usd, monto_bs, tasa_cambio').in('compra_id', kpiIds)
+                    .from('pagos_proveedor').select('compra_id, monto_usd, monto_bs, tasa_cambio').in('compra_id', kpiIds).eq('anulado', false)
                 const kpiPagosMap = {}
                 kpiPagos?.forEach(p => {
                     if (!kpiPagosMap[p.compra_id]) kpiPagosMap[p.compra_id] = []
@@ -138,7 +138,7 @@ export default function CuentasPagar() {
 
         const ids = data.map(c => c.id)
         const { data: pagosData } = ids.length > 0
-            ? await supabase.from('pagos_proveedor').select('*').in('compra_id', ids)
+            ? await supabase.from('pagos_proveedor').select('*').in('compra_id', ids).eq('anulado', false)
             : { data: [] }
 
         const pagosMap = {}
@@ -222,7 +222,7 @@ export default function CuentasPagar() {
     }
 
     if (compraVer) return (
-        <DetalleRecepcionCxP compra={compraVer} onVolver={() => setCompraVer(null)} />
+        <DetalleRecepcionCxP compra={compraVer} onVolver={() => { setCompraVer(null); cargarDatos() }} />
     )
     if (gastoVerCxp) return (
         <DetalleGastoCxP gasto={gastoVerCxp} tasas={tasas} onVolver={() => setGastoVerCxp(null)} />
@@ -583,7 +583,7 @@ function ModalPago({ compra, saldo, onCerrar, onPagado }) {
         }
 
         const { data: todosPagos } = await supabase
-            .from('pagos_proveedor').select('monto_usd, monto_bs, tasa_cambio').eq('compra_id', compra.id)
+            .from('pagos_proveedor').select('monto_usd, monto_bs, tasa_cambio').eq('compra_id', compra.id).eq('anulado', false)
         const totalPagado = todosPagos.reduce((s, p) => s + pagoEnUsd(p), 0)
         const montoDebido = Number(compra.total) - descuentoTotal
         const nuevoEstado = totalPagado >= montoDebido - 0.01 ? 'pagado' : 'parcial'
@@ -654,11 +654,34 @@ function ModalPago({ compra, saldo, onCerrar, onPagado }) {
     )
 }
 
-function DetalleRecepcionCxP({ compra, onVolver }) {
+function DetalleRecepcionCxP({ compra: compraInicial, onVolver }) {
     const { perfil } = useAuth()
+    // Solo Finanzas/Administración anulan pagos (la RPC lo vuelve a validar)
+    const puedeAnular = ['admin', 'finanzas', 'superadmin'].includes(perfil?.rol)
+    const [compra, setCompra] = useState(compraInicial)
     const [items, setItems] = useState([])
     const [loading, setLoading] = useState(true)
     const [mapaNombres, setMapaNombres] = useState({})
+    const [pagosRec, setPagosRec] = useState([])
+    const [pagoAnular, setPagoAnular] = useState(null)
+
+    // Incluye los anulados: se muestran tachados con su motivo, como rastro.
+    async function cargarPagos() {
+        const { data } = await supabase.from('pagos_proveedor')
+            .select('id, fecha_pago, created_at, monto_usd, monto_bs, tasa_cambio, metodo_usd, metodo_bs, nota, anulado, motivo_anulacion, fecha_anulacion, usuarios!usuario_id(nombre)')
+            .eq('compra_id', compra.id).eq('empresa_id', perfil.empresa_id)
+            .order('created_at')
+        setPagosRec(data || [])
+    }
+    useEffect(() => { if (perfil?.empresa_id) cargarPagos() }, [compra.id, perfil?.empresa_id])
+
+    function trasAnular(nuevoEstado) {
+        setPagoAnular(null)
+        setCompra(c => ({ ...c, estado_cobro: nuevoEstado }))
+        cargarPagos()
+    }
+    const totalPagado = pagosRec.filter(p => !p.anulado).reduce((s, p) => s + pagoEnUsd(p), 0)
+    const saldoRec = Math.max(0, Number(compra.total || 0) - Number(compra.descuento_pago || 0) - totalPagado)
 
     useEffect(() => {
         if (!perfil?.empresa_id) return
@@ -754,6 +777,116 @@ function DetalleRecepcionCxP({ compra, onVolver }) {
                             <span>{new Date(compra.fecha_vencimiento_pago).toLocaleDateString('es-VE')}</span>
                         </div>
                     )}
+                </div>
+
+                {/* Pagos registrados */}
+                <div style={{ marginTop: '28px' }}>
+                    <div style={{ fontSize: '13px', fontWeight: 600, color: '#1f2937', marginBottom: '8px' }}>Pagos registrados</div>
+                    {pagosRec.length === 0 ? (
+                        <div style={{ fontSize: '13px', color: '#9ca3af', fontStyle: 'italic' }}>Sin pagos registrados</div>
+                    ) : (
+                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                            <thead>
+                                <tr style={{ borderBottom: '2px solid #e5e7eb' }}>
+                                    {['Fecha', 'Monto', 'Método', 'Registró', ''].map((h, i) => (
+                                        <th key={i} style={{ padding: '6px 0', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: i === 1 ? 'right' : 'left' }}>{h}</th>
+                                    ))}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {pagosRec.map(p => {
+                                    const tachado = p.anulado ? { textDecoration: 'line-through', color: '#9ca3af' } : {}
+                                    return (
+                                        <tr key={p.id} style={{ borderBottom: '1px solid #f3f4f6', verticalAlign: 'top' }}>
+                                            <td style={{ padding: '8px 8px 8px 0', fontSize: '13px', color: '#374151', ...tachado }}>
+                                                {new Date(p.fecha_pago || p.created_at).toLocaleDateString('es-VE', { timeZone: 'UTC' })}
+                                            </td>
+                                            <td style={{ padding: '8px', fontSize: '13px', textAlign: 'right', whiteSpace: 'nowrap', ...tachado }}>
+                                                <div style={{ fontWeight: 600, color: p.anulado ? '#9ca3af' : '#1f2937' }}>{fmt(pagoEnUsd(p))}</div>
+                                                {Number(p.monto_bs) > 0 && <div style={{ fontSize: '11px', color: '#9ca3af' }}>{Number(p.monto_bs).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.</div>}
+                                            </td>
+                                            <td style={{ padding: '8px', fontSize: '12px', color: '#6b7280', ...tachado }}>
+                                                {[Number(p.monto_usd) > 0 && labelMetodo(p.metodo_usd), Number(p.monto_bs) > 0 && labelMetodo(p.metodo_bs)].filter(Boolean).join(' + ') || '—'}
+                                                {p.nota && <div style={{ fontSize: '11px', color: '#9ca3af' }}>{p.nota}</div>}
+                                            </td>
+                                            <td style={{ padding: '8px', fontSize: '12px', color: '#6b7280' }}>{p.usuarios?.nombre || '—'}</td>
+                                            <td className="no-print" style={{ padding: '8px 0', textAlign: 'right' }}>
+                                                {p.anulado ? (
+                                                    <div style={{ fontSize: '11px', color: '#991b1b', maxWidth: '180px', marginLeft: 'auto' }}>
+                                                        <strong>Anulado</strong>{p.fecha_anulacion && ` el ${new Date(p.fecha_anulacion).toLocaleDateString('es-VE')}`}
+                                                        {p.motivo_anulacion && <div style={{ color: '#6b7280' }}>{p.motivo_anulacion}</div>}
+                                                    </div>
+                                                ) : puedeAnular && compra.estado !== 'anulada' && (
+                                                    <button onClick={() => setPagoAnular(p)}
+                                                        style={{ padding: '4px 12px', borderRadius: '6px', fontSize: '12px', fontWeight: 500, border: '1px solid #fecaca', backgroundColor: '#fff', color: '#dc2626', cursor: 'pointer' }}>
+                                                        Anular
+                                                    </button>
+                                                )}
+                                            </td>
+                                        </tr>
+                                    )
+                                })}
+                            </tbody>
+                        </table>
+                    )}
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '24px', marginTop: '10px', fontSize: '13px' }}>
+                        <span style={{ color: '#6b7280' }}>Pagado: <strong style={{ color: '#16a34a' }}>{fmt(totalPagado)}</strong></span>
+                        <span style={{ color: '#6b7280' }}>Saldo: <strong style={{ color: saldoRec > 0.01 ? '#dc2626' : '#16a34a' }}>{fmt(saldoRec)}</strong></span>
+                    </div>
+                </div>
+            </div>
+
+            {pagoAnular && (
+                <ModalAnularPagoProveedor pago={pagoAnular} compra={compra}
+                    onCerrar={() => setPagoAnular(null)} onAnulado={trasAnular} />
+            )}
+        </div>
+    )
+}
+
+// ─── Anular pago a proveedor ────────────────────────────────────
+// La anulación es lógica y atómica (RPC anular_pago_proveedor, ver
+// anular_pago_proveedor.sql): marca el pago, devuelve a 'pendiente' la ND que
+// hubiera aplicado y recalcula el estado de la recepción.
+function ModalAnularPagoProveedor({ pago, compra, onCerrar, onAnulado }) {
+    const [motivo, setMotivo] = useState('')
+    const [guardando, setGuardando] = useState(false)
+    const [error, setError] = useState('')
+
+    async function anular() {
+        if (!motivo.trim()) { setError('Indica el motivo de la anulación'); return }
+        setGuardando(true); setError('')
+        const { data, error: err } = await supabase.rpc('anular_pago_proveedor', { p_pago_id: pago.id, p_motivo: motivo.trim() })
+        if (err) { setError(err.message); setGuardando(false); return }
+        onAnulado(data)
+    }
+
+    return (
+        <div className="no-print" style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: '16px' }}>
+            <div style={{ backgroundColor: '#fff', borderRadius: '16px', padding: '24px', width: '100%', maxWidth: '420px', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
+                <h2 style={{ fontSize: '17px', fontWeight: 600, color: '#1f2937', margin: '0 0 4px' }}>Anular pago</h2>
+                <p style={{ fontSize: '13px', color: '#6b7280', margin: '0 0 16px' }}>
+                    {compra.numero_doc} · {fmt(pagoEnUsd(pago))} del {new Date(pago.fecha_pago || pago.created_at).toLocaleDateString('es-VE', { timeZone: 'UTC' })}
+                </p>
+                <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 12px', fontSize: '12px', color: '#991b1b', marginBottom: '14px' }}>
+                    El pago deja de contar y el saldo de la recepción vuelve a subir por ese monto.
+                    {pago.metodo_usd === 'Nota de Débito' && ' La nota de débito aplicada vuelve a quedar disponible.'}
+                    {' '}El registro se conserva con el motivo.
+                </div>
+                <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Motivo *</label>
+                <textarea value={motivo} onChange={e => setMotivo(e.target.value)} rows={3} autoFocus
+                    placeholder="Ej.: se registró el total pero se pagó solo una parte"
+                    style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', boxSizing: 'border-box', resize: 'vertical', fontFamily: 'inherit' }} />
+                {error && <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '8px 12px', fontSize: '13px', color: '#dc2626', marginTop: '10px' }}>{error}</div>}
+                <div style={{ display: 'flex', gap: '10px', marginTop: '18px' }}>
+                    <button onClick={onCerrar} disabled={guardando}
+                        style={{ flex: 1, padding: '10px', border: '1px solid #e5e7eb', borderRadius: '8px', fontSize: '14px', color: '#374151', backgroundColor: '#fff', cursor: 'pointer' }}>
+                        Cancelar
+                    </button>
+                    <button onClick={anular} disabled={guardando}
+                        style={{ flex: 2, padding: '10px', border: 'none', borderRadius: '8px', fontSize: '14px', fontWeight: 600, color: '#fff', backgroundColor: '#dc2626', cursor: 'pointer', opacity: guardando ? 0.6 : 1 }}>
+                        {guardando ? 'Anulando...' : 'Anular pago'}
+                    </button>
                 </div>
             </div>
         </div>
