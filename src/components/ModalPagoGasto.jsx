@@ -84,6 +84,7 @@ export default function ModalPagoGasto({ gasto, tasas = {}, onPagado, onCerrar }
             abonado={pagadoPrevio}
             saldo={saldo}
             cargandoSaldo={cargandoPagos}
+            proveedorId={gasto.proveedor_id}
             onConfirmar={confirmar}
             onCerrar={onCerrar}
         />

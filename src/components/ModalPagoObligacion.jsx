@@ -15,6 +15,9 @@
 //     créditos (NDs). Es el tope del abono y el valor que prellena Monto USD.
 //   - `extras`: bloques propios del dominio (descuento por pronto pago, notas
 //     de débito) que se dibujan entre el resumen y el formulario.
+//   - `proveedorId` (opcional): habilita el botón "Cuentas del proveedor", una
+//     consulta de solo lectura de `cuentas_proveedor` para saber a dónde pagar.
+//     No se guarda a qué cuenta se pagó.
 //
 // Usado por: CxP → ModalPago (recepciones) y ModalPagoGasto (gastos, también
 // montado desde el módulo Gastos).
@@ -52,6 +55,57 @@ const inputS = {
 const selectS = { ...inputS, backgroundColor: '#fff' }
 const labelS = { fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }
 
+const TIPOS_CUENTA = { corriente: 'Corriente', ahorro: 'Ahorro', pago_movil: 'Pago Móvil' }
+
+// Consulta de las cuentas bancarias registradas del proveedor (Administración →
+// Proveedores). Se carga al abrirla por primera vez.
+function CuentasProveedor({ proveedorId }) {
+    const { perfil } = useAuth()
+    const [cuentas, setCuentas] = useState(null)
+    const [copiada, setCopiada] = useState(null)
+
+    useEffect(() => {
+        supabase.from('cuentas_proveedor')
+            .select('id, banco, tipo_cuenta, numero_cuenta, titular, rif_titular, es_predeterminada')
+            .eq('empresa_id', perfil.empresa_id).eq('proveedor_id', proveedorId)
+            .order('es_predeterminada', { ascending: false }).order('created_at')
+            .then(({ data }) => setCuentas(data || []))
+    }, [proveedorId, perfil.empresa_id])
+
+    function copiar(c) {
+        navigator.clipboard?.writeText(c.numero_cuenta).then(() => {
+            setCopiada(c.id)
+            setTimeout(() => setCopiada(id => (id === c.id ? null : id)), 1500)
+        })
+    }
+
+    return (
+        <div style={{ border: '1px solid #e5e7eb', borderRadius: '8px', padding: '10px 12px', marginBottom: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {cuentas === null ? <span style={{ fontSize: '12px', color: '#9ca3af' }}>Cargando cuentas…</span>
+                : cuentas.length === 0 ? <span style={{ fontSize: '12px', color: '#9ca3af' }}>Este proveedor no tiene cuentas registradas. Se cargan en Administración → Proveedores.</span>
+                : cuentas.map(c => (
+                    <div key={c.id} style={{ backgroundColor: c.es_predeterminada ? '#f0fdf4' : '#f9fafb', borderRadius: '6px', padding: '8px 10px', fontSize: '12px', color: '#374151' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '2px' }}>
+                            <strong style={{ fontSize: '13px', color: '#1f2937' }}>{c.banco}</strong>
+                            <span style={{ color: '#6b7280' }}>· {TIPOS_CUENTA[c.tipo_cuenta] || c.tipo_cuenta}</span>
+                            {c.es_predeterminada && <span style={{ marginLeft: 'auto', fontSize: '11px', fontWeight: 600, color: '#166534' }}>Predeterminada</span>}
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span style={{ fontFamily: 'monospace', fontSize: '13px', color: '#1f2937' }}>{c.numero_cuenta}</span>
+                            <button type="button" onClick={() => copiar(c)}
+                                style={{ fontSize: '11px', color: copiada === c.id ? '#16a34a' : '#1d4ed8', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+                                {copiada === c.id ? '✓ Copiado' : 'Copiar'}
+                            </button>
+                        </div>
+                        {(c.titular || c.rif_titular) && (
+                            <div style={{ color: '#6b7280' }}>{[c.titular, c.rif_titular].filter(Boolean).join(' · ')}</div>
+                        )}
+                    </div>
+                ))}
+        </div>
+    )
+}
+
 export default function ModalPagoObligacion({
     titulo = 'Registrar pago',
     subtitulo,
@@ -61,6 +115,7 @@ export default function ModalPagoObligacion({
     saldoEfectivo = null,        // tope a pagar tras descuentos/créditos (default: saldo)
     cargandoSaldo = false,
     extras = null,               // bloques del dominio (descuento, NDs)
+    proveedorId = null,          // habilita la consulta de cuentas del proveedor
     metodosUsd = METODOS_USD,
     metodosBs = METODOS_BS,
     textoConfirmar = 'Confirmar pago',
@@ -81,6 +136,7 @@ export default function ModalPagoObligacion({
     const [cuentasBancarias, setCuentasBancarias] = useState([])
     const [guardando, setGuardando] = useState(false)
     const [error, setError] = useState('')
+    const [verCuentasProv, setVerCuentasProv] = useState(false)
 
     useEffect(() => {
         if (!perfil?.empresa_id) return
@@ -139,10 +195,20 @@ export default function ModalPagoObligacion({
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
             <div style={{ backgroundColor: '#fff', borderRadius: '16px', padding: '28px', width: '100%', maxWidth: '460px', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
 
-                <div style={{ marginBottom: '20px' }}>
-                    <h2 style={{ fontSize: '17px', fontWeight: 600, color: '#1f2937', margin: '0 0 4px' }}>{titulo}</h2>
-                    {subtitulo && <p style={{ fontSize: '13px', color: '#6b7280', margin: 0 }}>{subtitulo}</p>}
+                <div style={{ marginBottom: '20px', display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+                    <div style={{ flex: 1 }}>
+                        <h2 style={{ fontSize: '17px', fontWeight: 600, color: '#1f2937', margin: '0 0 4px' }}>{titulo}</h2>
+                        {subtitulo && <p style={{ fontSize: '13px', color: '#6b7280', margin: 0 }}>{subtitulo}</p>}
+                    </div>
+                    {proveedorId && (
+                        <button type="button" onClick={() => setVerCuentasProv(v => !v)}
+                            style={{ flexShrink: 0, padding: '6px 10px', borderRadius: '8px', fontSize: '12px', fontWeight: 500, cursor: 'pointer', border: '1px solid', borderColor: verCuentasProv ? '#1d4ed8' : '#e5e7eb', backgroundColor: verCuentasProv ? '#eff6ff' : '#fff', color: verCuentasProv ? '#1d4ed8' : '#374151' }}>
+                            🏦 Cuentas del proveedor
+                        </button>
+                    )}
                 </div>
+
+                {proveedorId && verCuentasProv && <CuentasProveedor proveedorId={proveedorId} />}
 
                 {/* Resumen de la obligación */}
                 <div style={{ backgroundColor: '#eff6ff', borderRadius: '8px', padding: '12px 16px', marginBottom: extras ? '12px' : '20px', display: 'flex', flexDirection: 'column', gap: '6px' }}>

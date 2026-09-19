@@ -647,6 +647,7 @@ function ModalPago({ compra, saldo, onCerrar, onPagado }) {
             saldo={saldo}
             saldoEfectivo={saldoEfectivo}
             extras={extras}
+            proveedorId={compra.proveedor_id}
             onConfirmar={confirmar}
             onCerrar={onCerrar}
         />
