@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import * as XLSX from 'xlsx'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import { X, DollarSign, CheckSquare, FileText, Ban } from 'lucide-react'
@@ -54,9 +56,10 @@ export default function CuentasCobrar() {
     const [cobradoKpi, setCobradoKpi] = useState({})
     const [saldoFavor, setSaldoFavor] = useState(0)
     const [loading, setLoading] = useState(true)
-    const [filtro, setFiltro] = useState('pendiente')
+    const [filtro, setFiltro] = useState('por_cobrar')
     const [modalVenta, setModalVenta] = useState(null)       // cobro individual
     const [modalMultiple, setModalMultiple] = useState(false) // cobro múltiple
+    const [modalEstadoCuenta, setModalEstadoCuenta] = useState(false)
     const [tasas, setTasas] = useState({ tasa_bcv: 1, tasa_euro: 1, tasa_binance: 1 })
     const [clientes, setClientes] = useState([])
     const [filtroCliente, setFiltroCliente] = useState('')
@@ -99,7 +102,10 @@ export default function CuentasCobrar() {
 
     async function cargar() {
         setLoading(true)
-        const estados = filtro === 'todos' ? ['pendiente', 'parcial', 'pagado'] : [filtro]
+        // 'por_cobrar' = todo lo que el cliente aún debe, haya abonado o no.
+        const estados = filtro === 'todos' ? ['pendiente', 'parcial', 'pagado']
+            : filtro === 'por_cobrar' ? ['pendiente', 'parcial']
+            : [filtro]
 
         // !inner solo cuando se filtra por categoría: con el embed normal una venta
         // sin cliente seguiría apareciendo, que es el comportamiento sin filtro.
@@ -312,7 +318,7 @@ export default function CuentasCobrar() {
     }, 0)
     const diasCalle = totalPendiente > 0 ? (diasCalleNum / totalPendiente).toFixed(1) : '0.0'
 
-    const mostrarCheckboxes = filtro === 'pendiente' || filtro === 'parcial'
+    const mostrarCheckboxes = ['por_cobrar', 'pendiente', 'parcial'].includes(filtro)
     // En Pendientes no hay pagos todavía: las columnas de pago irían siempre vacías
     const mostrarColsPago = filtro !== 'pendiente'
 
@@ -365,7 +371,7 @@ export default function CuentasCobrar() {
 
                 {/* Filtros */}
                 <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
-                    {[['pendiente', 'Pendientes'], ['parcial', 'Parciales'], ['pagado', 'Pagadas'], ['todos', 'Todas']].map(([val, lbl]) => (
+                    {[['por_cobrar', 'Por cobrar'], ['pendiente', 'Pendientes'], ['parcial', 'Parciales'], ['pagado', 'Pagadas'], ['todos', 'Todas']].map(([val, lbl]) => (
                         <button key={val} onClick={() => setFiltro(val)}
                             style={{ padding: '7px 16px', borderRadius: '8px', fontSize: '13px', border: '1px solid', cursor: 'pointer', borderColor: filtro === val ? '#16a34a' : '#e5e7eb', backgroundColor: filtro === val ? '#16a34a' : '#fff', color: filtro === val ? '#fff' : '#6b7280' }}>
                             {lbl}
@@ -387,6 +393,12 @@ export default function CuentasCobrar() {
                         <option value="">Todas las categorías</option>
                         {categorias1.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
                     </select>
+                    {filtroCliente && (
+                        <button onClick={() => setModalEstadoCuenta(true)}
+                            style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 500, border: 'none', backgroundColor: '#1d4ed8', color: '#fff', cursor: 'pointer' }}>
+                            <FileText size={14} /> Estado de cuenta
+                        </button>
+                    )}
                 </div>
 
                 {/* Barra de cobro múltiple */}
@@ -611,6 +623,10 @@ export default function CuentasCobrar() {
                     ventas={ventasSeleccionadasObj}
                     onCerrar={() => setModalMultiple(false)}
                     onCobrado={() => { setModalMultiple(false); setSeleccionadas([]); cargar() }} />
+            )}
+            {modalEstadoCuenta && filtroCliente && (
+                <ModalEstadoCuenta clienteId={filtroCliente} tasaBcv={tasas.tasa_bcv}
+                    onCerrar={() => setModalEstadoCuenta(false)} />
             )}
             {modalNc && <DetalleNC nc={modalNc} onCerrar={() => setModalNc(null)} />}
             {modalLiquidar && (
@@ -1245,6 +1261,298 @@ function ModalCobroMultiple({ ventas, onCerrar, onCobrado }) {
                 </button>
             </div>
         </>
+    )
+}
+
+// ── Estado de cuenta del cliente ───────────────────────────────
+// Documento para enviarle al cliente todo lo que debe: facturas pendientes y
+// parciales con su saldo, NC disponibles y deuda neta. Carga sus propios datos
+// sin paginar, para que el total no dependa de la página visible en la tabla.
+// Se monta en un portal sobre <body> para que al imprimir se pueda ocultar #root
+// completo y el documento fluya en varias páginas.
+const TRAMOS_MORA = [
+    ['Por vencer', d => d <= 0],
+    ['1–30 días', d => d >= 1 && d <= 30],
+    ['31–60 días', d => d >= 31 && d <= 60],
+    ['61–90 días', d => d >= 61 && d <= 90],
+    ['+90 días', d => d > 90],
+]
+
+// Trocea un .in() para no armar URLs gigantes con cientos de UUIDs.
+async function enLotes(ids, consulta) {
+    const out = []
+    for (let i = 0; i < ids.length; i += 100) {
+        const { data, error } = await consulta(ids.slice(i, i + 100))
+        if (error) throw error
+        out.push(...(data || []))
+    }
+    return out
+}
+
+function ModalEstadoCuenta({ clienteId, tasaBcv, onCerrar }) {
+    const { perfil } = useAuth()
+    const [cliente, setCliente] = useState(null)
+    const [facturas, setFacturas] = useState([])
+    const [notas, setNotas] = useState([])
+    const [loading, setLoading] = useState(true)
+    const [error, setError] = useState('')
+
+    useEffect(() => {
+        async function cargar() {
+            try {
+                const [{ data: cli, error: e0 }, { data: vts, error: e1 }, { data: ncs, error: e2 }] = await Promise.all([
+                    supabase.from('clientes')
+                        .select('nombre, rif, direccion_fiscal, telefono, telefono_administrativo, email, email_administrativo, condicion_pago, dias_credito')
+                        .eq('empresa_id', perfil.empresa_id).eq('id', clienteId).maybeSingle(),
+                    supabase.from('ventas')
+                        .select('id, numero_factura, created_at, fecha_vencimiento_pago, total, estado_cobro, pago_usd, pago_bs, tasa_cambio')
+                        .eq('empresa_id', perfil.empresa_id).eq('cliente_id', clienteId)
+                        .in('estado_cobro', ['pendiente', 'parcial'])
+                        .order('created_at', { ascending: true }),
+                    supabase.from('devoluciones')
+                        .select('id, numero_nc, fecha_emision, created_at, monto_devuelto, estado_nc')
+                        .eq('empresa_id', perfil.empresa_id).eq('cliente_id', clienteId)
+                        .eq('genera_credito', true).in('estado_nc', ['pendiente', 'parcial'])
+                        .order('created_at', { ascending: true }),
+                ])
+                if (e0 || e1 || e2) throw e0 || e1 || e2
+
+                // Mismo cálculo de "cobrado" que la tabla: abonos en `cobros` +
+                // pago directo registrado en la venta (ventas migradas).
+                const cobros = await enLotes((vts || []).map(v => v.id), ids =>
+                    supabase.from('cobros').select('venta_id, monto_usd, monto_bs, tasa_cambio').in('venta_id', ids))
+                const cobrado = {}
+                cobros.forEach(c => { cobrado[c.venta_id] = (cobrado[c.venta_id] || 0) + cobroEnUsd(c) })
+
+                const hoy = hoyYMD()
+                setFacturas((vts || []).map(v => {
+                    const abonado = (cobrado[v.id] || 0) + pagoDirectoEnUsd(v)
+                    return {
+                        ...v,
+                        abonado,
+                        saldo: Math.max(0, Number(v.total || 0) - abonado),
+                        diasVencida: v.fecha_vencimiento_pago ? diasEntre(v.fecha_vencimiento_pago, hoy) : 0,
+                    }
+                }).filter(f => f.saldo > 0.01))
+
+                // Saldo vivo de cada NC = monto menos lo ya aplicado a facturas.
+                const parciales = (ncs || []).filter(n => n.estado_nc === 'parcial').map(n => n.id)
+                const aplic = await enLotes(parciales, ids =>
+                    supabase.from('cobros').select('devolucion_id, monto_usd').in('devolucion_id', ids))
+                const aplicado = {}
+                aplic.forEach(a => { aplicado[a.devolucion_id] = (aplicado[a.devolucion_id] || 0) + Number(a.monto_usd || 0) })
+                setNotas((ncs || []).map(n => ({
+                    ...n,
+                    disponible: Math.max(0, Number(n.monto_devuelto || 0) - (aplicado[n.id] || 0)),
+                })).filter(n => n.disponible > 0.01))
+
+                setCliente(cli)
+            } catch (e) {
+                console.error('Error cargando estado de cuenta:', e)
+                setError('No se pudo cargar el estado de cuenta')
+            } finally {
+                setLoading(false)
+            }
+        }
+        cargar()
+    }, [clienteId])
+
+    const totalFacturado = facturas.reduce((s, f) => s + Number(f.total || 0), 0)
+    const totalAbonado = facturas.reduce((s, f) => s + f.abonado, 0)
+    const totalSaldo = facturas.reduce((s, f) => s + f.saldo, 0)
+    const totalNc = notas.reduce((s, n) => s + n.disponible, 0)
+    const deudaNeta = totalSaldo - totalNc
+    const tramos = TRAMOS_MORA.map(([label, cumple]) => ({
+        label, monto: facturas.filter(f => cumple(f.diasVencida)).reduce((s, f) => s + f.saldo, 0),
+    }))
+    const conBs = tasaBcv > 1
+    const fechaDoc = new Date().toLocaleDateString('es-VE')
+    const fechaCorta = s => s ? parseFecha(s).toLocaleDateString('es-VE') : '—'
+    const telefono = cliente?.telefono_administrativo || cliente?.telefono
+    const email = cliente?.email_administrativo || cliente?.email
+
+    function exportarExcel() {
+        const r2 = n => Math.round(n * 100) / 100
+        const filas = [
+            [perfil?.empresas?.nombre || ''],
+            [`RIF: ${perfil?.empresas?.rif || ''}`],
+            [],
+            ['ESTADO DE CUENTA'],
+            ['Cliente', cliente?.nombre || ''],
+            ['RIF', cliente?.rif || ''],
+            ['Fecha', fechaDoc],
+            [],
+            ['Factura', 'Emisión', 'Vencimiento', 'Días vencida', 'Total USD', 'Abonado USD', 'Saldo USD'],
+            ...facturas.map(f => [
+                f.numero_factura, fechaCorta(f.created_at), fechaCorta(f.fecha_vencimiento_pago),
+                f.diasVencida > 0 ? f.diasVencida : 0, r2(Number(f.total || 0)), r2(f.abonado), r2(f.saldo),
+            ]),
+            ['TOTAL', '', '', '', r2(totalFacturado), r2(totalAbonado), r2(totalSaldo)],
+            [],
+            ['Antigüedad del saldo'],
+            ...tramos.map(t => [t.label, r2(t.monto)]),
+        ]
+        if (notas.length) {
+            filas.push([], ['Notas de crédito a favor'], ['N° NC', 'Fecha', 'Monto USD', 'Disponible USD'])
+            notas.forEach(n => filas.push([n.numero_nc, fechaCorta(n.fecha_emision || n.created_at), r2(Number(n.monto_devuelto || 0)), r2(n.disponible)]))
+        }
+        filas.push([], ['Saldo facturas', r2(totalSaldo)])
+        if (notas.length) filas.push(['Crédito a favor (NC)', r2(-totalNc)])
+        filas.push([deudaNeta >= 0 ? 'TOTAL A PAGAR USD' : 'SALDO A FAVOR USD', r2(Math.abs(deudaNeta))])
+        if (conBs) filas.push([`Equivalente Bs. (tasa BCV ${tasaBcv})`, r2(Math.abs(deudaNeta) * tasaBcv)])
+
+        const ws = XLSX.utils.aoa_to_sheet(filas)
+        ws['!cols'] = [{ wch: 26 }, { wch: 14 }, { wch: 14 }, { wch: 13 }, { wch: 13 }, { wch: 14 }, { wch: 13 }]
+        const wb = XLSX.utils.book_new()
+        XLSX.utils.book_append_sheet(wb, ws, 'Estado de cuenta')
+        const nombre = (cliente?.nombre || 'cliente').replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_')
+        XLSX.writeFile(wb, `estado_cuenta_${nombre}_${hoyYMD()}.xlsx`)
+    }
+
+    const th = { padding: '8px 10px', fontSize: '11px', fontWeight: 600, color: '#6b7280', textAlign: 'left', borderBottom: '1px solid #e5e7eb', whiteSpace: 'nowrap' }
+    const td = { padding: '8px 10px', fontSize: '12px', color: '#374151', borderBottom: '1px solid #f3f4f6', whiteSpace: 'nowrap' }
+    const num = { textAlign: 'right', fontVariantNumeric: 'tabular-nums' }
+    const Linea = ({ label, valor, fuerte, color }) => (
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '24px', fontSize: fuerte ? '15px' : '13px', fontWeight: fuerte ? 700 : 500, color: color || '#1f2937' }}>
+            <span style={{ color: fuerte ? '#1f2937' : '#6b7280' }}>{label}</span><span>{valor}</span>
+        </div>
+    )
+
+    return createPortal(
+        <>
+            <style>{`@media print {
+                #root { display: none !important; }
+                .ec-no-print { display: none !important; }
+                .ec-doc { position: static !important; transform: none !important; width: auto !important; max-height: none !important; overflow: visible !important; box-shadow: none !important; border-radius: 0 !important; padding: 0 !important; }
+                .ec-doc tr { break-inside: avoid; }
+                @page { margin: 14mm; }
+            }`}</style>
+            <div className="ec-no-print" onClick={onCerrar} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', zIndex: 40 }} />
+            <div className="ec-doc" style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', backgroundColor: '#fff', borderRadius: '16px', padding: '28px', width: 'min(820px, calc(100vw - 32px))', zIndex: 50, boxShadow: '0 20px 60px rgba(0,0,0,0.2)', maxHeight: '90vh', overflowY: 'auto', boxSizing: 'border-box' }}>
+
+                <div className="ec-no-print" style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '20px' }}>
+                    <h2 style={{ fontSize: '17px', fontWeight: 700, color: '#1f2937', margin: 0 }}>Estado de cuenta</h2>
+                    <button onClick={exportarExcel} disabled={loading || !!error}
+                        style={{ marginLeft: 'auto', padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: '#374151', cursor: 'pointer' }}>
+                        📊 Excel
+                    </button>
+                    <button onClick={() => window.print()} disabled={loading || !!error}
+                        style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: '#374151', cursor: 'pointer' }}>
+                        🖨️ Imprimir / PDF
+                    </button>
+                    <button onClick={onCerrar} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af' }}><X size={20} /></button>
+                </div>
+
+                {loading ? <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
+                    : error ? <div style={{ padding: '48px', textAlign: 'center', color: '#dc2626', fontSize: '14px' }}>{error}</div>
+                    : (<>
+                        {/* Membrete */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', marginBottom: '20px', paddingBottom: '16px', borderBottom: '2px solid #1f2937' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                {perfil?.empresas?.logo_url && <img src={perfil.empresas.logo_url} alt="" style={{ height: '44px', objectFit: 'contain' }} />}
+                                <div>
+                                    <div style={{ fontSize: '16px', fontWeight: 700, color: '#1f2937' }}>{perfil?.empresas?.nombre || ''}</div>
+                                    <div style={{ fontSize: '12px', color: '#6b7280' }}>RIF: {perfil?.empresas?.rif || ''}</div>
+                                </div>
+                            </div>
+                            <div style={{ textAlign: 'right' }}>
+                                <div style={{ fontSize: '18px', fontWeight: 700, color: '#1f2937' }}>Estado de cuenta</div>
+                                <div style={{ fontSize: '12px', color: '#6b7280' }}>Al {fechaDoc}</div>
+                            </div>
+                        </div>
+
+                        {/* Cliente */}
+                        <div style={{ backgroundColor: '#f9fafb', borderRadius: '10px', padding: '12px 16px', marginBottom: '20px', fontSize: '13px', color: '#374151', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '4px 24px' }}>
+                            <div><span style={{ color: '#6b7280' }}>Cliente: </span><strong>{cliente?.nombre || '—'}</strong></div>
+                            <div><span style={{ color: '#6b7280' }}>RIF: </span>{cliente?.rif || '—'}</div>
+                            {cliente?.direccion_fiscal && <div style={{ gridColumn: '1 / -1' }}><span style={{ color: '#6b7280' }}>Dirección: </span>{cliente.direccion_fiscal}</div>}
+                            {telefono && <div><span style={{ color: '#6b7280' }}>Teléfono: </span>{telefono}</div>}
+                            {email && <div><span style={{ color: '#6b7280' }}>Email: </span>{email}</div>}
+                            {cliente?.condicion_pago && <div><span style={{ color: '#6b7280' }}>Condición: </span>{cliente.condicion_pago}{cliente.dias_credito ? ` · ${cliente.dias_credito} días` : ''}</div>}
+                        </div>
+
+                        {/* Facturas */}
+                        {facturas.length === 0
+                            ? <div style={{ padding: '24px', textAlign: 'center', color: '#16a34a', fontSize: '14px' }}>El cliente no tiene facturas pendientes de pago.</div>
+                            : (
+                                <div style={{ overflowX: 'auto', marginBottom: '20px' }}>
+                                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                        <thead>
+                                            <tr>
+                                                <th style={th}>Factura</th><th style={th}>Emisión</th><th style={th}>Vencimiento</th>
+                                                <th style={{ ...th, ...num }}>Días venc.</th><th style={{ ...th, ...num }}>Total</th>
+                                                <th style={{ ...th, ...num }}>Abonado</th><th style={{ ...th, ...num }}>Saldo</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {facturas.map(f => (
+                                                <tr key={f.id}>
+                                                    <td style={{ ...td, fontFamily: 'monospace' }}>{f.numero_factura}</td>
+                                                    <td style={td}>{fechaCorta(f.created_at)}</td>
+                                                    <td style={td}>{fechaCorta(f.fecha_vencimiento_pago)}</td>
+                                                    <td style={{ ...td, ...num, color: f.diasVencida > 0 ? '#dc2626' : '#9ca3af', fontWeight: f.diasVencida > 0 ? 600 : 400 }}>
+                                                        {f.diasVencida > 0 ? f.diasVencida : '—'}
+                                                    </td>
+                                                    <td style={{ ...td, ...num }}>{fmt(f.total)}</td>
+                                                    <td style={{ ...td, ...num, color: f.abonado > 0.01 ? '#16a34a' : '#9ca3af' }}>{f.abonado > 0.01 ? fmt(f.abonado) : '—'}</td>
+                                                    <td style={{ ...td, ...num, fontWeight: 600, color: '#1f2937' }}>{fmt(f.saldo)}</td>
+                                                </tr>
+                                            ))}
+                                            <tr>
+                                                <td colSpan={4} style={{ ...td, fontWeight: 700, color: '#1f2937', borderBottom: 'none' }}>Total ({facturas.length} {facturas.length === 1 ? 'factura' : 'facturas'})</td>
+                                                <td style={{ ...td, ...num, fontWeight: 700, borderBottom: 'none' }}>{fmt(totalFacturado)}</td>
+                                                <td style={{ ...td, ...num, fontWeight: 700, borderBottom: 'none' }}>{fmt(totalAbonado)}</td>
+                                                <td style={{ ...td, ...num, fontWeight: 700, color: '#1f2937', borderBottom: 'none' }}>{fmt(totalSaldo)}</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
+
+                        {/* Antigüedad del saldo */}
+                        {facturas.length > 0 && (
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', border: '1px solid #e5e7eb', borderRadius: '10px', overflow: 'hidden', marginBottom: '20px' }}>
+                                {tramos.map((t, i) => (
+                                    <div key={t.label} style={{ padding: '10px 12px', borderLeft: i ? '1px solid #e5e7eb' : 'none' }}>
+                                        <div style={{ fontSize: '11px', color: '#6b7280' }}>{t.label}</div>
+                                        <div style={{ fontSize: '13px', fontWeight: 600, color: t.monto > 0.01 ? (i === 0 ? '#1f2937' : '#dc2626') : '#d1d5db', fontVariantNumeric: 'tabular-nums' }}>{fmt(t.monto)}</div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        {/* NC con saldo a favor del cliente */}
+                        {notas.length > 0 && (<>
+                            <div style={{ fontSize: '13px', fontWeight: 600, color: '#1f2937', marginBottom: '6px' }}>Notas de crédito a favor del cliente</div>
+                            <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '20px' }}>
+                                <thead>
+                                    <tr><th style={th}>N° NC</th><th style={th}>Fecha</th><th style={{ ...th, ...num }}>Monto</th><th style={{ ...th, ...num }}>Disponible</th></tr>
+                                </thead>
+                                <tbody>
+                                    {notas.map(n => (
+                                        <tr key={n.id}>
+                                            <td style={{ ...td, fontFamily: 'monospace' }}>{n.numero_nc || '—'}</td>
+                                            <td style={td}>{fechaCorta(n.fecha_emision || n.created_at)}</td>
+                                            <td style={{ ...td, ...num }}>{fmt(n.monto_devuelto)}</td>
+                                            <td style={{ ...td, ...num, fontWeight: 600, color: '#d97706' }}>{fmt(n.disponible)}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </>)}
+
+                        {/* Resumen */}
+                        <div style={{ marginLeft: 'auto', width: 'min(340px, 100%)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                            <Linea label="Saldo de facturas" valor={fmt(totalSaldo)} />
+                            {notas.length > 0 && <Linea label="Crédito a favor (NC)" valor={`− ${fmt(totalNc)}`} color="#d97706" />}
+                            <div style={{ height: '1px', backgroundColor: '#1f2937', margin: '2px 0' }} />
+                            <Linea label={deudaNeta >= 0 ? 'Total a pagar' : 'Saldo a favor del cliente'} valor={fmt(Math.abs(deudaNeta))} fuerte />
+                            {conBs && <Linea label={`Equivalente (BCV ${Number(tasaBcv).toLocaleString('es-VE')})`} valor={fmtBs(Math.abs(deudaNeta) * tasaBcv)} />}
+                        </div>
+                    </>)}
+            </div>
+        </>,
+        document.body
     )
 }
 
