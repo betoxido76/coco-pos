@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
-import { Package, AlertTriangle, Search, Layers, Beaker, Truck, ArrowDownLeft, ArrowUpRight, History, Filter, Warehouse, ArrowLeftRight, Plus } from 'lucide-react'
+import SaludInventario from '../components/SaludInventario'
+import { Package, AlertTriangle, Search, Layers, Beaker, Truck, ArrowDownLeft, ArrowUpRight, History, Filter, Warehouse, ArrowLeftRight, Plus, ShieldCheck } from 'lucide-react'
 
 const TIPOS_INVENTARIO = [
     { key: 'todos', label: 'Todo el inventario', icon: Layers },
@@ -39,6 +40,7 @@ export default function Inventario() {
                         { key: 'stock', label: 'Stock Actual', icon: Package },
                         { key: 'almacenes', label: 'Por Almacén', icon: Warehouse },
                         { key: 'movimientos', label: 'Movimientos', icon: History },
+                        { key: 'salud', label: 'Salud', icon: ShieldCheck },
                     ].map(tab => (
                         <button key={tab.key} onClick={() => setTabActiva(tab.key)}
                             className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all
@@ -53,6 +55,7 @@ export default function Inventario() {
             {tabActiva === 'stock' && <VistaStock />}
             {tabActiva === 'almacenes' && <VistaPorAlmacen />}
             {tabActiva === 'movimientos' && <VistaMovimientos />}
+            {tabActiva === 'salud' && <SaludInventario />}
         </div>
     )
 }

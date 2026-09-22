@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { Check, X, Building2, Plus, User, Shield, Eye, EyeOff } from 'lucide-react'
+import SaludInventarioOperador from '../components/SaludInventarioOperador'
 
 const inputStyle = {
     width: '100%', padding: '8px 12px', border: '1px solid #d1d5db',
@@ -294,6 +295,8 @@ export default function SuperAdmin() {
                     <Plus size={16} /> Nueva empresa
                 </button>
             </div>
+
+            <SaludInventarioOperador />
 
             <div style={{ display: 'grid', gridTemplateColumns: '260px 1fr', gap: '20px' }}>
 
