@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
+import { moverStock } from '../lib/inventario'
 import { Plus, Search, X, Check, AlertTriangle } from 'lucide-react'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
@@ -46,6 +47,7 @@ export default function Mermas() {
     const [filtroMes, setFiltroMes] = useState('')
     const [busqueda, setBusqueda] = useState('')
     const [modalAnular, setModalAnular] = useState(null)
+    const [errorAnular, setErrorAnular] = useState('')
     const [pagina, setPagina] = useState(0)
     const [totalRegistros, setTotalRegistros] = useState(0)
 
@@ -89,68 +91,27 @@ export default function Mermas() {
     }
 
     async function anular(merma, motivoAnulacion) {
-        const def = TIPOS_ITEM.find(t => t.key === merma.tipo_item)
-        if (def) {
-            const { data: item } = await supabase
-                .from(def.tabla).select('stock_actual').eq('id', merma.item_id).single()
-            if (item) {
-                const stockAnterior = item.stock_actual
-                const stockResultante = stockAnterior + Number(merma.cantidad)
-
-                await supabase.from(def.tabla)
-                    .update({ stock_actual: stockResultante })
-                    .eq('id', merma.item_id)
-
-                // Revertir stock_ubicacion (solo mermas de inventario con almacén registrado)
-                if (merma.almacen_id) {
-                    const tipoItemMap = {
-                        producto_terminado: 'producto_terminado',
-                        materia_prima: 'materia_prima',
-                        empaque: 'material_empaque',
-                        consumible: 'consumible',
-                    }
-                    const tipoSu = tipoItemMap[merma.tipo_item] || merma.tipo_item
-                    const { data: su } = await supabase
-                        .from('stock_ubicacion')
-                        .select('id, cantidad')
-                        .eq('empresa_id', perfil.empresa_id)
-                        .eq('tipo_item', tipoSu)
-                        .eq('item_id', merma.item_id)
-                        .eq('almacen_id', merma.almacen_id)
-                        .is('almacen_ubicacion_id', null)
-                        .maybeSingle()
-                    if (su) {
-                        await supabase.from('stock_ubicacion')
-                            .update({ cantidad: su.cantidad + Number(merma.cantidad) })
-                            .eq('id', su.id)
-                    } else {
-                        await supabase.from('stock_ubicacion').insert({
-                            empresa_id: perfil.empresa_id,
-                            tipo_item: tipoSu,
-                            item_id: merma.item_id,
-                            almacen_id: merma.almacen_id,
-                            almacen_ubicacion_id: null,
-                            cantidad: Number(merma.cantidad),
-                        })
-                    }
-                }
-
-                await supabase.from('movimientos_inventario').insert({
-                    empresa_id: perfil.empresa_id,
-                    tipo_item: merma.tipo_item,
-                    item_id: merma.item_id,
-                    item_nombre: merma.item_nombre,
-                    item_codigo: merma.item_codigo || null,
-                    tipo_movimiento: 'entrada',
+        // Reingreso por el motor: los 4 pasos en una transacción. Solo aplica a
+        // la merma de INVENTARIO — la de despacho nunca descontó, así que no
+        // hay nada que devolver (ver guardar()).
+        if (merma.tipo_merma === 'inventario') {
+            const { data: { user } } = await supabase.auth.getUser()
+            try {
+                await moverStock({
+                    tipoItem: merma.tipo_item, itemId: merma.item_id,
                     cantidad: Number(merma.cantidad),
-                    stock_anterior: stockAnterior,
-                    stock_actual: stockResultante,
-                    almacen_id: merma.almacen_id || null,
-                    origen: 'anulacion_merma',
-                    fecha: new Date().toISOString()
+                    tipoMovimiento: 'entrada', origen: 'anulacion_merma',
+                    almacenId: merma.almacen_id, usuarioId: user?.id || null,
+                    notas: motivoAnulacion || null,
                 })
+            } catch (e) {
+                // No se marca la merma como anulada si el stock no volvió: dejarla
+                // anulada sin reingreso descuadraría el inventario en silencio.
+                setErrorAnular('No se pudo devolver el stock: ' + e.message)
+                return
             }
         }
+
         await supabase.from('mermas')
             .update({ anulada: true, motivo_anulacion: motivoAnulacion })
             .eq('id', merma.id)
@@ -323,7 +284,7 @@ export default function Mermas() {
 
                                     {/* 10. Botón Anular */}
                                     <td style={{ padding: '12px 14px' }}>
-                                        <button onClick={() => setModalAnular(m)}
+                                        <button onClick={() => { setErrorAnular(''); setModalAnular(m) }}
                                             style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #fecaca', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#dc2626', cursor: 'pointer' }}>
                                             <X size={12} /> Anular
                                         </button>
@@ -357,7 +318,8 @@ export default function Mermas() {
                 <ModalAnular
                     merma={modalAnular}
                     onConfirmar={(motivo) => anular(modalAnular, motivo)}
-                    onCerrar={() => setModalAnular(null)}
+                    onCerrar={() => { setErrorAnular(''); setModalAnular(null) }}
+                    error={errorAnular}
                 />
             )}
         </div>
@@ -503,55 +465,26 @@ function NuevaMerma({ onRegistrada, onCancelar }) {
 
         if (errMerma) { setError('Error: ' + errMerma.message); setGuardando(false); return }
 
-        // 2. Descontar stock global
-        const nuevoStock = itemSel.stock_actual - Number(cantidad)
-        await supabase.from(def.tabla)
-            .update({ stock_actual: nuevoStock })
-            .eq('id', itemSel.id)
-
-        // 3. Descontar stock_ubicacion si es merma de inventario
-        if (tipoMerma === 'inventario' && almacenId) {
-            const tipoItemMap = {
-                producto_terminado: 'producto_terminado',
-                materia_prima: 'materia_prima',
-                empaque: 'material_empaque',
-                consumible: 'consumible',
-            }
-            // Repartir el descuento entre las filas del almacen (NULL primero, luego ubicaciones)
-            const { data: filasSU } = await supabase.from('stock_ubicacion')
-                .select('id, cantidad')
-                .eq('almacen_id', almacenId)
-                .eq('tipo_item', tipoItemMap[tipoItem] || tipoItem)
-                .eq('item_id', itemSel.id)
-                .eq('empresa_id', perfil.empresa_id)
-                .gt('cantidad', 0)
-                .order('almacen_ubicacion_id', { ascending: true, nullsFirst: true })
-            let restante = Number(cantidad)
-            for (const fila of (filasSU || [])) {
-                if (restante <= 0) break
-                const desc = Math.min(Number(fila.cantidad), restante)
-                await supabase.from('stock_ubicacion')
-                    .update({ cantidad: Number(fila.cantidad) - desc, updated_at: new Date().toISOString() })
-                    .eq('id', fila.id)
-                restante -= desc
+        // 2-4. Inventario — solo la merma de INVENTARIO lo toca.
+        //
+        // La merma de DESPACHO (rotura en entrega, daño en transporte) no
+        // descuenta: esa mercancía ya salió del almacén cuando se facturó, y
+        // descontarla otra vez la contaría doble. El registro sirve para medir
+        // el costo de las roturas; si hay que devolverle dinero al cliente, va
+        // por nota de crédito, que sí repone inventario.
+        if (tipoMerma === 'inventario') {
+            try {
+                await moverStock({
+                    tipoItem, itemId: itemSel.id, cantidad: Number(cantidad),
+                    tipoMovimiento: 'salida', origen: 'merma',
+                    almacenId, usuarioId: user.id, notas: motivo,
+                })
+            } catch (e) {
+                setError('La merma se registró pero el inventario NO se descontó: ' + e.message)
+                setGuardando(false)
+                return
             }
         }
-
-        // 4. Registrar movimiento
-        await supabase.from('movimientos_inventario').insert({
-            empresa_id: perfil.empresa_id,
-            tipo_item: tipoItem,
-            item_id: itemSel.id,
-            item_nombre: itemSel[def.campoNombre],
-            item_codigo: itemSel[def.campoCodigo] || null,
-            tipo_movimiento: 'salida',
-            cantidad: Number(cantidad),
-            stock_anterior: itemSel.stock_actual,
-            stock_actual: nuevoStock,
-            origen: 'merma',
-            almacen_id: tipoMerma === 'inventario' ? almacenId : null,
-            fecha: new Date().toISOString()
-        })
 
         setGuardando(false)
         onRegistrada()
@@ -588,6 +521,13 @@ function NuevaMerma({ onRegistrada, onCancelar }) {
                             </button>
                         ))}
                     </div>
+                    {tipoMerma === 'despacho' && (
+                        <div style={{ marginTop: '10px', backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '8px', padding: '10px 13px', fontSize: '12px', color: '#1e40af', lineHeight: 1.5 }}>
+                            <strong>No descuenta inventario.</strong> Esta mercancía ya salió del almacén cuando
+                            se facturó; descontarla otra vez la contaría doble. El registro sirve para medir el
+                            costo de las roturas. Si hay que devolverle dinero al cliente, emite una nota de crédito.
+                        </div>
+                    )}
                 </div>
 
                 {/* Tipo de ítem */}
@@ -797,9 +737,10 @@ function NuevaMerma({ onRegistrada, onCancelar }) {
 // ══════════════════════════════════════════════════════════════
 // MODAL ANULACIÓN
 // ══════════════════════════════════════════════════════════════
-function ModalAnular({ merma, onConfirmar, onCerrar }) {
+function ModalAnular({ merma, onConfirmar, onCerrar, error: errorExterno = '' }) {
     const [motivo, setMotivo] = useState('')
     const [error, setError] = useState('')
+    const tocaInventario = merma.tipo_merma === 'inventario'
 
     function confirmar() {
         if (!motivo.trim()) { setError('Ingresa el motivo de anulación'); return }
@@ -814,7 +755,9 @@ function ModalAnular({ merma, onConfirmar, onCerrar }) {
                     <AlertTriangle size={36} style={{ color: '#d97706', marginBottom: '10px' }} />
                     <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#1f2937', margin: '0 0 6px' }}>Anular merma</h3>
                     <p style={{ fontSize: '13px', color: '#6b7280', margin: 0 }}>
-                        Se revertirá el stock de <strong>{merma.item_nombre}</strong> ({merma.cantidad} {merma.unidad_medida})
+                        {tocaInventario
+                            ? <>Se devolverá al almacén el stock de <strong>{merma.item_nombre}</strong> ({merma.cantidad} {merma.unidad_medida})</>
+                            : <>Merma de despacho: no descontó inventario, así que anularla no devuelve stock. Solo se marca el registro de <strong>{merma.item_nombre}</strong>.</>}
                     </p>
                 </div>
                 <div style={{ marginBottom: '16px' }}>
@@ -825,9 +768,9 @@ function ModalAnular({ merma, onConfirmar, onCerrar }) {
                         placeholder="Explica por qué se anula este registro..."
                         style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', boxSizing: 'border-box', resize: 'vertical', fontFamily: 'inherit' }} />
                 </div>
-                {error && (
+                {(error || errorExterno) && (
                     <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '8px 12px', fontSize: '13px', color: '#dc2626', marginBottom: '12px' }}>
-                        {error}
+                        {error || errorExterno}
                     </div>
                 )}
                 <div style={{ display: 'flex', gap: '10px' }}>

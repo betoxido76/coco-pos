@@ -25,6 +25,41 @@ export async function almacenPredeterminado(empresaId) {
     return data?.id || null
 }
 
+// Los formularios usan varios nombres para el mismo tipo de ítem: el de Mermas
+// dice 'empaque', los de Compras y Producción usan el plural de la tabla. El
+// motor y `stock_ubicacion` usan el singular canónico. Ver CLAUDE.md §15.
+const TIPO_ITEM_MOTOR = {
+    empaque: 'material_empaque',
+    productos_terminados: 'producto_terminado',
+    materias_primas: 'materia_prima',
+    materiales_empaque: 'material_empaque',
+    consumibles: 'consumible',
+}
+export const tipoItemMotor = (t) => TIPO_ITEM_MOTOR[t] || t
+
+// Un solo ítem. Para varios usar moverStockLote, que los mueve en una
+// transacción — si uno falla, ninguno queda movido.
+export async function moverStock({
+    tipoItem, itemId, cantidad, origen, tipoMovimiento = 'salida',
+    almacenId = null, permitirFaltante = false, notas = null, usuarioId = null, fecha = null,
+}) {
+    const params = {
+        p_tipo_item: tipoItemMotor(tipoItem),
+        p_item_id: itemId,
+        p_cantidad: Number(cantidad),
+        p_tipo_movimiento: tipoMovimiento,
+        p_origen: origen,
+        p_almacen_id: almacenId || null,
+        p_permitir_faltante: permitirFaltante,
+        p_notas: notas,
+        p_usuario_id: usuarioId,
+    }
+    if (fecha) params.p_fecha = fecha
+    const { data, error } = await supabase.rpc('mover_stock', params)
+    if (error) throw new Error(error.message)
+    return data
+}
+
 // Convierte líneas de venta/pedido al formato que espera el motor.
 // `cantidad` DEBE venir en unidades primarias: el motor no sabe de UM2.
 export const lineasAItems = (lineas, getCantidad) => (lineas || [])
@@ -40,7 +75,7 @@ export const lineasAItems = (lineas, getCantidad) => (lineas || [])
 export async function verificarStock(items, almacenId) {
     if (!items?.length) return []
     const { data, error } = await supabase.rpc('verificar_stock', {
-        p_items: items,
+        p_items: items.map(i => ({ ...i, tipo_item: tipoItemMotor(i.tipo_item) })),
         p_almacen_id: almacenId || null,
     })
     if (error) throw new Error(error.message)
@@ -56,7 +91,7 @@ export async function moverStockLote({
 }) {
     if (!items?.length) return { items: 0, movimientos: 0, faltante: 0 }
     const params = {
-        p_items: items,
+        p_items: items.map(i => ({ ...i, tipo_item: tipoItemMotor(i.tipo_item) })),
         p_tipo_movimiento: tipoMovimiento,
         p_origen: origen,
         p_almacen_id: almacenId || null,

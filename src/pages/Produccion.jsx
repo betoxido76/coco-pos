@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
+import { moverStock, moverStockLote, almacenPredeterminado } from '../lib/inventario'
 import { Plus, ChevronRight, X, AlertTriangle, Check, FlaskConical, Package, Search } from 'lucide-react'
 
 const fmt = (n, dec = 2) => Number(n || 0).toLocaleString('es-VE', { minimumFractionDigits: dec, maximumFractionDigits: dec })
@@ -1234,6 +1235,8 @@ function ModalCierre({ orden, producto, onCerrar, onCerrada }) {
         if (!almacenId) { setError('Selecciona el almacén de ingreso del producto terminado'); return }
         setGuardando(true); setError('')
 
+        const { data: { user } } = await supabase.auth.getUser()
+
         // 1. Cerrar la orden
         const { data: ordenCerrada, error: errOrden } = await supabase
             .from('ordenes_produccion')
@@ -1288,72 +1291,57 @@ function ModalCierre({ orden, producto, onCerrar, onCerrada }) {
             )
             if (errConsumos) { setError('Error al guardar consumos: ' + errConsumos.message); setGuardando(false); return }
 
-            for (const c of consumosValidos) {
-                const tabla = c.tipo_insumo === 'materia_prima' ? 'materias_primas' : 'materiales_empaque'
-                const tipoItem = c.tipo_insumo === 'materia_prima' ? 'materia_prima' : 'material_empaque'
-                const { data: insumo } = await supabase.from(tabla)
-                    .select('stock_actual, nombre, codigo').eq('id', c.insumo_id).single()
-                if (!insumo) continue
+            // Consumo de insumos — todos en una transacción (mover_stock_lote).
+            // Antes, un consumo sin almacén saltaba stock_ubicacion y descuadraba
+            // el inventario; ahora cae al almacén predeterminado de la empresa.
+            const almacenFallback = await almacenPredeterminado(perfil.empresa_id)
+            const itemsConsumo = consumosValidos.map(c => ({
+                tipo_item: c.tipo_insumo === 'materia_prima' ? 'materia_prima' : 'material_empaque',
+                item_id: c.insumo_id,
+                cantidad: Number(c.cantidad_real),
+                almacen_id: c.almacen_id || almacenFallback || null,
+            })).filter(i => i.cantidad > 0)
 
-                const nuevoStock = Math.max(0, insumo.stock_actual - Number(c.cantidad_real))
-                await supabase.from(tabla).update({ stock_actual: nuevoStock }).eq('id', c.insumo_id)
-
-                if (c.almacen_id) {
-                    // Repartir el descuento entre las filas del almacen (NULL primero, luego ubicaciones)
-                    const { data: filasSU } = await supabase.from('stock_ubicacion')
-                        .select('id, cantidad')
-                        .eq('almacen_id', c.almacen_id).eq('tipo_item', tipoItem)
-                        .eq('item_id', c.insumo_id).eq('empresa_id', perfil.empresa_id)
-                        .gt('cantidad', 0)
-                        .order('almacen_ubicacion_id', { ascending: true, nullsFirst: true })
-                    let restante = Number(c.cantidad_real)
-                    for (const fila of (filasSU || [])) {
-                        if (restante <= 0) break
-                        const desc = Math.min(Number(fila.cantidad), restante)
-                        await supabase.from('stock_ubicacion')
-                            .update({ cantidad: Number(fila.cantidad) - desc, updated_at: new Date().toISOString() })
-                            .eq('id', fila.id)
-                        restante -= desc
-                    }
-                }
-
-                await supabase.from('movimientos_inventario').insert({
-                    empresa_id: perfil.empresa_id, tipo_item: tipoItem,
-                    item_id: c.insumo_id, item_nombre: c.insumo_nombre || insumo.nombre,
-                    item_codigo: insumo.codigo || '', tipo_movimiento: 'salida',
-                    cantidad: Number(c.cantidad_real), stock_anterior: insumo.stock_actual,
-                    stock_actual: nuevoStock, origen: 'produccion_consumo',
-                    almacen_id: c.almacen_id || null, fecha: new Date().toISOString()
+            try {
+                await moverStockLote({
+                    items: itemsConsumo, origen: 'produccion_consumo',
+                    almacenId: almacenFallback, permitirFaltante: true,
+                    usuarioId: user.id, notas: `Orden ${orden.numero_orden}`,
                 })
+            } catch (e) {
+                setError('No se pudo descontar el consumo de insumos: ' + e.message)
+                setGuardando(false)
+                return
             }
         }
 
-        // 3. Agregar PT/MP producido al stock
-        if (orden.tipo_salida === 'materia_prima') {
-            const { data: mp } = await supabase.from('materias_primas').select('stock_actual').eq('id', orden.mp_salida_id).single()
-            if (mp) {
-                const nuevoStock = mp.stock_actual + Number(cantReal)
-                await supabase.from('materias_primas').update({ stock_actual: nuevoStock }).eq('id', orden.mp_salida_id)
-                const { data: su } = await supabase.from('stock_ubicacion').select('id, cantidad').eq('almacen_id', almacenId).eq('tipo_item', 'materia_prima').eq('item_id', orden.mp_salida_id).eq('empresa_id', perfil.empresa_id).is('almacen_ubicacion_id', null).maybeSingle()
-                if (su) {
-                    await supabase.from('stock_ubicacion').update({ cantidad: Number(su.cantidad) + Number(cantReal), updated_at: new Date().toISOString() }).eq('id', su.id)
-                } else {
-                    await supabase.from('stock_ubicacion').insert({ almacen_id: almacenId, almacen_ubicacion_id: null, tipo_item: 'materia_prima', item_id: orden.mp_salida_id, cantidad: Number(cantReal), empresa_id: perfil.empresa_id, updated_at: new Date().toISOString() })
+        // 3. Agregar PT/MP producido al stock — entrada por el motor.
+        // El almacén destino lo elige el usuario al cerrar; si no lo eligió,
+        // cae al predeterminado de la empresa en vez de saltar stock_ubicacion.
+        {
+            const almacenFallbackCierre = await almacenPredeterminado(perfil.empresa_id)
+            const esMp = orden.tipo_salida === 'materia_prima'
+            const itemId = esMp ? orden.mp_salida_id : orden.producto_id
+            const destino = almacenId || almacenFallbackCierre
+            if (itemId && Number(cantReal) > 0) {
+                if (!destino) {
+                    setError('No hay almacén de destino: elige uno o marca un almacén predeterminado en Administración → Almacenes.')
+                    setGuardando(false)
+                    return
                 }
-                await supabase.from('movimientos_inventario').insert({ empresa_id: perfil.empresa_id, tipo_item: 'materia_prima', item_id: orden.mp_salida_id, item_nombre: producto?.nombre, item_codigo: producto?.sku || '', tipo_movimiento: 'entrada', cantidad: Number(cantReal), stock_anterior: mp.stock_actual, stock_actual: nuevoStock, origen: 'produccion_cierre', almacen_id: almacenId, fecha: new Date().toISOString() })
-            }
-        } else {
-            const { data: pt } = await supabase.from('productos_terminados').select('stock_actual').eq('id', orden.producto_id).single()
-            if (pt) {
-                const nuevoStock = pt.stock_actual + Number(cantReal)
-                await supabase.from('productos_terminados').update({ stock_actual: nuevoStock }).eq('id', orden.producto_id)
-                const { data: su } = await supabase.from('stock_ubicacion').select('id, cantidad').eq('almacen_id', almacenId).eq('tipo_item', 'producto_terminado').eq('item_id', orden.producto_id).eq('empresa_id', perfil.empresa_id).is('almacen_ubicacion_id', null).maybeSingle()
-                if (su) {
-                    await supabase.from('stock_ubicacion').update({ cantidad: Number(su.cantidad) + Number(cantReal), updated_at: new Date().toISOString() }).eq('id', su.id)
-                } else {
-                    await supabase.from('stock_ubicacion').insert({ almacen_id: almacenId, almacen_ubicacion_id: null, tipo_item: 'producto_terminado', item_id: orden.producto_id, cantidad: Number(cantReal), empresa_id: perfil.empresa_id, updated_at: new Date().toISOString() })
+                try {
+                    await moverStock({
+                        tipoItem: esMp ? 'materia_prima' : 'producto_terminado',
+                        itemId, cantidad: Number(cantReal),
+                        tipoMovimiento: 'entrada', origen: 'produccion_cierre',
+                        almacenId: destino, usuarioId: user.id,
+                        notas: `Orden ${orden.numero_orden}`,
+                    })
+                } catch (e) {
+                    setError('La orden se cerró pero el producto NO entró al inventario: ' + e.message)
+                    setGuardando(false)
+                    return
                 }
-                await supabase.from('movimientos_inventario').insert({ empresa_id: perfil.empresa_id, tipo_item: 'producto_terminado', item_id: orden.producto_id, item_nombre: producto?.nombre, item_codigo: producto?.sku || '', tipo_movimiento: 'entrada', cantidad: Number(cantReal), stock_anterior: pt.stock_actual, stock_actual: nuevoStock, origen: 'produccion_cierre', almacen_id: almacenId, fecha: new Date().toISOString() })
             }
         }
 

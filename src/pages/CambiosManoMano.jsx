@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
+import { moverStock, almacenPredeterminado } from '../lib/inventario'
 import { Plus, Search, Check, X, RefreshCw, Trash2, ArrowRight, ClipboardList, Eye } from 'lucide-react'
 
 const fmt = (n) => Number(n || 0).toLocaleString('es-VE', { minimumFractionDigits: 0, maximumFractionDigits: 3 })
@@ -389,58 +390,20 @@ function TabStockReproceso({ stock, loading, onActualizado }) {
             })
             .eq('id', item.id)
 
-        // Si se reprocesa, devolver al inventario
+        // Si se reprocesa, devolver al inventario. Antes, sin almacén destino
+        // se sumaba a stock_actual sin tocar stock_ubicacion y el inventario
+        // quedaba descuadrado; ahora cae al predeterminado de la empresa.
         if (accion === 'reprocesar') {
-            const { data: prod } = await supabase
-                .from('productos_terminados').select('stock_actual').eq('id', item.producto_id).single()
-            if (prod) {
-                const nuevoStock = prod.stock_actual + Number(item.cantidad)
-                await supabase.from('productos_terminados')
-                    .update({ stock_actual: nuevoStock }).eq('id', item.producto_id)
-
-                // Sumar a stock_ubicacion del almacén destino
-                if (almacenDestino) {
-                    const { data: su } = await supabase.from('stock_ubicacion')
-                        .select('id, cantidad')
-                        .eq('almacen_id', almacenDestino)
-                        .eq('tipo_item', 'producto_terminado')
-                        .eq('item_id', item.producto_id)
-                        .eq('empresa_id', perfil.empresa_id)
-                        .is('almacen_ubicacion_id', null)
-                        .maybeSingle()
-                    if (su) {
-                        await supabase.from('stock_ubicacion')
-                            .update({ cantidad: Number(su.cantidad) + Number(item.cantidad), updated_at: new Date().toISOString() })
-                            .eq('id', su.id)
-                    } else {
-                        await supabase.from('stock_ubicacion').insert({
-                            almacen_id: almacenDestino,
-                            almacen_ubicacion_id: null,
-                            tipo_item: 'producto_terminado',
-                            item_id: item.producto_id,
-                            cantidad: Number(item.cantidad),
-                            empresa_id: perfil.empresa_id,
-                            updated_at: new Date().toISOString(),
-                        })
-                    }
-                }
-
-                // Registrar movimiento
-                await supabase.from('movimientos_inventario').insert({
-                    empresa_id: perfil.empresa_id,
-                    tipo_item: 'producto_terminado',
-                    item_id: item.producto_id,
-                    item_nombre: item.productos_terminados?.nombre || '',
-                    item_codigo: item.productos_terminados?.sku || null,
-                    tipo_movimiento: 'entrada',
-                    cantidad: Number(item.cantidad),
-                    stock_anterior: prod.stock_actual,
-                    stock_actual: nuevoStock,
-                    origen: 'reproceso',
-                    almacen_id: almacenDestino || null,
-                    fecha: new Date().toISOString()
-                })
+            const destino = almacenDestino || await almacenPredeterminado(perfil.empresa_id)
+            if (!destino) {
+                alert('No hay almacén de destino para el reproceso. Elige uno o marca un almacén predeterminado en Administración → Almacenes.')
+                return
             }
+            await moverStock({
+                tipoItem: 'producto_terminado', itemId: item.producto_id,
+                cantidad: Number(item.cantidad), tipoMovimiento: 'entrada',
+                origen: 'reproceso', almacenId: destino, usuarioId: user?.id || null,
+            })
         }
 
         // Si se desecha, registrar como merma
@@ -774,33 +737,14 @@ function ProcesarSolicitud({ solicitud, onProcesada, onCancelar }) {
                 almacen_reproceso_id: it.destino === 'reprocesar' ? (almacenReproceso || null) : null,
             }).eq('id', it.id)
 
-            // 2b. Descontar stock global (leer fresco por si el mismo SKU repite)
-            const { data: pa } = await supabase.from('productos_terminados').select('stock_actual').eq('id', it.producto_id).single()
-            const sAnt = Number(pa?.stock_actual || 0)
-            const sNue = sAnt - Number(it.cantidad)
-            await supabase.from('productos_terminados').update({ stock_actual: sNue }).eq('id', it.producto_id)
-
-            // 2c. Descontar stock_ubicacion repartido (NULL primero, luego ubicaciones)
-            const { data: filas } = await supabase.from('stock_ubicacion')
-                .select('id, cantidad')
-                .eq('almacen_id', almacenId).eq('tipo_item', 'producto_terminado')
-                .eq('item_id', it.producto_id).eq('empresa_id', perfil.empresa_id)
-                .gt('cantidad', 0)
-                .order('almacen_ubicacion_id', { ascending: true, nullsFirst: true })
-            let rest = Number(it.cantidad)
-            for (const f of (filas || [])) {
-                if (rest <= 0) break
-                const d = Math.min(Number(f.cantidad), rest)
-                await supabase.from('stock_ubicacion').update({ cantidad: Number(f.cantidad) - d, updated_at: new Date().toISOString() }).eq('id', f.id)
-                rest -= d
-            }
-
-            // 2d. Movimiento de inventario
-            await supabase.from('movimientos_inventario').insert({
-                empresa_id: perfil.empresa_id, tipo_item: 'producto_terminado', item_id: it.producto_id,
-                item_nombre: prod?.nombre || '', item_codigo: prod?.sku || null, tipo_movimiento: 'salida',
-                cantidad: Number(it.cantidad), stock_anterior: sAnt, stock_actual: sNue,
-                origen: 'cambio_mano_mano', almacen_id: almacenId, fecha: new Date().toISOString(),
+            // 2b. Salida del inventario por el motor (4 pasos en una transacción).
+            // El producto cambiado sale del almacén; permitirFaltante deja pasar
+            // el cambio aunque el sistema no tenga existencias, marcándolo.
+            await moverStock({
+                tipoItem: 'producto_terminado', itemId: it.producto_id,
+                cantidad: Number(it.cantidad), tipoMovimiento: 'salida',
+                origen: 'cambio_mano_mano', almacenId, permitirFaltante: true,
+                usuarioId: user?.id || null,
             })
 
             // 2e. Destino: reproceso o merma
@@ -1196,30 +1140,12 @@ function NuevoCambio({ onRegistrado, onCancelar }) {
                 almacen_reproceso_id: it.destino === 'reprocesar' ? (almacenReproceso || null) : null,
             })
 
-            const { data: pa } = await supabase.from('productos_terminados').select('stock_actual').eq('id', prod.id).single()
-            const sAnt = Number(pa?.stock_actual || 0)
-            const sNue = sAnt - it.cantidad
-            await supabase.from('productos_terminados').update({ stock_actual: sNue }).eq('id', prod.id)
-
-            const { data: filas } = await supabase.from('stock_ubicacion')
-                .select('id, cantidad')
-                .eq('almacen_id', almacenId).eq('tipo_item', 'producto_terminado')
-                .eq('item_id', prod.id).eq('empresa_id', perfil.empresa_id)
-                .gt('cantidad', 0)
-                .order('almacen_ubicacion_id', { ascending: true, nullsFirst: true })
-            let rest = it.cantidad
-            for (const f of (filas || [])) {
-                if (rest <= 0) break
-                const d = Math.min(Number(f.cantidad), rest)
-                await supabase.from('stock_ubicacion').update({ cantidad: Number(f.cantidad) - d, updated_at: new Date().toISOString() }).eq('id', f.id)
-                rest -= d
-            }
-
-            await supabase.from('movimientos_inventario').insert({
-                empresa_id: perfil.empresa_id, tipo_item: 'producto_terminado', item_id: prod.id,
-                item_nombre: prod.nombre, item_codigo: prod.sku || null, tipo_movimiento: 'salida',
-                cantidad: it.cantidad, stock_anterior: sAnt, stock_actual: sNue,
-                origen: 'cambio_mano_mano', almacen_id: almacenId, fecha: new Date().toISOString(),
+            // Salida del inventario por el motor — ver nota en la ruta gemela
+            await moverStock({
+                tipoItem: 'producto_terminado', itemId: prod.id,
+                cantidad: Number(it.cantidad), tipoMovimiento: 'salida',
+                origen: 'cambio_mano_mano', almacenId, permitirFaltante: true,
+                usuarioId: user?.id || null,
             })
 
             if (it.destino === 'reprocesar') {
