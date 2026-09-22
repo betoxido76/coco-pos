@@ -837,31 +837,79 @@ function DetallePedido({ pedido, onVolver }) {
             })
         }
 
-        // Descontar stock — usar cantidad_alistada (unidades primarias reales despachadas)
+        // Descontar stock — usar cantidad_alistada (unidades primarias reales despachadas).
+        //
+        // Sigue el invariante de 4 pasos (CLAUDE.md §15). Antes esta ruta solo
+        // bajaba `stock_actual` y nunca tocaba `stock_ubicacion`: la venta salía
+        // del catálogo pero no de ningún almacén, y el siguiente ajuste en
+        // Inventario la deshacía al recalcular stock_actual desde las ubicaciones.
         for (const item of itemsDespachar) {
             const cantPrimaria = Number(item.cantidad_alistada ?? item.cantidad)
+            if (cantPrimaria <= 0) continue
+
             const { data: prod } = await supabase
                 .from('productos_terminados')
-                .select('stock_actual, nombre, sku')
+                .select('stock_actual, nombre, sku, tipo_producto')
                 .eq('id', item.producto_id)
                 .single()
             if (!prod) continue
-            const nuevoStock = Math.max(0, prod.stock_actual - cantPrimaria)
+            // Un servicio no lleva inventario (mismo criterio que Ventas.jsx)
+            if (prod.tipo_producto === 'servicio') continue
+
+            const stockAnterior = Number(prod.stock_actual || 0)
+            // Sin Math.max(0): un descuento que deja el stock en negativo es la
+            // única señal visible de que se despachó más de lo que había.
+            const nuevoStock = stockAnterior - cantPrimaria
             await supabase.from('productos_terminados')
                 .update({ stock_actual: nuevoStock })
                 .eq('id', item.producto_id)
-            await supabase.from('movimientos_inventario').insert({
+
+            const movBase = {
                 empresa_id: perfil.empresa_id,
                 tipo_item: 'producto_terminado',
                 item_id: item.producto_id,
                 item_nombre: prod.nombre,
                 item_codigo: prod.sku,
                 tipo_movimiento: 'salida',
-                cantidad: cantPrimaria,
-                stock_actual: nuevoStock,
                 origen: 'pedido_facturado',
-                fecha: new Date().toISOString()
-            })
+                fecha: new Date().toISOString(),
+            }
+
+            // Decrementar stock_ubicacion (greedy: toma del almacén con más stock).
+            // Se emite un movimiento por almacén tocado: con un solo movimiento
+            // para varios almacenes, el almacen_id mentiría.
+            const { data: filasStock } = await supabase.from('stock_ubicacion')
+                .select('id, cantidad, almacen_id')
+                .eq('tipo_item', 'producto_terminado')
+                .eq('item_id', item.producto_id).eq('empresa_id', perfil.empresa_id)
+                .gt('cantidad', 0).order('cantidad', { ascending: false })
+
+            let restante = cantPrimaria
+            let corriente = stockAnterior
+            for (const fila of (filasStock || [])) {
+                if (restante <= 0) break
+                const desc = Math.min(restante, Number(fila.cantidad))
+                await supabase.from('stock_ubicacion')
+                    .update({ cantidad: Number(fila.cantidad) - desc, updated_at: new Date().toISOString() })
+                    .eq('id', fila.id)
+                await supabase.from('movimientos_inventario').insert({
+                    ...movBase, cantidad: desc, almacen_id: fila.almacen_id,
+                    stock_anterior: corriente, stock_actual: corriente - desc,
+                })
+                restante -= desc
+                corriente -= desc
+            }
+
+            // Los almacenes no cubrían la cantidad. Se registra igual para que la
+            // suma de movimientos cuadre con lo despachado, pero queda marcado:
+            // es stock que salió sin respaldo en ninguna ubicación.
+            if (restante > 0.001) {
+                await supabase.from('movimientos_inventario').insert({
+                    ...movBase, cantidad: restante, almacen_id: null,
+                    stock_anterior: corriente, stock_actual: corriente - restante,
+                    notas: 'Sin existencias suficientes en almacenes: salida no atribuida a ninguna ubicación',
+                })
+            }
         }
 
         await supabase.from('pedidos')
