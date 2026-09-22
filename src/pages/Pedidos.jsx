@@ -4,6 +4,8 @@ import { useAuth } from '../contexts/AuthContext'
 import { Check, X, FileText, ChevronRight, Clock, Search, Bell, Ban, Pencil } from 'lucide-react'
 import { itemAplicaIva } from '../lib/iva'
 import { sinSaldoQueCobrar } from '../lib/cobro'
+import { almacenPredeterminado, verificarStock, moverStockLote } from '../lib/inventario'
+import ModalFaltanteStock from '../components/ModalFaltanteStock'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 
@@ -520,6 +522,9 @@ function DetallePedido({ pedido, onVolver }) {
     const [items, setItems] = useState([])
     const [loading, setLoading] = useState(true)
     const [procesando, setProcesando] = useState(false)
+    // Faltantes detectados antes de facturar: el modal los muestra y, si el
+    // usuario confirma, se vuelve a entrar con permitirFaltante = true.
+    const [faltantes, setFaltantes] = useState([])
     const [modalRechazo, setModalRechazo] = useState(false)
     const [motivoRechazo, setMotivoRechazo] = useState('')
     const [error, setError] = useState('')
@@ -722,7 +727,7 @@ function DetallePedido({ pedido, onVolver }) {
         setTimeout(() => setExito(''), 3000)
     }
 
-    async function convertirEnFactura() {
+    async function convertirEnFactura(permitirFaltante = false) {
         // Red de seguridad además del botón deshabilitado: nunca emitir una
         // factura sin líneas. Un pedido de muestras sí puede totalizar 0, pero
         // siempre tiene ítems; cero ítems solo ocurre si algo salió mal.
@@ -731,6 +736,30 @@ function DetallePedido({ pedido, onVolver }) {
             return
         }
         setProcesando(true); setError('')
+
+        // Stock a descontar, en unidades primarias (cantidad_alistada es lo
+        // realmente despachado). El almacén sale del predeterminado de la empresa.
+        const itemsStock = items
+            .filter(i => Number(i.cantidad_alistada ?? i.cantidad) > 0)
+            .map(i => ({
+                tipo_item: 'producto_terminado',
+                item_id: i.producto_id,
+                cantidad: Number(i.cantidad_alistada ?? i.cantidad),
+            }))
+        const almacenId = await almacenPredeterminado(perfil.empresa_id)
+
+        // Se pregunta ANTES de crear la factura: si el usuario cancela, no queda
+        // ningún documento a medias.
+        if (!permitirFaltante) {
+            try {
+                const faltan = await verificarStock(itemsStock, almacenId)
+                if (faltan.length > 0) {
+                    setFaltantes(faltan); setProcesando(false); return
+                }
+            } catch (e) {
+                setError('No se pudo verificar el stock: ' + e.message); setProcesando(false); return
+            }
+        }
 
         const { data: numeroConsecutivo } = await supabase.rpc('obtener_siguiente_ventas_numero', {
             p_empresa_id: perfil.empresa_id
@@ -837,79 +866,25 @@ function DetallePedido({ pedido, onVolver }) {
             })
         }
 
-        // Descontar stock — usar cantidad_alistada (unidades primarias reales despachadas).
-        //
-        // Sigue el invariante de 4 pasos (CLAUDE.md §15). Antes esta ruta solo
-        // bajaba `stock_actual` y nunca tocaba `stock_ubicacion`: la venta salía
-        // del catálogo pero no de ningún almacén, y el siguiente ajuste en
-        // Inventario la deshacía al recalcular stock_actual desde las ubicaciones.
-        for (const item of itemsDespachar) {
-            const cantPrimaria = Number(item.cantidad_alistada ?? item.cantidad)
-            if (cantPrimaria <= 0) continue
-
-            const { data: prod } = await supabase
-                .from('productos_terminados')
-                .select('stock_actual, nombre, sku, tipo_producto')
-                .eq('id', item.producto_id)
-                .single()
-            if (!prod) continue
-            // Un servicio no lleva inventario (mismo criterio que Ventas.jsx)
-            if (prod.tipo_producto === 'servicio') continue
-
-            const stockAnterior = Number(prod.stock_actual || 0)
-            // Sin Math.max(0): un descuento que deja el stock en negativo es la
-            // única señal visible de que se despachó más de lo que había.
-            const nuevoStock = stockAnterior - cantPrimaria
-            await supabase.from('productos_terminados')
-                .update({ stock_actual: nuevoStock })
-                .eq('id', item.producto_id)
-
-            const movBase = {
-                empresa_id: perfil.empresa_id,
-                tipo_item: 'producto_terminado',
-                item_id: item.producto_id,
-                item_nombre: prod.nombre,
-                item_codigo: prod.sku,
-                tipo_movimiento: 'salida',
+        // Descontar stock — una sola transacción en la base (mover_stock_lote).
+        // Antes esto eran 4 llamadas HTTP por ítem desde el navegador: si se
+        // cortaba a mitad, el stock quedaba inconsistente y nadie se enteraba.
+        // El motor salta servicios, reparte entre ubicaciones y emite un
+        // movimiento por almacén tocado. Ver motor_inventario_fase2.sql.
+        try {
+            await moverStockLote({
+                items: itemsStock,
                 origen: 'pedido_facturado',
-                fecha: new Date().toISOString(),
-            }
-
-            // Decrementar stock_ubicacion (greedy: toma del almacén con más stock).
-            // Se emite un movimiento por almacén tocado: con un solo movimiento
-            // para varios almacenes, el almacen_id mentiría.
-            const { data: filasStock } = await supabase.from('stock_ubicacion')
-                .select('id, cantidad, almacen_id')
-                .eq('tipo_item', 'producto_terminado')
-                .eq('item_id', item.producto_id).eq('empresa_id', perfil.empresa_id)
-                .gt('cantidad', 0).order('cantidad', { ascending: false })
-
-            let restante = cantPrimaria
-            let corriente = stockAnterior
-            for (const fila of (filasStock || [])) {
-                if (restante <= 0) break
-                const desc = Math.min(restante, Number(fila.cantidad))
-                await supabase.from('stock_ubicacion')
-                    .update({ cantidad: Number(fila.cantidad) - desc, updated_at: new Date().toISOString() })
-                    .eq('id', fila.id)
-                await supabase.from('movimientos_inventario').insert({
-                    ...movBase, cantidad: desc, almacen_id: fila.almacen_id,
-                    stock_anterior: corriente, stock_actual: corriente - desc,
-                })
-                restante -= desc
-                corriente -= desc
-            }
-
-            // Los almacenes no cubrían la cantidad. Se registra igual para que la
-            // suma de movimientos cuadre con lo despachado, pero queda marcado:
-            // es stock que salió sin respaldo en ninguna ubicación.
-            if (restante > 0.001) {
-                await supabase.from('movimientos_inventario').insert({
-                    ...movBase, cantidad: restante, almacen_id: null,
-                    stock_anterior: corriente, stock_actual: corriente - restante,
-                    notas: 'Sin existencias suficientes en almacenes: salida no atribuida a ninguna ubicación',
-                })
-            }
+                almacenId,
+                permitirFaltante,
+                usuarioId: user.id,
+            })
+        } catch (e) {
+            // La factura ya existe: avisar en vez de callar, porque el stock no
+            // se movió y hay que corregirlo a mano.
+            setError('La factura se creó pero el inventario NO se descontó: ' + e.message)
+            setProcesando(false)
+            return
         }
 
         await supabase.from('pedidos')
@@ -917,12 +892,19 @@ function DetallePedido({ pedido, onVolver }) {
             .eq('id', pedido.id)
 
         setProcesando(false)
+        setFaltantes([])
         setExito('Factura creada correctamente')
         setTimeout(() => onVolver(), 1500)
     }
 
     return (
         <div className="print-target" style={{ padding: '24px', maxWidth: '720px' }}>
+            <ModalFaltanteStock
+                faltantes={faltantes}
+                procesando={procesando}
+                onConfirmar={() => convertirEnFactura(true)}
+                onCancelar={() => setFaltantes([])}
+            />
             <style>{`@media print { body * { visibility: hidden; } .print-target, .print-target * { visibility: visible; } .print-target { position: fixed; top: 0; left: 0; width: 100% !important; max-width: none !important; margin: 0; padding: 20px !important; border: none !important; box-shadow: none !important; background: white !important; } .no-print { display: none !important; } }`}</style>
             <div className="no-print" style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
                 <button onClick={onVolver} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', fontSize: '13px' }}>← Volver</button>

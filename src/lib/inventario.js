@@ -1,0 +1,71 @@
+// Puente hacia el motor de inventario, que vive en Postgres (motor_inventario_fase2.sql
+// y _fase2b.sql). Aquí no hay lógica de stock: solo se arma la llamada.
+//
+// El invariante de 4 pasos (CLAUDE.md §15) se ejecuta dentro de una transacción
+// en la base. Antes eran 4 llamadas HTTP sueltas desde el navegador y un corte
+// de conexión a mitad dejaba el stock inconsistente sin que nadie se enterara.
+//
+// Uso típico en una pantalla que descuenta stock:
+//
+//   const almacenId = await almacenPredeterminado(perfil.empresa_id)
+//   const faltantes = await verificarStock(items, almacenId)
+//   if (faltantes.length && !yaConfirmo) { mostrarModal(faltantes); return }
+//   await moverStockLote({ items, origen: 'pedido_facturado', almacenId,
+//                          permitirFaltante: yaConfirmo, usuarioId })
+import { supabase } from './supabaseClient'
+
+// Almacén del que salen las ventas. Se marca en Administración → Almacenes.
+// Si la empresa no tiene ninguno marcado, se devuelve null y el motor reparte
+// tomando del almacén con más stock, que es el comportamiento anterior.
+export async function almacenPredeterminado(empresaId) {
+    if (!empresaId) return null
+    const { data } = await supabase.from('almacenes')
+        .select('id').eq('empresa_id', empresaId).eq('es_default', true)
+        .limit(1).maybeSingle()
+    return data?.id || null
+}
+
+// Convierte líneas de venta/pedido al formato que espera el motor.
+// `cantidad` DEBE venir en unidades primarias: el motor no sabe de UM2.
+export const lineasAItems = (lineas, getCantidad) => (lineas || [])
+    .map(l => ({
+        tipo_item: 'producto_terminado',
+        item_id: l.producto_id,
+        cantidad: Number(getCantidad ? getCantidad(l) : l.cantidad) || 0,
+    }))
+    .filter(i => i.item_id && i.cantidad > 0)
+
+// Lectura pura: qué ítems no alcanzan y cuánto falta. [] = alcanza para todos.
+// Mide contra lo que hay en almacenes, no contra stock_actual del catálogo.
+export async function verificarStock(items, almacenId) {
+    if (!items?.length) return []
+    const { data, error } = await supabase.rpc('verificar_stock', {
+        p_items: items,
+        p_almacen_id: almacenId || null,
+    })
+    if (error) throw new Error(error.message)
+    return data || []
+}
+
+// Mueve todos los ítems en UNA transacción: o salen todos o no sale ninguno.
+// Con permitirFaltante en false (el defecto), si el stock no alcanza lanza y no
+// queda nada a medias. En true registra el faltante marcado y sin almacén.
+export async function moverStockLote({
+    items, origen, almacenId = null, tipoMovimiento = 'salida',
+    permitirFaltante = false, notas = null, usuarioId = null, fecha = null,
+}) {
+    if (!items?.length) return { items: 0, movimientos: 0, faltante: 0 }
+    const params = {
+        p_items: items,
+        p_tipo_movimiento: tipoMovimiento,
+        p_origen: origen,
+        p_almacen_id: almacenId || null,
+        p_permitir_faltante: permitirFaltante,
+        p_notas: notas,
+        p_usuario_id: usuarioId,
+    }
+    if (fecha) params.p_fecha = fecha
+    const { data, error } = await supabase.rpc('mover_stock_lote', params)
+    if (error) throw new Error(error.message)
+    return data
+}

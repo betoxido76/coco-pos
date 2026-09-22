@@ -6,6 +6,8 @@ import { opcionesUnidad } from '../lib/unidades'
 import { itemAplicaIva } from '../lib/iva'
 import { crearNotaCredito } from '../lib/notasCredito'
 import { sinSaldoQueCobrar } from '../lib/cobro'
+import { almacenPredeterminado, verificarStock, moverStockLote } from '../lib/inventario'
+import ModalFaltanteStock from '../components/ModalFaltanteStock'
 
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
@@ -351,6 +353,7 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
     const [items, setItems] = useState([])
     const [loading, setLoading] = useState(true)
     const [procesando, setProcesando] = useState(false)
+    const [faltantes, setFaltantes] = useState([])
     const [error, setError] = useState('')
     const [nroReferencia, setNroReferencia] = useState('')
     const [condicion, setCondicion] = useState('credito')
@@ -438,12 +441,30 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
     const contadoSinDetalle = abonoContado < 0.01
     const contadoCuadra = contadoSinDetalle || Math.abs(abonoContado - total) <= 0.01
 
-    async function facturar() {
+    async function facturar(permitirFaltante = false) {
         if (condicion === 'credito' && Number(diasCredito) <= 0) {
             setError('El cliente tiene condición de crédito pero no tiene días de crédito configurados. Corrígelo en Administración → Clientes antes de facturar.')
             return
         }
         setProcesando(true); setError('')
+
+        // item.cantidad ya viene remapeado a cantidad_alistada al cargar los items
+        const itemsStock = items
+            // Sin metadata del producto no se toca su stock, igual que antes
+            .filter(i => i.productos_terminados && i.productos_terminados.tipo_producto !== 'servicio')
+            .map(i => ({ tipo_item: 'producto_terminado', item_id: i.producto_id, cantidad: Number(i.cantidad) }))
+            .filter(i => i.item_id && i.cantidad > 0)
+        const almacenId = await almacenPredeterminado(perfil.empresa_id)
+
+        // Se pregunta ANTES de crear la factura: si cancela, no queda documento a medias
+        if (!permitirFaltante) {
+            try {
+                const faltan = await verificarStock(itemsStock, almacenId)
+                if (faltan.length > 0) { setFaltantes(faltan); setProcesando(false); return }
+            } catch (e) {
+                setError('No se pudo verificar el stock: ' + e.message); setProcesando(false); return
+            }
+        }
         const { data: numeroConsecutivo } = await supabase.rpc('obtener_siguiente_ventas_numero', {
             p_empresa_id: perfil.empresa_id
         })
@@ -535,47 +556,19 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
             })
         }
 
-        for (const item of items) {
-            const meta = item.productos_terminados
-            if (!meta || meta.tipo_producto === 'servicio') continue
-            // item.cantidad fue remapeado a cantidad_alistada al cargar los items
-            const cantPrimaria = Number(item.cantidad)
-            const { data: prodActual } = await supabase.from('productos_terminados')
-                .select('stock_actual').eq('id', item.producto_id).single()
-            if (!prodActual) continue
-            const nuevoStock = prodActual.stock_actual - cantPrimaria
-            await supabase.from('productos_terminados')
-                .update({ stock_actual: nuevoStock })
-                .eq('id', item.producto_id)
-
-            // Decrementar stock_ubicacion (greedy: toma del almacén con más stock)
-            let restante = cantPrimaria
-            const { data: filasStock } = await supabase.from('stock_ubicacion')
-                .select('id, cantidad').eq('tipo_item', 'producto_terminado')
-                .eq('item_id', item.producto_id).eq('empresa_id', perfil.empresa_id)
-                .gt('cantidad', 0).order('cantidad', { ascending: false })
-            for (const fila of (filasStock || [])) {
-                if (restante <= 0) break
-                const desc = Math.min(restante, Number(fila.cantidad))
-                await supabase.from('stock_ubicacion')
-                    .update({ cantidad: Number(fila.cantidad) - desc })
-                    .eq('id', fila.id)
-                restante -= desc
-            }
-
-            await supabase.from('movimientos_inventario').insert({
-                empresa_id: perfil.empresa_id,
-                tipo_item: 'producto_terminado',
-                item_id: item.producto_id,
-                item_nombre: meta.nombre,
-                item_codigo: meta.sku,
-                tipo_movimiento: 'salida',
-                cantidad: cantPrimaria,
-                stock_anterior: prodActual.stock_actual,
-                stock_actual: nuevoStock,
-                origen: 'pedido_facturado',
-                fecha: new Date().toISOString()
+        // Descontar stock — una sola transacción en la base (mover_stock_lote).
+        // El motor salta servicios, reparte entre ubicaciones del almacén y
+        // emite un movimiento por almacén tocado, con stock_anterior y
+        // almacen_id. Ver motor_inventario_fase2.sql.
+        try {
+            await moverStockLote({
+                items: itemsStock, origen: 'pedido_facturado', almacenId,
+                permitirFaltante, usuarioId: user.id,
             })
+        } catch (e) {
+            setError('La factura se creó pero el inventario NO se descontó: ' + e.message)
+            setProcesando(false)
+            return
         }
 
         await supabase.from('pedidos')
@@ -583,11 +576,16 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
             .eq('id', pedido.id)
 
         setProcesando(false)
+        setFaltantes([])
         onFacturado()
     }
 
     return (
         <div style={{ padding: '24px', maxWidth: '680px' }}>
+            <ModalFaltanteStock
+                faltantes={faltantes} procesando={procesando}
+                onConfirmar={() => facturar(true)} onCancelar={() => setFaltantes([])}
+            />
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
                 <button onClick={onCancelar} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', fontSize: '13px' }}>← Volver</button>
                 <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Registrar pedido {pedido.numero_pedido}</h1>
@@ -856,6 +854,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
     const [items, setItems] = useState([])
     const [guardando, setGuardando] = useState(false)
     const [error, setError] = useState('')
+    const [faltantes, setFaltantes] = useState([])
 
     // Búsqueda avanzada (solo autopartes)
     const [modoAvanzado, setModoAvanzado] = useState(false)
@@ -1185,7 +1184,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
     const impuesto = total - subtotal
 
     // ── HANDLER UNIFICADO: bifurca internamente según flujo ──
-    async function procesar() {
+    async function procesar(permitirFaltante = false) {
         if (!clienteId) { setError('Selecciona un cliente'); return }
         if (items.length === 0) { setError('Agrega al menos un producto'); return }
         if (condicion === 'credito' && Number(diasCredito) <= 0) {
@@ -1198,6 +1197,27 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
 
         if (esRetail) {
             // ── FLUJO RETAIL: venta directa con descuento inmediato de inventario ──
+
+            // Stock a descontar, normalizado a unidades primarias (UM2 × factor)
+            const itemsStock = items
+                .filter(i => i.tipo_producto !== 'servicio')
+                .map(i => ({
+                    tipo_item: 'producto_terminado', item_id: i.producto_id,
+                    cantidad: i.unidadVenta === '2' ? i.cantidad * (i.factor_conversion_2 || 1) : i.cantidad,
+                }))
+                .filter(i => i.item_id && i.cantidad > 0)
+            const almacenId = await almacenPredeterminado(perfil.empresa_id)
+
+            // Se pregunta ANTES de crear la venta: si cancela, no queda nada a medias
+            if (!permitirFaltante) {
+                try {
+                    const faltan = await verificarStock(itemsStock, almacenId)
+                    if (faltan.length > 0) { setFaltantes(faltan); setGuardando(false); return }
+                } catch (e) {
+                    setError('No se pudo verificar el stock: ' + e.message); setGuardando(false); return
+                }
+            }
+
             const { data: numeroConsecutivo } = await supabase.rpc('obtener_siguiente_ventas_numero', {
                 p_empresa_id: perfil.empresa_id
             })
@@ -1265,47 +1285,19 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                 })
             }
 
-            // Descuento inmediato de inventario
-            for (const item of items) {
-                if (item.tipo_producto === 'servicio') continue
-                const cantPrimaria = item.unidadVenta === '2' ? item.cantidad * (item.factor_conversion_2 || 1) : item.cantidad
-                const { data: prodActual } = await supabase.from('productos_terminados')
-                    .select('stock_actual').eq('id', item.producto_id).single()
-                if (!prodActual) continue
-                const nuevoStock = prodActual.stock_actual - cantPrimaria
-                await supabase.from('productos_terminados')
-                    .update({ stock_actual: nuevoStock })
-                    .eq('id', item.producto_id)
-
-                // Decrementar stock_ubicacion (greedy: toma del almacén con más stock)
-                let restante = cantPrimaria
-                const { data: filasStock } = await supabase.from('stock_ubicacion')
-                    .select('id, cantidad').eq('tipo_item', 'producto_terminado')
-                    .eq('item_id', item.producto_id).eq('empresa_id', perfil.empresa_id)
-                    .gt('cantidad', 0).order('cantidad', { ascending: false })
-                for (const fila of (filasStock || [])) {
-                    if (restante <= 0) break
-                    const desc = Math.min(restante, Number(fila.cantidad))
-                    await supabase.from('stock_ubicacion')
-                        .update({ cantidad: Number(fila.cantidad) - desc })
-                        .eq('id', fila.id)
-                    restante -= desc
-                }
-
-                await supabase.from('movimientos_inventario').insert({
-                    empresa_id: perfil.empresa_id,
-                    tipo_item: 'producto_terminado',
-                    item_id: item.producto_id,
-                    item_nombre: item.nombre,
-                    item_codigo: item.sku,
-                    tipo_movimiento: 'salida',
-                    cantidad: cantPrimaria,
-                    stock_anterior: prodActual.stock_actual,
-                    stock_actual: nuevoStock,
-                    origen: 'venta',
-                    fecha: new Date().toISOString()
+            // Descuento inmediato de inventario — una sola transacción en la
+            // base. Ver motor_inventario_fase2.sql.
+            try {
+                await moverStockLote({
+                    items: itemsStock, origen: 'venta', almacenId,
+                    permitirFaltante, usuarioId: user.id,
                 })
+            } catch (e) {
+                setError('La venta se registró pero el inventario NO se descontó: ' + e.message)
+                setGuardando(false)
+                return
             }
+            setFaltantes([])
 
             const cambiados = items.filter(i => Number(i.precio_unitario) !== Number(i.precio_original))
             if (cambiados.length > 0) {
@@ -1393,6 +1385,10 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
 
     return (
         <div style={{ padding: '24px' }}>
+            <ModalFaltanteStock
+                faltantes={faltantes} procesando={guardando}
+                onConfirmar={() => procesar(true)} onCancelar={() => setFaltantes([])}
+            />
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
                 <button onClick={onCancelar} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', fontSize: '13px' }}>← Volver</button>
                 <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>
