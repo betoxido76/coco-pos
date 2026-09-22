@@ -13,6 +13,7 @@
 //   ventaId           ¿contra qué factura? (opcional desde Fase 0)
 
 import { supabase } from './supabaseClient'
+import { moverStockLote } from './inventario'
 
 // Los precios se guardan con IVA embebido salvo que la línea esté exenta.
 export const baseDeLinea = (precio, aplicaIva) =>
@@ -36,61 +37,23 @@ export function calcularTotalesNC(lineas) {
 // (CLAUDE.md §15): leer stock_actual → actualizar producto → actualizar
 // stock_ubicacion con SELECT+UPDATE/INSERT (nunca UPSERT con ON CONFLICT
 // cuando almacen_ubicacion_id es NULL) → registrar el movimiento.
-async function reponerStock({ empresaId, almacenId, lineas }) {
-    for (const l of lineas) {
-        if (l.tipo_linea === 'valor' || !l.producto_id) continue
-        const cantidad = Number(l.cantidad || 0)
-        if (cantidad <= 0) continue
-
-        const { data: prod } = await supabase.from('productos_terminados')
-            .select('stock_actual, nombre, sku, tipo_producto').eq('id', l.producto_id).single()
-        if (!prod) continue
-        // Un servicio no lleva inventario: reponerle stock genera existencias
-        // fantasma. Mismo criterio que anular_nota_no_despachada.
-        if (prod.tipo_producto === 'servicio') continue
-
-        const stockAnterior = Number(prod.stock_actual || 0)
-        const nuevoStock = stockAnterior + cantidad
-
-        await supabase.from('productos_terminados')
-            .update({ stock_actual: nuevoStock }).eq('id', l.producto_id)
-
-        const { data: su } = await supabase.from('stock_ubicacion')
-            .select('id, cantidad')
-            .eq('tipo_item', 'producto_terminado')
-            .eq('item_id', l.producto_id)
-            .eq('almacen_id', almacenId)
-            .is('almacen_ubicacion_id', null)
-            .maybeSingle()
-
-        if (su) {
-            await supabase.from('stock_ubicacion')
-                .update({ cantidad: Number(su.cantidad || 0) + cantidad }).eq('id', su.id)
-        } else {
-            await supabase.from('stock_ubicacion').insert({
-                tipo_item: 'producto_terminado',
-                item_id: l.producto_id,
-                almacen_id: almacenId,
-                cantidad,
-                empresa_id: empresaId,
-            })
-        }
-
-        await supabase.from('movimientos_inventario').insert({
-            empresa_id: empresaId,
+async function reponerStock({ usuarioId = null, almacenId, lineas }) {
+    // El motor hace los 4 pasos en una transacción y salta los servicios, que
+    // no llevan inventario. Antes esto estaba escrito a mano aquí, y su
+    // consulta a stock_ubicacion no filtraba por empresa_id.
+    const items = (lineas || [])
+        .filter(l => l.tipo_linea !== 'valor' && l.producto_id && Number(l.cantidad || 0) > 0)
+        .map(l => ({
             tipo_item: 'producto_terminado',
             item_id: l.producto_id,
-            item_nombre: l.nombre || prod.nombre || '',
-            item_codigo: l.sku || prod.sku || '',
-            tipo_movimiento: 'entrada',
-            cantidad,
-            stock_anterior: stockAnterior,
-            stock_actual: nuevoStock,
-            almacen_id: almacenId,
-            origen: 'devolucion',
-            fecha: new Date().toISOString(),
-        })
-    }
+            cantidad: Number(l.cantidad),
+        }))
+    if (items.length === 0) return
+
+    await moverStockLote({
+        items, tipoMovimiento: 'entrada', origen: 'devolucion',
+        almacenId, usuarioId, notas: 'Reposición por nota de crédito',
+    })
 }
 
 /**
@@ -184,7 +147,7 @@ export async function crearNotaCredito({
     if (errItems) return { data: nc, error: errItems }
 
     if (afectaInventario) {
-        await reponerStock({ empresaId, almacenId, lineas })
+        await reponerStock({ usuarioId, almacenId, lineas })
     }
 
     return { data: nc, error: null }

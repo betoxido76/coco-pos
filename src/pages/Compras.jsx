@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { Plus, Search, Trash2, Check, CheckCircle, FileText, X, AlertTriangle, Truck, ClipboardList, ArrowRight, RotateCcw, Pencil, Ban } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
+import { moverStockLote, verificarStock } from '../lib/inventario'
 import { opcionesUnidad } from '../lib/unidades'
 import SelectorFechaTasa, { useTasasFecha, hoyYMD, fmtFechaCorta } from '../components/SelectorFechaTasa'
 import { ConfirmacionPago, METODOS_USD, METODOS_BS } from '../components/ModalPagoObligacion'
@@ -1229,67 +1230,27 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
             }))
         )
 
-        for (const item of items) {
-            const tabla = item.tipo === 'materias_primas' ? 'materias_primas'
-                : item.tipo === 'materiales_empaque' ? 'materiales_empaque'
-                    : item.tipo === 'consumibles' ? 'consumibles'
-                        : 'productos_terminados'
-            const { data: actual } = await supabase.from(tabla).select('stock_actual').eq('id', item.id).single()
-            const nuevoStock = (actual?.stock_actual || 0) + item.cantidad
+        // Entrada al inventario por el motor: los 4 pasos en una transacción.
+        // Si el lote falla, no queda ningún insumo a medio recibir.
+        const itemsEntrada = items.map(i => ({
+            tipo_item: i.tipo,   // el motor normaliza plural -> singular
+            item_id: i.id,
+            cantidad: Number(i.cantidad),
+        })).filter(i => i.cantidad > 0)
 
-            await supabase.from(tabla).update({ stock_actual: nuevoStock }).eq('id', item.id)
-
-            // Actualizar stock_ubicacion en el almacén seleccionado
-            const tipoItemMap = {
-                materias_primas: 'materia_prima',
-                materiales_empaque: 'material_empaque',
-                consumibles: 'consumible',
-                productos_terminados: 'producto_terminado',
-            }
-            const tipoItem = tipoItemMap[item.tipo] || 'materia_prima'
-
-            // Buscar si ya existe registro en ese almacén
-            const { data: stockExistente } = await supabase.from('stock_ubicacion')
-                .select('id, cantidad')
-                .eq('almacen_id', almacenId)
-                .eq('tipo_item', tipoItem)
-                .eq('item_id', item.id)
-                .eq('empresa_id', perfil.empresa_id)
-                .is('almacen_ubicacion_id', null)
-                .maybeSingle()
-
-            if (stockExistente) {
-                await supabase.from('stock_ubicacion')
-                    .update({ cantidad: Number(stockExistente.cantidad) + item.cantidad, updated_at: new Date().toISOString() })
-                    .eq('id', stockExistente.id)
-            } else {
-                await supabase.from('stock_ubicacion').insert({
-                    almacen_id: almacenId,
-                    almacen_ubicacion_id: null,
-                    tipo_item: tipoItem,
-                    item_id: item.id,
-                    cantidad: item.cantidad,
-                    empresa_id: perfil.empresa_id,
-                    updated_at: new Date().toISOString(),
-                })
-            }
-
-            // Registrar movimiento
-            await supabase.from('movimientos_inventario').insert({
-                empresa_id: perfil.empresa_id,
-                tipo_item: tipoItem,
-                item_id: item.id,
-                item_nombre: item.nombre,
-                item_codigo: item.codigo || item.sku || '',
-                tipo_movimiento: 'entrada',
-                cantidad: item.cantidad,
-                stock_anterior: actual?.stock_actual || 0,
-                stock_actual: nuevoStock,
-                origen: 'recepcion_compra',
-                almacen_id: almacenId,
-                fecha: new Date().toISOString()
+        try {
+            await moverStockLote({
+                items: itemsEntrada, tipoMovimiento: 'entrada',
+                origen: 'recepcion_compra', almacenId,
+                usuarioId: user?.id || null, notas: `Recepción ${numero}`,
             })
+        } catch (e) {
+            setError('La recepción se registró pero el inventario NO entró: ' + e.message)
+            setGuardando(false)
+            return
+        }
 
+        for (const item of items) {
             if (item.orden_item_id) {
                 const { data: current } = await supabase.from('orden_compra_items').select('cantidad_recibida').eq('id', item.orden_item_id).single()
                 const nuevoRecibido = (current?.cantidad_recibida || 0) + item.cantidad
@@ -2535,54 +2496,51 @@ function DetalleRecepcion({ recepcion, onVolver }) {
             setErrorAnular('No se encontraron items de la recepción'); setAnulando(false); return
         }
 
-        // Validar TODO el stock antes de mutar nada (evita reversas parciales)
-        const plan = []
-        for (const ci of compraItems) {
-            const tabla = TABLA_ANULAR[ci.tipo_insumo]
-            const tipoItem = TIPO_ITEM_ANULAR[ci.tipo_insumo]
-            if (!tabla) { setErrorAnular(`Tipo de insumo desconocido: ${ci.tipo_insumo}`); setAnulando(false); return }
-            const cant = Number(ci.cantidad)
-            const nombre = mapaNombres[ci.insumo_id] || ci.insumo_id
-            const { data: prod } = await supabase.from(tabla).select('stock_actual').eq('id', ci.insumo_id).single()
-            const { data: su } = await supabase.from('stock_ubicacion')
-                .select('id, cantidad').eq('almacen_id', recepcion.almacen_id).eq('tipo_item', tipoItem)
-                .eq('item_id', ci.insumo_id).eq('empresa_id', perfil.empresa_id).is('almacen_ubicacion_id', null).maybeSingle()
-            const stockActual = Number(prod?.stock_actual || 0)
-            const stockUbic = Number(su?.cantidad || 0)
-            if (stockActual < cant || stockUbic < cant) {
-                setErrorAnular(`No se puede anular: "${nombre}" ya no tiene stock suficiente (se consumió, vendió o transfirió). Usa una Nota de Débito al proveedor.`)
-                setAnulando(false); return
-            }
-            plan.push({ ci, tabla, tipoItem, cant, nombre, stockActual, stockUbicId: su?.id || null, stockUbic })
+        // Reversa del stock: salida del almacén donde entró la recepción.
+        //
+        // Antes esto validaba a mano item por item antes de mutar, para evitar
+        // reversas parciales. Ahora la garantía la da la transacción del motor:
+        // con permitirFaltante en false, si a un solo insumo no le alcanza el
+        // stock, no se revierte ninguno. verificar_stock corre primero solo
+        // para poder dar un mensaje que nombre los insumos que faltan.
+        const itemsReversa = (compraItems || []).map(ci => ({
+            tipo_item: TIPO_ITEM_ANULAR[ci.tipo_insumo],
+            item_id: ci.insumo_id,
+            cantidad: Number(ci.cantidad),
+        })).filter(i => i.tipo_item && i.cantidad > 0)
+
+        if (itemsReversa.length !== (compraItems || []).length) {
+            setErrorAnular('Hay ítems con un tipo de insumo desconocido en esta recepción.')
+            setAnulando(false); return
         }
 
-        // Reversa del stock (patrón de 4 pasos, espejo de la recepción)
         const { data: { user } } = await supabase.auth.getUser()
-        for (const p of plan) {
-            const nuevoStock = p.stockActual - p.cant
-            await supabase.from(p.tabla).update({ stock_actual: nuevoStock }).eq('id', p.ci.insumo_id)
-            if (p.stockUbicId) {
-                await supabase.from('stock_ubicacion')
-                    .update({ cantidad: p.stockUbic - p.cant, updated_at: new Date().toISOString() }).eq('id', p.stockUbicId)
+        try {
+            const faltan = await verificarStock(itemsReversa, recepcion.almacen_id)
+            if (faltan.length > 0) {
+                const detalle = faltan.map(f => `${f.nombre} (falta ${f.faltante})`).join(', ')
+                setErrorAnular(`No se puede anular: ${detalle} ya no tiene stock suficiente (se consumió, vendió o transfirió). Usa una Nota de Débito al proveedor.`)
+                setAnulando(false); return
             }
-            await supabase.from('movimientos_inventario').insert({
-                empresa_id: perfil.empresa_id, tipo_item: p.tipoItem, item_id: p.ci.insumo_id,
-                item_nombre: p.nombre, item_codigo: '',
-                tipo_movimiento: 'salida', cantidad: p.cant,
-                stock_anterior: p.stockActual, stock_actual: nuevoStock,
-                origen: 'anulacion_recepcion', almacen_id: recepcion.almacen_id, fecha: new Date().toISOString(),
+            await moverStockLote({
+                items: itemsReversa, tipoMovimiento: 'salida',
+                origen: 'anulacion_recepcion', almacenId: recepcion.almacen_id,
+                usuarioId: user?.id || null, notas: motivoAnular.trim(),
             })
+        } catch (e) {
+            setErrorAnular('No se pudo revertir el inventario: ' + e.message)
+            setAnulando(false); return
         }
 
         // Revertir cantidad_recibida de la OC vinculada (match por insumo + tipo)
         if (recepcion.orden_compra_id) {
-            for (const p of plan) {
+            for (const ci of compraItems) {
                 const { data: oci } = await supabase.from('orden_compra_items')
                     .select('id, cantidad_recibida').eq('orden_id', recepcion.orden_compra_id)
-                    .eq('insumo_id', p.ci.insumo_id).eq('tipo_insumo', p.ci.tipo_insumo).maybeSingle()
+                    .eq('insumo_id', ci.insumo_id).eq('tipo_insumo', ci.tipo_insumo).maybeSingle()
                 if (oci) {
                     await supabase.from('orden_compra_items')
-                        .update({ cantidad_recibida: Math.max(0, Number(oci.cantidad_recibida || 0) - p.cant) }).eq('id', oci.id)
+                        .update({ cantidad_recibida: Math.max(0, Number(oci.cantidad_recibida || 0) - Number(ci.cantidad)) }).eq('id', oci.id)
                 }
             }
             const { data: itemsOC } = await supabase.from('orden_compra_items')
@@ -2891,31 +2849,31 @@ function NuevaDevolucion({ onCreada, onCancelar }) {
             }))
         )
 
-        for (const item of items) {
-            const tabla = item.tipo
-            const tipoItem = tipoItemMap[item.tipo] || 'materia_prima'
-            const cant = Number(item.cantidad)
-            const { data: actual } = await supabase.from(tabla).select('stock_actual').eq('id', item.id).single()
-            const nuevoStock = Math.max(0, (actual?.stock_actual || 0) - cant)
-            await supabase.from(tabla).update({ stock_actual: nuevoStock }).eq('id', item.id)
+        // Salida del inventario por el motor. Antes esto no validaba nada antes
+        // de mutar: si el almacén tenía menos de lo devuelto, stock_actual
+        // bajaba completo y la ubicación solo hasta 0, y si la fila de
+        // ubicación no existía, insertaba una en 0 y descontaba igual.
+        const itemsDevueltos = items.map(i => ({
+            tipo_item: i.tipo,
+            item_id: i.id,
+            cantidad: Number(i.cantidad),
+        })).filter(i => i.cantidad > 0)
 
-            const { data: stockEx } = await supabase.from('stock_ubicacion')
-                .select('id, cantidad').eq('almacen_id', almacenId).eq('tipo_item', tipoItem)
-                .eq('item_id', item.id).eq('empresa_id', perfil.empresa_id).is('almacen_ubicacion_id', null).maybeSingle()
-
-            if (stockEx) {
-                await supabase.from('stock_ubicacion').update({ cantidad: Math.max(0, Number(stockEx.cantidad) - cant), updated_at: new Date().toISOString() }).eq('id', stockEx.id)
-            } else {
-                await supabase.from('stock_ubicacion').insert({ almacen_id: almacenId, almacen_ubicacion_id: null, tipo_item: tipoItem, item_id: item.id, cantidad: 0, empresa_id: perfil.empresa_id, updated_at: new Date().toISOString() })
+        try {
+            const faltan = await verificarStock(itemsDevueltos, almacenId)
+            if (faltan.length > 0) {
+                const detalle = faltan.map(f => `${f.nombre}: hay ${f.disponible}, devuelves ${f.requerido}`).join(' · ')
+                setError(`No hay stock suficiente en el almacén para devolver. ${detalle}`)
+                setGuardando(false); return
             }
-
-            await supabase.from('movimientos_inventario').insert({
-                empresa_id: perfil.empresa_id, tipo_item: tipoItem, item_id: item.id,
-                item_nombre: item.nombre, item_codigo: item.codigo || item.sku || '',
-                tipo_movimiento: 'salida', cantidad: cant,
-                stock_anterior: actual?.stock_actual || 0, stock_actual: nuevoStock,
-                origen: 'devolucion_proveedor', almacen_id: almacenId, fecha: new Date().toISOString()
+            await moverStockLote({
+                items: itemsDevueltos, tipoMovimiento: 'salida',
+                origen: 'devolucion_proveedor', almacenId,
+                usuarioId: user?.id || null, notas: `ND ${devDoc.numero_nd || ''}`.trim(),
             })
+        } catch (e) {
+            setError('La devolución se registró pero el inventario NO se descontó: ' + e.message)
+            setGuardando(false); return
         }
 
         setGuardando(false)
