@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import { Check, X, FileText, ChevronRight, Clock, Search, Bell, Ban, Pencil } from 'lucide-react'
 import { itemAplicaIva } from '../lib/iva'
+import { sinSaldoQueCobrar } from '../lib/cobro'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 
@@ -767,9 +768,12 @@ function DetallePedido({ pedido, onVolver }) {
                 numero_factura: numero,
                 subtotal: subtotalFinal,
                 total,
+                // Una nota en $0 (muestra, reposición, cortesía) no es cuenta por
+                // cobrar: nace 'pagado' o queda atrapada en CxC sin poder cerrarse.
                 // Contado que no cubre el total queda 'parcial': marcarlo 'pagado'
                 // dejaría la diferencia sin registrar en ninguna parte.
-                estado_cobro: condicion !== 'contado' ? 'pendiente'
+                estado_cobro: sinSaldoQueCobrar(total) ? 'pagado'
+                    : condicion !== 'contado' ? 'pendiente'
                     : (abonoContado < 0.01 || abonoContado >= total - 0.01) ? 'pagado' : 'parcial',
                 empresa_id: perfil.empresa_id,
                 fecha_vencimiento_pago: fechaVencimiento,

@@ -7,6 +7,7 @@ import { X, DollarSign, CheckSquare, FileText, Ban } from 'lucide-react'
 import SelectorFechaTasa, { useTasasFecha, hoyYMD, fmtFechaCorta, fechaAtimestamp, OPCIONES_TASA } from '../components/SelectorFechaTasa'
 import { ModalEmitirNC, ModalMotivosNC } from '../components/NotasCredito'
 import ModalAnularNC from '../components/ModalAnularNC'
+import { sinSaldoQueCobrar } from '../lib/cobro'
 
 const fmt = n => `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const fmtBs = n => `${Number(n).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`
@@ -742,7 +743,13 @@ function ModalCobro({ venta, onCerrar, onCobrado }) {
     const saldoEfectivo = Math.max(0, saldo - montoNCs)
     const abonoEnUsd = pagoUsd + (pagoBs / tasa) + montoNCs
     const excede = abonoEnUsd > saldo + 0.01
-    const sinAbono = abonoEnUsd < 0.01
+    // Factura sin nada que cobrar (muestra en $0, o ya cubierta por NCs): se
+    // cierra sin dinero. Sin esta excepción quedaba atrapada entre `sinAbono`
+    // (rechaza el 0) y `excede` (rechaza todo lo demás).
+    const saldoCero = sinSaldoQueCobrar(saldo)
+    const sinAbono = !saldoCero && abonoEnUsd < 0.01
+    // Sin saldo no se mueve dinero: ni la tasa del día ni el monto lo bloquean.
+    const bloqueado = sinAbono || excede || (!saldoCero && (sinTasa || cargandoTasas))
 
     // Al cambiar de fecha cambia la tasa: se recalcula el Bs. para que siga
     // equivaliendo al resto del saldo, igual que al cambiar de tipo de tasa.
@@ -810,7 +817,8 @@ function ModalCobro({ venta, onCerrar, onCobrado }) {
     }
 
     async function confirmar() {
-        if (sinTasa) { setError('No hay tasa registrada para la fecha del pago'); return }
+        // Cerrar una factura sin saldo no mueve dinero: no necesita tasa del día.
+        if (sinTasa && !saldoCero) { setError('No hay tasa registrada para la fecha del pago'); return }
         if (sinAbono) { setError('Ingresa un monto a cobrar'); return }
         if (excede) { setError('El abono supera el saldo pendiente'); return }
         setGuardando(true); setError('')
@@ -906,9 +914,17 @@ function ModalCobro({ venta, onCerrar, onCobrado }) {
                     <div style={{ height: '1px', backgroundColor: '#e5e7eb', margin: '8px 0' }} />
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '15px', fontWeight: 700 }}>
                         <span style={{ color: '#6b7280' }}>Saldo pendiente</span>
-                        <span style={{ color: '#ef4444' }}>{fmt(saldo)}</span>
+                        <span style={{ color: saldoCero ? '#16a34a' : '#ef4444' }}>{fmt(saldo)}</span>
                     </div>
                 </div>
+
+                {/* Sin saldo: no hay dinero que registrar, solo cerrar la factura */}
+                {saldoCero && (
+                    <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '10px', padding: '12px 16px', marginBottom: '20px', fontSize: '13px', color: '#166534', lineHeight: 1.5 }}>
+                        Esta factura no tiene saldo por cobrar{venta.total <= 0.01 ? ' (nota en $0: muestra, reposición o cortesía)' : ''}.
+                        Al confirmar se marca como <strong>pagada</strong> y sale de Cuentas por Cobrar, sin registrar ningún cobro.
+                    </div>
+                )}
 
                 {/* Fecha del pago + tasas de esa fecha */}
                 <SelectorFechaTasa
@@ -1041,8 +1057,9 @@ function ModalCobro({ venta, onCerrar, onCobrado }) {
                     </div>
                 )}
 
-                <div style={{ borderRadius: '8px', padding: '10px 14px', marginBottom: '16px', fontSize: '13px', textAlign: 'center', fontWeight: 500, backgroundColor: sinTasa || excede ? '#fef2f2' : sinAbono ? '#f9fafb' : '#f0fdf4', color: sinTasa || excede ? '#dc2626' : sinAbono ? '#9ca3af' : '#166534', border: `1px solid ${sinTasa || excede ? '#fecaca' : sinAbono ? '#e5e7eb' : '#bbf7d0'}` }}>
-                    {sinTasa ? `⛔ Sin tasa registrada para el ${fmtFechaCorta(fechaPago)}`
+                <div style={{ borderRadius: '8px', padding: '10px 14px', marginBottom: '16px', fontSize: '13px', textAlign: 'center', fontWeight: 500, backgroundColor: !saldoCero && (sinTasa || excede) ? '#fef2f2' : sinAbono ? '#f9fafb' : '#f0fdf4', color: !saldoCero && (sinTasa || excede) ? '#dc2626' : sinAbono ? '#9ca3af' : '#166534', border: `1px solid ${!saldoCero && (sinTasa || excede) ? '#fecaca' : sinAbono ? '#e5e7eb' : '#bbf7d0'}` }}>
+                    {saldoCero ? '✓ Sin saldo — se marcará como pagada'
+                        : sinTasa ? `⛔ Sin tasa registrada para el ${fmtFechaCorta(fechaPago)}`
                         : excede ? '⚠️ El abono supera el saldo pendiente'
                         : sinAbono ? 'Ingresa el monto a cobrar'
                         : montoNCs > 0 && saldoEfectivo <= 0.001
@@ -1052,9 +1069,9 @@ function ModalCobro({ venta, onCerrar, onCobrado }) {
 
                 {error && <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px', fontSize: '13px', color: '#dc2626', marginBottom: '12px' }}>{error}</div>}
 
-                <button onClick={confirmar} disabled={guardando || sinAbono || excede || sinTasa || cargandoTasas}
-                    style={{ width: '100%', backgroundColor: sinAbono || excede || sinTasa || cargandoTasas ? '#d1d5db' : '#16a34a', color: '#fff', border: 'none', borderRadius: '10px', padding: '13px', fontSize: '15px', fontWeight: 700, cursor: sinAbono || excede || sinTasa || cargandoTasas ? 'default' : 'pointer' }}>
-                    {guardando ? 'Registrando...' : 'Confirmar cobro'}
+                <button onClick={confirmar} disabled={guardando || bloqueado}
+                    style={{ width: '100%', backgroundColor: bloqueado ? '#d1d5db' : '#16a34a', color: '#fff', border: 'none', borderRadius: '10px', padding: '13px', fontSize: '15px', fontWeight: 700, cursor: bloqueado ? 'default' : 'pointer' }}>
+                    {guardando ? 'Registrando...' : saldoCero ? 'Marcar como pagada' : 'Confirmar cobro'}
                 </button>
             </div>
         </>
@@ -1096,7 +1113,11 @@ function ModalCobroMultiple({ ventas, onCerrar, onCobrado }) {
     const abonoEnUsd = pagoUsd + (pagoBs / tasa)
     const cubre = Math.abs(abonoEnUsd - totalGeneral) <= 0.01
     const excede = abonoEnUsd > totalGeneral + 0.01
-    const sinAbono = abonoEnUsd < 0.01
+    // Igual que en el cobro individual: si lo seleccionado suma $0 (muestras)
+    // no hay monto que exigir, solo cerrar las facturas.
+    const saldoCero = sinSaldoQueCobrar(totalGeneral)
+    const sinAbono = !saldoCero && abonoEnUsd < 0.01
+    const bloqueado = !cubre || excede || (!saldoCero && (sinTasa || cargandoTasas))
 
     // La tasa del día elegido cambia el equivalente en Bs. del resto
     useEffect(() => {
@@ -1116,7 +1137,7 @@ function ModalCobroMultiple({ ventas, onCerrar, onCobrado }) {
     }
 
     async function confirmar() {
-        if (sinTasa) { setError('No hay tasa registrada para la fecha del pago'); return }
+        if (sinTasa && !saldoCero) { setError('No hay tasa registrada para la fecha del pago'); return }
         if (sinAbono) { setError('Ingresa un monto a cobrar'); return }
         if (excede) { setError('El monto supera el total de las facturas'); return }
         if (!cubre) { setError('El monto debe cubrir exactamente el total — no se aceptan pagos parciales en cobro múltiple'); return }
@@ -1126,23 +1147,32 @@ function ModalCobroMultiple({ ventas, onCerrar, onCobrado }) {
 
         // Insertar un cobro por cada factura con su proporción del total
         for (const venta of ventas) {
-            const proporcion = venta.total / totalGeneral
-            await supabase.from('cobros').insert({
-                venta_id: venta.id,
-                monto_usd: parseFloat((pagoUsd * proporcion).toFixed(2)),
-                monto_bs: parseFloat((pagoBs * proporcion).toFixed(2)),
-                tasa_cambio: tasa,
-                tipo_tasa: tipoTasa,
-                fecha_cobro: fechaAtimestamp(fechaPago),
-                metodo_usd: metodoUsd,
-                metodo_bs: metodoBs,
-                nota: nota || null,
-                cuenta_bancaria_id: cuentaBancariaId || null,
-                // Estatus del cliente al momento del pago
-                contribuyente_especial: venta.clientes?.contribuyente_especial ?? null,
-                usuario_id: user.id,
-                empresa_id: perfil.empresa_id,
-            })
+            // Guarda: todas las seleccionadas en $0 daría 0/0 = NaN y se
+            // intentaría insertar NaN en el cobro.
+            const proporcion = totalGeneral > 0.001 ? venta.total / totalGeneral : 0
+            const montoUsdVenta = parseFloat((pagoUsd * proporcion).toFixed(2))
+            const montoBsVenta = parseFloat((pagoBs * proporcion).toFixed(2))
+
+            // Una factura en $0 no genera cobro: se marca pagada y ya. Insertar
+            // una fila en $0 ensucia `cobros`, que es el libro de la cobranza.
+            if (montoUsdVenta > 0.001 || montoBsVenta > 0.001) {
+                await supabase.from('cobros').insert({
+                    venta_id: venta.id,
+                    monto_usd: montoUsdVenta,
+                    monto_bs: montoBsVenta,
+                    tasa_cambio: tasa,
+                    tipo_tasa: tipoTasa,
+                    fecha_cobro: fechaAtimestamp(fechaPago),
+                    metodo_usd: metodoUsd,
+                    metodo_bs: metodoBs,
+                    nota: nota || null,
+                    cuenta_bancaria_id: cuentaBancariaId || null,
+                    // Estatus del cliente al momento del pago
+                    contribuyente_especial: venta.clientes?.contribuyente_especial ?? null,
+                    usuario_id: user.id,
+                    empresa_id: perfil.empresa_id,
+                })
+            }
             await supabase.from('ventas').update({ estado_cobro: 'pagado' }).eq('id', venta.id)
         }
 
@@ -1255,9 +1285,11 @@ function ModalCobroMultiple({ ventas, onCerrar, onCobrado }) {
 
                 {error && <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px', fontSize: '13px', color: '#dc2626', marginBottom: '12px' }}>{error}</div>}
 
-                <button onClick={confirmar} disabled={guardando || !cubre || excede || sinTasa || cargandoTasas}
-                    style={{ width: '100%', backgroundColor: !cubre || excede || sinTasa || cargandoTasas ? '#d1d5db' : '#1d4ed8', color: '#fff', border: 'none', borderRadius: '10px', padding: '13px', fontSize: '15px', fontWeight: 700, cursor: !cubre || excede || sinTasa || cargandoTasas ? 'default' : 'pointer' }}>
-                    {guardando ? 'Registrando...' : `Confirmar cobro de ${ventas.length} facturas`}
+                <button onClick={confirmar} disabled={guardando || bloqueado}
+                    style={{ width: '100%', backgroundColor: bloqueado ? '#d1d5db' : '#1d4ed8', color: '#fff', border: 'none', borderRadius: '10px', padding: '13px', fontSize: '15px', fontWeight: 700, cursor: bloqueado ? 'default' : 'pointer' }}>
+                    {guardando ? 'Registrando...'
+                        : saldoCero ? `Marcar ${ventas.length} facturas como pagadas`
+                        : `Confirmar cobro de ${ventas.length} facturas`}
                 </button>
             </div>
         </>

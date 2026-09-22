@@ -5,6 +5,7 @@ import { Plus, Search, Trash2, Check, CheckCircle, FileText, RotateCcw, AlertTri
 import { opcionesUnidad } from '../lib/unidades'
 import { itemAplicaIva } from '../lib/iva'
 import { crearNotaCredito } from '../lib/notasCredito'
+import { sinSaldoQueCobrar } from '../lib/cobro'
 
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
@@ -464,9 +465,12 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
                 numero_factura: numero,
                 subtotal,
                 total,
+                // Una nota en $0 (muestra, reposición, cortesía) no es cuenta por
+                // cobrar: nace 'pagado' o queda atrapada en CxC sin poder cerrarse.
                 // Contado que no cubre el total queda 'parcial': marcarlo 'pagado'
                 // dejaría la diferencia sin registrar en ninguna parte.
-                estado_cobro: condicion !== 'contado' ? 'pendiente'
+                estado_cobro: sinSaldoQueCobrar(total) ? 'pagado'
+                    : condicion !== 'contado' ? 'pendiente'
                     : (contadoSinDetalle || abonoContado >= total - 0.01) ? 'pagado' : 'parcial',
                 empresa_id: perfil.empresa_id,
                 nro_referencia: nroReferencia.trim() || null,
@@ -1211,7 +1215,8 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                 .insert({
                     cliente_id: clienteId, usuario_id: user.id, numero_factura: numero,
                     subtotal, total,
-                    estado_cobro: condicion === 'contado' ? 'pagado' : 'pendiente',
+                    // Ver nota en FacturarPedido: una nota en $0 nace 'pagado'.
+                    estado_cobro: (sinSaldoQueCobrar(total) || condicion === 'contado') ? 'pagado' : 'pendiente',
                     empresa_id: perfil.empresa_id,
                     nro_referencia: nroReferencia.trim() || null,
                     oc_cliente: ocCliente.trim() || null,
