@@ -155,6 +155,9 @@ function TabComercial() {
                         .eq('empresa_id', perfil.empresa_id)
                         .gte('ventas.created_at', desde + 'T00:00:00')
                         .lte('ventas.created_at', hasta + 'T23:59:59.999')
+                        // Una nota anulada no es venta: se excluye igual que en
+                        // DashboardResumen y CxC, o los dos tabs se contradicen.
+                        .neq('ventas.estado_cobro', 'anulado')
                         .range(from, from + PAGE - 1)
                     if (e) throw e
                     all = all.concat(data || [])
