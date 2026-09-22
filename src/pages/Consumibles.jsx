@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabaseClient'
 import { Plus, Search, Pencil, Check, AlertTriangle, ToggleLeft, ToggleRight } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { opcionesUnidad } from '../lib/unidades'
+import { ajustarStockMaestro } from '../lib/inventario'
 
 const VACIO = {
     nombre: '', codigo: '', descripcion: '', unidad_medida: 'unidad',
@@ -23,13 +24,23 @@ export default function Consumibles() {
     const [form, setForm] = useState(VACIO)
     const [guardando, setGuardando] = useState(false)
     const [error, setError] = useState('')
+    // El stock se aplica como diferencia contra un almacén, por el motor de
+    // inventario. Ver la nota gemela en MateriasPrimas.jsx.
+    const [almacenes, setAlmacenes] = useState([])
+    const [almacenStock, setAlmacenStock] = useState('')
+    const [stockOriginal, setStockOriginal] = useState(0)
     const [exito, setExito] = useState('')
+
+    const stockCambio = Number(form.stock_actual || 0) !== Number(stockOriginal || 0)
 
     useEffect(() => {
         cargar()
         supabase.from('proveedores').select('id, nombre')
             .eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
             .then(({ data }) => setProveedores(data || []))
+        supabase.from('almacenes').select('id, nombre, es_default')
+            .eq('empresa_id', perfil.empresa_id).order('nombre')
+            .then(({ data }) => setAlmacenes(data || []))
     }, [])
 
     async function cargar() {
@@ -42,10 +53,19 @@ export default function Consumibles() {
 
     function abrirNuevo() {
         setEditando(null); setForm(VACIO); setError(''); setVista('form')
+        setStockOriginal(0); setAlmacenStock('')
     }
 
     function abrirEditar(item) {
         setEditando(item.id)
+        setStockOriginal(Number(item.stock_actual || 0))
+        // Preselecciona el almacén donde ya tiene existencias
+        supabase.from('stock_ubicacion')
+            .select('almacen_id, cantidad')
+            .eq('empresa_id', perfil.empresa_id).eq('tipo_item', 'consumible')
+            .eq('item_id', item.id).gt('cantidad', 0)
+            .order('cantidad', { ascending: false }).limit(1)
+            .then(({ data }) => setAlmacenStock(data?.[0]?.almacen_id || ''))
         setForm({
             nombre: item.nombre || '',
             codigo: item.codigo || '',
@@ -76,7 +96,7 @@ export default function Consumibles() {
             descripcion: form.descripcion.trim() || null,
             unidad_medida: form.unidad_medida,
             costo_compra_promedio: form.costo_compra_promedio !== '' ? Number(form.costo_compra_promedio) : null,
-            stock_actual: form.stock_actual !== '' ? Number(form.stock_actual) : 0,
+            // stock_actual NO va en el payload: lo escribe el motor de inventario
             stock_minimo: form.stock_minimo !== '' ? Number(form.stock_minimo) : 0,
             categoria_1: form.categoria_1 || null,
             categoria_2: form.categoria_2 || null,
@@ -87,14 +107,42 @@ export default function Consumibles() {
         }
 
         let err
+        let itemId = editando
         if (editando) {
             ; ({ error: err } = await supabase.from('consumibles').update(payload).eq('id', editando))
         } else {
-            ; ({ error: err } = await supabase.from('consumibles').insert({ ...payload, empresa_id: perfil.empresa_id }))
+            const { data: creado, error: e2 } = await supabase.from('consumibles')
+                .insert({ ...payload, empresa_id: perfil.empresa_id, stock_actual: 0 })
+                .select('id').single()
+            err = e2
+            itemId = creado?.id
+        }
+
+        if (err) {
+            setGuardando(false)
+            setError(err.code === '23505' ? `El código "${payload.codigo}" ya existe en el catálogo. Por favor elige otro código.` : 'Error al guardar: ' + err.message)
+            return
+        }
+
+        if (stockCambio && itemId) {
+            try {
+                const { data: { user } } = await supabase.auth.getUser()
+                await ajustarStockMaestro({
+                    tipoItem: 'consumible', itemId,
+                    stockAnterior: editando ? stockOriginal : 0,
+                    stockNuevo: Number(form.stock_actual || 0),
+                    almacenId: almacenStock, usuarioId: user?.id || null,
+                    nota: 'Ajuste desde la ficha del consumible',
+                })
+            } catch (e) {
+                setGuardando(false)
+                setError('Los datos se guardaron, pero el stock NO se ajustó: ' + e.message)
+                await cargar()
+                return
+            }
         }
 
         setGuardando(false)
-        if (err) { setError(err.code === '23505' ? `El código "${payload.codigo}" ya existe en el catálogo. Por favor elige otro código.` : 'Error al guardar: ' + err.message); return }
 
         setExito(editando ? 'Consumible actualizado' : 'Consumible creado')
         setTimeout(() => setExito(''), 3000)
@@ -171,7 +219,27 @@ export default function Consumibles() {
                     <input type="number" min="0" value={form.stock_actual}
                         onChange={e => campo('stock_actual', e.target.value)}
                         placeholder="0" style={inputStyle} />
+                    {stockCambio && (
+                        <p style={{ fontSize: '11px', color: '#92400e', margin: '5px 0 0' }}>
+                            Se registrará un ajuste de {(Number(form.stock_actual || 0) - Number(stockOriginal || 0)) > 0 ? '+' : ''}
+                            {Number(form.stock_actual || 0) - Number(stockOriginal || 0)} en el almacén elegido.
+                        </p>
+                    )}
                 </Campo>
+
+                {stockCambio && (
+                    <Campo label="Almacén del ajuste *">
+                        <select value={almacenStock} onChange={e => setAlmacenStock(e.target.value)} style={inputStyle}>
+                            <option value="">Selecciona el almacén...</option>
+                            {almacenes.map(a => (
+                                <option key={a.id} value={a.id}>{a.nombre}{a.es_default ? ' (principal)' : ''}</option>
+                            ))}
+                        </select>
+                        <p style={{ fontSize: '11px', color: '#6b7280', margin: '5px 0 0' }}>
+                            El stock vive en un almacén, no en la ficha. Elige a cuál aplicar la diferencia.
+                        </p>
+                    </Campo>
+                )}
 
                 <Campo label="Stock mínimo (alerta)">
                     <input type="number" min="0" value={form.stock_minimo}

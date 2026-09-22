@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { Plus, Search, Pencil, X, Check, AlertTriangle, Trash2 } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
+import { ajustarStockMaestro, almacenPredeterminado } from '../lib/inventario'
 import { opcionesUnidad } from '../lib/unidades'
 
 const TIPOS = ['producido', 'comprado', 'servicio']
@@ -185,84 +186,53 @@ export default function Productos() {
             // cálculo de documentos, y sin esto no queda rastro de quién los movió.
             // `updated_at` lo pone un trigger, así cubre también cambios por SQL.
             const { data: { user } } = await supabase.auth.getUser()
+            // stock_actual se omite a propósito: lo escribe el motor al aplicar
+            // la diferencia. Mandarlo aquí lo contaría dos veces.
+            const { stock_actual: _ignorado, ...sinStock } = payload
             ; ({ error: err } = await supabase.from('productos_terminados')
-                .update({ ...payload, actualizado_por: user?.id || null }).eq('id', editando))
+                .update({ ...sinStock, actualizado_por: user?.id || null }).eq('id', editando))
         } else {
-            const { data: nuevo, error: insErr } = await supabase.from('productos_terminados').insert({ ...payload, empresa_id: perfil.empresa_id }).select('id').single()
+            const { data: nuevo, error: insErr } = await supabase.from('productos_terminados').insert({ ...payload, stock_actual: 0, empresa_id: perfil.empresa_id }).select('id').single()
             err = insErr
             productoId = nuevo?.id
         }
 
         if (err) { setGuardando(false); setError(err.code === '23505' ? `El SKU "${payload.sku}" ya existe en el catálogo. Por favor elige otro código.` : 'Error al guardar: ' + err.message); return }
 
-        // Sincronizar stock_ubicacion y movimientos_inventario
+        // Stock por el motor: aplica la diferencia contra un almacén en una
+        // transacción, con su fila de ubicación y su movimiento. Antes esto
+        // eran tres ramas escritas a mano aquí, distintas de las de Materias
+        // Primas y Consumibles — y la diferencia era el bug.
         const stockNuevo = payload.stock_actual
         if (!esServicio && productoId && stockNuevo !== stockAnterior) {
             const { data: { user } } = await supabase.auth.getUser()
-            const { data: almDefault } = await supabase.from('almacenes')
-                .select('id').eq('empresa_id', perfil.empresa_id).eq('es_default', true).maybeSingle()
-            const almId = almDefault?.id
-
-            if (!editando) {
-                // CREAR: insertar fila en stock_ubicacion si stock > 0
-                if (stockNuevo > 0 && almId) {
-                    await supabase.from('stock_ubicacion').insert({
-                        tipo_item: 'producto_terminado', item_id: productoId,
-                        almacen_id: almId, almacen_ubicacion_id: null,
-                        cantidad: stockNuevo, empresa_id: perfil.empresa_id,
-                        updated_at: new Date().toISOString(),
-                    })
-                    await supabase.from('movimientos_inventario').insert({
-                        empresa_id: perfil.empresa_id, tipo_item: 'producto_terminado',
-                        item_id: productoId, item_nombre: payload.nombre, item_codigo: payload.sku,
-                        tipo_movimiento: 'entrada', cantidad: stockNuevo,
-                        stock_anterior: 0, stock_actual: stockNuevo,
-                        almacen_id: almId, origen: 'inventario_inicial',
-                        notas: 'Stock inicial al crear producto',
-                        usuario_id: user.id, fecha: new Date().toISOString(),
-                    })
-                }
-            } else {
-                // EDITAR: aplicar diff al almacén con más stock (o al default si no hay filas)
-                const diff = stockNuevo - stockAnterior
-                const { data: filas } = await supabase.from('stock_ubicacion')
-                    .select('id, cantidad, almacen_id')
+            // Al editar se aplica donde el producto ya tiene stock; al crear,
+            // en el almacén predeterminado de la empresa.
+            const { data: filas } = editando
+                ? await supabase.from('stock_ubicacion')
+                    .select('almacen_id, cantidad')
                     .eq('tipo_item', 'producto_terminado').eq('item_id', editando)
-                    .eq('empresa_id', perfil.empresa_id)
-                    .order('cantidad', { ascending: false })
+                    .eq('empresa_id', perfil.empresa_id).gt('cantidad', 0)
+                    .order('cantidad', { ascending: false }).limit(1)
+                : { data: null }
+            const almId = filas?.[0]?.almacen_id || await almacenPredeterminado(perfil.empresa_id)
 
-                if (filas && filas.length > 0) {
-                    const fila = filas[0]
-                    const nuevaCantidad = Math.max(0, Number(fila.cantidad) + diff)
-                    await supabase.from('stock_ubicacion')
-                        .update({ cantidad: nuevaCantidad, updated_at: new Date().toISOString() })
-                        .eq('id', fila.id)
-                    await supabase.from('movimientos_inventario').insert({
-                        empresa_id: perfil.empresa_id, tipo_item: 'producto_terminado',
-                        item_id: editando, item_nombre: payload.nombre, item_codigo: payload.sku,
-                        tipo_movimiento: diff > 0 ? 'entrada' : 'ajuste',
-                        cantidad: Math.abs(diff), stock_anterior: stockAnterior, stock_actual: stockNuevo,
-                        almacen_id: fila.almacen_id, origen: 'ajuste_manual',
-                        notas: 'Ajuste desde ficha de producto',
-                        usuario_id: user.id, fecha: new Date().toISOString(),
-                    })
-                } else if (stockNuevo > 0 && almId) {
-                    await supabase.from('stock_ubicacion').insert({
-                        tipo_item: 'producto_terminado', item_id: editando,
-                        almacen_id: almId, almacen_ubicacion_id: null,
-                        cantidad: stockNuevo, empresa_id: perfil.empresa_id,
-                        updated_at: new Date().toISOString(),
-                    })
-                    await supabase.from('movimientos_inventario').insert({
-                        empresa_id: perfil.empresa_id, tipo_item: 'producto_terminado',
-                        item_id: editando, item_nombre: payload.nombre, item_codigo: payload.sku,
-                        tipo_movimiento: 'ajuste', cantidad: stockNuevo,
-                        stock_anterior: stockAnterior, stock_actual: stockNuevo,
-                        almacen_id: almId, origen: 'ajuste_manual',
-                        notas: 'Ajuste desde ficha de producto',
-                        usuario_id: user.id, fecha: new Date().toISOString(),
-                    })
-                }
+            if (!almId) {
+                setGuardando(false)
+                setError('El producto se guardó, pero el stock no se aplicó: marca un almacén predeterminado en Administración → Almacenes.')
+                return
+            }
+            try {
+                await ajustarStockMaestro({
+                    tipoItem: 'producto_terminado', itemId: productoId,
+                    stockAnterior: editando ? stockAnterior : 0, stockNuevo,
+                    almacenId: almId, usuarioId: user?.id || null,
+                    nota: editando ? 'Ajuste desde la ficha del producto' : 'Stock inicial al crear el producto',
+                })
+            } catch (e) {
+                setGuardando(false)
+                setError('El producto se guardó, pero el stock NO se ajustó: ' + e.message)
+                return
             }
         }
 

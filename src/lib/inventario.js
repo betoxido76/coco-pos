@@ -60,6 +60,28 @@ export async function moverStock({
     return data
 }
 
+// Ajuste de stock desde la ficha de un maestro (productos, materias primas,
+// empaque, consumibles). Aplica la DIFERENCIA contra el almacén elegido, no el
+// valor absoluto: si otro usuario movió stock mientras el formulario estaba
+// abierto, un "set" a ciegas le borraría el movimiento.
+//
+// Antes, estos formularios escribían stock_actual directo y no tocaban
+// stock_ubicacion ni dejaban movimiento. De ahí salen los consumibles de
+// Meraki con el doble en el catálogo que en almacenes.
+export async function ajustarStockMaestro({
+    tipoItem, itemId, stockAnterior, stockNuevo, almacenId, usuarioId = null, nota = null,
+}) {
+    const diff = Number(stockNuevo || 0) - Number(stockAnterior || 0)
+    if (Math.abs(diff) < 0.0001) return null
+    if (!almacenId) throw new Error('Selecciona el almacén al que aplicar el ajuste de stock')
+    return moverStock({
+        tipoItem, itemId, cantidad: Math.abs(diff),
+        tipoMovimiento: diff > 0 ? 'entrada' : 'salida',
+        origen: 'ajuste_manual', almacenId, usuarioId,
+        notas: nota || 'Ajuste desde la ficha del maestro',
+    })
+}
+
 // Convierte líneas de venta/pedido al formato que espera el motor.
 // `cantidad` DEBE venir en unidades primarias: el motor no sabe de UM2.
 export const lineasAItems = (lineas, getCantidad) => (lineas || [])

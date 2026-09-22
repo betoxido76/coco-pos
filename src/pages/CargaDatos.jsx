@@ -1,6 +1,7 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
+import { ajustarStockMaestro } from '../lib/inventario'
 import * as XLSX from 'xlsx'
 import { Download, Upload, CheckCircle, AlertTriangle, X, FileSpreadsheet } from 'lucide-react'
 import { UNIDADES } from '../lib/unidades'
@@ -171,9 +172,31 @@ export default function CargaDatos() {
     const [erroresFila, setErroresFila] = useState({})
     const [cargando, setCargando] = useState(false)
     const [resultado, setResultado] = useState(null)
+    const [almacenes, setAlmacenes] = useState([])
+    const [almacenCarga, setAlmacenCarga] = useState('')
+
+    useEffect(() => {
+        supabase.from('almacenes').select('id, nombre, es_default')
+            .eq('empresa_id', perfil.empresa_id).order('nombre')
+            .then(({ data }) => {
+                setAlmacenes(data || [])
+                setAlmacenCarga((data || []).find(a => a.es_default)?.id || '')
+            })
+    }, [perfil?.empresa_id])
     const fileRef = useRef()
 
     const catalogo = CATALOGOS.find(c => c.key === catalogoKey)
+    // Catálogos que llevan inventario: su "Stock Actual" no se escribe directo,
+    // se aplica por el motor contra un almacén (ver ajustarStockMaestro).
+    const TIPO_ITEM_POR_TABLA = {
+        productos_terminados: 'producto_terminado',
+        materias_primas: 'materia_prima',
+        materiales_empaque: 'material_empaque',
+        consumibles: 'consumible',
+    }
+    const tipoItemCatalogo = TIPO_ITEM_POR_TABLA[catalogo?.tabla] || null
+    const hayStockEnPlanilla = !!tipoItemCatalogo && filas.some(f => Number(f.stock_actual || 0) > 0)
+    const faltaAlmacen = hayStockEnPlanilla && !almacenCarga
 
     // ── Descargar plantilla ──
     function descargarPlantilla() {
@@ -249,10 +272,20 @@ export default function CargaDatos() {
         if (filasValidas.length === 0) return
         setCargando(true)
 
-        const payload = filasValidas.map(({ _idx, ...rest }) => ({
-            ...rest,
-            empresa_id: perfil.empresa_id,
-        }))
+        // El stock de la planilla se aparta: se aplica después por el motor,
+        // contra el almacén elegido. Escribirlo aquí dejaría stock_actual sin
+        // fila de almacén ni movimiento, que es el bug que arrastran los
+        // consumibles de Meraki.
+        const stockPorClave = {}
+        const payload = filasValidas.map(({ _idx, ...rest }) => {
+            const fila = { ...rest, empresa_id: perfil.empresa_id }
+            if (tipoItemCatalogo) {
+                const cant = Number(fila.stock_actual || 0)
+                if (cant > 0 && fila.codigo) stockPorClave[fila.codigo] = cant
+                fila.stock_actual = 0
+            }
+            return fila
+        })
         let insertados = 0, errores = []
 
         const BATCH = 50
@@ -268,8 +301,30 @@ export default function CargaDatos() {
             }
         }
 
+        // Aplicar el stock inicial por el motor, ya con los ítems creados
+        let conStock = 0
+        const codigos = Object.keys(stockPorClave)
+        if (tipoItemCatalogo && codigos.length > 0) {
+            const { data: { user } } = await supabase.auth.getUser()
+            const { data: creados } = await supabase.from(catalogo.tabla)
+                .select('id, codigo').eq('empresa_id', perfil.empresa_id).in('codigo', codigos)
+            for (const item of (creados || [])) {
+                try {
+                    await ajustarStockMaestro({
+                        tipoItem: tipoItemCatalogo, itemId: item.id,
+                        stockAnterior: 0, stockNuevo: stockPorClave[item.codigo],
+                        almacenId: almacenCarga, usuarioId: user?.id || null,
+                        nota: 'Stock inicial — carga masiva',
+                    })
+                    conStock++
+                } catch (e) {
+                    errores.push(`Stock de ${item.codigo}: ${e.message}`)
+                }
+            }
+        }
+
         setCargando(false)
-        setResultado({ insertados, errores, total: filasValidas.length })
+        setResultado({ insertados, errores, total: filasValidas.length, conStock })
         setPaso('resultado')
     }
 
@@ -390,6 +445,24 @@ export default function CargaDatos() {
                         )}
                     </div>
 
+                    {/* Almacén del stock inicial */}
+                    {tipoItemCatalogo && hayStockEnPlanilla && (
+                        <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: '10px', padding: '14px 18px', marginBottom: '16px' }}>
+                            <label style={{ fontSize: '13px', fontWeight: 600, color: '#92400e', display: 'block', marginBottom: '8px' }}>
+                                Almacén del stock inicial *
+                            </label>
+                            <select value={almacenCarga} onChange={e => setAlmacenCarga(e.target.value)}
+                                style={{ width: '100%', maxWidth: '380px', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', backgroundColor: '#fff' }}>
+                                <option value="">Selecciona el almacén...</option>
+                                {almacenes.map(a => <option key={a.id} value={a.id}>{a.nombre}{a.es_default ? ' (principal)' : ''}</option>)}
+                            </select>
+                            <p style={{ fontSize: '12px', color: '#92400e', margin: '8px 0 0', lineHeight: 1.5 }}>
+                                La planilla trae stock. El stock vive en un almacén: se cargará ahí y quedará
+                                su movimiento de entrada, en vez de escribirse suelto en la ficha.
+                            </p>
+                        </div>
+                    )}
+
                     {/* Tabla preview */}
                     <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden', marginBottom: '16px' }}>
                         <div style={{ padding: '12px 16px', borderBottom: '1px solid #e5e7eb', fontSize: '13px', fontWeight: 500, color: '#374151', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -439,8 +512,9 @@ export default function CargaDatos() {
 
                     {/* Botones */}
                     <div style={{ display: 'flex', gap: '10px' }}>
-                        <button onClick={confirmarCarga} disabled={cargando || filasValidas === 0}
-                            style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: filasValidas === 0 ? '#d1d5db' : '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px 20px', fontSize: '14px', fontWeight: 600, cursor: filasValidas === 0 ? 'default' : 'pointer', opacity: cargando ? 0.6 : 1 }}>
+                        <button onClick={confirmarCarga} disabled={cargando || filasValidas === 0 || faltaAlmacen}
+                            title={faltaAlmacen ? 'Selecciona el almacén del stock inicial' : undefined}
+                            style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: (filasValidas === 0 || faltaAlmacen) ? '#d1d5db' : '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px 20px', fontSize: '14px', fontWeight: 600, cursor: (filasValidas === 0 || faltaAlmacen) ? 'default' : 'pointer', opacity: cargando ? 0.6 : 1 }}>
                             <Upload size={16} />
                             {cargando ? 'Importando...' : `Importar ${filasValidas} registros`}
                         </button>
@@ -467,6 +541,11 @@ export default function CargaDatos() {
                                 </div>
                                 <div style={{ fontSize: '13px', color: '#6b7280' }}>
                                     {resultado.insertados} de {resultado.total} registros importados correctamente
+                                    {resultado.conStock > 0 && (
+                                        <div style={{ fontSize: '13px', fontWeight: 400, marginTop: '4px' }}>
+                                            Stock inicial cargado en {resultado.conStock} {resultado.conStock === 1 ? 'ítem' : 'ítems'}, con su movimiento de entrada.
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         </div>
