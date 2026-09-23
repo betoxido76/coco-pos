@@ -1223,7 +1223,7 @@ function DetallePedido({ pedido, onVolver }) {
                     {/* disabled con `loading`: sin esto, hacer clic antes de que
                         carguen los ítems facturaba con `items` vacío → factura en $0
                         y sin líneas, con la mercancía igual descontada del inventario. */}
-                    <button onClick={convertirEnFactura} disabled={procesando || loading}
+                    <button onClick={() => convertirEnFactura()} disabled={procesando || loading}
                         style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#1d4ed8', color: '#fff', border: 'none', borderRadius: '8px', padding: '11px 24px', fontSize: '14px', fontWeight: 600, cursor: procesando || loading ? 'default' : 'pointer', opacity: procesando || loading ? 0.6 : 1 }}>
                         <ChevronRight size={16} /> {loading ? 'Cargando ítems...' : procesando ? 'Creando factura...' : 'Convertir en factura'}
                     </button>

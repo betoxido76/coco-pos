@@ -798,7 +798,7 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
             </div>
 
             <div style={{ display: 'flex', gap: '10px' }}>
-                <button onClick={facturar} disabled={procesando || loading}
+                <button onClick={() => facturar()} disabled={procesando || loading}
                     style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '12px 24px', fontSize: '14px', fontWeight: 600, cursor: 'pointer', opacity: procesando ? 0.6 : 1 }}>
                     <CheckCircle size={16} /> {procesando ? 'Registrando...' : 'Confirmar y registrar'}
                 </button>
@@ -1965,7 +1965,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
 
                     {/* Botón de acción — diferente según flujo */}
                     <button
-                        onClick={procesar}
+                        onClick={() => procesar()}
                         disabled={guardando || items.length === 0}
                         style={{ width: '100%', backgroundColor: items.length === 0 ? '#d1d5db' : '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '12px', fontSize: '14px', fontWeight: 600, cursor: items.length === 0 ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
                         <CheckCircle size={16} />
