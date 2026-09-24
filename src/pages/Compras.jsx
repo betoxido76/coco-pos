@@ -9,6 +9,11 @@ import { ConfirmacionPago, METODOS_USD, METODOS_BS } from '../components/ModalPa
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 
+// orden_compra_items.precio_unitario_esperado se guarda SIN IVA (ver NuevaOrden).
+// Las pantallas trabajan con IVA embebido: todo lector del precio de la OC pasa por aquí.
+const precioConIvaOC = (esperado, aplicaIva) =>
+    aplicaIva ? Number((Number(esperado) * 1.16).toFixed(6)) : Number(esperado)
+
 const tiempoDesde = (ts) => {
     const mins = Math.floor((Date.now() - ts) / 60000)
     if (mins < 1) return 'hace un momento'
@@ -1126,15 +1131,19 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
         }
         setItems(oc.orden_compra_items.map(i => {
             const insumo = insumos.find(ins => ins.id === i.insumo_id)
+            const aplicaIva = insumo?.aplica_iva ?? true
             return {
                 id: i.insumo_id,
                 tipo: tipoToPlural[i.tipo_insumo] || 'materias_primas',
                 nombre: mapaNombres[i.insumo_id] || 'Cargando...',
                 cantidad: i.cantidad_solicitada - i.cantidad_recibida,
-                precio_unitario: i.precio_unitario_esperado,
+                // La OC guarda el precio SIN IVA; la recepción trabaja con IVA
+                // embebido (igual que EditarOrden). Sin esto cada ítem con IVA
+                // se recibía 13,8% por debajo de lo ordenado.
+                precio_unitario: precioConIvaOC(i.precio_unitario_esperado, aplicaIva),
                 pendiente: i.cantidad_solicitada - i.cantidad_recibida,
                 orden_item_id: i.id,
-                aplica_iva: insumo?.aplica_iva ?? true,
+                aplica_iva: aplicaIva,
                 descuento_item: 0,
             }
         }))
@@ -2310,20 +2319,22 @@ function DetalleOrden({ orden, onVolver }) {
     const [items, setItems] = useState([])
     const [loading, setLoading] = useState(true)
     const [mapaNombres, setMapaNombres] = useState({})
+    const [mapaIva, setMapaIva] = useState({})
 
     useEffect(() => {
         if (!orden?.empresa_id) return
 
         Promise.all([
-            supabase.from('materias_primas').select('id, nombre').eq('empresa_id', orden.empresa_id),
-            supabase.from('materiales_empaque').select('id, nombre').eq('empresa_id', orden.empresa_id),
-            supabase.from('productos_terminados').select('id, nombre').eq('empresa_id', orden.empresa_id),
-            supabase.from('consumibles').select('id, nombre').eq('empresa_id', orden.empresa_id)
+            supabase.from('materias_primas').select('id, nombre, aplica_iva').eq('empresa_id', orden.empresa_id),
+            supabase.from('materiales_empaque').select('id, nombre, aplica_iva').eq('empresa_id', orden.empresa_id),
+            supabase.from('productos_terminados').select('id, nombre, aplica_iva').eq('empresa_id', orden.empresa_id),
+            supabase.from('consumibles').select('id, nombre, aplica_iva').eq('empresa_id', orden.empresa_id)
         ]).then(([mp, emp, pt, con]) => {
-            const mapa = {}
+            const mapa = {}, iva = {}
                 ;[...(mp.data || []), ...(emp.data || []), ...(pt.data || []), ...(con.data || [])]
-                    .forEach(i => mapa[i.id] = i.nombre)
+                    .forEach(i => { mapa[i.id] = i.nombre; iva[i.id] = i.aplica_iva ?? true })
             setMapaNombres(mapa)
+            setMapaIva(iva)
         })
 
         supabase.from('orden_compra_items').select('*')
@@ -2411,8 +2422,8 @@ function DetalleOrden({ orden, onVolver }) {
                                     <td style={{ padding: '10px 0', fontSize: '11px', color: '#6b7280', textTransform: 'uppercase' }}>{item.tipo_insumo.replace('_', ' ')}</td>
                                     <td style={{ padding: '10px 0', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{item.cantidad_solicitada}</td>
                                     <td style={{ padding: '10px 0', fontSize: '13px', color: item.cantidad_recibida >= item.cantidad_solicitada ? '#16a34a' : '#d97706', textAlign: 'right', fontWeight: 600 }}>{item.cantidad_recibida}</td>
-                                    <td style={{ padding: '10px 0', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{fmt(item.precio_unitario_esperado)}</td>
-                                    <td style={{ padding: '10px 0', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(item.cantidad_solicitada * item.precio_unitario_esperado)}</td>
+                                    <td style={{ padding: '10px 0', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{fmt(precioConIvaOC(item.precio_unitario_esperado, mapaIva[item.insumo_id] ?? true))}</td>
+                                    <td style={{ padding: '10px 0', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(item.cantidad_solicitada * precioConIvaOC(item.precio_unitario_esperado, mapaIva[item.insumo_id] ?? true))}</td>
                                 </tr>
                             ))}
                         </tbody>
@@ -3138,9 +3149,7 @@ function EditarOrden({ oc, onGuardada, onCancelar }) {
             const tipoLocal = tipoFromDB[dbItem.tipo_insumo] || 'materias_primas'
             const match = insumosUnidos.find(ins => ins.id === dbItem.insumo_id && ins.tipo === tipoLocal)
             const aplicaIva = match?.aplica_iva ?? true
-            const precioConIva = aplicaIva
-                ? Number(dbItem.precio_unitario_esperado) * 1.16
-                : Number(dbItem.precio_unitario_esperado)
+            const precioConIva = precioConIvaOC(dbItem.precio_unitario_esperado, aplicaIva)
             return {
                 id: dbItem.insumo_id,
                 tipo: tipoLocal,
