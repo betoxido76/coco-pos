@@ -356,6 +356,7 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
     const [faltantes, setFaltantes] = useState([])
     const [error, setError] = useState('')
     const [nroReferencia, setNroReferencia] = useState('')
+    const [ocCliente, setOcCliente] = useState(pedido.oc_cliente || '')
     const [condicion, setCondicion] = useState('credito')
     const [tasas, setTasas] = useState({})
     const [tipoTasa, setTipoTasa] = useState('tasa_bcv')
@@ -495,7 +496,7 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
                     : (contadoSinDetalle || abonoContado >= total - 0.01) ? 'pagado' : 'parcial',
                 empresa_id: perfil.empresa_id,
                 nro_referencia: nroReferencia.trim() || null,
-                oc_cliente: pedido.oc_cliente || null,
+                oc_cliente: ocCliente.trim() || null,
                 fecha_vencimiento_pago: fechaVencimiento,
                 direccion_entrega_id: pedido.direccion_entrega_id || null,
                 direccion_entrega_texto: pedido.direccion_entrega_texto || null,
