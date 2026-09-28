@@ -122,6 +122,7 @@ stock_reproceso       -- almacen_id, estado
 gastos                -- monto_usd, monto_bs, tipo_tasa, metodo_pago,
                       --   estado ('pagado'|'pendiente'), fecha_vencimiento,
                       --   cuenta_bancaria_id → cuentas_bancarias
+                      --   numero_factura text (opcional, factura del proveedor)
 tipos_gastos          -- Tipos de gasto personalizables por empresa
 configuracion         -- Tasa VIGENTE: clave/valor por empresa_id
                       --   claves: tasa_bcv, tasa_euro, tasa_binance

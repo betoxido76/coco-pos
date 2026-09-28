@@ -280,7 +280,7 @@ export default function Gastos() {
                             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                                 <thead>
                                     <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                        {['', 'Documento', 'Fecha', 'Nombre', 'Tipo', 'Vencimiento', 'Monto USD', 'Monto Bs.', 'Método', 'Usuario', ''].map((h, i) => (
+                                        {['', 'Documento', 'Nro Factura', 'Fecha', 'Nombre', 'Tipo', 'Vencimiento', 'Monto USD', 'Monto Bs.', 'Método', 'Usuario', ''].map((h, i) => (
                                             <th key={i} style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
                                         ))}
                                     </tr>
@@ -301,6 +301,9 @@ export default function Gastos() {
                                                 </td>
                                                 <td style={{ padding: '12px 14px', fontSize: '12px', fontFamily: 'monospace', color: '#374151', whiteSpace: 'nowrap' }}>
                                                     {g.numero_gasto || '—'}
+                                                </td>
+                                                <td style={{ padding: '12px 14px', fontSize: '12px', fontFamily: 'monospace', color: '#374151', whiteSpace: 'nowrap' }}>
+                                                    {g.numero_factura || '—'}
                                                 </td>
                                                 <td style={{ padding: '12px 14px', fontSize: '13px', color: '#6b7280', whiteSpace: 'nowrap' }}>
                                                     {new Date(g.fecha + 'T00:00:00').toLocaleDateString('es-VE')}
@@ -529,6 +532,7 @@ function NuevoGasto({ tasas, tipos, onGuardado, onCancelar }) {
     const [cuentaBancariaId, setCuentaBancariaId] = useState('')
     const [proveedores, setProveedores] = useState([])
     const [proveedorId, setProveedorId] = useState('')
+    const [numeroFactura, setNumeroFactura] = useState('')
 
     useEffect(() => {
         if (perfil?.empresa_id) {
@@ -573,6 +577,7 @@ function NuevoGasto({ tasas, tipos, onGuardado, onCancelar }) {
             categoria: tipos.find(t => t.id === tipoGastoId)?.nombre || '',
             cuenta_bancaria_id: estadoGasto === 'pagado' ? (cuentaBancariaId || null) : null,
             proveedor_id: proveedorId || null,
+            numero_factura: numeroFactura.trim() || null,
             fecha,
             estado: estadoGasto,
             fecha_vencimiento: estadoGasto === 'pendiente' ? fechaVencimiento : null,
@@ -643,18 +648,27 @@ function NuevoGasto({ tasas, tipos, onGuardado, onCancelar }) {
                     </div>
                 </div>
 
-                {/* Proveedor */}
-                {proveedores.length > 0 && (
+                {/* Proveedor y Nro. de factura */}
+                <div style={{ display: 'grid', gridTemplateColumns: proveedores.length > 0 ? '1fr 1fr' : '1fr', gap: '16px' }}>
+                    {proveedores.length > 0 && (
+                        <div>
+                            <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>
+                                Proveedor <span style={{ color: '#9ca3af', fontWeight: 400 }}>(opcional)</span>
+                            </label>
+                            <select value={proveedorId} onChange={e => setProveedorId(e.target.value)} style={inputStyle}>
+                                <option value="">— Sin proveedor —</option>
+                                {proveedores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+                            </select>
+                        </div>
+                    )}
                     <div>
                         <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>
-                            Proveedor <span style={{ color: '#9ca3af', fontWeight: 400 }}>(opcional)</span>
+                            Nro. de factura <span style={{ color: '#9ca3af', fontWeight: 400 }}>(opcional)</span>
                         </label>
-                        <select value={proveedorId} onChange={e => setProveedorId(e.target.value)} style={inputStyle}>
-                            <option value="">— Sin proveedor —</option>
-                            {proveedores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
-                        </select>
+                        <input value={numeroFactura} onChange={e => setNumeroFactura(e.target.value)}
+                            placeholder="Ej: 00012345" style={inputStyle} />
                     </div>
-                )}
+                </div>
 
                 {/* Fecha */}
                 <div style={{ display: 'grid', gridTemplateColumns: estadoGasto === 'pendiente' ? '1fr 1fr' : '1fr 1fr', gap: '16px' }}>
@@ -978,6 +992,7 @@ function DetalleGasto({ gasto: g, tasas, onVolver }) {
                     <div>
                         <p style={label}>Proveedor</p>
                         <p style={value}>{g.proveedores?.nombre || '—'}</p>
+                        {g.numero_factura && <p style={{ fontSize: '13px', color: '#6b7280', margin: '6px 0 0' }}>Factura: <span style={{ fontFamily: 'monospace' }}>{g.numero_factura}</span></p>}
                     </div>
                 </div>
             </div>
