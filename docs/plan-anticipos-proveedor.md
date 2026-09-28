@@ -34,7 +34,7 @@ se cancela el anticipo se pierde de vista. Hoy: 0 anticipos en las 9 empresas
 | # | Decisión | Resultado |
 |---|---|---|
 | 0.1 | ¿El proveedor emite factura por el anticipo? (IVA: hecho imponible al pagar, consultar al contador) | **Pendiente con el contador.** No bloquea: `nro_doc_proveedor` queda **opcional** y se vuelve obligatorio si el contador lo confirma |
-| 0.2 | ¿Quién registra anticipos? | **Solo quien tenga el módulo `cxp`** (el botón en la OC se oculta sin ese módulo) |
+| 0.2 | ¿Quién registra anticipos? | Quien tenga el módulo **`compras` o `cxp`** (el botón en la OC se oculta sin ninguno de los dos) |
 | 0.3 | ¿Quién los anula? | Admin / finanzas (igual que `anular_pago_proveedor`) ✔ |
 | 0.4 | ¿Tope del anticipo? | Hasta el 100 % del total de la OC, menos los anticipos vigentes ✔ |
 | 0.5 | Reembolso de un anticipo | Sí, con fecha, cuenta bancaria y método; entra al banco ✔ |
