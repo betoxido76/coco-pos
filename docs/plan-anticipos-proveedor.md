@@ -29,16 +29,16 @@ se cancela el anticipo se pierde de vista. Hoy: 0 anticipos en las 9 empresas
   (`tasas_cambio`, §7). Se aplica en USD. No hay diferencial cambiario porque el
   sistema contabiliza en USD.
 
-## Fase 0 — Decisiones previas (usuario)
+## Fase 0 — Decisiones previas (usuario) — CERRADA 2026-09-28
 
-| # | Decisión | Propuesta por defecto |
+| # | Decisión | Resultado |
 |---|---|---|
-| 0.1 | ¿El proveedor emite factura por el anticipo? (IVA: hecho imponible al pagar, consultar al contador) | Campo `nro_doc_proveedor` **opcional**; se vuelve obligatorio si el contador lo confirma |
-| 0.2 | ¿Quién registra anticipos? | Quien tenga el módulo `compras` o `cxp` |
-| 0.3 | ¿Quién los anula? | Admin / finanzas (igual que `anular_pago_proveedor`) |
-| 0.4 | ¿Tope del anticipo? | Hasta el 100 % del total de la OC, menos los anticipos vigentes |
-| 0.5 | Reembolso de un anticipo (OC cancelada, el proveedor devuelve el dinero) | Sí, con fecha, cuenta bancaria y método; entra al banco |
-| 0.6 | ¿Arreglar los 2 bugs previos de Bancos/Finanzas (ver Fase 2)? | Sí, en la misma entrega: si no, el anticipo se vería mal desde el primer día |
+| 0.1 | ¿El proveedor emite factura por el anticipo? (IVA: hecho imponible al pagar, consultar al contador) | **Pendiente con el contador.** No bloquea: `nro_doc_proveedor` queda **opcional** y se vuelve obligatorio si el contador lo confirma |
+| 0.2 | ¿Quién registra anticipos? | **Solo quien tenga el módulo `cxp`** (el botón en la OC se oculta sin ese módulo) |
+| 0.3 | ¿Quién los anula? | Admin / finanzas (igual que `anular_pago_proveedor`) ✔ |
+| 0.4 | ¿Tope del anticipo? | Hasta el 100 % del total de la OC, menos los anticipos vigentes ✔ |
+| 0.5 | Reembolso de un anticipo | Sí, con fecha, cuenta bancaria y método; entra al banco ✔ |
+| 0.6 | ¿Arreglar los 2 bugs previos de Bancos/Finanzas (ver Fase 2)? | Sí, en la misma entrega ✔ |
 
 ## Fase 1 — Base de datos
 
