@@ -6,6 +6,7 @@ import { moverStockLote, verificarStock } from '../lib/inventario'
 import { opcionesUnidad } from '../lib/unidades'
 import SelectorFechaTasa, { useTasasFecha, hoyYMD, fmtFechaCorta } from '../components/SelectorFechaTasa'
 import { ConfirmacionPago, METODOS_USD, METODOS_BS } from '../components/ModalPagoObligacion'
+import FiltroCombo from '../components/FiltroCombo'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 
@@ -23,6 +24,14 @@ const tiempoDesde = (ts) => {
 
 // ─── Componente principal ──────────────────────────────────────
 const PAGE_SIZE = 50
+
+const ESTADOS_OC = [
+    { value: 'pendiente', label: 'Pendiente' },
+    { value: 'aprobada', label: 'Aprobada' },
+    { value: 'recibida_parcial', label: 'Recibida parcial' },
+    { value: 'recibida_total', label: 'Recibida total' },
+    { value: 'cancelada', label: 'Cancelada' },
+]
 
 export default function Compras() {
     const { perfil } = useAuth()
@@ -45,17 +54,45 @@ export default function Compras() {
     const [devolucionActual, setDevolucionActual] = useState(null)
     const [ocAEditar, setOcAEditar] = useState(null)
 
+    // Filtros del listado de órdenes (se aplican en la consulta: la tabla pagina en el servidor)
+    const [fOC, setFOC] = useState('')
+    const [fProveedor, setFProveedor] = useState('')
+    const [fEstado, setFEstado] = useState('')
+    const [opcOC, setOpcOC] = useState([])
+    const [opcProveedores, setOpcProveedores] = useState([])
+
+    useEffect(() => { if (perfil?.empresa_id) cargarOpcionesFiltros() }, [perfil?.empresa_id])
+    useEffect(() => { setPaginaOrdenes(0) }, [fOC, fProveedor, fEstado])
+
     useEffect(() => {
         if (tabActiva === 'ordenes') cargarOrdenes()
         else if (tabActiva === 'recepciones') cargarRecepciones()
         else cargarDevoluciones()
-    }, [tabActiva, paginaOrdenes, paginaRecepciones, paginaDevoluciones])
+    }, [tabActiva, paginaOrdenes, paginaRecepciones, paginaDevoluciones, fOC, fProveedor, fEstado])
+
+    async function cargarOpcionesFiltros() {
+        const [{ data: ocs }, { data: provs }] = await Promise.all([
+            supabase.from('ordenes_compra').select('id, numero_oc, proveedor_id')
+                .eq('empresa_id', perfil.empresa_id).order('created_at', { ascending: false }),
+            supabase.from('proveedores').select('id, nombre')
+                .eq('empresa_id', perfil.empresa_id).order('nombre'),
+        ])
+        setOpcOC((ocs || []).map(o => ({ value: o.id, label: o.numero_oc || 'S/N' })))
+        // Solo proveedores con órdenes: los demás darían siempre una lista vacía
+        const conOC = new Set((ocs || []).map(o => o.proveedor_id))
+        setOpcProveedores((provs || []).filter(p => conOC.has(p.id)).map(p => ({ value: p.id, label: p.nombre })))
+    }
 
     async function cargarOrdenes() {
         setLoading(true)
-        const { data, count } = await supabase
+        let q = supabase
             .from('ordenes_compra')
             .select(`*, proveedores(nombre)`, { count: 'exact' })
+            .eq('empresa_id', perfil.empresa_id)
+        if (fOC) q = q.eq('id', fOC)
+        if (fProveedor) q = q.eq('proveedor_id', fProveedor)
+        if (fEstado) q = q.eq('estado', fEstado)
+        const { data, count } = await q
             .order('created_at', { ascending: false })
             .range(paginaOrdenes * PAGE_SIZE, (paginaOrdenes + 1) * PAGE_SIZE - 1)
         if (data) setOrdenes(data)
@@ -102,7 +139,7 @@ export default function Compras() {
         return <EditarOrden oc={ocAEditar} onGuardada={() => { cargarOrdenes(); setVista('lista') }} onCancelar={() => setVista('lista')} />
 
     if (vista === 'nueva_oc')
-        return <NuevaOrden onCreada={(oc) => { cargarOrdenes(); setOrdenActual(oc); setVista('detalle_oc') }} onCancelar={() => setVista('lista')} />
+        return <NuevaOrden onCreada={(oc) => { cargarOrdenes(); cargarOpcionesFiltros(); setOrdenActual(oc); setVista('detalle_oc') }} onCancelar={() => setVista('lista')} />
 
     if (vista === 'nueva_recepcion')
         return <NuevaRecepcion
@@ -154,7 +191,20 @@ export default function Compras() {
                 ))}
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '16px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: '12px', flexWrap: 'wrap', marginBottom: '16px' }}>
+                {tabActiva === 'ordenes' ? (
+                    <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                        <FiltroCombo label="OC" value={fOC} onChange={setFOC} options={opcOC} width="160px" />
+                        <FiltroCombo label="Proveedor" value={fProveedor} onChange={setFProveedor} options={opcProveedores} width="240px" />
+                        <FiltroCombo label="Estado" value={fEstado} onChange={setFEstado} options={ESTADOS_OC} width="170px" />
+                        {(fOC || fProveedor || fEstado) && (
+                            <button onClick={() => { setFOC(''); setFProveedor(''); setFEstado('') }}
+                                style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '8px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: '#6b7280', fontSize: '13px', cursor: 'pointer' }}>
+                                <X size={14} /> Limpiar
+                            </button>
+                        )}
+                    </div>
+                ) : <div />}
                 <button onClick={() => setVista(tabActiva === 'ordenes' ? 'nueva_oc' : tabActiva === 'recepciones' ? 'nueva_recepcion' : 'nueva_devolucion')}
                     style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px 16px', fontSize: '14px', fontWeight: 500, cursor: 'pointer' }}>
                     <Plus size={16} /> {tabActiva === 'ordenes' ? 'Nueva Orden' : tabActiva === 'recepciones' ? 'Nueva Recepción' : 'Nueva Devolución'}
@@ -163,7 +213,7 @@ export default function Compras() {
 
             {tabActiva === 'ordenes' && (
                 <>
-                    <TablaOrdenes ordenes={ordenes} loading={loading} onVer={abrirDetalleOC}
+                    <TablaOrdenes ordenes={ordenes} loading={loading} onVer={abrirDetalleOC} filtrado={!!(fOC || fProveedor || fEstado)}
                     onEditar={oc => { setOcAEditar(oc); setVista('editar_oc') }}
                     onAnular={anularOC} />
                     {totalOrdenes > PAGE_SIZE && (
@@ -234,12 +284,12 @@ export default function Compras() {
 }
 
 // ─── Tablas de Listado ──────────────────────────────────────
-function TablaOrdenes({ ordenes, loading, onVer, onEditar, onAnular }) {
+function TablaOrdenes({ ordenes, loading, onVer, onEditar, onAnular, filtrado }) {
     const editable = (estado) => estado === 'pendiente' || estado === 'aprobada'
     return (
         <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
             {loading ? <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af' }}>Cargando...</div> : ordenes.length === 0 ?
-                <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af' }}>No hay órdenes registradas.</div> : (
+                <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af' }}>{filtrado ? 'No hay órdenes para los filtros seleccionados.' : 'No hay órdenes registradas.'}</div> : (
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
                             <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
