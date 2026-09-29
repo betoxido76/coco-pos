@@ -171,6 +171,138 @@ export function TablaAnticipos({ anticipos, puedeAnular, onAnular, mostrarOC = f
     )
 }
 
+// ── Aplicar anticipos a una recepción (Fase 4) ──────────────────────────────
+// Bloque para las ventanas de pago de una recepción (Compras → recepción y
+// CxP → Pagar). Carga los anticipos con saldo del proveedor, pre-marca los de
+// la misma OC hasta `tope` y deja aplicar a mano los demás (otra OC, sin OC,
+// OC cancelada = saldo a favor). El llamador guarda `aplicaciones`
+// ({ anticipo_id: monto }) y, tras guardar la recepción, llama a
+// aplicar_anticipo_proveedor por cada una — ver aplicacionesALista().
+const r2 = n => Math.round(Number(n || 0) * 100) / 100
+
+export function totalAplicaciones(aplicaciones) {
+    return r2(Object.values(aplicaciones || {}).reduce((s, m) => s + Number(m || 0), 0))
+}
+
+export function aplicacionesALista(aplicaciones, anticipos) {
+    return Object.entries(aplicaciones || {})
+        .filter(([, m]) => Number(m) > 0.001)
+        .map(([id, m]) => ({ anticipo_id: id, monto: r2(m), numero: anticipos?.find(a => a.id === id)?.numero_anticipo || '' }))
+}
+
+export function SelectorAnticipos({ proveedorId, ocId = null, tope, aplicaciones, onChange, onCargados }) {
+    const { perfil } = useAuth()
+    const { puedeOperar } = usePermisosAnticipo()
+    const [disponibles, setDisponibles] = useState(null)
+
+    useEffect(() => {
+        if (!perfil?.empresa_id || !proveedorId || !puedeOperar) { setDisponibles([]); return }
+        let cancel = false
+        // Sin embeds sobre la vista: la OC se trae aparte
+        ;(async () => {
+            const { data } = await supabase.from('v_anticipos_saldo')
+                .select('id, numero_anticipo, fecha, orden_compra_id, saldo_usd')
+                .eq('empresa_id', perfil.empresa_id)
+                .eq('proveedor_id', proveedorId)
+                .in('estado', ['disponible', 'aplicado_parcial'])
+                .order('fecha', { ascending: true })
+            const conSaldo = (data || []).filter(a => Number(a.saldo_usd) > 0.01)
+            const ocIds = [...new Set(conSaldo.map(a => a.orden_compra_id).filter(Boolean))]
+            const ocs = {}
+            if (ocIds.length) {
+                const { data: ocData } = await supabase.from('ordenes_compra')
+                    .select('id, numero_oc, estado').eq('empresa_id', perfil.empresa_id).in('id', ocIds)
+                ;(ocData || []).forEach(o => { ocs[o.id] = o })
+            }
+            {
+                if (cancel) return
+                const lista = conSaldo.map(a => ({ ...a, ordenes_compra: ocs[a.orden_compra_id] || null }))
+                    // Primero los de esta OC; después el resto, por antigüedad
+                    .sort((a, b) => (b.orden_compra_id === ocId) - (a.orden_compra_id === ocId))
+                setDisponibles(lista)
+                onCargados?.(lista)
+                // Pre-marcar los de la misma OC hasta el tope
+                let resto = Number(tope || 0)
+                const inicial = {}
+                if (ocId) for (const a of lista) {
+                    if (a.orden_compra_id !== ocId || resto <= 0.01) continue
+                    const m = r2(Math.min(Number(a.saldo_usd), resto))
+                    inicial[a.id] = m
+                    resto -= m
+                }
+                onChange(inicial)
+            }
+        })()
+        return () => { cancel = true }
+    }, [perfil?.empresa_id, proveedorId, ocId, puedeOperar])
+
+    // Si el tope baja (descuento, NDs), recortar desde el último aplicado
+    useEffect(() => {
+        let exceso = totalAplicaciones(aplicaciones) - Number(tope || 0)
+        if (exceso <= 0.01) return
+        const next = { ...aplicaciones }
+        for (const id of Object.keys(next).reverse()) {
+            if (exceso <= 0.01) break
+            const quita = Math.min(next[id], exceso)
+            next[id] = r2(next[id] - quita)
+            exceso -= quita
+            if (next[id] <= 0.001) delete next[id]
+        }
+        onChange(next)
+    }, [tope])
+
+    if (!disponibles || disponibles.length === 0) return null
+
+    const aplicado = totalAplicaciones(aplicaciones)
+    function toggle(a) {
+        const next = { ...aplicaciones }
+        if (next[a.id] !== undefined) delete next[a.id]
+        else {
+            const libre = Number(tope || 0) - aplicado
+            if (libre <= 0.01) return
+            next[a.id] = r2(Math.min(Number(a.saldo_usd), libre))
+        }
+        onChange(next)
+    }
+    function setMonto(a, v) {
+        const otros = aplicado - Number(aplicaciones[a.id] || 0)
+        const max = Math.min(Number(a.saldo_usd), Number(tope || 0) - otros)
+        onChange({ ...aplicaciones, [a.id]: r2(Math.max(0, Math.min(Number(v) || 0, max))) })
+    }
+
+    return (
+        <div style={{ backgroundColor: '#fefce8', border: '1px solid #fde68a', borderRadius: '10px', padding: '12px 16px', marginBottom: '16px' }}>
+            <p style={{ fontSize: '12px', fontWeight: 600, color: '#854d0e', margin: '0 0 8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Anticipos disponibles</p>
+            {disponibles.map(a => {
+                const marcado = aplicaciones[a.id] !== undefined
+                const origen = a.orden_compra_id && a.orden_compra_id === ocId ? 'esta OC'
+                    : a.ordenes_compra ? `${a.ordenes_compra.numero_oc}${a.ordenes_compra.estado === 'cancelada' ? ' (cancelada)' : ''}`
+                    : 'sin OC'
+                return (
+                    <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0', borderBottom: '1px solid #fde68a' }}>
+                        <input type="checkbox" checked={marcado} onChange={() => toggle(a)} />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                            <span style={{ fontSize: '13px', color: '#713f12', fontFamily: 'monospace' }}>{a.numero_anticipo}</span>
+                            <span style={{ fontSize: '11px', color: '#a16207', marginLeft: '6px' }}>{origen} · saldo {fmt(a.saldo_usd)}</span>
+                        </div>
+                        {marcado && (
+                            <input type="number" min="0" step="0.01" value={aplicaciones[a.id]}
+                                onChange={e => setMonto(a, e.target.value)}
+                                style={{ width: '96px', padding: '4px 8px', border: '1px solid #fcd34d', borderRadius: '6px', fontSize: '13px', textAlign: 'right' }} />
+                        )}
+                    </div>
+                )
+            })}
+            {aplicado > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px', fontSize: '13px' }}>
+                    <span style={{ color: '#854d0e' }}>Anticipo aplicado:</span>
+                    <span style={{ fontWeight: 600, color: '#166534' }}>-{fmt(aplicado)}</span>
+                </div>
+            )}
+        </div>
+    )
+}
+
 // ── Registrar ───────────────────────────────────────────────────────────────
 function ModalRegistrarAnticipo({ orden, totalAnticipado, onRegistrado, onCerrar }) {
     const [nroDoc, setNroDoc] = useState('')

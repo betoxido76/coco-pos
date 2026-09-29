@@ -50,8 +50,10 @@ export const METODOS_BS = [
 
 // Etiqueta legible de un método guardado ('pago_movil' → 'Pago móvil').
 // Los registros viejos ya traen texto legible: se devuelven tal cual.
+// 'anticipo' marca la aplicación de un anticipo (aplicar_anticipo_proveedor).
 export const labelMetodo = (v) =>
-    [...METODOS_USD, ...METODOS_BS].find(m => m.value === v)?.label || v || null
+    v === 'anticipo' ? 'Anticipo'
+        : [...METODOS_USD, ...METODOS_BS].find(m => m.value === v)?.label || v || null
 
 const inputS = {
     width: '100%', padding: '8px 12px', border: '1px solid #d1d5db',

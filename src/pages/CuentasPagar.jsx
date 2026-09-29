@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import { AlertTriangle, CheckCircle, Clock, DollarSign, FileText } from 'lucide-react'
 import ModalPagoObligacion, { labelMetodo } from '../components/ModalPagoObligacion'
+import { SelectorAnticipos, totalAplicaciones, aplicacionesALista } from '../components/AnticiposOC'
 import ModalPagoGasto from '../components/ModalPagoGasto'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
@@ -520,6 +521,8 @@ function ModalPago({ compra, saldo, onCerrar, onPagado }) {
     const [descPct, setDescPct] = useState(0)
     const [ndsDisponibles, setNdsDisponibles] = useState([])
     const [ndsSeleccionadas, setNdsSeleccionadas] = useState(new Set())
+    const [aplicaciones, setAplicaciones] = useState({}) // anticipo_id -> monto USD
+    const [anticiposCargados, setAnticiposCargados] = useState([])
 
     useEffect(() => {
         if (perfil?.empresa_id && compra.proveedor_id) {
@@ -538,7 +541,10 @@ function ModalPago({ compra, saldo, onCerrar, onPagado }) {
     }, 0)
     const descMonto = saldo * (Number(descPct) / 100)
     const saldoConDesc = Math.max(0, saldo - descMonto)
-    const saldoEfectivo = Math.max(0, saldoConDesc - montoNDs)
+    const saldoTrasNDs = Math.max(0, saldoConDesc - montoNDs)
+    // Anticipos pagados antes de recibir: cubren saldo sin mover dinero hoy
+    const montoAnticipos = totalAplicaciones(aplicaciones)
+    const saldoEfectivo = Math.max(0, saldoTrasNDs - montoAnticipos)
     const pagadoPrevio = Math.max(0, Number(compra.total || 0) - Number(compra.descuento_pago || 0) - saldo)
 
     function toggleNd(ndId) {
@@ -568,6 +574,15 @@ function ModalPago({ compra, saldo, onCerrar, onPagado }) {
                 empresa_id: perfil.empresa_id,
             })
             await supabase.from('devoluciones_proveedor').update({ estado_nd: 'aplicada' }).eq('id', nd.id)
+        }
+
+        // Aplicación de anticipos: la RPC valida saldos (del anticipo y de la
+        // recepción) y escribe el abono sin cuenta bancaria.
+        for (const ap of aplicacionesALista(aplicaciones, anticiposCargados)) {
+            const { error: errAp } = await supabase.rpc('aplicar_anticipo_proveedor', {
+                p_anticipo_id: ap.anticipo_id, p_compra_id: compra.id, p_monto: ap.monto,
+            })
+            if (errAp) return `No se pudo aplicar el anticipo ${ap.numero}: ${errAp.message}`
         }
 
         if (saldoEfectivo > 0.001) {
@@ -628,13 +643,16 @@ function ModalPago({ compra, saldo, onCerrar, onPagado }) {
                             <span style={{ fontWeight: 600, color: '#dc2626' }}>-{fmt(montoNDs)}</span>
                         </div>
                     )}
-                    {saldoEfectivo <= 0.001 && (
+                    {saldoTrasNDs <= 0.001 && (
                         <div style={{ marginTop: '8px', backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '6px', padding: '8px 12px', fontSize: '13px', color: '#166534', fontWeight: 500 }}>
                             ✓ Saldo cubierto completamente por notas de débito
                         </div>
                     )}
                 </div>
             )}
+
+            <SelectorAnticipos proveedorId={compra.proveedor_id} ocId={compra.orden_compra_id || null}
+                tope={saldoTrasNDs} aplicaciones={aplicaciones} onChange={setAplicaciones} onCargados={setAnticiposCargados} />
         </>
     )
 
@@ -871,6 +889,7 @@ function ModalAnularPagoProveedor({ pago, compra, onCerrar, onAnulado }) {
                 <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 12px', fontSize: '12px', color: '#991b1b', marginBottom: '14px' }}>
                     El pago deja de contar y el saldo de la recepción vuelve a subir por ese monto.
                     {pago.metodo_usd === 'Nota de Débito' && ' La nota de débito aplicada vuelve a quedar disponible.'}
+                    {pago.metodo_usd === 'anticipo' && ' El monto vuelve al saldo del anticipo, disponible para otra recepción.'}
                     {' '}El registro se conserva con el motivo.
                 </div>
                 <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Motivo *</label>

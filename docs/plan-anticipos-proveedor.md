@@ -123,6 +123,12 @@ Cambios:
 
 ## Fase 4 — Aplicación automática en la recepción
 
+> **HECHA 2026-09-28.** `SelectorAnticipos` (en `AnticiposOC.jsx`) se usa en
+> `ModalPagoCompra` y en CxP → `ModalPago`. Con anticipo, la recepción se guarda
+> a crédito y el pago en dinero al recibir va como abono ("Pago al recibir"); si el
+> anticipo cubre todo no se pide pago. La OC del anticipo se lee aparte (no se
+> usan embeds sobre la vista `v_anticipos_saldo`).
+
 1. **Recepción contra OC** (`NuevaRecepcion` → `ModalPagoCompra`): si la OC o el proveedor
    tienen anticipos con saldo, se muestra el bloque **"Anticipos disponibles"**.
    - Los de **la misma OC** vienen pre-marcados y se aplican automáticamente hasta el total de la recepción.
