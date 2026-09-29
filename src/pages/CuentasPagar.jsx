@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import { AlertTriangle, CheckCircle, Clock, DollarSign, FileText } from 'lucide-react'
 import ModalPagoObligacion, { labelMetodo } from '../components/ModalPagoObligacion'
-import { SelectorAnticipos, totalAplicaciones, aplicacionesALista } from '../components/AnticiposOC'
+import { SelectorAnticipos, totalAplicaciones, aplicacionesALista, PanelAnticiposCxP, saldoAnticiposEmpresa } from '../components/AnticiposOC'
 import ModalPagoGasto from '../components/ModalPagoGasto'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
@@ -76,11 +76,14 @@ export default function CuentasPagar() {
     const [filtroNdEstado, setFiltroNdEstado] = useState('pendiente')
     const [ndVer, setNdVer] = useState(null)
     const [modalLiquidarNd, setModalLiquidarNd] = useState(null)
+    const [saldoAnticipos, setSaldoAnticipos] = useState(0)
 
     useEffect(() => { setPagina(0) }, [filtro, filtroProveedor])
     useEffect(() => { cargarDatos() }, [filtro, filtroProveedor, pagina])
     useEffect(() => { if (tabSeccion === 'gastos') cargarGastosPendientes() }, [tabSeccion])
     useEffect(() => { if (tabSeccion === 'nd') cargarNds() }, [tabSeccion, filtroNdEstado])
+    // Anticipos a favor: activo, NO se resta de la deuda (se muestran por separado)
+    useEffect(() => { if (perfil?.empresa_id) saldoAnticiposEmpresa(perfil.empresa_id).then(setSaldoAnticipos) }, [perfil?.empresa_id, tabSeccion])
 
     useEffect(() => {
         supabase.from('proveedores').select('id, nombre')
@@ -240,7 +243,7 @@ export default function CuentasPagar() {
             </div>
 
             {/* KPIs */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '24px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '24px' }}>
                 <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px' }}>
                     <p style={{ fontSize: '12px', color: '#6b7280', margin: '0 0 4px' }}>Total pendiente</p>
                     <p style={{ fontSize: '22px', fontWeight: 700, color: '#16a34a', margin: 0 }}>{fmt(totalPendiente)}</p>
@@ -253,11 +256,16 @@ export default function CuentasPagar() {
                     <p style={{ fontSize: '12px', color: '#6b7280', margin: '0 0 4px' }}>Al día</p>
                     <p style={{ fontSize: '22px', fontWeight: 700, color: '#16a34a', margin: 0 }}>{alDia}</p>
                 </div>
+                <div onClick={() => setTabSeccion('anticipos')} title="Ver anticipos"
+                    style={{ backgroundColor: '#fff', borderRadius: '12px', border: saldoAnticipos > 0.01 ? '1px solid #fde68a' : '1px solid #e5e7eb', padding: '16px', cursor: 'pointer' }}>
+                    <p style={{ fontSize: '12px', color: '#6b7280', margin: '0 0 4px' }}>Anticipos a favor</p>
+                    <p style={{ fontSize: '22px', fontWeight: 700, color: saldoAnticipos > 0.01 ? '#854d0e' : '#1f2937', margin: 0 }}>{fmt(saldoAnticipos)}</p>
+                </div>
             </div>
 
             {/* Tabs de sección */}
             <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
-                {[['compras', 'Compras a crédito'], ['gastos', 'Gastos programados'], ['nd', `Notas de Débito${nds.length && filtroNdEstado === 'pendiente' ? ` (${nds.length})` : ''}`]].map(([key, label]) => (
+                {[['compras', 'Compras a crédito'], ['gastos', 'Gastos programados'], ['nd', `Notas de Débito${nds.length && filtroNdEstado === 'pendiente' ? ` (${nds.length})` : ''}`], ['anticipos', 'Anticipos']].map(([key, label]) => (
                     <button key={key} onClick={() => setTabSeccion(key)}
                         style={{ padding: '8px 18px', borderRadius: '8px', fontSize: '13px', fontWeight: 500, border: '1px solid', cursor: 'pointer',
                             borderColor: tabSeccion === key ? '#16a34a' : '#e5e7eb',
@@ -483,6 +491,8 @@ export default function CuentasPagar() {
                     </div>
                 </div>
             )}
+
+            {tabSeccion === 'anticipos' && <PanelAnticiposCxP />}
 
             {mostrarModal && compraSeleccionada && (
                 <ModalPago

@@ -147,6 +147,10 @@ Cambios:
 
 ## Fase 5 — CxP: pestaña "Anticipos"
 
+> **HECHA 2026-09-28.** `PanelAnticiposCxP` y `DetalleAnticipo` (en `AnticiposOC.jsx`).
+> KPI "Anticipos a favor" en la cabecera de CxP, separado de la deuda. Reembolso con
+> la ventana única de pago; anulación de reembolso con motivo.
+
 1. Tab nuevo junto a Compras, Gastos y ND. KPIs: **total anticipado con saldo**, cantidad,
    **anticipos con más de 30 días sin aplicar**, y **saldo en OC canceladas**.
 2. Tabla: ANT, fecha, proveedor, OC (con su estado), monto, aplicado, saldo, antigüedad,
