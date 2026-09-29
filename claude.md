@@ -165,8 +165,18 @@ guardado se bloquea (hay que cargarlas primero en Administración).
 | Gastos — alta del gasto | `gastos.fecha` |
 | Compras — recepción de contado | `compras.fecha_pago` |
 
+**Lectores de caja (Bancos, Finanzas):** ubicar cada movimiento por su fecha
+real (`cobros.fecha_cobro`, `pagos_proveedor.fecha_pago`), nunca por
+`created_at`; convertir con `ymdCaracas()` y filtrar con
+`inicioDiaCaracas()`/`finDiaCaracas()`. No son dinero y se excluyen de caja: los
+cobros con `devolucion_id` (NC aplicada), los `pagos_proveedor` con
+`devolucion_proveedor_id` (ND aplicada) o con `anticipo_id` (aplicación de un
+anticipo: el dinero salió con el anticipo, `anticipos_proveedor`, en su `fecha`).
+Ver `docs/plan-anticipos-proveedor.md`.
+
 La UI es un componente único: `src/components/SelectorFechaTasa.jsx`, que
-exporta también `useTasasFecha`, `OPCIONES_TASA`, `hoyYMD` y `fechaAtimestamp`.
+exporta también `useTasasFecha`, `OPCIONES_TASA`, `hoyYMD`, `fechaAtimestamp`,
+`ymdCaracas`, `inicioDiaCaracas` y `finDiaCaracas`.
 **No duplicar el selector de tasa en un módulo nuevo** — importarlo de ahí.
 
 ### Ventana de pago única (cuentas por pagar)

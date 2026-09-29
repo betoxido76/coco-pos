@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import { ArrowLeft, Plus, Edit2, Landmark, ArrowRightLeft } from 'lucide-react'
+import { ymdCaracas, inicioDiaCaracas, finDiaCaracas } from '../components/SelectorFechaTasa'
 
 const fmt = n => '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const fmtBs = n => Number(n || 0).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' Bs.'
@@ -19,11 +20,15 @@ function monedaCampo(moneda) {
 
 async function calcularSaldoCuenta(cuentaId, moneda, saldoInicial) {
     const campo = monedaCampo(moneda)
-    const [{ data: cobros }, { data: movs }, { data: pagos }, { data: gastos }] = await Promise.all([
+    // Las aplicaciones de anticipo (pagos_proveedor.anticipo_id) no tienen cuenta
+    // bancaria: el dinero salió con el anticipo, que se cuenta aparte.
+    const [{ data: cobros }, { data: movs }, { data: pagos }, { data: gastos }, { data: anticipos }, { data: reembolsos }] = await Promise.all([
         supabase.from('cobros').select('monto_usd, monto_bs').eq('cuenta_bancaria_id', cuentaId),
         supabase.from('movimientos_financieros').select('monto_usd, monto_bs, tipo').eq('cuenta_bancaria_id', cuentaId).eq('estado', 'pagado'),
         supabase.from('pagos_proveedor').select('monto_usd, monto_bs').eq('cuenta_bancaria_id', cuentaId).eq('anulado', false),
         supabase.from('gastos').select('monto_usd, monto_bs').eq('cuenta_bancaria_id', cuentaId).eq('estado', 'pagado'),
+        supabase.from('anticipos_proveedor').select('monto_usd, monto_bs').eq('cuenta_bancaria_id', cuentaId).neq('estado', 'anulado'),
+        supabase.from('anticipo_reembolsos').select('monto_usd, monto_bs').eq('cuenta_bancaria_id', cuentaId).eq('anulado', false),
     ])
 
     let saldo = Number(saldoInicial || 0)
@@ -32,6 +37,8 @@ async function calcularSaldoCuenta(cuentaId, moneda, saldoInicial) {
         .reduce((s, m) => s + Number(m[campo] || 0), 0)
     saldo -= (pagos || []).reduce((s, p) => s + Number(p[campo] || 0), 0)
     saldo -= (gastos || []).reduce((s, g) => s + Number(g[campo] || 0), 0)
+    saldo -= (anticipos || []).reduce((s, a) => s + Number(a[campo] || 0), 0)
+    saldo += (reembolsos || []).reduce((s, r) => s + Number(r[campo] || 0), 0)
     saldo -= (movs || []).filter(m => ['egreso', 'transferencia_salida'].includes(m.tipo))
         .reduce((s, m) => s + Number(m[campo] || 0), 0)
     return saldo
@@ -227,11 +234,13 @@ function VistaDetalle({ cuenta, tasas, onVolver }) {
         setCargando(true)
         const campo = monedaCampo(cuenta.moneda)
 
-        const [{ data: cobros }, { data: movManuales }, { data: pagos }, { data: gastosData }, saldo] = await Promise.all([
+        // Cobros y pagos se ubican por su fecha REAL (fecha_cobro / fecha_pago), no
+        // por cuándo se cargaron: un pago registrado con fecha pasada va en su día.
+        const [{ data: cobros }, { data: movManuales }, { data: pagos }, { data: gastosData }, { data: anticipos }, { data: reembolsos }, saldo] = await Promise.all([
             supabase.from('cobros')
-                .select('id, monto_usd, monto_bs, created_at, ventas(numero_factura, clientes(nombre))')
+                .select('id, monto_usd, monto_bs, fecha_cobro, ventas(numero_factura, clientes(nombre))')
                 .eq('cuenta_bancaria_id', cuenta.id)
-                .gte('created_at', desde).lte('created_at', hasta + 'T23:59:59'),
+                .gte('fecha_cobro', inicioDiaCaracas(desde)).lte('fecha_cobro', finDiaCaracas(hasta)),
 
             supabase.from('movimientos_financieros')
                 .select('id, monto_usd, monto_bs, tipo, concepto, descripcion, fecha')
@@ -240,15 +249,27 @@ function VistaDetalle({ cuenta, tasas, onVolver }) {
                 .gte('fecha', desde).lte('fecha', hasta),
 
             supabase.from('pagos_proveedor')
-                .select('id, monto_usd, monto_bs, created_at, compras(numero_doc, proveedores(nombre))')
+                .select('id, monto_usd, monto_bs, fecha_pago, compras(numero_doc, proveedores(nombre))')
                 .eq('cuenta_bancaria_id', cuenta.id)
                 .eq('anulado', false)
-                .gte('created_at', desde).lte('created_at', hasta + 'T23:59:59'),
+                .gte('fecha_pago', inicioDiaCaracas(desde)).lte('fecha_pago', finDiaCaracas(hasta)),
 
             supabase.from('gastos')
                 .select('id, monto_usd, monto_bs, nombre, fecha')
                 .eq('cuenta_bancaria_id', cuenta.id)
                 .eq('estado', 'pagado')
+                .gte('fecha', desde).lte('fecha', hasta),
+
+            supabase.from('anticipos_proveedor')
+                .select('id, numero_anticipo, monto_usd, monto_bs, fecha, proveedores(nombre), ordenes_compra(numero_oc)')
+                .eq('cuenta_bancaria_id', cuenta.id)
+                .neq('estado', 'anulado')
+                .gte('fecha', desde).lte('fecha', hasta),
+
+            supabase.from('anticipo_reembolsos')
+                .select('id, monto_usd, monto_bs, fecha, anticipos_proveedor(numero_anticipo, proveedores(nombre))')
+                .eq('cuenta_bancaria_id', cuenta.id)
+                .eq('anulado', false)
                 .gte('fecha', desde).lte('fecha', hasta),
 
             calcularSaldoCuenta(cuenta.id, cuenta.moneda, cuenta.saldo_inicial),
@@ -266,7 +287,7 @@ function VistaDetalle({ cuenta, tasas, onVolver }) {
         const lista = [
             ...(cobros || []).map(c => ({
                 id: c.id, key: 'cobro-' + c.id,
-                fecha: c.created_at?.split('T')[0],
+                fecha: ymdCaracas(c.fecha_cobro),
                 origen: 'cobro', label: 'Cobro venta',
                 descripcion: [c.ventas?.numero_factura, c.ventas?.clientes?.nombre].filter(Boolean).join(' · '),
                 monto: Number(c[campo] || 0), signo: 1,
@@ -282,7 +303,7 @@ function VistaDetalle({ cuenta, tasas, onVolver }) {
             })),
             ...(pagos || []).map(p => ({
                 id: p.id, key: 'pago-' + p.id,
-                fecha: p.created_at?.split('T')[0],
+                fecha: ymdCaracas(p.fecha_pago),
                 origen: 'pago', label: 'Pago proveedor',
                 descripcion: [p.compras?.numero_doc, p.compras?.proveedores?.nombre].filter(Boolean).join(' · '),
                 monto: Number(p[campo] || 0), signo: -1,
@@ -293,6 +314,20 @@ function VistaDetalle({ cuenta, tasas, onVolver }) {
                 origen: 'gasto', label: 'Gasto',
                 descripcion: g.nombre,
                 monto: Number(g[campo] || 0), signo: -1,
+            })),
+            ...(anticipos || []).map(a => ({
+                id: a.id, key: 'anticipo-' + a.id,
+                fecha: a.fecha,
+                origen: 'pago', label: 'Anticipo proveedor',
+                descripcion: [a.numero_anticipo, a.ordenes_compra?.numero_oc, a.proveedores?.nombre].filter(Boolean).join(' · '),
+                monto: Number(a[campo] || 0), signo: -1,
+            })),
+            ...(reembolsos || []).map(r => ({
+                id: r.id, key: 'reembolso-' + r.id,
+                fecha: r.fecha,
+                origen: 'ingreso', label: 'Reembolso de anticipo',
+                descripcion: [r.anticipos_proveedor?.numero_anticipo, r.anticipos_proveedor?.proveedores?.nombre].filter(Boolean).join(' · '),
+                monto: Number(r[campo] || 0), signo: 1,
             })),
         ].sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''))
 

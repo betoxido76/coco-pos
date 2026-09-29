@@ -30,6 +30,16 @@ export const fmtFechaCorta = (ymd) =>
 // fecha un día hacia atrás en husos negativos como el de Venezuela.
 export const fechaAtimestamp = (ymd) => `${ymd}T12:00:00`
 
+// Inverso: la fecha (YYYY-MM-DD, hora de Venezuela) de un timestamptz como
+// cobros.fecha_cobro o pagos_proveedor.fecha_pago. No usar ts.split('T')[0]:
+// eso da el día en UTC, que después de las 20:00 ya es el día siguiente.
+export const ymdCaracas = (ts) =>
+    ts ? new Date(ts).toLocaleDateString('en-CA', { timeZone: 'America/Caracas' }) : null
+
+// Límites de un rango de días para filtrar columnas timestamptz por fecha local
+export const inicioDiaCaracas = (ymd) => `${ymd}T00:00:00-04:00`
+export const finDiaCaracas = (ymd) => `${ymd}T23:59:59.999-04:00`
+
 // Tasas de una fecha concreta. Devuelve null si ese día no tiene tasas cargadas.
 export function useTasasFecha(empresaId, fecha) {
     const [tasasFecha, setTasasFecha] = useState(null)

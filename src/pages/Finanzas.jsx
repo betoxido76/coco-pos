@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import { Plus, X, Check, Trash2 } from 'lucide-react'
+import { ymdCaracas, inicioDiaCaracas, finDiaCaracas } from '../components/SelectorFechaTasa'
 
 const fmt = n => `$${Number(n || 0).toFixed(2)}`
 const fmtBs = n => `${Number(n || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`
@@ -40,6 +41,8 @@ function BadgeOrigen({ origen }) {
         gasto:      { bg: '#fef9c3', color: '#854d0e', label: 'Gasto' },
         gasto_prog: { bg: '#fef3c7', color: '#92400e', label: 'Gasto prog.' },
         proveedor:  { bg: '#fce7f3', color: '#9d174d', label: 'Pago proveedor' },
+        anticipo:   { bg: '#fce7f3', color: '#9d174d', label: 'Anticipo proveedor' },
+        reembolso:  { bg: '#dcfce7', color: '#166534', label: 'Reembolso anticipo' },
         cxp:        { bg: '#fee2e2', color: '#991b1b', label: 'CXP pendiente' },
         manual:     { bg: '#f3f4f6', color: '#374151', label: 'Manual' },
     }
@@ -70,6 +73,8 @@ export default function Finanzas() {
     const [gastosPendientes, setGastosPendientes] = useState([])
     const [pagosGasto, setPagosGasto] = useState([]) // abonos a gastos (motor `pagos`)
     const [pagosProveedor, setPagosProveedor] = useState([])
+    const [anticipos, setAnticipos] = useState([])
+    const [reembolsos, setReembolsos] = useState([])
     const [cxpPendiente, setCxpPendiente] = useState([])
     const [movManuales, setMovManuales] = useState([])
     const [tasas, setTasas] = useState({ tasa_bcv: 1, tasa_euro: 1, tasa_binance: 1 })
@@ -89,13 +94,16 @@ export default function Finanzas() {
         const [
             { data: d1 }, { data: d2 }, { data: d3 }, { data: d4 },
             { data: d5 }, { data: d6 }, { data: d7 }, { data: cfg },
-            { data: dPagos },
+            { data: dPagos }, { data: dAnt }, { data: dReemb },
         ] = await Promise.all([
+            // Caja realizada: cada movimiento en su fecha REAL, no la de carga.
+            // Una NC aplicada como cobro no es dinero que entra.
             supabase.from('cobros')
                 .select('*, ventas(numero_factura, clientes(nombre))')
                 .eq('empresa_id', perfil.empresa_id)
-                .gte('created_at', desde + 'T00:00:00')
-                .lte('created_at', hasta + 'T23:59:59'),
+                .is('devolucion_id', null)
+                .gte('fecha_cobro', inicioDiaCaracas(desde))
+                .lte('fecha_cobro', finDiaCaracas(hasta)),
 
             supabase.from('ventas')
                 .select('id, numero_factura, total, fecha_vencimiento_pago, estado_cobro, clientes(nombre)')
@@ -114,12 +122,16 @@ export default function Finanzas() {
                 .eq('empresa_id', perfil.empresa_id)
                 .in('estado', ['pendiente', 'parcial']),
 
+            // Ni la ND aplicada como pago ni la aplicación de un anticipo son salidas
+            // de dinero: el anticipo ya salió de caja el día que se pagó.
             supabase.from('pagos_proveedor')
                 .select('*, compras(proveedores(nombre))')
                 .eq('empresa_id', perfil.empresa_id)
                 .eq('anulado', false)
-                .gte('created_at', desde + 'T00:00:00')
-                .lte('created_at', hasta + 'T23:59:59'),
+                .is('devolucion_proveedor_id', null)
+                .is('anticipo_id', null)
+                .gte('fecha_pago', inicioDiaCaracas(desde))
+                .lte('fecha_pago', finDiaCaracas(hasta)),
 
             supabase.from('compras')
                 .select('id, total, fecha_vencimiento_pago, estado_cobro, proveedores(nombre)')
@@ -142,6 +154,18 @@ export default function Finanzas() {
                 .select('origen_id, fecha, monto_usd, monto_bs, tasa_cambio, tipo_tasa, metodo_usd')
                 .eq('empresa_id', perfil.empresa_id)
                 .eq('origen_tipo', 'gasto'),
+
+            supabase.from('anticipos_proveedor')
+                .select('id, numero_anticipo, fecha, monto_usd, monto_bs, tasa_cambio, tipo_tasa, metodo_usd, metodo_bs, proveedores(nombre), ordenes_compra(numero_oc)')
+                .eq('empresa_id', perfil.empresa_id)
+                .neq('estado', 'anulado')
+                .gte('fecha', desde).lte('fecha', hasta),
+
+            supabase.from('anticipo_reembolsos')
+                .select('id, fecha, monto_usd, monto_bs, tasa_cambio, tipo_tasa, metodo_usd, metodo_bs, anticipos_proveedor(numero_anticipo, proveedores(nombre))')
+                .eq('empresa_id', perfil.empresa_id)
+                .eq('anulado', false)
+                .gte('fecha', desde).lte('fecha', hasta),
         ])
 
         setCobros(d1 || [])
@@ -152,6 +176,8 @@ export default function Finanzas() {
         setCxpPendiente(d6 || [])
         setMovManuales(d7 || [])
         setPagosGasto(dPagos || [])
+        setAnticipos(dAnt || [])
+        setReembolsos(dReemb || [])
         if (cfg) { const t = {}; cfg.forEach(r => { t[r.clave] = Number(r.valor) }); setTasas(t) }
         setLoading(false)
     }
@@ -160,7 +186,7 @@ export default function Finanzas() {
     const ingresosRealizados = [
         ...cobros.map(c => ({
             id: c.id, origen: 'cobro',
-            fecha: c.created_at?.split('T')[0],
+            fecha: ymdCaracas(c.fecha_cobro),
             descripcion: [c.ventas?.numero_factura, c.ventas?.clientes?.nombre].filter(Boolean).join(' — '),
             monto_usd: c.monto_usd, monto_bs: c.monto_bs,
             tasa_cambio: c.tasa_cambio, tipo_tasa: c.tipo_tasa,
@@ -175,6 +201,14 @@ export default function Finanzas() {
                 monto_usd: m.monto_usd, monto_bs: m.monto_bs,
                 tasa_cambio: m.tasa_cambio, tipo_tasa: m.tipo_tasa, metodo: null,
             })),
+        ...reembolsos.map(r => ({
+            id: 'reemb-' + r.id, origen: 'reembolso',
+            fecha: r.fecha,
+            descripcion: `Reembolso ${r.anticipos_proveedor?.numero_anticipo || ''} — ${r.anticipos_proveedor?.proveedores?.nombre || '—'}`,
+            monto_usd: r.monto_usd, monto_bs: r.monto_bs,
+            tasa_cambio: r.tasa_cambio, tipo_tasa: r.tipo_tasa,
+            metodo: [r.metodo_usd, r.metodo_bs].filter(Boolean).join(' / '),
+        })),
     ].sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''))
 
     const ingresosProgramados = [
@@ -228,11 +262,19 @@ export default function Finanzas() {
         })),
         ...pagosProveedor.map(p => ({
             id: p.id, origen: 'proveedor',
-            fecha: p.created_at?.split('T')[0],
+            fecha: ymdCaracas(p.fecha_pago),
             descripcion: `Pago a: ${p.compras?.proveedores?.nombre || '—'}`,
             monto_usd: p.monto_usd, monto_bs: p.monto_bs,
             tasa_cambio: p.tasa_cambio, tipo_tasa: p.tipo_tasa,
             metodo: [p.metodo_usd, p.metodo_bs].filter(Boolean).join(' / '),
+        })),
+        ...anticipos.map(a => ({
+            id: 'ant-' + a.id, origen: 'anticipo',
+            fecha: a.fecha,
+            descripcion: `${a.numero_anticipo}${a.ordenes_compra?.numero_oc ? ' · ' + a.ordenes_compra.numero_oc : ''} — ${a.proveedores?.nombre || '—'}`,
+            monto_usd: a.monto_usd, monto_bs: a.monto_bs,
+            tasa_cambio: a.tasa_cambio, tipo_tasa: a.tipo_tasa,
+            metodo: [a.metodo_usd, a.metodo_bs].filter(Boolean).join(' / '),
         })),
         ...movManuales.filter(m => m.tipo === 'egreso' && (m.estado || 'pagado') === 'pagado'
             && m.fecha >= (filtroDesde || '2000-01-01') && m.fecha <= (filtroHasta || '2099-12-31'))

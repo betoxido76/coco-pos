@@ -76,7 +76,18 @@ definición actual en producción** (`pg_get_functiondef`), no reescribirla de m
     total, sobreaplicar (debe fallar), proveedor distinto (debe fallar), anular la
     aplicación (el saldo vuelve), anular un anticipo con aplicaciones (debe fallar).
 
+> **Fase 1 — APLICADA en producción 2026-09-28** (migración `anticipos_proveedor_fase1`).
+> 17/17 pruebas con BEGIN/ROLLBACK. Ajustes surgidos al probar: trigger guardián
+> sobre `pagos_proveedor.anticipo_id` y permiso atado al módulo (no al rol admin).
+
 ## Fase 2 — Bancos y Finanzas (antes de la UI, para que el dinero cuadre desde el primer anticipo)
+
+> **HECHA 2026-09-28.** Además de los 2 bugs previstos, los **cobros** tenían el mismo
+> error de fecha (596 de 1.828 fuera de su día) y Finanzas contaba las NC aplicadas
+> como ingreso; ambos corregidos. Hallazgos que quedan FUERA de esta fase:
+> (a) Finanzas muestra la CxP programada por `compras.total`, sin restar abonos;
+> (b) Bancos no lee los abonos parciales a gastos (tabla `pagos`): hoy es latente
+> (0 abonos con cuenta bancaria), pero fallará cuando se registre el primero.
 
 Encontré dos bugs que **ya existen hoy**:
 - **Finanzas cuenta como salida de caja las ND aplicadas como pago**
