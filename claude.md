@@ -340,6 +340,24 @@ ON CONFLICT DO NOTHING;
 | Billing integrado | Baja | Cobro recurrente automático, corte de acceso por falta de pago, portal de cliente. Opciones: Stripe + webhooks, o MercadoPago para mercado latinoamericano. |
 | **CxP unificada (compras + gastos)** — Fase 2 del motor de pagos | Media | Consolidar en una sola pantalla de Cuentas por Pagar todas las obligaciones: recepciones de compra **y** gastos programados/parciales. Fase 1 ya creó la tabla genérica `pagos` (`origen_tipo IN ('gasto','compra')`) como cimiento. Fase 2: migrar `pagos_proveedor` → `pagos`, y que CxP liste ambos orígenes con estado derivado (pendiente/parcial/pagado) y un motor de abonos compartido. Objetivo: un único "¿qué debo?" en vez de revisar Gastos y CxP por separado. Solo entran gastos `pendiente`/`parcial` (los de contado no son cuentas por pagar). Ver §17 y §18 (`gastos.estado` ya admite `'parcial'`). |
 
+### Backlog funcional (pendientes abiertos)
+
+Correcciones y cierres concretos del producto, no capacidades de plataforma.
+Al cerrar un ítem, borrarlo de esta tabla.
+
+| Item | Prioridad | Descripción |
+|---|---|---|
+| Recorrido de anticipos en producción | Alta | Nada del circuito de anticipos (`docs/plan-anticipos-proveedor.md`) se probó en navegador. Correr los 7 casos de la Fase 7 con una OC real pequeña antes de anunciarlo a los usuarios. |
+| Revisar pedidos alistados sin facturar (Meraki) | Alta | Al 2026-09-28 había 15 pedidos `alistado` con fecha programada ≤ 28/09, algunos del 16-17/09. Si alguno se entregó sin facturar, el conteo físico no lo incluye y facturarlo lo descontaría dos veces. Revisar uno por uno con despacho. |
+| Recontar Helado Antojito 40g (Meraki) | Media | El 24/09 se ajustó a 520 y el conteo del 25/09 dio 812 sin producción registrada entre medio. Hoy está en 392 tras restar el pedido de Farmatodo. |
+| Factura del anticipo (IVA) | Media | Consultar al contador si el proveedor debe facturar el anticipo al cobrarlo. Si sí, volver obligatorio `anticipos_proveedor.nro_doc_proveedor`. |
+| Lámina de capacitación: anticipos | Media | Compras y CxP, formato de las presentaciones de Meraki, con capturas reales. Hacerla después del recorrido. |
+| Finanzas: CxP programada sin abonos | Media | Egresos programados muestran `compras.total` de cada recepción pendiente/parcial, sin restar abonos ni anticipos aplicados. Debe mostrar el saldo. |
+| Bancos: abonos parciales a gastos | Media | `calcularSaldoCuenta` y el extracto no leen la tabla `pagos` (abonos a gastos con cuenta bancaria). Latente: hoy hay 0 abonos con cuenta. |
+| Documento de origen en movimientos de inventario | Media | Los movimientos `pedido_facturado` no guardan NE/PED: enlazar una salida con su factura solo se puede por hora. Pasar `notas` con NE y PED en `moverStockLote` desde Pedidos y Ventas. |
+| Hora real de despacho | Media | `pedidos.fecha_despacho` es la fecha PROGRAMADA; la hora en que se marca despachado solo queda en los logs de la API (retención corta). Agregar `despachado_at`. |
+| Recepción no transaccional | Baja | La recepción se guarda en varios pasos desde el navegador (compra, abono, aplicación de anticipos, ítems, stock). Si un paso falla, avisa y queda para completarlo a mano. Llevarla a una RPC. |
+
 ---
 
 ## 15. Convenciones de código
