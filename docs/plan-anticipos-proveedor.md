@@ -162,6 +162,11 @@ Cambios:
 
 ## Fase 6 — Cancelación de OC con anticipo
 
+> **HECHA 2026-09-28.** `ModalCancelarOCConAnticipo` + `anticiposConSaldoDeOC` (en
+> `AnticiposOC.jsx`). Sin anticipos con saldo, la cancelación sigue igual. El
+> reembolso se pide anticipo por anticipo; cerrar uno sin registrar lo deja como
+> saldo a favor.
+
 1. `anularOC`: si la OC tiene anticipos con saldo, en vez del `confirm` simple se abre un
    modal con dos caminos:
    - **Dejar como saldo a favor del proveedor** (default): el anticipo sigue `disponible`

@@ -668,7 +668,7 @@ export function DetalleAnticipo({ anticipoId, onVolver }) {
 }
 
 // ── Reembolso: el proveedor devuelve dinero del anticipo ───────────────────
-function ModalReembolsoAnticipo({ anticipo, saldo, onRegistrado, onCerrar }) {
+export function ModalReembolsoAnticipo({ anticipo, saldo, onRegistrado, onCerrar }) {
     async function confirmar({ fecha, tipoTasa, tasa, montoUsd, montoBs, metodoUsd, metodoBs, cuentaBancariaId, nota }) {
         const { error } = await supabase.rpc('registrar_reembolso_anticipo', {
             p_anticipo_id: anticipo.id, p_fecha: fecha,
@@ -724,6 +724,105 @@ function ModalMotivo({ titulo, detalle, aviso, textoBoton, onConfirmar, onCerrar
                     <button onClick={confirmar} disabled={guardando}
                         style={{ flex: 2, padding: '10px', border: 'none', borderRadius: '8px', fontSize: '14px', fontWeight: 600, color: '#fff', backgroundColor: '#dc2626', cursor: 'pointer', opacity: guardando ? 0.6 : 1 }}>
                         {guardando ? 'Procesando...' : textoBoton}
+                    </button>
+                </div>
+            </div>
+        </div>
+    )
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Cancelar una OC con anticipos (Fase 6)
+// ════════════════════════════════════════════════════════════════════════════
+// Anticipos con saldo de una OC (para decidir qué hacer al cancelarla)
+export async function anticiposConSaldoDeOC(empresaId, ocId) {
+    const { data } = await supabase.from('v_anticipos_saldo')
+        .select('id, numero_anticipo, fecha, saldo_usd, monto_equiv_usd')
+        .eq('empresa_id', empresaId).eq('orden_compra_id', ocId)
+        .in('estado', ['disponible', 'aplicado_parcial'])
+        .order('fecha')
+    return (data || []).filter(a => Number(a.saldo_usd) > 0.01)
+}
+
+// El dinero ya está en manos del proveedor: cancelar la OC no lo borra. Dos
+// caminos (plan, Fase 6): dejarlo como saldo a favor —se ofrecerá en la
+// próxima recepción del proveedor— o registrar ya el reembolso.
+export function ModalCancelarOCConAnticipo({ oc, anticipos, onCancelada, onCerrar }) {
+    const [camino, setCamino] = useState('saldo')
+    const [guardando, setGuardando] = useState(false)
+    const [error, setError] = useState('')
+    const [cola, setCola] = useState(null) // anticipos pendientes de reembolsar
+    const saldo = anticipos.reduce((s, a) => s + Number(a.saldo_usd), 0)
+
+    useEffect(() => { if (cola && cola.length === 0) onCancelada() }, [cola])
+
+    async function confirmar() {
+        setGuardando(true); setError('')
+        const { error: err } = await supabase.from('ordenes_compra')
+            .update({ estado: 'cancelada' }).eq('id', oc.id).eq('empresa_id', oc.empresa_id)
+        if (err) { setError('No se pudo cancelar la OC: ' + err.message); setGuardando(false); return }
+        if (camino === 'reembolso') setCola(anticipos)
+        else onCancelada()
+    }
+
+    // Reembolsos uno por uno; cerrar uno sin registrar lo deja como saldo a favor
+    if (cola) {
+        if (cola.length === 0) return null
+        const [actual, ...resto] = cola
+        return (
+            <ModalReembolsoAnticipo
+                anticipo={{ ...actual, proveedores: oc.proveedores }}
+                saldo={Number(actual.saldo_usd)}
+                onRegistrado={() => setCola(resto)}
+                onCerrar={() => setCola(resto)} />
+        )
+    }
+
+    const opcion = (valor, titulo, texto) => (
+        <label style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', padding: '10px 12px', borderRadius: '10px', cursor: 'pointer', marginBottom: '8px',
+            border: `2px solid ${camino === valor ? '#16a34a' : '#e5e7eb'}`, backgroundColor: camino === valor ? '#f0fdf4' : '#fff' }}>
+            <input type="radio" checked={camino === valor} onChange={() => setCamino(valor)} style={{ marginTop: '3px' }} />
+            <div>
+                <div style={{ fontSize: '13px', fontWeight: 600, color: '#1f2937' }}>{titulo}</div>
+                <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '2px' }}>{texto}</div>
+            </div>
+        </label>
+    )
+
+    return (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
+            <div style={{ backgroundColor: '#fff', borderRadius: '16px', padding: '24px', width: '100%', maxWidth: '460px', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
+                <h2 style={{ fontSize: '17px', fontWeight: 600, color: '#1f2937', margin: '0 0 4px' }}>Cancelar {oc.numero_oc}</h2>
+                <p style={{ fontSize: '13px', color: '#6b7280', margin: '0 0 14px' }}>{oc.proveedores?.nombre || ''}</p>
+
+                <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: '10px', padding: '12px 14px', marginBottom: '16px' }}>
+                    <div style={{ fontSize: '13px', color: '#92400e', marginBottom: '8px' }}>
+                        Esta OC tiene <strong>{fmt(saldo)}</strong> anticipados sin aplicar. Cancelar la OC no cancela ese dinero: sigue en manos del proveedor.
+                    </div>
+                    {anticipos.map(a => (
+                        <div key={a.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#78350f', padding: '2px 0' }}>
+                            <span style={{ fontFamily: 'monospace' }}>{a.numero_anticipo} · {fmtFechaCorta(a.fecha)}</span>
+                            <strong>{fmt(a.saldo_usd)}</strong>
+                        </div>
+                    ))}
+                </div>
+
+                {opcion('saldo', 'Dejar como saldo a favor del proveedor',
+                    'El anticipo queda disponible y se ofrecerá al registrar la próxima recepción de este proveedor. Se sigue en CxP → Anticipos.')}
+                {opcion('reembolso', 'Registrar el reembolso ahora',
+                    'El proveedor ya devolvió el dinero: se registra la entrada al banco. Si solo devolvió una parte, el resto queda como saldo a favor.')}
+
+                <p style={{ fontSize: '12px', color: '#9ca3af', margin: '8px 0 0' }}>La cancelación de la OC no se puede deshacer.</p>
+                {error && <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', color: '#dc2626', marginTop: '12px' }}>{error}</div>}
+
+                <div style={{ display: 'flex', gap: '10px', marginTop: '18px' }}>
+                    <button onClick={onCerrar} disabled={guardando}
+                        style={{ flex: 1, padding: '10px', border: '1px solid #e5e7eb', borderRadius: '8px', fontSize: '14px', color: '#374151', backgroundColor: '#fff', cursor: 'pointer' }}>
+                        No cancelar
+                    </button>
+                    <button onClick={confirmar} disabled={guardando}
+                        style={{ flex: 2, padding: '10px', border: 'none', borderRadius: '8px', fontSize: '14px', fontWeight: 600, color: '#fff', backgroundColor: '#dc2626', cursor: 'pointer', opacity: guardando ? 0.6 : 1 }}>
+                        {guardando ? 'Cancelando...' : 'Cancelar la OC'}
                     </button>
                 </div>
             </div>

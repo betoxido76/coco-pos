@@ -7,7 +7,7 @@ import { opcionesUnidad } from '../lib/unidades'
 import SelectorFechaTasa, { useTasasFecha, hoyYMD, fmtFechaCorta } from '../components/SelectorFechaTasa'
 import { ConfirmacionPago, METODOS_USD, METODOS_BS } from '../components/ModalPagoObligacion'
 import FiltroCombo from '../components/FiltroCombo'
-import AnticiposOC, { SelectorAnticipos, totalAplicaciones, aplicacionesALista } from '../components/AnticiposOC'
+import AnticiposOC, { SelectorAnticipos, totalAplicaciones, aplicacionesALista, anticiposConSaldoDeOC, ModalCancelarOCConAnticipo } from '../components/AnticiposOC'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 
@@ -62,6 +62,7 @@ export default function Compras() {
     const [opcOC, setOpcOC] = useState([])
     const [opcProveedores, setOpcProveedores] = useState([])
     const [anticiposPorOC, setAnticiposPorOC] = useState({}) // oc_id -> { anticipado, saldo }
+    const [ocCancelando, setOcCancelando] = useState(null)   // { oc, anticipos } al cancelar una OC con anticipo
 
     useEffect(() => { if (perfil?.empresa_id) cargarOpcionesFiltros() }, [perfil?.empresa_id])
     useEffect(() => { setPaginaOrdenes(0) }, [fOC, fProveedor, fEstado])
@@ -149,8 +150,11 @@ export default function Compras() {
     function abrirDetalleDevolucion(dev) { setDevolucionActual(dev); setVista('detalle_devolucion') }
 
     async function anularOC(oc) {
+        // Con anticipos sin aplicar, la cancelación pide decidir qué pasa con el dinero
+        const conSaldo = await anticiposConSaldoDeOC(perfil.empresa_id, oc.id)
+        if (conSaldo.length > 0) { setOcCancelando({ oc, anticipos: conSaldo }); return }
         if (!window.confirm(`¿Anular la orden ${oc.numero_oc}? Esta acción no se puede deshacer.`)) return
-        await supabase.from('ordenes_compra').update({ estado: 'cancelada' }).eq('id', oc.id)
+        await supabase.from('ordenes_compra').update({ estado: 'cancelada' }).eq('id', oc.id).eq('empresa_id', perfil.empresa_id)
         cargarOrdenes()
     }
 
@@ -275,6 +279,12 @@ export default function Compras() {
                         </div>
                     )}
                 </>
+            )}
+            {ocCancelando && (
+                <ModalCancelarOCConAnticipo
+                    oc={ocCancelando.oc} anticipos={ocCancelando.anticipos}
+                    onCancelada={() => { setOcCancelando(null); cargarOrdenes() }}
+                    onCerrar={() => setOcCancelando(null)} />
             )}
             {tabActiva === 'devoluciones' && (
                 <>
