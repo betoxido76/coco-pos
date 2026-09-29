@@ -107,6 +107,11 @@ Cambios:
 
 ## Fase 3 — Registrar el anticipo desde la OC
 
+> **HECHA 2026-09-28.** Componente `src/components/AnticiposOC.jsx` (sección, tabla
+> reutilizable `TablaAnticipos`, `ModalAnularAnticipo`, `usePermisosAnticipo`).
+> `ModalPagoObligacion` ganó `labelAbonado`, `labelSaldo` y `confirmacion`. El botón de
+> anular aparece solo en anticipos `disponible` (sin aplicaciones ni reembolsos).
+
 1. **`DetalleOrden`**: sección "Anticipos" (número, fecha, monto, aplicado, saldo, estado)
    y botón **"Registrar anticipo"** para OC en estado `pendiente`, `aprobada` o `recibida_parcial`.
 2. El botón abre **`ModalPagoObligacion`** (la ventana única de pago, §7). Total = total OC,

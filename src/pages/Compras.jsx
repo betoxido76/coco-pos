@@ -7,6 +7,7 @@ import { opcionesUnidad } from '../lib/unidades'
 import SelectorFechaTasa, { useTasasFecha, hoyYMD, fmtFechaCorta } from '../components/SelectorFechaTasa'
 import { ConfirmacionPago, METODOS_USD, METODOS_BS } from '../components/ModalPagoObligacion'
 import FiltroCombo from '../components/FiltroCombo'
+import AnticiposOC from '../components/AnticiposOC'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 
@@ -60,6 +61,7 @@ export default function Compras() {
     const [fEstado, setFEstado] = useState('')
     const [opcOC, setOpcOC] = useState([])
     const [opcProveedores, setOpcProveedores] = useState([])
+    const [anticiposPorOC, setAnticiposPorOC] = useState({}) // oc_id -> { anticipado, saldo }
 
     useEffect(() => { if (perfil?.empresa_id) cargarOpcionesFiltros() }, [perfil?.empresa_id])
     useEffect(() => { setPaginaOrdenes(0) }, [fOC, fProveedor, fEstado])
@@ -97,6 +99,23 @@ export default function Compras() {
             .range(paginaOrdenes * PAGE_SIZE, (paginaOrdenes + 1) * PAGE_SIZE - 1)
         if (data) setOrdenes(data)
         if (count !== null) setTotalOrdenes(count)
+
+        const ids = (data || []).map(o => o.id)
+        const mapa = {}
+        if (ids.length > 0) {
+            const { data: ants } = await supabase.from('v_anticipos_saldo')
+                .select('orden_compra_id, monto_equiv_usd, saldo_usd')
+                .eq('empresa_id', perfil.empresa_id)
+                .in('orden_compra_id', ids)
+                .neq('estado', 'anulado')
+            ;(ants || []).forEach(a => {
+                const m = mapa[a.orden_compra_id] || { anticipado: 0, saldo: 0 }
+                m.anticipado += Number(a.monto_equiv_usd || 0)
+                m.saldo += Number(a.saldo_usd || 0)
+                mapa[a.orden_compra_id] = m
+            })
+        }
+        setAnticiposPorOC(mapa)
         setLoading(false)
     }
 
@@ -213,7 +232,7 @@ export default function Compras() {
 
             {tabActiva === 'ordenes' && (
                 <>
-                    <TablaOrdenes ordenes={ordenes} loading={loading} onVer={abrirDetalleOC} filtrado={!!(fOC || fProveedor || fEstado)}
+                    <TablaOrdenes ordenes={ordenes} loading={loading} onVer={abrirDetalleOC} filtrado={!!(fOC || fProveedor || fEstado)} anticipos={anticiposPorOC}
                     onEditar={oc => { setOcAEditar(oc); setVista('editar_oc') }}
                     onAnular={anularOC} />
                     {totalOrdenes > PAGE_SIZE && (
@@ -284,7 +303,7 @@ export default function Compras() {
 }
 
 // ─── Tablas de Listado ──────────────────────────────────────
-function TablaOrdenes({ ordenes, loading, onVer, onEditar, onAnular, filtrado }) {
+function TablaOrdenes({ ordenes, loading, onVer, onEditar, onAnular, filtrado, anticipos = {} }) {
     const editable = (estado) => estado === 'pendiente' || estado === 'aprobada'
     return (
         <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
@@ -293,8 +312,8 @@ function TablaOrdenes({ ordenes, loading, onVer, onEditar, onAnular, filtrado })
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
                             <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                {['OC #', 'Proveedor', 'Emisión', 'Entrega', 'Total', 'Estado', ''].map((h, i) => (
-                                    <th key={i} style={{ padding: '10px 16px', textAlign: i === 4 ? 'right' : 'left', fontSize: '12px', fontWeight: 500, color: '#6b7280' }}>{h}</th>
+                                {['OC #', 'Proveedor', 'Emisión', 'Entrega', 'Total', 'Anticipo', 'Estado', ''].map((h, i) => (
+                                    <th key={i} style={{ padding: '10px 16px', textAlign: i === 4 || i === 5 ? 'right' : 'left', fontSize: '12px', fontWeight: 500, color: '#6b7280' }}>{h}</th>
                                 ))}
                             </tr>
                         </thead>
@@ -308,6 +327,13 @@ function TablaOrdenes({ ordenes, loading, onVer, onEditar, onAnular, filtrado })
                                     <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{new Date(o.fecha_emision).toLocaleDateString('es-VE')}</td>
                                     <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{o.fecha_entrega_esperada ? new Date(o.fecha_entrega_esperada).toLocaleDateString('es-VE') : '—'}</td>
                                     <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(o.total)}</td>
+                                    <td style={{ padding: '12px 16px', fontSize: '12px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                                        {anticipos[o.id] ? (
+                                            anticipos[o.id].saldo > 0.01
+                                                ? <span title={`Anticipado ${fmt(anticipos[o.id].anticipado)}`} style={{ fontWeight: 600, color: '#854d0e' }}>{fmt(anticipos[o.id].saldo)} por aplicar</span>
+                                                : <span style={{ color: '#166534' }}>{fmt(anticipos[o.id].anticipado)} aplicado</span>
+                                        ) : <span style={{ color: '#d1d5db' }}>—</span>}
+                                    </td>
                                     <td style={{ padding: '12px 16px' }}><BadgeOC estado={o.estado} /></td>
                                     <td style={{ padding: '12px 16px' }}>
                                         <div style={{ display: 'flex', gap: '6px' }}>
@@ -2493,6 +2519,9 @@ function DetalleOrden({ orden, onVolver }) {
 
                 <div style={{ marginTop: '32px', textAlign: 'center', fontSize: '12px', color: '#d1d5db' }}>Documento generado electrónicamente</div>
             </div>
+
+            {/* Siempre visible: una OC cancelada puede tener anticipos por reembolsar */}
+            <AnticiposOC orden={orden} />
         </div>
     )
 }

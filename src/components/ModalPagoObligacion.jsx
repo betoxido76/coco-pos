@@ -124,6 +124,9 @@ export default function ModalPagoObligacion({
     metodosUsd = METODOS_USD,
     metodosBs = METODOS_BS,
     textoConfirmar = 'Confirmar pago',
+    labelAbonado = 'Abonado',
+    labelSaldo = 'Saldo pendiente',
+    confirmacion = {},           // { titulo, aviso, textoBoton } para ConfirmacionPago
     onConfirmar,                 // async (datos) => string | void   (string = mensaje de error)
     onCerrar,
 }) {
@@ -225,11 +228,11 @@ export default function ModalPagoObligacion({
                     )}
                     {abonado > 0.001 && (
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#6b7280' }}>
-                            <span>Abonado</span><span style={{ fontWeight: 600, color: '#16a34a' }}>-{fmt(abonado)}</span>
+                            <span>{labelAbonado}</span><span style={{ fontWeight: 600, color: '#16a34a' }}>-{fmt(abonado)}</span>
                         </div>
                     )}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', ...(hayResumenExtendido ? { borderTop: '1px solid #dbeafe', paddingTop: '6px' } : {}) }}>
-                        <span style={{ fontSize: '13px', color: '#16a34a' }}>Saldo pendiente</span>
+                        <span style={{ fontSize: '13px', color: '#16a34a' }}>{labelSaldo}</span>
                         <span style={{ fontSize: '15px', fontWeight: 700, color: '#16a34a' }}>{cargandoSaldo ? '…' : fmt(saldo)}</span>
                     </div>
                 </div>
@@ -334,7 +337,7 @@ export default function ModalPagoObligacion({
                 <ConfirmacionPago
                     saldo={tope} pago={totalEnUsd} pendiente={pendienteTras} saldada={quedaSaldada}
                     montoUsd={Number(montoUsd || 0)} montoBs={Number(montoBs || 0)} tasa={tasa} fecha={fecha}
-                    guardando={guardando}
+                    guardando={guardando} {...confirmacion}
                     onVolver={() => setConfirmando(false)} onConfirmar={confirmar} />
             )}
         </div>
