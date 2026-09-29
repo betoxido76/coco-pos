@@ -81,6 +81,21 @@ pagos_proveedor       -- Pagos a proveedores
                       --   anulado_por → usuarios, fecha_anulacion. Anulación lógica
                       --   vía RPC anular_pago_proveedor. FILTRAR anulado=false.
                       --   2 FKs a usuarios → embed con hint usuarios!usuario_id
+                      --   anticipo_id → anticipos_proveedor: APLICACIÓN de un anticipo.
+                      --   Siempre sin cuenta_bancaria_id (CHECK) y solo vía RPC (trigger).
+                      --   Lectores de caja la excluyen: el dinero salió con el anticipo.
+anticipos_proveedor   -- Anticipos pagados antes de recibir (ANT-000001), CLAUDE.md §7
+                      --   proveedor_id!, orden_compra_id (nullable = saldo a favor sin OC)
+                      --   fecha date, monto_usd, monto_bs, tasa_cambio, tipo_tasa,
+                      --   metodo_usd/bs, cuenta_bancaria_id, monto_equiv_usd (USD a la tasa del día)
+                      --   nro_doc_proveedor, estado ('disponible','aplicado_parcial',
+                      --   'aplicado','reembolsado','anulado') — lo escribe recalcular_anticipo()
+                      --   2 FKs a usuarios → embed con hint usuarios!usuario_id
+                      --   Escritura SOLO por RPC (sin políticas de INSERT/UPDATE)
+anticipo_reembolsos   -- El proveedor devuelve dinero de un anticipo (entra al banco)
+                      --   anticipo_id!, fecha, montos, cuenta_bancaria_id, anulado
+v_anticipos_saldo     -- Vista (security_invoker): anticipo + aplicado_usd, reembolsado_usd, saldo_usd
+                      --   Sin embeds sobre la vista: resolver proveedor/OC con otra consulta
 devoluciones_proveedor     -- Notas de débito a proveedor
 devolucion_proveedor_items -- Detalle de ND
 ```

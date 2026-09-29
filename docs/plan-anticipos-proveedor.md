@@ -176,6 +176,10 @@ Cambios:
 
 ## Fase 7 — Cierre
 
+> **Documentación HECHA 2026-09-28** (CLAUDE.md §7 "Anticipos a proveedor",
+> docs/claude-schema.md, memoria). **Pendiente:** el recorrido de 7 casos en
+> producción con el usuario y la lámina de capacitación.
+
 1. `CLAUDE.md` §7 (anticipos, la regla de que la aplicación no es salida de dinero y que
    los lectores de `pagos_proveedor` para caja deben excluir `anticipo_id`) y `docs/claude-schema.md`.
 2. Memoria del proyecto.

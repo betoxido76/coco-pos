@@ -208,6 +208,28 @@ La usan `CuentasPagar → ModalPago` (recepciones) y
 **Gastos** como desde **CxP → tab Gastos** para que pagar un gasto se vea y
 funcione igual desde ambos lados. **No escribir una ventana de pago nueva.**
 
+### Anticipos a proveedor
+
+Dinero pagado a un proveedor ANTES de recibir, normalmente contra una OC
+(`anticipos_proveedor`, `ANT-000001`). Es un saldo a favor, no un gasto: sale
+del banco en su `fecha` y se cruza contra recepciones con una **aplicación** =
+fila de `pagos_proveedor` con `anticipo_id` y **sin cuenta bancaria** (abono
+para CxP, no salida de caja). Saldo = `monto_equiv_usd − aplicaciones vigentes −
+reembolsos vigentes` (vista `v_anticipos_saldo`).
+
+- **Toda escritura por RPC**: `registrar_anticipo_proveedor`,
+  `aplicar_anticipo_proveedor`, `anular_anticipo_proveedor`,
+  `registrar_reembolso_anticipo`, `anular_reembolso_anticipo`. Un trigger impide
+  escribir `pagos_proveedor.anticipo_id` fuera de la RPC, y las tablas no tienen
+  política de INSERT/UPDATE. `anular_pago_proveedor` devuelve el saldo al anticipo.
+- Registrar/aplicar: módulo `compras` o `cxp` (el rol admin NO basta). Anular:
+  admin/finanzas.
+- UI en `src/components/AnticiposOC.jsx`: sección en el detalle de la OC,
+  `SelectorAnticipos` (recepción y CxP → Pagar), pestaña CxP → Anticipos,
+  detalle/reembolso y el modal al cancelar una OC con anticipo.
+- Con anticipo aplicado, una recepción se guarda SIEMPRE a crédito.
+- Diseño y decisiones: `docs/plan-anticipos-proveedor.md`.
+
 Los cobros y gastos manejan `monto_usd` + `monto_bs` + `tasa_cambio` + `tipo_tasa`.
 El equivalente en USD = `monto_usd + (monto_bs / tasa)`.
 
