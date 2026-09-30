@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
-import { Check, X, FileText, ChevronRight, Clock, Search, Bell, Ban, Pencil } from 'lucide-react'
+import { Check, X, FileText, ChevronRight, Clock, Search, Bell, Ban, Pencil, Trash2 } from 'lucide-react'
 import { itemAplicaIva } from '../lib/iva'
 import { sinSaldoQueCobrar } from '../lib/cobro'
 import { almacenPredeterminado, verificarStock, moverStockLote } from '../lib/inventario'
@@ -527,6 +527,8 @@ function DetallePedido({ pedido, onVolver }) {
     const [descGlobalEdit, setDescGlobalEdit] = useState('')
     const [descGlobalActual, setDescGlobalActual] = useState(Number(pedido.descuento_global || 0))
     const [guardandoEdit, setGuardandoEdit] = useState(false)
+    const [eliminados, setEliminados] = useState([])        // ids de líneas quitadas en la edición
+    const [catalogoEdit, setCatalogoEdit] = useState([])    // productos que se pueden agregar (con precio de la lista del pedido)
     // Detalle del cobro de contado (solo aplica al convertir en factura)
     const [condicionCliente, setCondicionCliente] = useState(null)
     const [tasas, setTasas] = useState({})
@@ -673,23 +675,131 @@ function DetallePedido({ pedido, onVolver }) {
     function iniciarEdicion() {
         setItemsEdit(items.map(i => ({
             ...i,
+            _key: i.id,
             _cantidad: String(Number(i.cantidad)),
             _precio: String(Number(i.precio_unitario).toFixed(4)),
             _descuento: String(Number(i.descuento_item || 0)),
         })))
+        setEliminados([])
         setDescGlobalEdit(String(descGlobalActual))
         setEditando(true)
         setExito('')
         setError('')
+        cargarCatalogoEdit()
+    }
+
+    // Productos para agregar al pedido: precio de SU lista de precios (con IVA
+    // embebido, igual que Ventas); sin lista, el precio de venta del catálogo.
+    async function cargarCatalogoEdit() {
+        const campos = 'id, nombre, sku, precio_venta, aplica_iva, tipo_producto, unidad_medida, unidad_venta_2, factor_conversion_2'
+        if (pedido.lista_precio_id) {
+            const { data } = await supabase.from('producto_precios')
+                .select(`precio, productos_terminados(${campos}, activo)`)
+                .eq('empresa_id', perfil.empresa_id).eq('lista_id', pedido.lista_precio_id)
+            setCatalogoEdit((data || []).filter(x => x.productos_terminados?.activo)
+                .map(x => ({ ...x.productos_terminados, precio_venta: Number(x.precio) }))
+                .sort((a, b) => a.nombre.localeCompare(b.nombre)))
+        } else {
+            const { data } = await supabase.from('productos_terminados').select(campos)
+                .eq('empresa_id', perfil.empresa_id).eq('activo', true).order('nombre')
+            setCatalogoEdit(data || [])
+        }
+    }
+
+    function agregarProducto(productoId) {
+        if (!productoId) return
+        const prod = catalogoEdit.find(x => x.id === productoId)
+        if (!prod) return
+        if (itemsEdit.some(i => i.producto_id === productoId)) {
+            setError(`${prod.nombre} ya está en el pedido: modifica su cantidad en la línea existente`)
+            return
+        }
+        setError('')
+        const precio = Number(prod.precio_venta || 0)
+        setItemsEdit(prev => [...prev, {
+            _key: `nuevo-${productoId}`,
+            _nuevo: true,
+            _precioBase: precio,              // precio de lista en la unidad principal
+            producto_id: productoId,
+            nombre_producto: prod.nombre,
+            aplica_iva: prod.aplica_iva ?? true,
+            unidad_venta: prod.unidad_medida,
+            productos_terminados: {
+                nombre: prod.nombre, sku: prod.sku, aplica_iva: prod.aplica_iva,
+                factor_conversion_2: prod.factor_conversion_2, unidad_medida: prod.unidad_medida, unidad_venta_2: prod.unidad_venta_2,
+            },
+            _cantidad: '1',
+            _precio: precio.toFixed(4),
+            _descuento: '0',
+        }])
+    }
+
+    // Unidad de una línea nueva: principal o secundaria (precio UM2 = lista × factor, como Ventas)
+    function cambiarUnidadNueva(key, usarUM2) {
+        setItemsEdit(prev => prev.map(it => {
+            if (it._key !== key) return it
+            const pt = it.productos_terminados
+            const factor = Number(pt?.factor_conversion_2 || 1)
+            return {
+                ...it,
+                unidad_venta: usarUM2 ? pt.unidad_venta_2 : pt.unidad_medida,
+                _precio: (it._precioBase * (usarUM2 ? factor : 1)).toFixed(4),
+            }
+        }))
+    }
+
+    function quitarLinea(key) {
+        const item = itemsEdit.find(i => i._key === key)
+        if (item && !item._nuevo) setEliminados(prev => [...prev, item.id])
+        setItemsEdit(prev => prev.filter(i => i._key !== key))
     }
 
     async function guardarEdicion() {
+        if (itemsEdit.length === 0) {
+            setError('El pedido debe tener al menos un producto. Si ya no se quiere, recházalo.')
+            return
+        }
         if (itemsEdit.some(i => !(Number(i._cantidad) > 0))) {
             setError('La cantidad debe ser mayor a 0 en todas las líneas')
             return
         }
         setGuardandoEdit(true); setError('')
-        for (const item of itemsEdit) {
+
+        // 1) Líneas quitadas. Se verifica cuántas se borraron: RLS filtra en
+        //    silencio y un borrado a medias dejaría el pedido con líneas fantasma.
+        if (eliminados.length > 0) {
+            const { data: borradas, error: errDel } = await supabase.from('pedido_items')
+                .delete().in('id', eliminados).eq('pedido_id', pedido.id).select('id')
+            if (errDel || (borradas || []).length !== eliminados.length) {
+                setError('No se pudieron quitar todas las líneas: ' + (errDel?.message || 'sin permiso sobre alguna'))
+                setGuardandoEdit(false); return
+            }
+        }
+
+        // 2) Líneas nuevas
+        const nuevas = itemsEdit.filter(i => i._nuevo)
+        if (nuevas.length > 0) {
+            const { error: errIns } = await supabase.from('pedido_items').insert(nuevas.map(item => {
+                const cantidad = Number(item._cantidad)
+                const factor = Number(item.productos_terminados?.factor_conversion_2 || 1)
+                const precio = Math.max(0, Number(item._precio) || 0)
+                const desc = Math.min(100, Math.max(0, Number(item._descuento) || 0))
+                return {
+                    pedido_id: pedido.id, empresa_id: perfil.empresa_id,
+                    producto_id: item.producto_id, nombre_producto: item.nombre_producto,
+                    cantidad, precio_unitario: precio, descuento_item: desc,
+                    subtotal: cantidad * precio * (1 - desc / 100),
+                    unidad_venta: item.unidad_venta,
+                    cantidad_primaria: (esUM2(item) && factor > 1) ? cantidad * factor : cantidad,
+                    // Snapshot de la condición de IVA al crear la línea (src/lib/iva.js)
+                    aplica_iva: item.aplica_iva ?? true,
+                }
+            }))
+            if (errIns) { setError('Error al agregar productos: ' + errIns.message); setGuardandoEdit(false); return }
+        }
+
+        // 3) Líneas existentes
+        for (const item of itemsEdit.filter(i => !i._nuevo)) {
             // cantidad va en unidad de venta → cantidad_primaria siempre normalizada a UM1
             const cantidad = Number(item._cantidad)
             const factor = Number(item.productos_terminados?.factor_conversion_2 || 1)
@@ -974,12 +1084,12 @@ function DetallePedido({ pedido, onVolver }) {
                 <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '2px solid #d97706', overflow: 'hidden', marginBottom: '20px' }}>
                     <div style={{ backgroundColor: '#fffbeb', padding: '10px 16px', borderBottom: '1px solid #fde68a', display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <Pencil size={14} color="#d97706" />
-                        <span style={{ fontSize: '13px', fontWeight: 600, color: '#92400e' }}>Modo edición — modifica cantidades, precios y descuentos, luego guarda</span>
+                        <span style={{ fontSize: '13px', fontWeight: 600, color: '#92400e' }}>Modo edición — agrega o quita productos, modifica cantidades, precios y descuentos, luego guarda</span>
                     </div>
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
                             <tr style={{ backgroundColor: '#fffbeb', borderBottom: '1px solid #fde68a' }}>
-                                {['Producto', 'Cantidad', 'Precio unit.', 'Desc. (%)', 'Subtotal'].map((h, i) => (
+                                {['Producto', 'Cantidad', 'Precio unit.', 'Desc. (%)', 'Subtotal', ''].map((h, i) => (
                                     <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#92400e', textAlign: i === 0 ? 'left' : 'right' }}>{h}</th>
                                 ))}
                             </tr>
@@ -994,12 +1104,25 @@ function DetallePedido({ pedido, onVolver }) {
                                 const unidad = esUM2(item)
                                     ? item.productos_terminados?.unidad_venta_2
                                     : item.productos_terminados?.unidad_medida
+                                const tieneUM2Prod = Number(item.productos_terminados?.factor_conversion_2 || 0) > 1 && item.productos_terminados?.unidad_venta_2
                                 return (
-                                    <tr key={idx} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                                    <tr key={item._key} style={{ borderBottom: '1px solid #f3f4f6', backgroundColor: item._nuevo ? '#f0fdf4' : 'transparent' }}>
                                         <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1f2937', fontWeight: 500 }}>
                                             {item.nombre_producto || item.productos_terminados?.nombre || '—'}
                                             {item.productos_terminados?.sku && (
                                                 <span style={{ fontSize: '11px', color: '#9ca3af', marginLeft: '6px', fontFamily: 'monospace' }}>{item.productos_terminados.sku}</span>
+                                            )}
+                                            {item._nuevo && <span style={{ fontSize: '10px', color: '#16a34a', marginLeft: '6px', fontWeight: 600 }}>NUEVO</span>}
+                                            {item._nuevo && tieneUM2Prod && (
+                                                <div style={{ display: 'flex', gap: '4px', marginTop: '4px' }}>
+                                                    {[false, true].map(um2 => (
+                                                        <button key={String(um2)} type="button" onClick={() => cambiarUnidadNueva(item._key, um2)}
+                                                            style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '11px', cursor: 'pointer', border: '1px solid',
+                                                                borderColor: esUM2(item) === um2 ? '#16a34a' : '#e5e7eb', backgroundColor: esUM2(item) === um2 ? '#dcfce7' : '#fff', color: esUM2(item) === um2 ? '#166534' : '#6b7280' }}>
+                                                            {um2 ? item.productos_terminados.unidad_venta_2 : item.productos_terminados.unidad_medida}
+                                                        </button>
+                                                    ))}
+                                                </div>
                                             )}
                                         </td>
                                         <td style={{ padding: '8px 12px', textAlign: 'right' }}>
@@ -1024,11 +1147,25 @@ function DetallePedido({ pedido, onVolver }) {
                                                 style={{ width: '70px', padding: '6px 8px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px', textAlign: 'right', color: '#374151' }} />
                                         </td>
                                         <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(subtotal)}</td>
+                                        <td style={{ padding: '8px 12px', textAlign: 'right' }}>
+                                            <button type="button" onClick={() => quitarLinea(item._key)} title="Quitar del pedido"
+                                                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', padding: '4px' }}>
+                                                <Trash2 size={15} />
+                                            </button>
+                                        </td>
                                     </tr>
                                 )
                             })}
                         </tbody>
                     </table>
+                    <div style={{ padding: '12px 16px', borderTop: '1px solid #fde68a', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: '13px', color: '#92400e', fontWeight: 500 }}>Agregar producto:</span>
+                        <FiltroCombo value="" onChange={agregarProducto}
+                            options={catalogoEdit.filter(x => !itemsEdit.some(i => i.producto_id === x.id))
+                                .map(x => ({ value: x.id, label: `${x.nombre}${x.sku ? ` (${x.sku})` : ''} — ${fmt(x.precio_venta)}` }))}
+                            placeholder="Buscar producto…" width="360px" />
+                        {eliminados.length > 0 && <span style={{ fontSize: '12px', color: '#dc2626' }}>{eliminados.length} línea(s) se quitarán al guardar</span>}
+                    </div>
                     <div style={{ padding: '12px 16px', borderTop: '1px solid #fde68a', backgroundColor: '#fffbeb', display: 'flex', alignItems: 'center', gap: '12px' }}>
                         <span style={{ fontSize: '13px', color: '#92400e', fontWeight: 500 }}>Descuento global (%):</span>
                         <input type="number" min="0" max="100" step="0.1" value={descGlobalEdit}
