@@ -42,6 +42,7 @@ export default function Recetas() {
             .from('recetas')
             .select(`
                 id, descripcion, merma_pct, activo, rinde_unidades, producto_id, mp_id, created_at,
+                planificar_por, insumo_base_tipo, insumo_base_id,
                 productos_terminados(id, nombre, sku, unidad_medida),
                 materias_primas(id, nombre, codigo, unidad_medida),
                 receta_items(id, tipo_insumo, insumo_id, cantidad, unidad)
@@ -228,6 +229,10 @@ function ModalReceta({ receta, tabActivo, recetas = [], onGuardada, onCerrar }) 
     const [descripcion, setDescripcion] = useState(receta?.descripcion || '')
     const [merma, setMerma] = useState(receta?.merma_pct ?? 0)
     const [rinde, setRinde] = useState(receta?.rinde_unidades ?? 1)
+    // 'salida' = la orden se planifica por cantidad a producir; 'insumo' = por
+    // cantidad del insumo base a procesar (p. ej. cocos de agua → litros de agua)
+    const [planificarPor, setPlanificarPor] = useState(receta?.planificar_por || 'salida')
+    const [baseKey, setBaseKey] = useState(receta?.insumo_base_id ? `${normTipo(receta.insumo_base_tipo)}|${receta.insumo_base_id}` : '')
 
     // Items
     const [items, setItems] = useState([])
@@ -320,6 +325,10 @@ function ModalReceta({ receta, tabActivo, recetas = [], onGuardada, onCerrar }) 
         if (Number(rinde) <= 0) return setError('El rendimiento debe ser mayor a 0')
         const itemsValidos = items.filter(i => i.insumo_id && i.cantidad && Number(i.cantidad) > 0)
         if (itemsValidos.length === 0) return setError('Agrega al menos un insumo con cantidad válida')
+        const baseItem = planificarPor === 'insumo'
+            ? itemsValidos.find(i => `${normTipo(i.tipo_insumo)}|${i.insumo_id}` === baseKey) : null
+        if (planificarPor === 'insumo' && !baseItem)
+            return setError('Elige cuál insumo de la receta se usa para planificar las órdenes')
 
         setGuardando(true)
 
@@ -332,6 +341,9 @@ function ModalReceta({ receta, tabActivo, recetas = [], onGuardada, onCerrar }) 
                 descripcion: descripcion.trim() || null,
                 merma_pct: Number(merma) || 0,
                 rinde_unidades: Number(rinde) || 1,
+                planificar_por: baseItem ? 'insumo' : 'salida',
+                insumo_base_tipo: baseItem ? normTipo(baseItem.tipo_insumo) : null,
+                insumo_base_id: baseItem ? baseItem.insumo_id : null,
             }
 
             if (esNueva) {
@@ -551,6 +563,13 @@ function ModalReceta({ receta, tabActivo, recetas = [], onGuardada, onCerrar }) 
                     )}
                 </div>
 
+                {/* ── SECCIÓN 3: Cómo se planifica la orden ── */}
+                <SeccionPlanificacion
+                    planificarPor={planificarPor} onPlanificarPor={setPlanificarPor}
+                    baseKey={baseKey} onBaseKey={setBaseKey}
+                    items={items} rinde={rinde} productoSel={productoSel}
+                    listas={{ materia_prima: insumosMp, material_empaque: insumosMe, consumible: insumosC }} />
+
                 {error && (
                     <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 14px', fontSize: '13px', color: '#dc2626', marginBottom: '16px' }}>
                         {error}
@@ -568,6 +587,57 @@ function ModalReceta({ receta, tabActivo, recetas = [], onGuardada, onCerrar }) 
                 </div>
             </div>
         </>
+    )
+}
+
+// ══════════════════════════════════════════════════════════════
+// PLANIFICACIÓN: por cantidad a producir o por insumo a procesar
+// ══════════════════════════════════════════════════════════════
+const normTipo = t => (t === 'empaque' ? 'material_empaque' : t)
+
+function SeccionPlanificacion({ planificarPor, onPlanificarPor, baseKey, onBaseKey, items, rinde, productoSel, listas }) {
+    const candidatos = items
+        .filter(i => i.insumo_id && Number(i.cantidad) > 0)
+        .map(i => {
+            const tipo = normTipo(i.tipo_insumo)
+            const ins = (listas[tipo] || []).find(x => x.id === i.insumo_id)
+            return { key: `${tipo}|${i.insumo_id}`, nombre: ins?.nombre || '—', unidad: ins?.unidad_medida || i.unidad || '', cantidad: Number(i.cantidad) }
+        })
+    const base = candidatos.find(c => c.key === baseKey)
+    const opcion = (valor, titulo, texto) => (
+        <button type="button" onClick={() => onPlanificarPor(valor)}
+            style={{ flex: 1, textAlign: 'left', padding: '10px 12px', borderRadius: '10px', cursor: 'pointer',
+                border: `2px solid ${planificarPor === valor ? '#16a34a' : '#e5e7eb'}`, backgroundColor: planificarPor === valor ? '#f0fdf4' : '#fff' }}>
+            <div style={{ fontSize: '13px', fontWeight: 600, color: planificarPor === valor ? '#166534' : '#374151' }}>{titulo}</div>
+            <div style={{ fontSize: '11px', color: '#6b7280', marginTop: '2px' }}>{texto}</div>
+        </button>
+    )
+    return (
+        <div style={{ backgroundColor: '#f9fafb', borderRadius: '10px', padding: '16px', marginBottom: '20px' }}>
+            <p style={{ fontSize: '11px', fontWeight: 600, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 12px' }}>
+                Cómo se planifica la orden de producción
+            </p>
+            <div style={{ display: 'flex', gap: '8px' }}>
+                {opcion('salida', 'Cantidad a producir', `La orden pide cuánto ${productoSel?.nombre || 'producto'} obtener (lo habitual)`)}
+                {opcion('insumo', 'Insumo a procesar', 'La orden pide cuánto de un insumo se procesa; lo producido es un estimado')}
+            </div>
+            {planificarPor === 'insumo' && (
+                <div style={{ marginTop: '12px' }}>
+                    <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Insumo que manda *</label>
+                    <select value={baseKey} onChange={e => onBaseKey(e.target.value)} style={inputStyle}>
+                        <option value="">— Elige un insumo de esta receta —</option>
+                        {candidatos.map(c => <option key={c.key} value={c.key}>{c.nombre} ({fmt(c.cantidad, 3)} {c.unidad})</option>)}
+                    </select>
+                    {candidatos.length === 0 && <p style={{ fontSize: '11px', color: '#d97706', margin: '4px 0 0' }}>Primero agrega los insumos de la receta con su cantidad.</p>}
+                    {base && Number(rinde) > 0 && (
+                        <p style={{ fontSize: '12px', color: '#7c3aed', margin: '6px 0 0' }}>
+                            Ejemplo: procesar {fmt(base.cantidad, 0)} {base.unidad} de {base.nombre} rinde ≈ {fmt(rinde, 3)} {productoSel?.unidad_medida || 'unidades'}
+                            {' '}(≈ {fmt(Number(rinde) / base.cantidad, 4)} {productoSel?.unidad_medida || 'u.'} por cada {base.unidad || 'unidad'}).
+                        </p>
+                    )}
+                </div>
+            )}
+        </div>
     )
 }
 

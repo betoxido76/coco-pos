@@ -6,6 +6,25 @@ import { Plus, ChevronRight, X, AlertTriangle, Check, FlaskConical, Package, Sea
 
 const fmt = (n, dec = 2) => Number(n || 0).toLocaleString('es-VE', { minimumFractionDigits: dec, maximumFractionDigits: dec })
 
+const normTipo = t => (t === 'empaque' ? 'material_empaque' : t)
+
+// Ítem de la receta que manda cuando se planifica por insumo (recetas.planificar_por)
+function itemBase(receta, tipo, id) {
+    return receta?.receta_items?.find(i => normTipo(i.tipo_insumo) === normTipo(tipo) && i.insumo_id === id) || null
+}
+
+// Factor de escala de la receta para una orden. Planificada por insumo, sale
+// exacto de lo que el usuario decidió procesar; si no, de la cantidad a
+// producir. No usar cantidad_planificada en el primer caso: tiene 2 decimales
+// y 1.000 cocos volverían como 1.000,0068.
+function factorOrden(orden, receta) {
+    if (orden?.planificada_por === 'insumo' && Number(orden.cantidad_insumo_base) > 0) {
+        const base = itemBase(receta, orden.insumo_base_tipo, orden.insumo_base_id)
+        if (base && Number(base.cantidad) > 0) return Number(orden.cantidad_insumo_base) / Number(base.cantidad)
+    }
+    return Number(orden?.cantidad_planificada || 0) / (Number(receta?.rinde_unidades) || 1)
+}
+
 const PAGE_SIZE_OPTIONS = [25, 50, 100]
 
 // ── Colores y labels por estado ────────────────────────────────
@@ -267,7 +286,10 @@ export default function Produccion() {
                                                 )}
                                             </td>
                                             <td style={{ padding: '12px 14px', fontSize: '13px', color: '#6b7280' }}>
-                                                {fmt(o.cantidad_planificada, 0)} {getUnidadSalida(o)}
+                                                {o.planificada_por === 'insumo' && '≈ '}{fmt(o.cantidad_planificada, 0)} {getUnidadSalida(o)}
+                                                {o.planificada_por === 'insumo' && (
+                                                    <div style={{ fontSize: '11px', color: '#7c3aed' }}>procesa {fmt(o.cantidad_insumo_base, 0)} de insumo base</div>
+                                                )}
                                             </td>
                                             <td style={{ padding: '12px 14px', fontSize: '13px', color: o.cantidad_real ? '#166534' : '#9ca3af', fontWeight: o.cantidad_real ? 600 : 400 }}>
                                                 {o.cantidad_real ? `${fmt(o.cantidad_real, 0)} ${getUnidadSalida(o)}` : '—'}
@@ -327,6 +349,8 @@ function NuevaOrden({ onCreada, onCancelar }) {
     const [productoId, setProductoId] = useState('')
     const [mpSalidaId, setMpSalidaId] = useState('')
     const [cantPlanif, setCantPlanif] = useState('')
+    const [cantInsumo, setCantInsumo] = useState('')     // si la receta se planifica por insumo
+    const [recetaCfg, setRecetaCfg] = useState(null)     // receta activa del producto elegido
     const [fechaPlan, setFechaPlan] = useState('')
     const [numeroLote, setNumeroLote] = useState('')
     const [observ, setObserv] = useState('')
@@ -379,21 +403,56 @@ function NuevaOrden({ onCreada, onCancelar }) {
             })
     }, [])
 
+    // Receta activa del producto elegido (siempre filtrada por empresa)
+    function queryReceta(campos) {
+        const q = supabase.from('recetas').select(campos)
+            .eq('empresa_id', perfil.empresa_id).eq('activo', true)
+        return tipoSalida === 'materia_prima' ? q.eq('mp_id', mpSalidaId) : q.eq('producto_id', productoId)
+    }
+
+    // Al elegir el producto se lee cómo se planifica su receta
+    useEffect(() => {
+        setRecetaCfg(null); setCantInsumo(''); setCantPlanif('')
+        const idSalida = tipoSalida === 'materia_prima' ? mpSalidaId : productoId
+        if (!idSalida) return
+        queryReceta('id, rinde_unidades, planificar_por, insumo_base_tipo, insumo_base_id, receta_items(tipo_insumo, insumo_id, cantidad)')
+            .maybeSingle()
+            .then(({ data }) => setRecetaCfg(data || null))
+    }, [tipoSalida, productoId, mpSalidaId])
+
+    const baseCfg = recetaCfg?.planificar_por === 'insumo'
+        ? itemBase(recetaCfg, recetaCfg.insumo_base_tipo, recetaCfg.insumo_base_id) : null
+    const porInsumo = !!(baseCfg && Number(baseCfg.cantidad) > 0)
+    const insumoBase = porInsumo
+        ? (normTipo(baseCfg.tipo_insumo) === 'materia_prima' ? insumosMp : insumosMe).find(i => i.id === baseCfg.insumo_id)
+        : null
+
+    function cambiarCantInsumo(v) {
+        setCantInsumo(v)
+        const estimado = Number(v) * Number(recetaCfg?.rinde_unidades || 0) / Number(baseCfg.cantidad)
+        setCantPlanif(estimado > 0 ? estimado.toFixed(2) : '')
+    }
+
+    // La orden tal como se va a guardar (para factorOrden)
+    const ordenPlan = {
+        planificada_por: porInsumo ? 'insumo' : 'salida',
+        insumo_base_tipo: porInsumo ? normTipo(baseCfg.tipo_insumo) : null,
+        insumo_base_id: porInsumo ? baseCfg.insumo_id : null,
+        cantidad_insumo_base: porInsumo ? Number(cantInsumo) : null,
+        cantidad_planificada: Number(cantPlanif),
+    }
+
     async function cargarReceta() {
         const idSalida = tipoSalida === 'materia_prima' ? mpSalidaId : productoId
+        if (porInsumo && !(Number(cantInsumo) > 0)) {
+            setError(`Ingresa cuánto ${insumoBase?.nombre || 'insumo'} vas a procesar`); return
+        }
         if (!idSalida || !cantPlanif || Number(cantPlanif) <= 0) {
             setError('Selecciona un producto e ingresa una cantidad válida'); return
         }
         setError('')
         // Buscar receta activa del producto
-        let recetaQ = supabase
-            .from('recetas')
-            .select('id, rinde_unidades, receta_items(id, tipo_insumo, insumo_id, cantidad, unidad)')
-            .eq('activo', true)
-        recetaQ = tipoSalida === 'materia_prima'
-            ? recetaQ.eq('mp_id', mpSalidaId)
-            : recetaQ.eq('producto_id', productoId)
-        const { data: receta } = await recetaQ.maybeSingle()
+        const { data: receta } = await queryReceta('id, rinde_unidades, receta_items(id, tipo_insumo, insumo_id, cantidad, unidad)').maybeSingle()
 
         if (!receta || !receta.receta_items?.length) {
             // Sin receta — crear consumos vacíos para que el usuario agregue manualmente
@@ -402,7 +461,7 @@ function NuevaOrden({ onCreada, onCancelar }) {
             return
         }
 
-        const factor = Number(cantPlanif) / (receta.rinde_unidades || 1)
+        const factor = factorOrden(ordenPlan, receta)
 
         // Resolver nombres de insumos
         const itemsConNombre = await Promise.all(receta.receta_items.map(async item => {
@@ -524,12 +583,7 @@ function NuevaOrden({ onCreada, onCancelar }) {
         const numero = numeroConsecutivo || 'OP-000001' // Fallback por si falla
 
         // Buscar receta
-        const idSalida = tipoSalida === 'materia_prima' ? mpSalidaId : productoId
-        let recetaQ2 = supabase.from('recetas').select('id').eq('activo', true)
-        recetaQ2 = tipoSalida === 'materia_prima'
-            ? recetaQ2.eq('mp_id', mpSalidaId)
-            : recetaQ2.eq('producto_id', productoId)
-        const { data: receta } = await recetaQ2.maybeSingle()
+        const { data: receta } = await queryReceta('id').maybeSingle()
 
         const { data: orden, error: errOrden } = await supabase
             .from('ordenes_produccion')
@@ -541,6 +595,11 @@ function NuevaOrden({ onCreada, onCancelar }) {
                 tipo_salida: tipoSalida,
                 receta_id: receta?.id || null,
                 cantidad_planificada: Number(cantPlanif),
+                // Foto de cómo se planificó (la receta puede cambiar después)
+                planificada_por: ordenPlan.planificada_por,
+                insumo_base_tipo: ordenPlan.insumo_base_tipo,
+                insumo_base_id: ordenPlan.insumo_base_id,
+                cantidad_insumo_base: ordenPlan.cantidad_insumo_base,
                 estado: 'confirmada',
                 fecha_planificada: fechaPlan || null,
                 observaciones: observ || null,
@@ -642,13 +701,28 @@ function NuevaOrden({ onCreada, onCancelar }) {
                 </div>
 
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                    <div>
-                        <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>
-                            Cantidad planificada * {productoActual ? `(${productoActual.unidad_medida})` : ''}
-                        </label>
-                        <input type="number" min="1" value={cantPlanif} onChange={e => setCantPlanif(e.target.value)}
-                            placeholder="Ej: 100" style={inputStyle} />
-                    </div>
+                    {porInsumo ? (
+                        <div>
+                            <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>
+                                {insumoBase?.nombre || 'Insumo'} a procesar * {insumoBase?.unidad_medida ? `(${insumoBase.unidad_medida})` : ''}
+                            </label>
+                            <input type="number" min="0" step="any" value={cantInsumo} onChange={e => cambiarCantInsumo(e.target.value)}
+                                placeholder="Ej: 1000" style={inputStyle} />
+                            <p style={{ fontSize: '12px', color: '#7c3aed', margin: '4px 0 0' }}>
+                                {Number(cantPlanif) > 0
+                                    ? <>Rinde estimado: ≈ <strong>{fmt(cantPlanif)} {productoActual?.unidad_medida}</strong> de {productoActual?.nombre}</>
+                                    : 'La receta de este producto se planifica por el insumo que se procesa.'}
+                            </p>
+                        </div>
+                    ) : (
+                        <div>
+                            <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>
+                                Cantidad planificada * {productoActual ? `(${productoActual.unidad_medida})` : ''}
+                            </label>
+                            <input type="number" min="1" value={cantPlanif} onChange={e => setCantPlanif(e.target.value)}
+                                placeholder="Ej: 100" style={inputStyle} />
+                        </div>
+                    )}
                     <div>
                         <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Fecha planificada</label>
                         <input type="date" value={fechaPlan} onChange={e => setFechaPlan(e.target.value)} style={inputStyle} />
@@ -694,9 +768,15 @@ function NuevaOrden({ onCreada, onCancelar }) {
                     <p style={{ fontSize: '11px', color: '#16a34a', margin: '0 0 2px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Producto</p>
                     <p style={{ fontSize: '15px', fontWeight: 700, color: '#1f2937', margin: 0 }}>{productoActual?.nombre}</p>
                 </div>
+                {porInsumo && (
+                    <div>
+                        <p style={{ fontSize: '11px', color: '#16a34a', margin: '0 0 2px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Procesa</p>
+                        <p style={{ fontSize: '15px', fontWeight: 700, color: '#1f2937', margin: 0 }}>{fmt(cantInsumo, 0)} {insumoBase?.unidad_medida} {insumoBase?.nombre}</p>
+                    </div>
+                )}
                 <div>
-                    <p style={{ fontSize: '11px', color: '#16a34a', margin: '0 0 2px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Cantidad planificada</p>
-                    <p style={{ fontSize: '15px', fontWeight: 700, color: '#1f2937', margin: 0 }}>{fmt(cantPlanif, 0)} {productoActual?.unidad_medida}</p>
+                    <p style={{ fontSize: '11px', color: '#16a34a', margin: '0 0 2px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{porInsumo ? 'Rinde estimado' : 'Cantidad planificada'}</p>
+                    <p style={{ fontSize: '15px', fontWeight: 700, color: '#1f2937', margin: 0 }}>{porInsumo ? `≈ ${fmt(cantPlanif)}` : fmt(cantPlanif, 0)} {productoActual?.unidad_medida}</p>
                 </div>
                 {numeroLote && (
                     <div>
@@ -888,8 +968,17 @@ function DetalleOrden({ orden, onVolver, onActualizada }) {
     const [modalCierre, setModalCierre] = useState(false)
     const [procesando, setProcesando] = useState(false)
     const [producto, setProducto] = useState(null)
+    const [insumoBaseNombre, setInsumoBaseNombre] = useState('')
 
     useEffect(() => { cargarDetalle() }, [orden.id])
+
+    // Nombre del insumo que se procesó (órdenes planificadas por insumo)
+    useEffect(() => {
+        if (orden.planificada_por !== 'insumo' || !orden.insumo_base_id) return
+        const tabla = normTipo(orden.insumo_base_tipo) === 'materia_prima' ? 'materias_primas' : 'materiales_empaque'
+        supabase.from(tabla).select('nombre, unidad_medida').eq('empresa_id', orden.empresa_id).eq('id', orden.insumo_base_id).maybeSingle()
+            .then(({ data }) => data && setInsumoBaseNombre(`${data.unidad_medida || ''} ${data.nombre}`.trim()))
+    }, [orden.id])
 
     async function cargarDetalle() {
         setLoading(true)
@@ -903,11 +992,12 @@ function DetalleOrden({ orden, onVolver, onActualizada }) {
             const { data: receta } = await supabase
                 .from('recetas')
                 .select('rinde_unidades, receta_items(tipo_insumo, insumo_id, cantidad)')
+                .eq('empresa_id', orden.empresa_id)
                 .eq('id', orden.receta_id)
                 .single()
 
             if (receta?.receta_items?.length) {
-                const factor = Number(orden.cantidad_planificada) / (receta.rinde_unidades || 1)
+                const factor = factorOrden(orden, receta)
                 const mpIds = receta.receta_items.filter(i => i.tipo_insumo === 'materia_prima').map(i => i.insumo_id)
                 const meIds = receta.receta_items.filter(i => i.tipo_insumo !== 'materia_prima').map(i => i.insumo_id)
 
@@ -997,12 +1087,15 @@ function DetalleOrden({ orden, onVolver, onActualizada }) {
                 {[
                     { label: 'Producto', valor: producto?.nombre || '—' },
                     { label: 'Lote', valor: orden.numero_lote || '—', mono: true },
-                    { label: 'Cant. planificada', valor: `${fmt(orden.cantidad_planificada, 0)} ${producto?.unidad_medida || ''}` },
+                    orden.planificada_por === 'insumo'
+                        ? { label: 'Rinde estimado', valor: `≈ ${fmt(orden.cantidad_planificada)} ${producto?.unidad_medida || ''}`, sub: `procesa ${fmt(orden.cantidad_insumo_base, 0)} ${insumoBaseNombre || 'de insumo base'}` }
+                        : { label: 'Cant. planificada', valor: `${fmt(orden.cantidad_planificada, 0)} ${producto?.unidad_medida || ''}` },
                     { label: 'Cant. producida', valor: orden.cantidad_real ? `${fmt(orden.cantidad_real, 0)} ${producto?.unidad_medida || ''}` : '—', color: orden.cantidad_real ? '#166534' : undefined },
                 ].map(f => (
                     <div key={f.label} style={{ backgroundColor: '#fff', borderRadius: '10px', border: '1px solid #e5e7eb', padding: '12px 16px' }}>
                         <p style={{ fontSize: '11px', color: '#9ca3af', margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{f.label}</p>
                         <p style={{ fontSize: '14px', fontWeight: 600, color: f.color || '#1f2937', margin: 0, fontFamily: f.mono ? 'monospace' : 'inherit' }}>{f.valor}</p>
+                        {f.sub && <p style={{ fontSize: '11px', color: '#7c3aed', margin: '2px 0 0' }}>{f.sub}</p>}
                     </div>
                 ))}
             </div>
@@ -1190,9 +1283,10 @@ function ModalCierre({ orden, producto, onCerrar, onCerrada }) {
         } else if (orden.receta_id) {
             const { data: receta } = await supabase.from('recetas')
                 .select('rinde_unidades, receta_items(tipo_insumo, insumo_id, cantidad)')
+                .eq('empresa_id', orden.empresa_id)
                 .eq('id', orden.receta_id).single()
             if (receta?.receta_items?.length) {
-                const factor = Number(orden.cantidad_planificada) / (receta.rinde_unidades || 1)
+                const factor = factorOrden(orden, receta)
                 setConsumoItems(receta.receta_items.map((item, idx) => {
                     const ins = allInsumos.find(i => i.id === item.insumo_id)
                     const qty = parseFloat((item.cantidad * factor).toFixed(4))

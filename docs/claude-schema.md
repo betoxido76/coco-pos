@@ -108,8 +108,17 @@ recetas               -- Recetas de productos
                       --   Exactamente uno de los dos tiene valor (el otro es NULL)
                       --   Filtrar receta por PT: .eq('producto_id', id)
                       --   Filtrar receta por MP: .eq('mp_id', id)
+                      --   planificar_por ('salida' default | 'insumo') + insumo_base_tipo/insumo_base_id:
+                      --   con 'insumo' la orden pide cuánto del insumo base se procesa y la salida
+                      --   es un estimado (caso Meraki 30001: cocos de agua → litros). El insumo base
+                      --   se referencia por (tipo, id): el editor borra y reinserta receta_items.
+                      --   SIEMPRE filtrar por empresa_id al buscar la receta.
 receta_items          -- Ingredientes de recetas
 ordenes_produccion    -- Órdenes de producción
+                      --   planificada_por, insumo_base_tipo/id, cantidad_insumo_base: foto de cómo se
+                      --   planificó. Con 'insumo', cantidad_planificada es el rinde estimado (2 dec.)
+                      --   y el factor de la receta sale de cantidad_insumo_base (factorOrden() en
+                      --   Produccion.jsx), no de cantidad_planificada.
 lote_consumos         -- Insumos consumidos por orden/lote (lote_id nullable — NULL = planificado al crear, se asigna al cerrar)
 lotes_produccion      -- Lotes de PT producidos
 ```
