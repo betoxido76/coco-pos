@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import { PackageCheck, ChevronRight, Check, AlertTriangle, Truck, FileText, Ban, RotateCcw, Search, Plus, X } from 'lucide-react'
 import { itemAplicaIva } from '../lib/iva'
+import FiltroCombo from '../components/FiltroCombo'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 
@@ -233,11 +234,7 @@ export default function Despacho() {
                     <input type="text" placeholder="SKU o producto..."
                         value={filtroSku} onChange={e => setFiltroSku(e.target.value)}
                         style={{ ...inputStyle, minWidth: '160px' }} />
-                    <select value={filtroCliente} onChange={e => setFiltroCliente(e.target.value)}
-                        style={{ ...inputStyle, minWidth: '180px' }}>
-                        <option value="">Todos los clientes</option>
-                        {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-                    </select>
+                    <FiltroCombo value={filtroCliente} onChange={setFiltroCliente} options={clientes.map(x => ({ value: x.id, label: x.nombre }))} placeholder="Todos los clientes" width="220px" />
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                         <span style={{ fontSize: '12px', color: '#6b7280' }}>Desde</span>
                         <input type="date" value={fechaDesde} onChange={e => setFechaDesde(e.target.value)} style={inputStyle} />

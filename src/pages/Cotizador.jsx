@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import { useNavigate } from 'react-router-dom'
 import { Search, Share2, ShoppingCart, Car, Tag, ChevronDown } from 'lucide-react'
+import FiltroCombo from '../components/FiltroCombo'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 
@@ -324,19 +325,13 @@ export default function Cotizador() {
                                 <label style={{ fontSize: '12px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '5px' }}>
                                     Marca <span style={{ fontWeight: 400 }}>(opcional)</span>
                                 </label>
-                                <select value={queryMarca} onChange={e => setQueryMarca(e.target.value)} style={inputStyle}>
-                                    <option value="">— Todas las marcas —</option>
-                                    {marcasRepuesto.map(m => <option key={m} value={m}>{m}</option>)}
-                                </select>
+                                <FiltroCombo value={queryMarca} onChange={setQueryMarca} options={marcasRepuesto.map(x => ({ value: x, label: x }))} placeholder="— Todas las marcas —" width="100%" />
                             </div>
                             <div>
                                 <label style={{ fontSize: '12px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '5px' }}>
                                     Tipo <span style={{ fontWeight: 400 }}>(opcional)</span>
                                 </label>
-                                <select value={queryTipo} onChange={e => setQueryTipo(e.target.value)} style={inputStyle}>
-                                    <option value="">— Todos los tipos —</option>
-                                    {tiposRepuesto.map(t => <option key={t} value={t}>{t}</option>)}
-                                </select>
+                                <FiltroCombo value={queryTipo} onChange={setQueryTipo} options={tiposRepuesto.map(x => ({ value: x, label: x }))} placeholder="— Todos los tipos —" width="100%" />
                             </div>
                         </div>
                         {/* Fila 2: Descripción, Categoría, botones */}
@@ -352,10 +347,7 @@ export default function Cotizador() {
                             </div>
                             <div>
                                 <label style={{ fontSize: '12px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '5px' }}>Categoría</label>
-                                <select value={categoriaFiltro} onChange={e => setCategoriaFiltro(e.target.value)} style={inputStyle}>
-                                    <option value="">— Todas las categorías —</option>
-                                    {categorias.map(c => <option key={c} value={c}>{c}</option>)}
-                                </select>
+                                <FiltroCombo value={categoriaFiltro} onChange={setCategoriaFiltro} options={categorias.map(x => ({ value: x, label: x }))} placeholder="— Todas las categorías —" width="100%" />
                             </div>
                             <BotonesAccion hayFiltros={hayFiltros} buscando={buscando} onLimpiar={limpiarFiltros} onBuscar={handleBuscar} />
                         </div>
@@ -368,13 +360,7 @@ export default function Cotizador() {
                                 <label style={{ fontSize: '12px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '5px' }}>
                                     Marca del vehículo *
                                 </label>
-                                <div style={{ position: 'relative' }}>
-                                    <select value={marcaV} onChange={e => setMarcaV(e.target.value)} style={{ ...inputStyle, appearance: 'none', paddingRight: '30px' }}>
-                                        <option value="">— Selecciona marca —</option>
-                                        {marcas.map(m => <option key={m} value={m}>{m}</option>)}
-                                    </select>
-                                    <ChevronDown size={14} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af', pointerEvents: 'none' }} />
-                                </div>
+                                <FiltroCombo value={marcaV} onChange={setMarcaV} options={marcas.map(x => ({ value: x, label: x }))} placeholder="— Selecciona marca —" width="100%" />
                                 {marcasError && (
                                     <p style={{ fontSize: '11px', color: '#dc2626', margin: '4px 0 0' }}>{marcasError}</p>
                                 )}
@@ -388,15 +374,7 @@ export default function Cotizador() {
                                 <label style={{ fontSize: '12px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '5px' }}>
                                     Modelo {marcaV ? '' : <span style={{ fontWeight: 400, color: '#9ca3af' }}>(selecciona marca primero)</span>}
                                 </label>
-                                <div style={{ position: 'relative' }}>
-                                    <select value={modeloV} onChange={e => setModeloV(e.target.value)}
-                                        disabled={!marcaV || modelos.length === 0}
-                                        style={{ ...inputStyle, appearance: 'none', paddingRight: '30px', opacity: !marcaV ? 0.5 : 1 }}>
-                                        <option value="">— Todos los modelos —</option>
-                                        {modelos.map(m => <option key={m} value={m}>{m}</option>)}
-                                    </select>
-                                    <ChevronDown size={14} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af', pointerEvents: 'none' }} />
-                                </div>
+                                <FiltroCombo value={modeloV} onChange={setModeloV} options={modelos.map(x => ({ value: x, label: x }))} placeholder="— Todos los modelos —" width="100%" disabled={!marcaV || modelos.length === 0} />
                             </div>
                             <div>
                                 <label style={{ fontSize: '12px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '5px' }}>Año</label>
@@ -420,19 +398,13 @@ export default function Cotizador() {
                                 <label style={{ fontSize: '12px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '5px' }}>
                                     Categoría <span style={{ fontWeight: 400 }}>(opcional)</span>
                                 </label>
-                                <select value={categoriaFiltro} onChange={e => setCategoriaFiltro(e.target.value)} style={inputStyle}>
-                                    <option value="">— Todas —</option>
-                                    {categorias.map(c => <option key={c} value={c}>{c}</option>)}
-                                </select>
+                                <FiltroCombo value={categoriaFiltro} onChange={setCategoriaFiltro} options={categorias.map(x => ({ value: x, label: x }))} placeholder="— Todas las categorías —" width="100%" />
                             </div>
                             <div>
                                 <label style={{ fontSize: '12px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '5px' }}>
                                     Tipo <span style={{ fontWeight: 400 }}>(opcional)</span>
                                 </label>
-                                <select value={queryTipo} onChange={e => setQueryTipo(e.target.value)} style={inputStyle}>
-                                    <option value="">— Todos los tipos —</option>
-                                    {tiposRepuesto.map(t => <option key={t} value={t}>{t}</option>)}
-                                </select>
+                                <FiltroCombo value={queryTipo} onChange={setQueryTipo} options={tiposRepuesto.map(x => ({ value: x, label: x }))} placeholder="— Todos los tipos —" width="100%" />
                             </div>
                         </div>
                         <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>

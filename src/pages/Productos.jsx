@@ -4,6 +4,7 @@ import { Plus, Search, Pencil, X, Check, AlertTriangle, Trash2 } from 'lucide-re
 import { useAuth } from '../contexts/AuthContext'
 import { ajustarStockMaestro, almacenPredeterminado } from '../lib/inventario'
 import { opcionesUnidad } from '../lib/unidades'
+import FiltroCombo from '../components/FiltroCombo'
 
 const TIPOS = ['producido', 'comprado', 'servicio']
 
@@ -663,11 +664,8 @@ export default function Productos() {
                         style={{ ...inputStyle, paddingLeft: '32px', width: '100%', boxSizing: 'border-box' }} />
                 </div>
                 {categorias.length > 0 && (
-                    <select value={filtrocat} onChange={e => setFiltrocat(e.target.value)}
-                        style={{ padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', color: '#374151', backgroundColor: '#fff', cursor: 'pointer' }}>
-                        <option value="Todas">Todas las categorías</option>
-                        {categorias.map(c => <option key={c} value={c}>{c}</option>)}
-                    </select>
+                    <FiltroCombo value={filtrocat === 'Todas' ? '' : filtrocat} onChange={v => setFiltrocat(v || 'Todas')}
+                        options={categorias.map(x => ({ value: x, label: x }))} placeholder="Todas las categorías" width="220px" />
                 )}
             </div>
 

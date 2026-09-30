@@ -5,6 +5,7 @@ import { AlertTriangle, CheckCircle, Clock, DollarSign, FileText } from 'lucide-
 import ModalPagoObligacion, { labelMetodo } from '../components/ModalPagoObligacion'
 import { SelectorAnticipos, totalAplicaciones, aplicacionesALista, PanelAnticiposCxP, saldoAnticiposEmpresa } from '../components/AnticiposOC'
 import ModalPagoGasto from '../components/ModalPagoGasto'
+import FiltroCombo from '../components/FiltroCombo'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 const fmtBs = (n, tasa) => `${(Number(n || 0) * Number(tasa || 1)).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`
@@ -284,11 +285,7 @@ export default function CuentasPagar() {
                         {label}
                     </button>
                 ))}
-                <select value={filtroProveedor} onChange={e => setFiltroProveedor(e.target.value)}
-                    style={{ padding: '6px 12px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', color: '#374151', backgroundColor: '#fff', cursor: 'pointer' }}>
-                    <option value="">Todos los proveedores</option>
-                    {proveedores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
-                </select>
+                <FiltroCombo value={filtroProveedor} onChange={setFiltroProveedor} options={proveedores.map(x => ({ value: x.id, label: x.nombre }))} placeholder="Todos los proveedores" width="240px" />
             </div>}
 
             {/* Tabla compras */}

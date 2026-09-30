@@ -5,6 +5,7 @@ import { Plus, X, Check, Pencil, Trash2, AlertTriangle, DollarSign, FileText } f
 import { useTasasFecha, fmtFechaCorta } from '../components/SelectorFechaTasa'
 import ModalPagoGasto from '../components/ModalPagoGasto'
 import { labelMetodo } from '../components/ModalPagoObligacion'
+import FiltroCombo from '../components/FiltroCombo'
 
 const fmt = n => `$${Number(n || 0).toFixed(2)}`
 const fmtBs = n => `${Number(n || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`
@@ -247,11 +248,7 @@ export default function Gastos() {
 
                     {/* Filtros de fecha y tipo */}
                     <div style={{ display: 'flex', gap: '10px', marginBottom: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
-                        <select value={filtroTipo} onChange={e => setFiltroTipo(e.target.value)}
-                            style={{ padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', color: '#374151', backgroundColor: '#fff' }}>
-                            <option value="">Todos los tipos</option>
-                            {tipos.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
-                        </select>
+                        <FiltroCombo value={filtroTipo} onChange={setFiltroTipo} options={tipos.map(x => ({ value: x.id, label: x.nombre }))} placeholder="Todos los tipos" width="200px" />
                         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                             <span style={{ fontSize: '13px', color: '#6b7280' }}>Desde</span>
                             <input type="date" value={filtroDesde} onChange={e => setFiltroDesde(e.target.value)}

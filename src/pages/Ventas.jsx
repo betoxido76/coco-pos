@@ -8,6 +8,7 @@ import { crearNotaCredito } from '../lib/notasCredito'
 import { sinSaldoQueCobrar } from '../lib/cobro'
 import { almacenPredeterminado, verificarStock, moverStockLote } from '../lib/inventario'
 import ModalFaltanteStock from '../components/ModalFaltanteStock'
+import FiltroCombo from '../components/FiltroCombo'
 
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
@@ -1610,27 +1611,15 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                                     </div>
                                     <div>
                                         <label style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '3px' }}>Marca repuesto</label>
-                                        <select value={filtroMarca} onChange={e => setFiltroMarca(e.target.value)}
-                                            style={{ width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '13px', boxSizing: 'border-box', backgroundColor: '#fff' }}>
-                                            <option value="">— Todas —</option>
-                                            {marcasRepuesto.map(m => <option key={m} value={m}>{m}</option>)}
-                                        </select>
+                                        <FiltroCombo value={filtroMarca} onChange={setFiltroMarca} options={marcasRepuesto.map(x => ({ value: x, label: x }))} placeholder="— Todas —" width="100%" />
                                     </div>
                                     <div>
                                         <label style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '3px' }}>Tipo</label>
-                                        <select value={filtroTipo} onChange={e => setFiltroTipo(e.target.value)}
-                                            style={{ width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '13px', boxSizing: 'border-box', backgroundColor: '#fff' }}>
-                                            <option value="">— Todos —</option>
-                                            {tiposRepuesto.map(t => <option key={t} value={t}>{t}</option>)}
-                                        </select>
+                                        <FiltroCombo value={filtroTipo} onChange={setFiltroTipo} options={tiposRepuesto.map(x => ({ value: x, label: x }))} placeholder="— Todos —" width="100%" />
                                     </div>
                                     <div>
                                         <label style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '3px' }}>Categoría</label>
-                                        <select value={filtroCat} onChange={e => setFiltroCat(e.target.value)}
-                                            style={{ width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '13px', boxSizing: 'border-box', backgroundColor: '#fff' }}>
-                                            <option value="">— Todas —</option>
-                                            {categoriasRepuesto.map(c => <option key={c} value={c}>{c}</option>)}
-                                        </select>
+                                        <FiltroCombo value={filtroCat} onChange={setFiltroCat} options={categoriasRepuesto.map(x => ({ value: x, label: x }))} placeholder="— Todas —" width="100%" />
                                     </div>
                                 </div>
                                 <div style={{ padding: '8px 10px', backgroundColor: '#f0f9ff', borderRadius: '7px', border: '1px solid #bae6fd' }}>
@@ -1638,20 +1627,11 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 80px', gap: '8px' }}>
                                         <div>
                                             <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '3px' }}>Marca</label>
-                                            <select value={marcaV} onChange={e => setMarcaV(e.target.value)}
-                                                style={{ width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '13px', boxSizing: 'border-box', backgroundColor: '#fff' }}>
-                                                <option value="">— Todas —</option>
-                                                {marcasV.map(m => <option key={m} value={m}>{m}</option>)}
-                                            </select>
+                                            <FiltroCombo value={marcaV} onChange={setMarcaV} options={marcasV.map(x => ({ value: x, label: x }))} placeholder="— Todas —" width="100%" />
                                         </div>
                                         <div>
                                             <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '3px' }}>Modelo</label>
-                                            <select value={modeloV} onChange={e => setModeloV(e.target.value)}
-                                                disabled={!marcaV}
-                                                style={{ width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '13px', boxSizing: 'border-box', backgroundColor: '#fff', opacity: !marcaV ? 0.5 : 1 }}>
-                                                <option value="">— Todos —</option>
-                                                {modelosV.map(m => <option key={m} value={m}>{m}</option>)}
-                                            </select>
+                                            <FiltroCombo value={modeloV} onChange={setModeloV} options={modelosV.map(x => ({ value: x, label: x }))} placeholder="— Todos —" width="100%" disabled={!marcaV} />
                                         </div>
                                         <div>
                                             <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '3px' }}>Año</label>

@@ -12,7 +12,7 @@ import { ChevronDown, X } from 'lucide-react'
 
 const normalizar = s => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
 
-export default function FiltroCombo({ label, value, options, onChange, placeholder = 'Todos', width = '200px' }) {
+export default function FiltroCombo({ label, value, options, onChange, placeholder = 'Todos', width = '200px', disabled = false }) {
     const [abierto, setAbierto] = useState(false)
     const [texto, setTexto] = useState('')
     const [activo, setActivo] = useState(0)
@@ -33,7 +33,7 @@ export default function FiltroCombo({ label, value, options, onChange, placehold
     // Con texto escrito no se ofrece "Todos": el usuario está buscando algo
     const items = q ? filtradas : [{ value: '', label: placeholder }, ...filtradas]
 
-    function abrir() { setAbierto(true); setTexto(''); setActivo(0) }
+    function abrir() { if (disabled) return; setAbierto(true); setTexto(''); setActivo(0) }
     function cerrar() { setAbierto(false); setTexto('') }
     function elegir(v) { onChange(v); cerrar() }
 
@@ -60,14 +60,16 @@ export default function FiltroCombo({ label, value, options, onChange, placehold
                     onClick={() => !abierto && abrir()}
                     onChange={e => { setTexto(e.target.value); setActivo(0); if (!abierto) setAbierto(true) }}
                     onKeyDown={onKeyDown}
+                    disabled={disabled}
                     style={{
+                        opacity: disabled ? 0.5 : 1, cursor: disabled ? 'not-allowed' : 'text',
                         width: '100%', padding: '8px 52px 8px 12px', border: '1px solid',
                         borderColor: value ? '#16a34a' : '#d1d5db', borderRadius: '8px', fontSize: '13px',
                         color: '#374151', backgroundColor: value ? '#f0fdf4' : '#fff', boxSizing: 'border-box',
                         textOverflow: 'ellipsis',
                     }} />
                 <div style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    {value && !abierto && (
+                    {value && !abierto && !disabled && (
                         <button onMouseDown={e => { e.preventDefault(); onChange('') }} title="Quitar filtro"
                             style={{ display: 'flex', background: 'none', border: 'none', padding: '2px', cursor: 'pointer', color: '#6b7280' }}>
                             <X size={14} />

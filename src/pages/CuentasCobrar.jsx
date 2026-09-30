@@ -8,6 +8,7 @@ import SelectorFechaTasa, { useTasasFecha, hoyYMD, fmtFechaCorta, fechaAtimestam
 import { ModalEmitirNC, ModalMotivosNC } from '../components/NotasCredito'
 import ModalAnularNC from '../components/ModalAnularNC'
 import { sinSaldoQueCobrar } from '../lib/cobro'
+import FiltroCombo from '../components/FiltroCombo'
 
 const fmt = n => `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const fmtBs = n => `${Number(n).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`
@@ -378,22 +379,14 @@ export default function CuentasCobrar() {
                             {lbl}
                         </button>
                     ))}
-                    <select value={filtroCliente} onChange={e => setFiltroCliente(e.target.value)}
-                        style={{ padding: '7px 12px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', color: '#374151', backgroundColor: '#fff', cursor: 'pointer' }}>
-                        <option value="">Todos los clientes</option>
-                        {clientesFiltrados.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-                    </select>
-                    <select value={filtroCat1}
-                        onChange={e => {
-                            const cat = e.target.value
+                    <FiltroCombo value={filtroCliente} onChange={setFiltroCliente} options={clientesFiltrados.map(x => ({ value: x.id, label: x.nombre }))} placeholder="Todos los clientes" width="240px" />
+                    <FiltroCombo value={filtroCat1}
+                        onChange={cat => {
                             setFiltroCat1(cat)
                             // Si el cliente elegido no pertenece a la categoría, se limpia
                             if (cat && filtroCliente && !clientes.some(c => c.id === filtroCliente && c.cat1_id === cat)) setFiltroCliente('')
                         }}
-                        style={{ padding: '7px 12px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', color: '#374151', backgroundColor: '#fff', cursor: 'pointer' }}>
-                        <option value="">Todas las categorías</option>
-                        {categorias1.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-                    </select>
+                        options={categorias1.map(x => ({ value: x.id, label: x.nombre }))} placeholder="Todas las categorías" width="220px" />
                     {filtroCliente && (
                         <button onClick={() => setModalEstadoCuenta(true)}
                             style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 500, border: 'none', backgroundColor: '#1d4ed8', color: '#fff', cursor: 'pointer' }}>

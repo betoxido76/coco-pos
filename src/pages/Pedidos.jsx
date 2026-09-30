@@ -6,6 +6,7 @@ import { itemAplicaIva } from '../lib/iva'
 import { sinSaldoQueCobrar } from '../lib/cobro'
 import { almacenPredeterminado, verificarStock, moverStockLote } from '../lib/inventario'
 import ModalFaltanteStock from '../components/ModalFaltanteStock'
+import FiltroCombo from '../components/FiltroCombo'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 
@@ -296,16 +297,8 @@ export default function Pedidos() {
                 <input type="text" placeholder="SKU o producto..."
                     value={filtroSku} onChange={e => setFiltroSku(e.target.value)}
                     style={{ ...inputStyle, width: 'auto', minWidth: '160px' }} />
-                <select value={filtroCliente} onChange={e => setFiltroCliente(e.target.value)}
-                    style={{ ...inputStyle, width: 'auto', minWidth: '180px' }}>
-                    <option value="">Todos los clientes</option>
-                    {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-                </select>
-                <select value={filtroVendedor} onChange={e => setFiltroVendedor(e.target.value)}
-                    style={{ ...inputStyle, width: 'auto', minWidth: '180px' }}>
-                    <option value="">Todos los vendedores</option>
-                    {vendedores.map(v => <option key={v.id} value={v.id}>{v.nombre}</option>)}
-                </select>
+                <FiltroCombo value={filtroCliente} onChange={setFiltroCliente} options={clientes.map(x => ({ value: x.id, label: x.nombre }))} placeholder="Todos los clientes" width="220px" />
+                <FiltroCombo value={filtroVendedor} onChange={setFiltroVendedor} options={vendedores.map(x => ({ value: x.id, label: x.nombre }))} placeholder="Todos los vendedores" width="220px" />
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                     <span style={{ fontSize: '12px', color: '#6b7280' }}>Desde</span>
                     <input type="date" value={fechaDesde} onChange={e => setFechaDesde(e.target.value)}

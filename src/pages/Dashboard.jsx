@@ -11,6 +11,7 @@ import {
     PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer,
     LineChart, Line, XAxis, YAxis, CartesianGrid,
 } from 'recharts'
+import FiltroCombo from '../components/FiltroCombo'
 
 // ─── Formato ───────────────────────────────────────────────────
 const fmt = n => `$${Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -701,31 +702,19 @@ function TabComercial() {
                     </div>
                     <div>
                         <label style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '4px' }}>Producto</label>
-                        <select value={fProducto} onChange={e => setFProducto(e.target.value)} style={{ ...selectStyle, maxWidth: '220px' }}>
-                            <option value="">Todos</option>
-                            {opcProductos.map(([id, lbl]) => <option key={id} value={id}>{lbl}</option>)}
-                        </select>
+                        <FiltroCombo value={fProducto} onChange={setFProducto} options={opcProductos.map(([id, lbl]) => ({ value: id, label: lbl }))} width="220px" />
                     </div>
                     <div>
                         <label style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '4px' }}>Cliente</label>
-                        <select value={fCliente} onChange={e => setFCliente(e.target.value)} style={{ ...selectStyle, maxWidth: '220px' }}>
-                            <option value="">Todos</option>
-                            {opcClientes.map(([id, lbl]) => <option key={id} value={id}>{lbl}</option>)}
-                        </select>
+                        <FiltroCombo value={fCliente} onChange={setFCliente} options={opcClientes.map(([id, lbl]) => ({ value: id, label: lbl }))} width="220px" />
                     </div>
                     <div>
                         <label style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '4px' }}>Canal (categoría cliente)</label>
-                        <select value={fCanal} onChange={e => setFCanal(e.target.value)} style={selectStyle}>
-                            <option value="">Todos</option>
-                            {opcCanales.map(c => <option key={c} value={c}>{c}</option>)}
-                        </select>
+                        <FiltroCombo value={fCanal} onChange={setFCanal} options={opcCanales.map(x => ({ value: x, label: x }))} width="200px" />
                     </div>
                     <div>
                         <label style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '4px' }}>Vendedor</label>
-                        <select value={fVendedor} onChange={e => setFVendedor(e.target.value)} style={{ ...selectStyle, maxWidth: '200px' }}>
-                            <option value="">Todos</option>
-                            {opcVendedores.map(([id, nombre]) => <option key={id} value={id}>{nombre}</option>)}
-                        </select>
+                        <FiltroCombo value={fVendedor} onChange={setFVendedor} options={opcVendedores.map(([id, lbl]) => ({ value: id, label: lbl }))} width="200px" />
                     </div>
                     <button onClick={limpiar}
                         style={{ padding: '8px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 500, border: '1px solid #e5e7eb', backgroundColor: '#f9fafb', color: '#374151', cursor: 'pointer' }}>
