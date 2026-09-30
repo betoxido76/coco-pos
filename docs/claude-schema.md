@@ -162,6 +162,19 @@ visitas_comerciales   -- Visitas de campo desde NuevoPedido
                       --   pedido_id uuid (opcional)
 ```
 
+### Requisiciones (consumo interno) — docs/plan-requisiciones.md
+```
+areas_consumo         -- Áreas que solicitan, editables por empresa (nombre único por empresa)
+requisiciones         -- RQ-000001: solicitante_id → usuarios, area_id, almacen_id,
+                      --   estado ('pendiente','entregada','anulada'), entregado_por, fecha_entrega,
+                      --   anulado_por, motivo_anulacion. 3 FKs a usuarios → hint usuarios!solicitante_id
+requisicion_items     -- tipo_item, item_id, foto nombre/código/unidad, cantidad_solicitada,
+                      --   cantidad_entregada, costo_unitario (congelado al entregar)
+                      -- Escritura SOLO por RPC: crear_requisicion / entregar_requisicion /
+                      --   anular_requisicion. Movimientos con origen 'requisicion' y
+                      --   'anulacion_requisicion' (nota = RQ · área).
+```
+
 ### Finanzas / Bancos
 ```
 cuentas_bancarias     -- Cuentas por empresa: banco, numero_cuenta, tipo_cuenta, moneda, saldo_inicial, activa

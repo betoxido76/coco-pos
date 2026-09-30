@@ -61,7 +61,15 @@ El stock de consumibles solo crece.
 7. Pruebas en producción con BEGIN … ROLLBACK (crear, entregar parcial, stock
    baja en el almacén, anular con reverso, permisos, faltante).
 
+> **Fase 1 APLICADA 2026-09-29** (migración `requisiciones_fase1`): 36 áreas (4 × 9
+> empresas), módulo registrado, 3 RPCs. 13/13 pruebas con BEGIN/ROLLBACK.
+
 ## Fase 2 — Pantalla (`/requisiciones`)
+
+> **HECHA 2026-09-29.** `src/pages/Requisiciones.jsx`. La ruta exige el módulo
+> `requisiciones`: **el almacenista necesita los dos módulos** (requisiciones para
+> abrir la pantalla, inventario para entregar). Quien tiene inventario ve el
+> botón "Entregar" y el stock del almacén; el solicitante no.
 
 - Listado con filtros (`FiltroCombo`): área, estado, solicitante, ítem.
 - **Nueva requisición**: área, almacén, ítems (consumibles primero) y cantidades.
