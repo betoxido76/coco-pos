@@ -384,6 +384,9 @@ Al cerrar un ítem, borrarlo de esta tabla.
   - Para conversión de tipo de insumo entre formulario y `stock_ubicacion`: `{ materias_primas→materia_prima, materiales_empaque→material_empaque, consumibles→consumible, productos_terminados→producto_terminado }`
   - Para conversión desde `compra_items.tipo_insumo` (singular) a nombre de tabla (plural): `{ materia_prima→materias_primas, empaque→materiales_empaque, material_empaque→materiales_empaque, consumible→consumibles, producto_terminado→productos_terminados }`
 - Estilos: inline styles con objetos JS (no clases Tailwind, excepto en Login/ResetPassword)
+- **Filtros de lista**: usar `src/components/FiltroCombo.jsx` (lista + búsqueda por
+  cualquier parte del texto, sin acentos ni mayúsculas; `value=''` = Todos; prop
+  `disabled`). No usar `<select>` para filtros; los `<select>` de formularios siguen igual.
 - Formato de moneda USD: `fmt(n)` → `$X.XX`
 - Formato de moneda Bs: `fmtBs(n)` → `X.XX Bs.`
 - **localStorage cache keys** (prefijo `mipos_`):
