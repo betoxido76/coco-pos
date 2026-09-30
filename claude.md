@@ -356,6 +356,7 @@ Al cerrar un ítem, borrarlo de esta tabla.
 | Bancos: abonos parciales a gastos | Media | `calcularSaldoCuenta` y el extracto no leen la tabla `pagos` (abonos a gastos con cuenta bancaria). Latente: hoy hay 0 abonos con cuenta. |
 | Documento de origen en movimientos de inventario | Media | Los movimientos `pedido_facturado` no guardan NE/PED: enlazar una salida con su factura solo se puede por hora. Pasar `notas` con NE y PED en `moverStockLote` desde Pedidos y Ventas. |
 | Hora real de despacho | Media | `pedidos.fecha_despacho` es la fecha PROGRAMADA; la hora en que se marca despachado solo queda en los logs de la API (retención corta). Agregar `despachado_at`. |
+| Merma de la receta sin uso | Media | `recetas.merma_pct` se carga pero ninguna orden lo aplica: el factor es `cantidad ÷ rinde_unidades`. Confirmar con Meraki si el rinde que cargan ya es neto (p. ej. 30001: 529,411 L de 1.800 cocos con merma 3 %); si no, los estimados están inflados. |
 | Recepción no transaccional | Baja | La recepción se guarda en varios pasos desde el navegador (compra, abono, aplicación de anticipos, ítems, stock). Si un paso falla, avisa y queda para completarlo a mano. Llevarla a una RPC. |
 
 ---
