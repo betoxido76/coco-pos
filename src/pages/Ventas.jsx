@@ -385,6 +385,7 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
                                 ...i,
                                 cantidad: i.cantidad_alistada != null ? cantPrim / conv : Number(i.cantidad),
                                 cantPrim,
+                                conv,
                             }
                         })
                     setItems(activos)
@@ -585,8 +586,9 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
                                                 <span style={{ fontSize: '11px', color: '#9ca3af', marginLeft: '6px', fontFamily: 'monospace' }}>{item.productos_terminados.sku}</span>
                                             )}
                                         </td>
-                                        <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{Number(item.cantidad).toLocaleString('es-VE')}</td>
-                                        <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{fmt(item.precio_unitario)}</td>
+                                        <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{Number(item.cantPrim).toLocaleString('es-VE')}</td>
+                                        {/* Por unidad primaria, como en Pedidos y Despacho; el subtotal no cambia */}
+                                        <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{fmt(Number(item.precio_unitario) / (item.conv || 1))}</td>
                                         <td style={{ padding: '12px 16px', fontSize: '13px', textAlign: 'right' }}>
                                             {Number(item.descuento_item || 0) > 0
                                                 ? <span style={{ color: '#16a34a', fontWeight: 500 }}>-{item.descuento_item}%</span>

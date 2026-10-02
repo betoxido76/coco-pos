@@ -558,6 +558,13 @@ function DetallePedido({ pedido, onVolver }) {
         const factor = Number(item.productos_terminados?.factor_conversion_2 || 1)
         return (esUM2(item) && factor > 1) ? cantAlistada / factor : cantAlistada
     }
+    // "Precio lista" se muestra SIEMPRE por unidad primaria, igual que la columna de
+    // cantidad. precio_unitario está en la unidad de venta de la línea (caja en UM2):
+    // es solo visual, el subtotal se sigue calculando con cantFn × precio_unitario.
+    const precioPrimario = (item) => {
+        const factor = Number(item.productos_terminados?.factor_conversion_2 || 1)
+        return (esUM2(item) && factor > 1) ? Number(item.precio_unitario) / factor : Number(item.precio_unitario)
+    }
     // cantidad en unidades primarias para mostrar en columna principal
     const cantPrimaria = (item) => {
         if (esAlistado) return Number(item.cantidad_alistada ?? item.cantidad)
@@ -1135,7 +1142,7 @@ function DetallePedido({ pedido, onVolver }) {
                                                     {(() => { const c2 = cantSecundaria(item); return c2 != null ? c2.toLocaleString('es-VE', { maximumFractionDigits: 2 }) : '—' })()}
                                                 </td>
                                             )}
-                                            <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{fmt(item.precio_unitario)}</td>
+                                            <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{fmt(precioPrimario(item))}</td>
                                             <td style={{ padding: '12px 16px', fontSize: '13px', textAlign: 'right' }}>
                                                 {Number(item.descuento_item || 0) > 0
                                                     ? <span style={{ color: '#16a34a', fontWeight: 500 }}>-{item.descuento_item}%</span>
