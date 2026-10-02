@@ -8,8 +8,16 @@ const SESSION_KEY = 'mipos_session_token'
 const TODOS_LOS_MODULOS = [
     'dashboard', 'inventario', 'ventas', 'pedidos', 'pedidos_campo',
     'compras', 'cxc', 'cxp', 'gastos', 'produccion', 'cambios', 'mermas', 'administracion',
-    'cotizador', 'finanzas', 'bancos', 'despacho',
+    'cotizador', 'finanzas', 'bancos', 'despacho', 'requisiciones',
 ]
+
+// El superadmin ve todos los módulos del catálogo (tabla `modulos`). La lista
+// fija es solo el respaldo si la consulta falla: leerla de la base evita que un
+// módulo nuevo quede fuera del menú del superadmin (pasó con 'requisiciones').
+async function modulosDelCatalogo() {
+    const { data } = await supabase.from('modulos').select('id').eq('activo', true)
+    return data?.length ? data.map(m => m.id) : TODOS_LOS_MODULOS
+}
 
 export function AuthProvider({ children }) {
     const [user, setUser] = useState(null)
@@ -98,7 +106,7 @@ export function AuthProvider({ children }) {
         setPerfilBase(data)
 
         if (data?.rol === 'superadmin') {
-            setModulosActivos(TODOS_LOS_MODULOS)
+            setModulosActivos(await modulosDelCatalogo())
         } else if (data) {
             const { data: mods } = await supabase
                 .from('usuario_modulos')
@@ -117,7 +125,7 @@ export function AuthProvider({ children }) {
     async function recargarModulos() {
         if (!user) return
         if (perfilBase?.rol === 'superadmin') {
-            setModulosActivos(TODOS_LOS_MODULOS)
+            setModulosActivos(await modulosDelCatalogo())
             return
         }
         const { data: mods } = await supabase
