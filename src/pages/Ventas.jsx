@@ -369,10 +369,24 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
                 if (data) {
                     const activos = data
                         .filter(i => i.cantidad_alistada === null || Number(i.cantidad_alistada) > 0)
-                        .map(i => ({
-                            ...i,
-                            cantidad: i.cantidad_alistada != null ? Number(i.cantidad_alistada) : Number(i.cantidad),
-                        }))
+                        .map(i => {
+                            // cantidad_alistada está en unidades PRIMARIAS; precio_unitario
+                            // está en la unidad de venta de la línea. Para una línea en UM2
+                            // (caja) hay que llevar lo alistado a cajas antes de multiplicar
+                            // por el precio, o se factura ×factor (NE-001196).
+                            const prod = i.productos_terminados || {}
+                            const factor = Number(prod.factor_conversion_2 || 1)
+                            const esSec = !!i.unidad_venta && (i.unidad_venta === '2' || (!!prod.unidad_venta_2 && i.unidad_venta === prod.unidad_venta_2))
+                            const conv = esSec && factor > 1 ? factor : 1
+                            const cantPrim = i.cantidad_alistada != null
+                                ? Number(i.cantidad_alistada)
+                                : (i.cantidad_primaria != null ? Number(i.cantidad_primaria) : Number(i.cantidad) * conv)
+                            return {
+                                ...i,
+                                cantidad: i.cantidad_alistada != null ? cantPrim / conv : Number(i.cantidad),
+                                cantPrim,
+                            }
+                        })
                     setItems(activos)
                 }
                 setLoading(false)
@@ -403,11 +417,12 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
         }
         setProcesando(true); setError('')
 
-        // item.cantidad ya viene remapeado a cantidad_alistada al cargar los items
+        // El stock se mueve en unidades primarias (cantPrim); item.cantidad está
+        // en la unidad de venta de la línea
         const itemsStock = items
             // Sin metadata del producto no se toca su stock, igual que antes
             .filter(i => i.productos_terminados && i.productos_terminados.tipo_producto !== 'servicio')
-            .map(i => ({ tipo_item: 'producto_terminado', item_id: i.producto_id, cantidad: Number(i.cantidad) }))
+            .map(i => ({ tipo_item: 'producto_terminado', item_id: i.producto_id, cantidad: Number(i.cantPrim) }))
             .filter(i => i.item_id && i.cantidad > 0)
         const almacenId = await almacenPredeterminado(perfil.empresa_id)
 
@@ -464,17 +479,6 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
 
         await supabase.from('venta_items').insert(
             items.map(i => {
-                const prod = i.productos_terminados || {}
-                const factor = Number(prod.factor_conversion_2 || 1)
-                const esSec = i.unidad_venta && (i.unidad_venta === '2' || (prod.unidad_venta_2 && i.unidad_venta === prod.unidad_venta_2))
-                // Cantidad facturada en unidades primarias:
-                //  - con alistado, cantidad_alistada ya está en primarias
-                //  - sin alistado, usar cantidad_primaria del pedido; último recurso: convertir con el factor
-                const cantidadPrimaria = i.cantidad_alistada != null
-                    ? Number(i.cantidad_alistada)
-                    : (i.cantidad_primaria != null
-                        ? Number(i.cantidad_primaria)
-                        : (esSec && factor > 1 ? Number(i.cantidad) * factor : Number(i.cantidad)))
                 return {
                     venta_id: venta.id,
                     producto_id: i.producto_id,
@@ -482,7 +486,7 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
                     precio_unitario: Number(i.precio_unitario) * (1 - Number(i.descuento_item || 0) / 100) * (1 - descGlobal / 100),
                     aplica_iva: itemAplicaIva(i),
                     unidad_venta: i.unidad_venta || null,
-                    cantidad_primaria: cantidadPrimaria,
+                    cantidad_primaria: i.cantPrim,
                     empresa_id: perfil.empresa_id,
                 }
             })
