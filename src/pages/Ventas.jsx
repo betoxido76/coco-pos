@@ -359,17 +359,7 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
     const [nroReferencia, setNroReferencia] = useState('')
     const [ocCliente, setOcCliente] = useState(pedido.oc_cliente || '')
     const [condicion, setCondicion] = useState('credito')
-    const [tasas, setTasas] = useState({})
-    const [tipoTasa, setTipoTasa] = useState('tasa_bcv')
-    const [pagoUsd, setPagoUsd] = useState('')
-    const [metodoUsd, setMetodoUsd] = useState('Efectivo')
-    const [pagoBs, setPagoBs] = useState('')
-    const [metodoBs, setMetodoBs] = useState('Pago Móvil')
-    const [notaCobro, setNotaCobro] = useState('')
     const [diasCredito, setDiasCredito] = useState(0)
-    const [contribEspecial, setContribEspecial] = useState(null)
-    const [cuentasBancarias, setCuentasBancarias] = useState([])
-    const [cuentaBancariaId, setCuentaBancariaId] = useState('')
 
     useEffect(() => {
         supabase.from('pedido_items')
@@ -387,45 +377,14 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
                 }
                 setLoading(false)
             })
-        supabase.from('clientes').select('condicion_pago, dias_credito, contribuyente_especial').eq('id', pedido.cliente_id).single()
+        supabase.from('clientes').select('condicion_pago, dias_credito').eq('id', pedido.cliente_id).single()
             .then(({ data }) => {
                 if (data) {
                     setCondicion(data.condicion_pago || 'credito')
                     setDiasCredito(Number(data.dias_credito) || 0)
-                    setContribEspecial(data.contribuyente_especial ?? null)
                 }
             })
-        supabase.from('configuracion').select('clave, valor').eq('empresa_id', perfil.empresa_id)
-            .then(({ data }) => { if (data) { const t = {}; data.forEach(r => { t[r.clave] = Number(r.valor) }); setTasas(t) } })
-        supabase.from('cuentas_bancarias').select('id, nombre, banco, moneda').eq('empresa_id', perfil.empresa_id).eq('activa', true)
-            .then(({ data }) => setCuentasBancarias(data || []))
     }, [pedido.id])
-
-    // Recalcular Bs cuando cambia la tasa (mantiene el monto USD como base)
-    useEffect(() => {
-        const tasa = tasas[tipoTasa] || 0
-        if (!tasa || !pagoUsd) return
-        const complemento = (total - Number(pagoUsd)) * tasa
-        setPagoBs(complemento > 0 ? complemento.toFixed(2) : '0')
-    }, [tipoTasa, tasas])
-
-    function handleUsdChange(val) {
-        setPagoUsd(val)
-        const tasa = tasas[tipoTasa] || 0
-        if (!tasa) return
-        const usd = Number(val) || 0
-        const complemento = (total - usd) * tasa
-        setPagoBs(complemento > 0 ? complemento.toFixed(2) : '0')
-    }
-
-    function handleBsChange(val) {
-        setPagoBs(val)
-        const tasa = tasas[tipoTasa] || 0
-        if (!tasa) return
-        const bs = Number(val) || 0
-        const complemento = total - bs / tasa
-        setPagoUsd(complemento > 0 ? complemento.toFixed(2) : '0')
-    }
 
     const descGlobal = Number(pedido.descuento_global || 0)
     const discountFactor = 1 - descGlobal / 100
@@ -436,12 +395,6 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
     }, 0)
     const iva = total - subtotal
     const descGlobalMonto = discountFactor < 1 ? total / discountFactor - total : 0
-
-    const tasaContado = tasas[tipoTasa] || 1
-    const abonoContado = (Number(pagoUsd) || 0) + (Number(pagoBs) || 0) / tasaContado
-    // Sin detalle de pago se asume el total (ver el insert del cobro en facturar)
-    const contadoSinDetalle = abonoContado < 0.01
-    const contadoCuadra = contadoSinDetalle || Math.abs(abonoContado - total) <= 0.01
 
     async function facturar(permitirFaltante = false) {
         if (condicion === 'credito' && Number(diasCredito) <= 0) {
@@ -473,7 +426,11 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
         const numero = numeroConsecutivo || 'NE-000001'
         const { data: { user } } = await supabase.auth.getUser()
 
-        let fechaVencimiento = null
+        // Contado = plazo de 0 días: vence el mismo día de emisión (hora de Venezuela).
+        // El cobro se registra en CxC cuando el dinero entra, con su fecha y tasa reales.
+        let fechaVencimiento = condicion === 'contado'
+            ? new Date().toLocaleDateString('en-CA', { timeZone: 'America/Caracas' })
+            : null
         if (condicion === 'credito' && diasCredito > 0) {
             const d = new Date()
             d.setDate(d.getDate() + Number(diasCredito))
@@ -488,13 +445,10 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
                 numero_factura: numero,
                 subtotal,
                 total,
-                // Una nota en $0 (muestra, reposición, cortesía) no es cuenta por
-                // cobrar: nace 'pagado' o queda atrapada en CxC sin poder cerrarse.
-                // Contado que no cubre el total queda 'parcial': marcarlo 'pagado'
-                // dejaría la diferencia sin registrar en ninguna parte.
-                estado_cobro: sinSaldoQueCobrar(total) ? 'pagado'
-                    : condicion !== 'contado' ? 'pendiente'
-                    : (contadoSinDetalle || abonoContado >= total - 0.01) ? 'pagado' : 'parcial',
+                // Toda nota con saldo nace 'pendiente', también las de contado: el
+                // cobro se registra en CxC cuando el cliente paga. Una nota en $0
+                // (muestra, reposición, cortesía) nace 'pagado' o quedaría atrapada.
+                estado_cobro: sinSaldoQueCobrar(total) ? 'pagado' : 'pendiente',
                 empresa_id: perfil.empresa_id,
                 nro_referencia: nroReferencia.trim() || null,
                 oc_cliente: ocCliente.trim() || null,
@@ -533,30 +487,6 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
                 }
             })
         )
-
-        if (condicion === 'contado') {
-            // Los montos de pago son opcionales en el formulario. Si se dejan en
-            // blanco el cobro entraría en 0 y la factura, ya marcada 'pagado',
-            // aparecería en CxC con el saldo completo. En ese caso se registra
-            // el total en USD, que es lo que implica el estado.
-            const montoUsd = contadoSinDetalle ? total : Number(pagoUsd) || 0
-            const montoBs = contadoSinDetalle ? 0 : Number(pagoBs) || 0
-            await supabase.from('cobros').insert({
-                venta_id: venta.id,
-                monto_usd: montoUsd,
-                monto_bs: montoBs,
-                tasa_cambio: tasaContado,
-                tipo_tasa: tipoTasa,
-                metodo_usd: montoUsd > 0 ? metodoUsd : null,
-                metodo_bs: montoBs > 0 ? metodoBs : null,
-                nota: notaCobro || (contadoSinDetalle ? 'Contado — pago no detallado al facturar' : null),
-                cuenta_bancaria_id: cuentaBancariaId || null,
-                // Estatus del cliente al momento del pago
-                contribuyente_especial: contribEspecial,
-                usuario_id: user.id,
-                empresa_id: perfil.empresa_id,
-            })
-        }
 
         // Descontar stock — una sola transacción en la base (mover_stock_lote).
         // El motor salta servicios, reparte entre ubicaciones del almacén y
@@ -734,68 +664,9 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
                     ))}
                 </div>
                 {condicion === 'contado' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                        <div>
-                            <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Tasa de cambio</label>
-                            <select value={tipoTasa} onChange={e => setTipoTasa(e.target.value)}
-                                style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', color: '#374151', backgroundColor: '#fff' }}>
-                                {OPCIONES_TASA.map(o => (
-                                    <option key={o.key} value={o.key}>{o.label}{tasas[o.key] ? ` (${tasas[o.key]})` : ''}</option>
-                                ))}
-                            </select>
-                        </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                            <div>
-                                <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Monto USD</label>
-                                <input type="number" min="0" step="0.01" value={pagoUsd} onChange={e => handleUsdChange(e.target.value)} placeholder="0.00"
-                                    style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', boxSizing: 'border-box' }} />
-                            </div>
-                            <div>
-                                <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Método USD</label>
-                                <select value={metodoUsd} onChange={e => setMetodoUsd(e.target.value)}
-                                    style={{ width: '100%', padding: '8px 10px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '12px', color: '#374151', backgroundColor: '#fff' }}>
-                                    {METODOS_USD.map(m => <option key={m} value={m}>{m}</option>)}
-                                </select>
-                            </div>
-                        </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                            <div>
-                                <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Monto Bs.</label>
-                                <input type="number" min="0" step="0.01" value={pagoBs} onChange={e => handleBsChange(e.target.value)} placeholder="0.00"
-                                    style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', boxSizing: 'border-box' }} />
-                            </div>
-                            <div>
-                                <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Método Bs.</label>
-                                <select value={metodoBs} onChange={e => setMetodoBs(e.target.value)}
-                                    style={{ width: '100%', padding: '8px 10px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '12px', color: '#374151', backgroundColor: '#fff' }}>
-                                    {METODOS_BS.map(m => <option key={m} value={m}>{m}</option>)}
-                                </select>
-                            </div>
-                        </div>
-                        <div>
-                            <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Nota <span style={{ color: '#9ca3af', fontWeight: 400 }}>(opcional)</span></label>
-                            <input type="text" value={notaCobro} onChange={e => setNotaCobro(e.target.value)} placeholder="Ej: Efectivo recibido en caja..."
-                                style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', boxSizing: 'border-box' }} />
-                        </div>
-                        {cuentasBancarias.length > 0 && (
-                            <div>
-                                <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Cuenta bancaria <span style={{ color: '#9ca3af', fontWeight: 400 }}>(opcional)</span></label>
-                                <select value={cuentaBancariaId} onChange={e => setCuentaBancariaId(e.target.value)}
-                                    style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', color: '#374151', backgroundColor: '#fff' }}>
-                                    <option value="">— Efectivo / sin cuenta —</option>
-                                    {cuentasBancarias
-                                        .filter(c => Number(pagoUsd) > 0 && Number(pagoBs) > 0 ? true : Number(pagoUsd) > 0 ? c.moneda !== 'Bs' : c.moneda === 'Bs')
-                                        .map(c => <option key={c.id} value={c.id}>{c.nombre} ({c.banco} · {c.moneda})</option>)}
-                                </select>
-                            </div>
-                        )}
-                        <div style={{ borderRadius: '8px', padding: '8px 12px', fontSize: '13px', textAlign: 'center', fontWeight: 500, backgroundColor: contadoCuadra ? '#f0fdf4' : '#fffbeb', color: contadoCuadra ? '#166534' : '#854d0e', border: `1px solid ${contadoCuadra ? '#bbf7d0' : '#fde68a'}` }}>
-                            {contadoSinDetalle ? `Sin detalle — se registrará el total (${fmt(total)}) en USD`
-                                : contadoCuadra ? `✓ El pago cubre el total (${fmt(total)})`
-                                : abonoContado > total ? `⚠️ El pago supera el total por ${fmt(abonoContado - total)}`
-                                : `⚠️ Faltan ${fmt(total - abonoContado)} — la factura quedará parcial`}
-                        </div>
-                    </div>
+                    <p style={{ fontSize: '12px', color: '#1e40af', backgroundColor: '#eff6ff', borderRadius: '8px', padding: '8px 12px', margin: 0 }}>
+                        La nota pasa a Cuentas por Cobrar con vencimiento hoy. Registra el cobro desde CxC cuando el cliente pague, con su fecha y tasa reales.
+                    </p>
                 )}
             </div>
 
