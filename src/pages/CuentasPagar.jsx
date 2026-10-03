@@ -6,6 +6,7 @@ import ModalPagoObligacion, { labelMetodo } from '../components/ModalPagoObligac
 import { SelectorAnticipos, totalAplicaciones, aplicacionesALista, PanelAnticiposCxP, saldoAnticiposEmpresa } from '../components/AnticiposOC'
 import ModalPagoGasto from '../components/ModalPagoGasto'
 import FiltroCombo from '../components/FiltroCombo'
+import { precioBaseItem, totalesGuardados } from '../lib/iva'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 const fmtBs = (n, tasa) => `${(Number(n || 0) * Number(tasa || 1)).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`
@@ -770,13 +771,14 @@ function DetalleRecepcionCxP({ compra: compraInicial, onVolver }) {
                         <tbody>
                             {items.map((item, idx) => {
                                 const desc = item.descuento_item || 0
-                                const lineaTotal = item.cantidad * item.precio_unitario * (1 - desc / 100)
+                                // Base de la línea; las recepciones viejas guardaban el precio con IVA
+                                const lineaTotal = item.cantidad * precioBaseItem(item) * (1 - desc / 100)
                                 return (
                                 <tr key={idx} style={{ borderBottom: '1px solid #f3f4f6' }}>
                                     <td style={{ padding: '10px 0', fontSize: '13px', color: '#1f2937' }}>{mapaNombres[item.insumo_id] || '—'}</td>
                                     <td style={{ padding: '10px 0', fontSize: '11px', color: '#6b7280', textTransform: 'uppercase' }}>{item.tipo_insumo?.replace(/_/g, ' ') || '—'}</td>
                                     <td style={{ padding: '10px 0', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{item.cantidad}</td>
-                                    <td style={{ padding: '10px 0', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{fmt(item.precio_unitario)}</td>
+                                    <td style={{ padding: '10px 0', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{fmt(precioBaseItem(item))}</td>
                                     <td style={{ padding: '10px 0', fontSize: '13px', color: desc > 0 ? '#dc2626' : '#6b7280', textAlign: 'right' }}>{desc > 0 ? `${desc}%` : '—'}</td>
                                     <td style={{ padding: '10px 0', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(lineaTotal)}</td>
                                 </tr>
@@ -789,9 +791,16 @@ function DetalleRecepcionCxP({ compra: compraInicial, onVolver }) {
                     {compra.descuento_global > 0 && (
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#dc2626' }}>
                             <span>Descuento global ({compra.descuento_global}%)</span>
-                            <span>-{fmt(items.reduce((s, i) => s + i.cantidad * i.precio_unitario * (1 - (i.descuento_item || 0) / 100), 0) * compra.descuento_global / 100)}</span>
+                            <span>-{fmt(Math.max(0, items.reduce((s, i) => s + i.cantidad * precioBaseItem(i) * (1 - (i.descuento_item || 0) / 100), 0) - totalesGuardados(compra).subtotal))}</span>
                         </div>
                     )}
+                    {[['Base imponible', totalesGuardados(compra).base_gravada], ['Exento', totalesGuardados(compra).base_exenta], ['IVA (16%)', totalesGuardados(compra).iva]]
+                        .filter(([l, v]) => l !== 'Exento' || v > 0)
+                        .map(([l, v]) => (
+                            <div key={l} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#6b7280' }}>
+                                <span>{l}</span><span>{fmt(v)}</span>
+                            </div>
+                        ))}
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '18px', fontWeight: 700, color: '#1f2937' }}>
                         <span>Total</span>
                         <span style={{ color: '#16a34a' }}>{fmt(compra.total)}</span>
@@ -1051,8 +1060,8 @@ function DetalleND({ nd, onVolver }) {
                                     <td style={{ padding: '10px 16px', fontSize: '13px', color: '#1f2937', fontWeight: 500 }}>{item.nombre_insumo || '—'}</td>
                                     <td style={{ padding: '10px 16px', fontSize: '11px', color: '#6b7280', textTransform: 'uppercase' }}>{item.tipo_insumo?.replace(/_/g, ' ') || '—'}</td>
                                     <td style={{ padding: '10px 16px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{Number(item.cantidad).toLocaleString('es-VE')}</td>
-                                    <td style={{ padding: '10px 16px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{fmt(item.precio_unitario)}</td>
-                                    <td style={{ padding: '10px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(Number(item.cantidad) * Number(item.precio_unitario))}</td>
+                                    <td style={{ padding: '10px 16px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{fmt(precioBaseItem(item))}</td>
+                                    <td style={{ padding: '10px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(Number(item.cantidad) * precioBaseItem(item))}</td>
                                 </tr>
                             ))}
                         </tbody>

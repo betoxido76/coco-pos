@@ -7,14 +7,19 @@ import { opcionesUnidad } from '../lib/unidades'
 import SelectorFechaTasa, { useTasasFecha, hoyYMD, fmtFechaCorta } from '../components/SelectorFechaTasa'
 import { ConfirmacionPago, METODOS_USD, METODOS_BS } from '../components/ModalPagoObligacion'
 import FiltroCombo from '../components/FiltroCombo'
+import { totalesDeItems, totalesDocumento, totalesGuardados, precioBaseItem, camposIvaLinea, camposIvaHeredados, itemAplicaIva, IVA_PCT } from '../lib/iva'
 import AnticiposOC, { SelectorAnticipos, totalAplicaciones, aplicacionesALista, anticiposConSaldoDeOC, ModalCancelarOCConAnticipo } from '../components/AnticiposOC'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 
-// orden_compra_items.precio_unitario_esperado se guarda SIN IVA (ver NuevaOrden).
-// Las pantallas trabajan con IVA embebido: todo lector del precio de la OC pasa por aquí.
-const precioConIvaOC = (esperado, aplicaIva) =>
-    aplicaIva ? Number((Number(esperado) * 1.16).toFixed(6)) : Number(esperado)
+// Precios de compra en base imponible (docs/plan-iva-base-imponible.md): la OC
+// siempre guardó precio_unitario_esperado sin IVA, y desde 2026-10 las pantallas
+// también trabajan en base. Las recepciones anteriores guardan precio con IVA
+// (compra_items.precio_incluye_iva = true): precioBaseItem las lee bien.
+const camposTotalesCompra = (t) => ({
+    subtotal: t.subtotal, total: t.total,
+    base_gravada: t.base_gravada, base_exenta: t.base_exenta, iva: t.iva,
+})
 
 const tiempoDesde = (ts) => {
     const mins = Math.floor((Date.now() - ts) / 60000)
@@ -772,12 +777,9 @@ function NuevaOrden({ onCreada, onCancelar }) {
 
     function eliminarItem(id, tipo) { setItems(prev => prev.filter(i => !(i.id === id && i.tipo === tipo))) }
 
-    const total = items.reduce((s, i) => s + i.cantidad * i.precio_unitario, 0)
-    const subtotal = items.reduce((s, i) => {
-        const linea = i.cantidad * i.precio_unitario
-        return s + ((i.aplica_iva ?? true) ? linea / 1.16 : linea)
-    }, 0)
-    const iva = total - subtotal
+    // El precio de la OC es base imponible; el IVA se suma (src/lib/iva.js)
+    const totalesOC = totalesDeItems(items)
+    const { subtotal, iva, total } = totalesOC
 
     async function confirmar() {
         if (!proveedorId) { setError('Selecciona un proveedor'); return }
@@ -794,7 +796,7 @@ function NuevaOrden({ onCreada, onCancelar }) {
 
             const payload = {
                 proveedor_id: proveedorId, usuario_id: user.id, numero_oc: numero,
-                subtotal, total, estado: 'pendiente',
+                ...camposTotalesCompra(totalesOC), estado: 'pendiente',
                 fecha_emision: new Date().toISOString(),
                 fecha_entrega_esperada: fechaEntrega || null
             }
@@ -821,7 +823,9 @@ function NuevaOrden({ onCreada, onCancelar }) {
                     insumo_id: i.id,
                     cantidad_solicitada: i.cantidad,
                     cantidad_recibida: 0,
-                    precio_unitario_esperado: (i.aplica_iva ?? true) ? i.precio_unitario / 1.16 : i.precio_unitario,
+                    precio_unitario_esperado: i.precio_unitario,
+                    aplica_iva: i.aplica_iva ?? true,
+                    iva_pct: (i.aplica_iva ?? true) ? IVA_PCT : 0,
                 }))
             )
 
@@ -1004,7 +1008,8 @@ function NuevaOrden({ onCreada, onCancelar }) {
                 <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '20px', height: 'fit-content', position: 'sticky', top: '24px' }}>
                     <h2 style={{ fontSize: '15px', fontWeight: 600, color: '#1f2937', margin: '0 0 16px' }}>Resumen de OC</h2>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#6b7280' }}> <span>Subtotal</span> <span>{fmt(subtotal)}</span> </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#6b7280' }}> <span>Base imponible</span> <span>{fmt(totalesOC.base_gravada)}</span> </div>
+                        {totalesOC.base_exenta > 0 && <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#6b7280' }}> <span>Exento</span> <span>{fmt(totalesOC.base_exenta)}</span> </div>}
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#6b7280' }}> <span>IVA (16%)</span> <span>{fmt(iva)}</span> </div>
                         <div style={{ height: '1px', backgroundColor: '#e5e7eb', margin: '4px 0' }} />
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '16px', fontWeight: 700, color: '#1f2937' }}><span>Total</span><span style={{ color: '#16a34a' }}>{fmt(total)}</span></div>
@@ -1201,16 +1206,15 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
         }
         setItems(oc.orden_compra_items.map(i => {
             const insumo = insumos.find(ins => ins.id === i.insumo_id)
-            const aplicaIva = insumo?.aplica_iva ?? true
+            // IVA del catálogo vigente al recibir; si el insumo no está, la foto de la OC
+            const aplicaIva = insumo?.aplica_iva ?? i.aplica_iva ?? true
             return {
                 id: i.insumo_id,
                 tipo: tipoToPlural[i.tipo_insumo] || 'materias_primas',
                 nombre: mapaNombres[i.insumo_id] || 'Cargando...',
                 cantidad: i.cantidad_solicitada - i.cantidad_recibida,
-                // La OC guarda el precio SIN IVA; la recepción trabaja con IVA
-                // embebido (igual que EditarOrden). Sin esto cada ítem con IVA
-                // se recibía 13,8% por debajo de lo ordenado.
-                precio_unitario: precioConIvaOC(i.precio_unitario_esperado, aplicaIva),
+                // La OC y la recepción trabajan ambas en base imponible
+                precio_unitario: Number(i.precio_unitario_esperado),
                 pendiente: i.cantidad_solicitada - i.cantidad_recibida,
                 orden_item_id: i.id,
                 aplica_iva: aplicaIva,
@@ -1241,16 +1245,12 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
         i.codigo?.toLowerCase().includes(busquedaInsumo.toLowerCase())
     )
 
+    // Base de la línea con su descuento; el global y el IVA van a los totales (src/lib/iva.js)
     const lineaConDesc = (item) => item.cantidad * item.precio_unitario * (1 - (item.descuento_item || 0) / 100)
-    const totalBruto = items.reduce((s, i) => s + lineaConDesc(i), 0)
-    const descGlobalMonto = totalBruto * (descGlobal || 0) / 100
-    const total = totalBruto - descGlobalMonto
-    const factorGlobal = totalBruto > 0 ? total / totalBruto : 1
-    const subtotal = items.reduce((s, i) => {
-        const linea = lineaConDesc(i) * factorGlobal
-        return s + ((i.aplica_iva ?? true) ? linea / 1.16 : linea)
-    }, 0)
-    const iva = total - subtotal
+    const lineasBase = items.map(i => ({ base: lineaConDesc(i), aplicaIva: i.aplica_iva ?? true }))
+    const totalesRec = totalesDocumento(lineasBase, descGlobal || 0)
+    const descGlobalMonto = Math.max(0, totalesDocumento(lineasBase).subtotal - totalesRec.subtotal)
+    const { subtotal, iva, total } = totalesRec
 
     function abrirConfirmacion() {
         if (modo === 'contra_oc' && !ocSeleccionada) { setError('Selecciona una OC'); return }
@@ -1272,7 +1272,7 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
 
         const payload = {
             proveedor_id: proveedorId, usuario_id: user.id, numero_doc: numero, nro_doc_proveedor: nroDocProveedor.trim() || null,
-            subtotal, total, descuento_global: descGlobal || 0, estado: 'recibida', fecha_compra: new Date().toISOString(),
+            ...camposTotalesCompra(totalesRec), descuento_global: descGlobal || 0, estado: 'recibida', fecha_compra: new Date().toISOString(),
             almacen_id: almacenId,
             orden_compra_id: modo === 'contra_oc' ? ocSeleccionada : null,
             ...datosPago
@@ -1319,6 +1319,9 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
                 cantidad: i.cantidad,
                 precio_unitario: i.precio_unitario,
                 descuento_item: i.descuento_item || 0,
+                // Precio en base y foto del IVA (src/lib/iva.js)
+                ...camposIvaLinea(i.aplica_iva ?? true),
+                base_linea: lineaConDesc(i),
             }))
         )
 
@@ -1594,9 +1597,10 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
                             style={{ width: '100%', padding: '7px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', boxSizing: 'border-box' }} />
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#6b7280' }}> <span>Subtotal (sin IVA)</span> <span>{fmt(subtotal)}</span> </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#6b7280' }}> <span>IVA (16%)</span> <span>{fmt(iva)}</span> </div>
                         {descGlobalMonto > 0 && <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#dc2626' }}> <span>Descuento ({descGlobal}%)</span> <span>-{fmt(descGlobalMonto)}</span> </div>}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#6b7280' }}> <span>Base imponible</span> <span>{fmt(totalesRec.base_gravada)}</span> </div>
+                        {totalesRec.base_exenta > 0 && <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#6b7280' }}> <span>Exento</span> <span>{fmt(totalesRec.base_exenta)}</span> </div>}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#6b7280' }}> <span>IVA (16%)</span> <span>{fmt(iva)}</span> </div>
                         <div style={{ height: '1px', backgroundColor: '#e5e7eb', margin: '4px 0' }} />
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '16px', fontWeight: 700, color: '#1f2937' }}><span>Total</span><span style={{ color: '#16a34a' }}>{fmt(total)}</span></div>
                     </div>
@@ -2476,9 +2480,9 @@ function DetalleOrden({ orden, onVolver }) {
             })
     }, [orden.id, orden.empresa_id])
 
-    const total = orden.total || 0
-    const subtotal = orden.subtotal || 0
-    const iva = total - subtotal
+    // Documento guardado: mandan los montos del encabezado
+    const montosOC = totalesGuardados(orden)
+    const { total, iva } = montosOC
 
     return (
         <div style={{ padding: '24px', maxWidth: '680px' }}>
@@ -2552,8 +2556,8 @@ function DetalleOrden({ orden, onVolver }) {
                                     <td style={{ padding: '10px 0', fontSize: '11px', color: '#6b7280', textTransform: 'uppercase' }}>{item.tipo_insumo.replace('_', ' ')}</td>
                                     <td style={{ padding: '10px 0', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{item.cantidad_solicitada}</td>
                                     <td style={{ padding: '10px 0', fontSize: '13px', color: item.cantidad_recibida >= item.cantidad_solicitada ? '#16a34a' : '#d97706', textAlign: 'right', fontWeight: 600 }}>{item.cantidad_recibida}</td>
-                                    <td style={{ padding: '10px 0', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{fmt(precioConIvaOC(item.precio_unitario_esperado, mapaIva[item.insumo_id] ?? true))}</td>
-                                    <td style={{ padding: '10px 0', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(item.cantidad_solicitada * precioConIvaOC(item.precio_unitario_esperado, mapaIva[item.insumo_id] ?? true))}</td>
+                                    <td style={{ padding: '10px 0', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{fmt(item.precio_unitario_esperado)}</td>
+                                    <td style={{ padding: '10px 0', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(item.cantidad_solicitada * Number(item.precio_unitario_esperado))}</td>
                                 </tr>
                             ))}
                         </tbody>
@@ -2561,7 +2565,7 @@ function DetalleOrden({ orden, onVolver }) {
                 )}
 
                 <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: '16px' }}>
-                    {[['Subtotal', fmt(subtotal)], ['IVA (16%)', fmt(iva)]].map(([l, v]) => (
+                    {[['Base imponible', fmt(montosOC.base_gravada)], ...(montosOC.base_exenta > 0 ? [['Exento', fmt(montosOC.base_exenta)]] : []), ['IVA (16%)', fmt(iva)]].map(([l, v]) => (
                         <div key={l} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#6b7280', marginBottom: '6px' }}>
                             <span>{l}</span> <span>{v}</span>
                         </div>
@@ -2812,7 +2816,8 @@ function DetalleRecepcion({ recepcion, onVolver }) {
                         <tbody>
                             {items.map((item, idx) => {
                                 const desc = item.descuento_item || 0
-                                const lineaTotal = item.cantidad * item.precio_unitario * (1 - desc / 100)
+                                // Base de la línea; las recepciones viejas guardaban el precio con IVA
+                                const lineaTotal = item.cantidad * precioBaseItem(item) * (1 - desc / 100)
                                 return (
                                 <tr key={idx} style={{ borderBottom: '1px solid #f3f4f6' }}>
                                     <td style={{ padding: '10px 0', fontSize: '13px', color: '#1f2937' }}>
@@ -2825,7 +2830,7 @@ function DetalleRecepcion({ recepcion, onVolver }) {
                                         {item.cantidad}
                                     </td>
                                     <td style={{ padding: '10px 0', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>
-                                        {fmt(item.precio_unitario)}
+                                        {fmt(precioBaseItem(item))}
                                     </td>
                                     <td style={{ padding: '10px 0', fontSize: '13px', color: desc > 0 ? '#dc2626' : '#6b7280', textAlign: 'right' }}>
                                         {desc > 0 ? `${desc}%` : '—'}
@@ -2843,9 +2848,16 @@ function DetalleRecepcion({ recepcion, onVolver }) {
                     {recepcion.descuento_global > 0 && (
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#dc2626' }}>
                             <span>Descuento global ({recepcion.descuento_global}%)</span>
-                            <span>-{fmt(items.reduce((s, i) => s + i.cantidad * i.precio_unitario * (1 - (i.descuento_item || 0) / 100), 0) * recepcion.descuento_global / 100)}</span>
+                            <span>-{fmt(Math.max(0, items.reduce((s, i) => s + i.cantidad * precioBaseItem(i) * (1 - (i.descuento_item || 0) / 100), 0) - totalesGuardados(recepcion).subtotal))}</span>
                         </div>
                     )}
+                    {[['Base imponible', totalesGuardados(recepcion).base_gravada], ['Exento', totalesGuardados(recepcion).base_exenta], ['IVA (16%)', totalesGuardados(recepcion).iva]]
+                        .filter(([l, v]) => l !== 'Exento' || v > 0)
+                        .map(([l, v]) => (
+                            <div key={l} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#6b7280' }}>
+                                <span>{l}</span><span>{fmt(v)}</span>
+                            </div>
+                        ))}
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '18px', fontWeight: 700, color: '#1f2937' }}>
                         <span>Total</span>
                         <span style={{ color: '#16a34a' }}>{fmt(recepcion.total)}</span>
@@ -2935,19 +2947,21 @@ function NuevaDevolucion({ onCreada, onCancelar }) {
         const { data } = await supabase.from('compra_items').select('*').eq('compra_id', compId).eq('empresa_id', perfil.empresa_id)
         if (!data) return
         const tipoToPlural = { materia_prima: 'materias_primas', empaque: 'materiales_empaque', material_empaque: 'materiales_empaque', consumible: 'consumibles', producto_terminado: 'productos_terminados' }
+        // Hereda IVA y convención de la recepción original
         setItems(data.map(i => ({
             id: i.insumo_id,
             tipo: tipoToPlural[i.tipo_insumo] || 'materias_primas',
             nombre: mapaNombres[i.insumo_id] || '—',
             cantidad: i.cantidad,
             precio_unitario: i.precio_unitario,
+            ...camposIvaHeredados(i),
         })))
     }
 
     function agregarInsumo(insumo) {
         setItems(prev => {
             if (prev.find(i => i.id === insumo.id)) return prev
-            return [...prev, { id: insumo.id, tipo: insumo.tipo, nombre: insumo.nombre, cantidad: 1, precio_unitario: insumo.costo || 0 }]
+            return [...prev, { id: insumo.id, tipo: insumo.tipo, nombre: insumo.nombre, cantidad: 1, precio_unitario: insumo.costo || 0, ...camposIvaLinea(insumo.aplica_iva ?? true) }]
         })
         setBusquedaInsumo('')
     }
@@ -2956,7 +2970,9 @@ function NuevaDevolucion({ onCreada, onCancelar }) {
         ? insumos.filter(i => i.nombre.toLowerCase().includes(busquedaInsumo.toLowerCase()) || (i.codigo || i.sku || '').toLowerCase().includes(busquedaInsumo.toLowerCase())).slice(0, 8)
         : []
 
-    const total = items.reduce((s, i) => s + Number(i.cantidad) * Number(i.precio_unitario), 0)
+    // Total con IVA de la ND; cada línea con su convención (src/lib/iva.js)
+    const totalesND = totalesDeItems(items.map(i => ({ ...i, cantidad: Number(i.cantidad), precio_unitario: Number(i.precio_unitario) })))
+    const total = totalesND.total
     const tipoItemMap = { materias_primas: 'materia_prima', materiales_empaque: 'material_empaque', consumibles: 'consumible', productos_terminados: 'producto_terminado' }
 
     async function confirmar() {
@@ -2977,6 +2993,8 @@ function NuevaDevolucion({ onCreada, onCancelar }) {
             motivo: motivo.trim(),
             estado_nd: 'pendiente',
             monto_total: total,
+            subtotal: totalesND.subtotal, iva: totalesND.iva,
+            base_gravada: totalesND.base_gravada, base_exenta: totalesND.base_exenta,
         }).select().single()
 
         if (errDev) { setError('Error: ' + errDev.message); setGuardando(false); return }
@@ -2990,6 +3008,9 @@ function NuevaDevolucion({ onCreada, onCancelar }) {
                 nombre_insumo: i.nombre,
                 cantidad: Number(i.cantidad),
                 precio_unitario: Number(i.precio_unitario),
+                aplica_iva: itemAplicaIva(i),
+                iva_pct: itemAplicaIva(i) ? IVA_PCT : 0,
+                precio_incluye_iva: i.precio_incluye_iva === true,
             }))
         )
 
@@ -3090,7 +3111,7 @@ function NuevaDevolucion({ onCreada, onCancelar }) {
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
                             <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                {['Ítem', 'Tipo', 'Cantidad', 'Precio unit.', 'Subtotal', ''].map((h, i) => (
+                                {['Ítem', 'Tipo', 'Cantidad', 'Precio unit.', 'Base', ''].map((h, i) => (
                                     <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: [2, 3, 4].includes(i) ? 'right' : 'left' }}>{h}</th>
                                 ))}
                             </tr>
@@ -3111,7 +3132,7 @@ function NuevaDevolucion({ onCreada, onCancelar }) {
                                             style={{ width: '90px', padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px', textAlign: 'right' }} />
                                     </td>
                                     <td style={{ padding: '10px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>
-                                        {fmt(Number(item.cantidad) * Number(item.precio_unitario))}
+                                        {fmt(Number(item.cantidad) * precioBaseItem({ ...item, precio_unitario: Number(item.precio_unitario) }))}
                                     </td>
                                     <td style={{ padding: '10px 16px' }}>
                                         <button onClick={() => setItems(prev => prev.filter((_, j) => j !== idx))}
@@ -3124,7 +3145,7 @@ function NuevaDevolucion({ onCreada, onCancelar }) {
                         </tbody>
                     </table>
                     <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '12px 16px', backgroundColor: '#f9fafb', borderTop: '1px solid #e5e7eb' }}>
-                        <span style={{ fontSize: '15px', fontWeight: 700, color: '#1f2937' }}>Total ND: <span style={{ color: '#dc2626' }}>{fmt(total)}</span></span>
+                        <span style={{ fontSize: '15px', fontWeight: 700, color: '#1f2937' }}>Total ND (con IVA): <span style={{ color: '#dc2626' }}>{fmt(total)}</span></span>
                     </div>
                 </div>
             )}
@@ -3211,8 +3232,8 @@ function DetalleDevolucion({ devolucion: dev, onVolver }) {
                                     <td style={{ padding: '10px 16px', fontSize: '13px', color: '#1f2937', fontWeight: 500 }}>{item.nombre_insumo || '—'}</td>
                                     <td style={{ padding: '10px 16px', fontSize: '11px', color: '#6b7280', textTransform: 'uppercase' }}>{item.tipo_insumo?.replace(/_/g, ' ') || '—'}</td>
                                     <td style={{ padding: '10px 16px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{Number(item.cantidad).toLocaleString('es-VE')}</td>
-                                    <td style={{ padding: '10px 16px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{fmt(item.precio_unitario)}</td>
-                                    <td style={{ padding: '10px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(Number(item.cantidad) * Number(item.precio_unitario))}</td>
+                                    <td style={{ padding: '10px 16px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{fmt(precioBaseItem(item))}</td>
+                                    <td style={{ padding: '10px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(Number(item.cantidad) * precioBaseItem(item))}</td>
                                 </tr>
                             ))}
                         </tbody>
@@ -3281,15 +3302,14 @@ function EditarOrden({ oc, onGuardada, onCancelar }) {
         const existingItems = (itemsRes.data || []).map(dbItem => {
             const tipoLocal = tipoFromDB[dbItem.tipo_insumo] || 'materias_primas'
             const match = insumosUnidos.find(ins => ins.id === dbItem.insumo_id && ins.tipo === tipoLocal)
-            const aplicaIva = match?.aplica_iva ?? true
-            const precioConIva = precioConIvaOC(dbItem.precio_unitario_esperado, aplicaIva)
+            const aplicaIva = match?.aplica_iva ?? dbItem.aplica_iva ?? true
             return {
                 id: dbItem.insumo_id,
                 tipo: tipoLocal,
                 nombre: match?.nombre || '(Ítem desconocido)',
                 codigo: match?.codigo || '',
                 cantidad: Number(dbItem.cantidad_solicitada),
-                precio_unitario: precioConIva,
+                precio_unitario: Number(dbItem.precio_unitario_esperado),
                 aplica_iva: aplicaIva,
             }
         })
@@ -3324,12 +3344,9 @@ function EditarOrden({ oc, onGuardada, onCancelar }) {
 
     function eliminarItem(id, tipo) { setItems(prev => prev.filter(i => !(i.id === id && i.tipo === tipo))) }
 
-    const total = items.reduce((s, i) => s + i.cantidad * i.precio_unitario, 0)
-    const subtotal = items.reduce((s, i) => {
-        const linea = i.cantidad * i.precio_unitario
-        return s + ((i.aplica_iva ?? true) ? linea / 1.16 : linea)
-    }, 0)
-    const iva = total - subtotal
+    // El precio de la OC es base imponible; el IVA se suma (src/lib/iva.js)
+    const totalesOC = totalesDeItems(items)
+    const { subtotal, iva, total } = totalesOC
 
     async function guardar() {
         if (!proveedorId) { setError('Selecciona un proveedor'); return }
@@ -3347,8 +3364,7 @@ function EditarOrden({ oc, onGuardada, onCancelar }) {
             const { error: errOC } = await supabase.from('ordenes_compra').update({
                 proveedor_id: proveedorId,
                 fecha_entrega_esperada: fechaEntrega || null,
-                subtotal,
-                total,
+                ...camposTotalesCompra(totalesOC),
             }).eq('id', oc.id)
 
             if (errOC) { setError('Error al actualizar la orden: ' + errOC.message); setGuardando(false); return }
@@ -3363,7 +3379,9 @@ function EditarOrden({ oc, onGuardada, onCancelar }) {
                     insumo_id: i.id,
                     cantidad_solicitada: i.cantidad,
                     cantidad_recibida: 0,
-                    precio_unitario_esperado: (i.aplica_iva ?? true) ? i.precio_unitario / 1.16 : i.precio_unitario,
+                    precio_unitario_esperado: i.precio_unitario,
+                    aplica_iva: i.aplica_iva ?? true,
+                    iva_pct: (i.aplica_iva ?? true) ? IVA_PCT : 0,
                 }))
             )
 
@@ -3475,7 +3493,8 @@ function EditarOrden({ oc, onGuardada, onCancelar }) {
                 <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '20px', height: 'fit-content', position: 'sticky', top: '24px' }}>
                     <h2 style={{ fontSize: '15px', fontWeight: 600, color: '#1f2937', margin: '0 0 16px' }}>Resumen de OC</h2>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#6b7280' }}><span>Subtotal</span><span>{fmt(subtotal)}</span></div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#6b7280' }}><span>Base imponible</span><span>{fmt(totalesOC.base_gravada)}</span></div>
+                        {totalesOC.base_exenta > 0 && <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#6b7280' }}><span>Exento</span><span>{fmt(totalesOC.base_exenta)}</span></div>}
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#6b7280' }}><span>IVA (16%)</span><span>{fmt(iva)}</span></div>
                         <div style={{ height: '1px', backgroundColor: '#e5e7eb', margin: '4px 0' }} />
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '16px', fontWeight: 700, color: '#1f2937' }}><span>Total</span><span style={{ color: '#16a34a' }}>{fmt(total)}</span></div>
