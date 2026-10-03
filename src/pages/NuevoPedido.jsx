@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
+import { precioBaseItem, baseLinea, totalesDeItems, camposIvaLinea, IVA_PCT } from '../lib/iva'
 import {
     Search, Plus, Minus, Trash2, Check, ChevronRight, ChevronLeft,
     X, Clock, Package, ShoppingCart, DollarSign, Users, AlertCircle,
@@ -314,7 +315,7 @@ function HomeVendedor({ onNuevoPedido, onVerClientes, onCancelar, refreshKey }) 
 
         const { data: pedidosHoy } = await supabase
             .from('pedidos')
-            .select('id, cliente_id, numero_pedido, fecha_pedido, estado, pedido_items(subtotal, descuento_item, cantidad)')
+            .select('id, cliente_id, numero_pedido, fecha_pedido, estado, total')
             .eq('empresa_id', perfil.empresa_id)
             .eq('vendedor_id', user.id)
             .gte('fecha_pedido', hoy + 'T00:00:00')
@@ -322,7 +323,7 @@ function HomeVendedor({ onNuevoPedido, onVerClientes, onCancelar, refreshKey }) 
 
         const { data: recientes, count } = await supabase
             .from('pedidos')
-            .select('id, numero_pedido, fecha_pedido, estado, clientes(nombre), pedido_items(subtotal, descuento_item, cantidad)', { count: 'exact' })
+            .select('id, numero_pedido, fecha_pedido, estado, total, clientes(nombre)', { count: 'exact' })
             .eq('empresa_id', perfil.empresa_id)
             .eq('vendedor_id', user.id)
             .order('fecha_pedido', { ascending: false })
@@ -336,10 +337,8 @@ function HomeVendedor({ onNuevoPedido, onVerClientes, onCancelar, refreshKey }) 
             .gte('fecha_visita', hoy + 'T00:00:00')
 
         if (pedidosHoy) {
-            const montoHoy = pedidosHoy.reduce((sum, p) => {
-                const totalPedido = (p.pedido_items || []).reduce((s, i) => s + Number(i.subtotal || 0), 0)
-                return sum + totalPedido
-            }, 0)
+            // Total con IVA de cada pedido: lo mantiene la base de datos en el encabezado
+            const montoHoy = pedidosHoy.reduce((sum, p) => sum + Number(p.total || 0), 0)
             const clientesUnicos = new Set(pedidosHoy.map(p => p.cliente_id)).size
             setStats({ pedidosHoy: pedidosHoy.length, montoHoy, clientesHoy: clientesUnicos, visitasHoy: visitasHoyData?.length || 0 })
         }
@@ -351,7 +350,7 @@ function HomeVendedor({ onNuevoPedido, onVerClientes, onCancelar, refreshKey }) 
         const { data: { user } } = await supabase.auth.getUser()
         const { data: recientes, count } = await supabase
             .from('pedidos')
-            .select('id, numero_pedido, fecha_pedido, estado, clientes(nombre), pedido_items(subtotal, descuento_item, cantidad)', { count: 'exact' })
+            .select('id, numero_pedido, fecha_pedido, estado, total, clientes(nombre)', { count: 'exact' })
             .eq('empresa_id', perfil.empresa_id)
             .eq('vendedor_id', user.id)
             .order('fecha_pedido', { ascending: false })
@@ -432,7 +431,7 @@ function HomeVendedor({ onNuevoPedido, onVerClientes, onCancelar, refreshKey }) 
                             <p style={{ color: '#9ca3af', fontSize: '14px', margin: 0 }}>Aún no has tomado pedidos</p>
                         </div>
                     ) : pedidosRecientes.map(p => {
-                        const total = (p.pedido_items || []).reduce((s, i) => s + Number(i.subtotal || 0), 0)
+                        const total = Number(p.total || 0)
                         const est = ESTADOS_PEDIDO[p.estado] || ESTADOS_PEDIDO.pendiente
                         return (
                             <div key={p.id} style={{ padding: '14px 16px', borderBottom: '1px solid #f3f4f6', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -657,7 +656,7 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
                 .limit(5),
 
             supabase.from('pedidos')
-                .select('id, numero_pedido, fecha_pedido, estado, descuento_global, pedido_items(id, producto_id, nombre_producto, cantidad, precio_unitario, descuento_item, subtotal, unidad_venta)', { count: 'exact' })
+                .select('id, numero_pedido, fecha_pedido, estado, descuento_global, total, pedido_items(id, producto_id, nombre_producto, cantidad, precio_unitario, descuento_item, subtotal, unidad_venta, aplica_iva, precio_incluye_iva)', { count: 'exact' })
                 .eq('cliente_id', cliente.id)
                 .eq('empresa_id', perfil.empresa_id)
                 .order('fecha_pedido', { ascending: false })
@@ -743,7 +742,7 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
 
     async function cargarPedidos(pag) {
         const { data, count } = await supabase.from('pedidos')
-            .select('id, numero_pedido, fecha_pedido, estado, descuento_global, pedido_items(id, producto_id, nombre_producto, cantidad, precio_unitario, descuento_item, subtotal, unidad_venta)', { count: 'exact' })
+            .select('id, numero_pedido, fecha_pedido, estado, descuento_global, total, pedido_items(id, producto_id, nombre_producto, cantidad, precio_unitario, descuento_item, subtotal, unidad_venta, aplica_iva, precio_incluye_iva)', { count: 'exact' })
             .eq('cliente_id', cliente.id)
             .eq('empresa_id', perfil.empresa_id)
             .order('fecha_pedido', { ascending: false })
@@ -755,7 +754,8 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
         const items = pedidoDetalle.pedido_items || []
         setItemsEditPedido(items.map(i => ({
             ...i,
-            _precio: String(Number(i.precio_unitario).toFixed(4)),
+            // Se edita en base: una línea anterior al cambio traía el IVA embebido
+            _precio: String(precioBaseItem(i).toFixed(4)),
             _descuento: String(Number(i.descuento_item || 0)),
         })))
         setDescGlobalEditPedido(String(Number(pedidoDetalle.descuento_global || 0)))
@@ -773,6 +773,9 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
                 precio_unitario: precio,
                 descuento_item: desc,
                 subtotal,
+                // El precio editado es base: la línea queda con la convención nueva
+                precio_incluye_iva: false,
+                iva_pct: (item.aplica_iva ?? true) ? IVA_PCT : 0,
             }).eq('id', item.id)
             if (err) { setErrorEditPedido('Error: ' + err.message); setGuardandoEditPedido(false); return }
         }
@@ -1164,7 +1167,7 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
                                 <>
                                 <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden', marginBottom: '12px' }}>
                                     {datos.pedidos.map(p => {
-                                        const total = (p.pedido_items || []).reduce((s, i) => s + Number(i.subtotal || 0), 0)
+                                        const total = Number(p.total || 0)
                                         const est = ESTADOS_PEDIDO[p.estado] || ESTADOS_PEDIDO.pendiente
                                         return (
                                             <div key={p.id} style={{ padding: '14px 16px', borderBottom: '1px solid #f3f4f6', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
@@ -1326,13 +1329,15 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
             {pedidoDetalle && (() => {
                 const est = ESTADOS_PEDIDO[pedidoDetalle.estado] || ESTADOS_PEDIDO.pendiente
                 const items = pedidoDetalle.pedido_items || []
+                // Total con IVA: el del encabezado; en edición, la fórmula única con los precios base
                 const total = editandoPedido
-                    ? itemsEditPedido.reduce((s, i) => {
-                        const p = Math.max(0, Number(i._precio) || 0)
-                        const d = Math.min(100, Math.max(0, Number(i._descuento) || 0))
-                        return s + Number(i.cantidad) * p * (1 - d / 100)
-                    }, 0)
-                    : items.reduce((s, i) => s + Number(i.subtotal || 0), 0)
+                    ? totalesDeItems(itemsEditPedido.map(i => ({
+                        ...i,
+                        precio_unitario: Math.max(0, Number(i._precio) || 0),
+                        descuento_item: Math.min(100, Math.max(0, Number(i._descuento) || 0)),
+                        precio_incluye_iva: false,
+                    })), { descGlobal: Math.min(100, Math.max(0, Number(descGlobalEditPedido) || 0)) }).total
+                    : Number(pedidoDetalle.total || 0)
                 return (
                     <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 50, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
                         onClick={e => { if (e.target === e.currentTarget && !editandoPedido) setPedidoDetalle(null) }}>
@@ -1366,11 +1371,11 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
                                             <div style={{ flex: 1, paddingRight: '12px' }}>
                                                 <p style={{ fontSize: '14px', fontWeight: 600, color: '#1f2937', margin: '0 0 2px' }}>{item.nombre_producto}</p>
                                                 <p style={{ fontSize: '12px', color: '#9ca3af', margin: 0 }}>
-                                                    {item.cantidad} × {fmt(item.precio_unitario)}
+                                                    {item.cantidad} × {fmt(precioBaseItem(item))}
                                                     {Number(item.descuento_item) > 0 && <span style={{ color: '#f59e0b', marginLeft: '6px' }}>−{item.descuento_item}%</span>}
                                                 </p>
                                             </div>
-                                            <p style={{ fontSize: '14px', fontWeight: 700, color: '#1f2937', margin: 0, flexShrink: 0 }}>{fmt(item.subtotal)}</p>
+                                            <p style={{ fontSize: '14px', fontWeight: 700, color: '#1f2937', margin: 0, flexShrink: 0 }}>{fmt(baseLinea(item))}</p>
                                         </div>
                                     ))}
                                 </div>
@@ -1797,7 +1802,9 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
 
     useEffect(() => {
         if (!listaId) return
-        const cacheKey = `mipos_productos_${perfil.empresa_id}_${listaId}`
+        // v2: desde el cambio a base imponible (2026-10) el precio de lista es sin IVA;
+        // la clave nueva descarta lo cacheado con la convención anterior.
+        const cacheKey = `mipos_productos_v2_${perfil.empresa_id}_${listaId}`
 
         function aplicarProductos(prods) {
             setProductos(prods)
@@ -1919,19 +1926,18 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
         return {
             unidad_venta: esUM2 ? i.unidad_venta_2 : (i.unidad_medida || 'unidad'),
             cantidad_primaria: esUM2 ? i.cantidad * factor : i.cantidad,
-            // Snapshot: si mañana cambia la casilla del producto, este pedido
-            // debe seguir calculándose con la condición que tenía hoy.
-            aplica_iva: i.aplica_iva ?? true,
+            // Snapshot de IVA y precio en base. Los pedidos que quedaron en la cola
+            // offline antes del cambio no traen precio_incluye_iva y la base de
+            // datos los marca con la convención vieja (default true).
+            ...camposIvaLinea(i.aplica_iva ?? true),
         }
     }
 
-    const totalConDescItems = items.reduce((s, i) => s + i.cantidad * i.precio * (1 - Number(i.descuento_item || 0) / 100), 0)
-    const total = totalConDescItems * (1 - Number(descuentoGlobal || 0) / 100)
-    const subtotal = items.reduce((s, i) => {
-        const linea = i.cantidad * i.precio * (1 - Number(i.descuento_item || 0) / 100) * (1 - Number(descuentoGlobal || 0) / 100)
-        return s + ((i.aplica_iva ?? true) ? linea / 1.16 : linea)
-    }, 0)
-    const iva = total - subtotal
+    // Precios de lista en base; el IVA se suma (src/lib/iva.js), igual que en el resto del sistema
+    const lineasCalc = items.map(i => ({ ...i, precio_unitario: i.precio }))
+    const totales = totalesDeItems(lineasCalc, { descGlobal: descuentoGlobal })
+    const { subtotal, iva, total } = totales
+    const descGlobalMonto = Math.max(0, totalesDeItems(lineasCalc).subtotal - subtotal)
 
     async function guardar() {
         setGuardando(true); setError('')
@@ -1993,10 +1999,8 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
             items.map(i => ({
                 pedido_id: pedido.id, empresa_id: perfil.empresa_id,
                 producto_id: i.id, nombre_producto: i.nombre,
-                // precio_unitario se guarda como precio de lista (IVA embebido si el
-                // producto lo aplica), igual que Ventas.jsx. Pedidos.jsx extrae la base
-                // al calcular; dividir aquí hacía que los pedidos de campo salieran ~16%
-                // por debajo en el back-office.
+                // precio_unitario = precio de lista, que es base imponible (igual que
+                // Ventas.jsx); el IVA lo suma el documento.
                 cantidad: i.cantidad, precio_unitario: i.precio,
                 descuento_item: Number(i.descuento_item) || 0,
                 subtotal: i.cantidad * i.precio * (1 - Number(i.descuento_item || 0) / 100),
@@ -2431,12 +2435,17 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
                         {descuentoGlobal > 0 && (
                             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#16a34a', marginBottom: '4px' }}>
                                 <span>Descuento global ({descuentoGlobal}%)</span>
-                                <span>-{fmt(totalConDescItems - totalConIVA)}</span>
+                                <span>-{fmt(descGlobalMonto)}</span>
                             </div>
                         )}
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#6b7280', marginBottom: '4px' }}>
-                            <span>Subtotal (sin IVA)</span><span>{fmt(subtotal)}</span>
+                            <span>Base imponible</span><span>{fmt(totales.base_gravada)}</span>
                         </div>
+                        {totales.base_exenta > 0 && (
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#6b7280', marginBottom: '4px' }}>
+                                <span>Exento</span><span>{fmt(totales.base_exenta)}</span>
+                            </div>
+                        )}
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#6b7280', marginBottom: '4px' }}>
                             <span>IVA (16%)</span><span>{fmt(iva)}</span>
                         </div>

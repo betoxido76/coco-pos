@@ -348,7 +348,7 @@ export default function Productos() {
                 </Campo>
 
                 {/* Precio venta */}
-                <Campo label="Precio de venta ($)">
+                <Campo label="Precio de venta sin IVA ($)">
                     <input type="number" min="0" step="0.01" value={form.precio_venta}
                         onChange={e => campo('precio_venta', e.target.value)}
                         placeholder="0.00" style={inputStyle} />

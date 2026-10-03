@@ -9,6 +9,7 @@ import { ModalEmitirNC, ModalMotivosNC } from '../components/NotasCredito'
 import ModalAnularNC from '../components/ModalAnularNC'
 import { sinSaldoQueCobrar } from '../lib/cobro'
 import FiltroCombo from '../components/FiltroCombo'
+import { totalesGuardados, precioBaseItem } from '../lib/iva'
 
 const fmt = n => `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const fmtBs = n => `${Number(n).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`
@@ -1612,7 +1613,7 @@ function DetalleNC({ nc, onCerrar }) {
         async function cargar() {
             const [{ data: itemsData }, { data: cobroData }] = await Promise.all([
                 supabase.from('devolucion_items')
-                    .select('cantidad_devuelta, precio_unitario, tipo_linea, concepto, aplica_iva, productos_terminados(nombre, sku)')
+                    .select('cantidad_devuelta, precio_unitario, tipo_linea, concepto, aplica_iva, precio_incluye_iva, productos_terminados(nombre, sku)')
                     .eq('devolucion_id', nc.id),
                 // Una NC aplicada puede tener varios cobros si se repartió entre
                 // facturas: se muestra a cuál se aplicó cuando fue una sola.
@@ -1629,14 +1630,9 @@ function DetalleNC({ nc, onCerrar }) {
         cargar()
     }, [nc.id])
 
-    // Los montos guardados mandan; el fallback cubre las NC anteriores a Fase 0,
-    // que no tienen subtotal/iva desglosados.
-    const total = Number(nc.monto_devuelto || 0)
-    const subtotal = nc.subtotal != null ? Number(nc.subtotal) : items.reduce((s, i) => {
-        const linea = Number(i.cantidad_devuelta || 0) * Number(i.precio_unitario || 0)
-        return s + ((i.aplica_iva ?? true) ? linea / 1.16 : linea)
-    }, 0)
-    const iva = nc.iva != null ? Number(nc.iva) : total - subtotal
+    // Documento emitido: mandan los montos guardados (las NC anteriores a la Fase 0
+    // se completaron en iva_base_imponible_fase1.sql).
+    const { total, subtotal, iva } = totalesGuardados(nc, 'monto_devuelto')
     // Saldo derivado de las aplicaciones, igual que el saldo de una factura.
     const disponible = Math.max(0, total - aplicado)
 
@@ -1737,9 +1733,9 @@ function DetalleNC({ nc, onCerrar }) {
                                                 )}
                                             </td>
                                             <td style={{ padding: '10px 12px', textAlign: 'right', color: '#374151' }}>{it.cantidad_devuelta}</td>
-                                            <td style={{ padding: '10px 12px', textAlign: 'right', color: '#374151' }}>{fmt(it.precio_unitario)}</td>
+                                            <td style={{ padding: '10px 12px', textAlign: 'right', color: '#374151' }}>{fmt(precioBaseItem(it))}</td>
                                             <td style={{ padding: '10px 12px', textAlign: 'center', color: '#6b7280', fontSize: '12px' }}>{(it.aplica_iva ?? true) ? '16%' : 'Exento'}</td>
-                                            <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 600, color: '#1f2937' }}>{fmt((it.cantidad_devuelta || 0) * (it.precio_unitario || 0))}</td>
+                                            <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 600, color: '#1f2937' }}>{fmt((it.cantidad_devuelta || 0) * precioBaseItem(it))}</td>
                                         </tr>
                                     ))}
                                 </tbody>

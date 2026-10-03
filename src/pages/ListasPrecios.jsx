@@ -254,7 +254,7 @@ export default function ListasPrecios() {
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
                             <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                {['Producto', 'SKU', 'Unidad', 'Precio venta base', `Precio en ${listaActual?.nombre || '—'}`].map((h, i) => (
+                                {['Producto', 'SKU', 'Unidad', 'Precio venta base (sin IVA)', `Precio en ${listaActual?.nombre || '—'} (sin IVA)`].map((h, i) => (
                                     <th key={i} style={{
                                         padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280',
                                         textAlign: i >= 3 ? 'right' : 'left', whiteSpace: 'nowrap'

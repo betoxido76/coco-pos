@@ -14,23 +14,22 @@
 
 import { supabase } from './supabaseClient'
 import { moverStockLote } from './inventario'
+import { precioBase, totalesDocumento, IVA_PCT } from './iva'
 
-// Los precios se guardan con IVA embebido salvo que la línea esté exenta.
-export const baseDeLinea = (precio, aplicaIva) =>
-    aplicaIva ? Number(precio || 0) / 1.16 : Number(precio || 0)
+// El precio de la línea es base imponible. Solo una NC contra una factura
+// anterior al cambio de convención hereda `precio_incluye_iva = true` de la
+// línea original (docs/plan-iva-base-imponible.md).
+export const baseDeLinea = (precio, aplicaIva, incluyeIva = false) =>
+    precioBase(precio, aplicaIva, incluyeIva)
 
 // `aplica_iva` es POR LÍNEA: en una misma NC conviven productos gravados y
-// exentos, y una línea de valor puede ser cualquiera de las dos.
+// exentos, y una línea de valor puede ser cualquiera de las dos. El IVA se
+// calcula una vez, sobre la base gravada total.
 export function calcularTotalesNC(lineas) {
-    let subtotal = 0, total = 0
-    for (const l of lineas) {
-        const cant = Number(l.cantidad || 0)
-        const monto = cant * Number(l.precio_unitario || 0)
-        total += monto
-        subtotal += baseDeLinea(monto, l.aplica_iva)
-    }
-    const round2 = n => Math.round(n * 100) / 100
-    return { subtotal: round2(subtotal), iva: round2(total - subtotal), total: round2(total) }
+    return totalesDocumento(lineas.map(l => ({
+        base: Number(l.cantidad || 0) * baseDeLinea(l.precio_unitario, l.aplica_iva, l.precio_incluye_iva),
+        aplicaIva: !!l.aplica_iva,
+    })))
 }
 
 // Reingreso de mercancía siguiendo la invariante de stock del proyecto
@@ -60,8 +59,9 @@ async function reponerStock({ usuarioId = null, almacenId, lineas }) {
  * Emite una nota de crédito / documento de devolución.
  *
  * `lineas` es un array de:
- *   { tipo_linea: 'producto', producto_id, cantidad, precio_unitario, aplica_iva, nombre?, sku? }
+ *   { tipo_linea: 'producto', producto_id, cantidad, precio_unitario, aplica_iva, precio_incluye_iva?, nombre?, sku? }
  *   { tipo_linea: 'valor',    concepto, cantidad: 1, precio_unitario, aplica_iva }
+ * precio_unitario es base; precio_incluye_iva solo al heredar de una factura vieja.
  *
  * Devuelve { data, error }. `data` es la fila de `devoluciones` creada.
  */
@@ -91,7 +91,7 @@ export async function crearNotaCredito({
         return { data: null, error: { message: 'Falta el almacén destino para reingresar la mercancía' } }
     }
 
-    const { subtotal, iva, total } = calcularTotalesNC(lineas)
+    const { subtotal, iva, total, base_gravada, base_exenta } = calcularTotalesNC(lineas)
 
     // Solo un documento que genera crédito consume número de la serie NC. Una
     // reposición de mercancía se registra igual, pero sin N° y sin aparecer en
@@ -123,6 +123,8 @@ export async function crearNotaCredito({
         monto_devuelto: total,
         subtotal,
         iva,
+        base_gravada,
+        base_exenta,
         es_total: esTotal,
         referencia_fiscal: referenciaFiscal,
         ...(fechaEmision ? { fecha_emision: fechaEmision } : {}),
@@ -142,6 +144,8 @@ export async function crearNotaCredito({
             cantidad_devuelta: Number(l.cantidad || 0),
             precio_unitario: Number(l.precio_unitario || 0),
             aplica_iva: !!l.aplica_iva,
+            iva_pct: l.aplica_iva ? IVA_PCT : 0,
+            precio_incluye_iva: !!l.precio_incluye_iva,
         }))
     )
     if (errItems) return { data: nc, error: errItems }

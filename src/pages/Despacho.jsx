@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import { PackageCheck, ChevronRight, Check, AlertTriangle, Truck, FileText, Ban, RotateCcw, Search, Plus, X } from 'lucide-react'
-import { itemAplicaIva } from '../lib/iva'
+import { itemAplicaIva, precioIncluyeIva, precioBaseItem, baseLinea, totalesDeItems, totalesGuardados, IVA_PCT } from '../lib/iva'
 import FiltroCombo from '../components/FiltroCombo'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
@@ -462,7 +462,7 @@ function TablaPorRegistrar({ pedidos, onVer, onAnular, sortCol, sortDir, onSort 
                             {p.fecha_despacho ? new Date(p.fecha_despacho + 'T00:00:00').toLocaleDateString('es-VE') : '—'}
                         </td>
                         <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937' }}>
-                            <TotalPedido pedidoId={p.id} descuentoGlobal={p.descuento_global} estado={p.estado} />
+                            <TotalPedido pedido={p} />
                         </td>
                         <td style={{ padding: '12px 16px' }}><BadgeEstado estado={p.estado} /></td>
                         <td style={{ padding: '12px 16px' }}>
@@ -688,7 +688,7 @@ function TablaCompletados({ pedidos, onVer, sortCol, sortDir, onSort }) {
                             {p.fecha_despacho ? new Date(p.fecha_despacho + 'T00:00:00').toLocaleDateString('es-VE') : '—'}
                         </td>
                         <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937' }}>
-                            <TotalPedido pedidoId={p.id} descuentoGlobal={p.descuento_global} estado={p.estado} />
+                            <TotalPedido pedido={p} />
                         </td>
                         <td style={{ padding: '12px 16px' }}><BadgeEstado estado={p.estado} /></td>
                         <td style={{ padding: '12px 16px' }}>
@@ -704,35 +704,9 @@ function TablaCompletados({ pedidos, onVer, sortCol, sortDir, onSort }) {
     )
 }
 
-// ── Total calculado desde items ────────────────────────────────
-function TotalPedido({ pedidoId, descuentoGlobal, estado }) {
-    const [total, setTotal] = useState(null)
-    const usarAlistada = ['alistado', 'facturado', 'despachado'].includes(estado)
-    useEffect(() => {
-        supabase.from('pedido_items').select('cantidad, cantidad_alistada, precio_unitario, descuento_item, unidad_venta, aplica_iva, productos_terminados(aplica_iva, unidad_venta_2, factor_conversion_2)')
-            .eq('pedido_id', pedidoId)
-            .then(({ data }) => {
-                if (!data) return
-                const t = data.reduce((s, i) => {
-                    let cant = usarAlistada ? Number(i.cantidad_alistada ?? i.cantidad) : Number(i.cantidad)
-                    if (cant === 0) return s
-                    if (usarAlistada) {
-                        const uv = i.unidad_venta
-                        const uv2 = i.productos_terminados?.unidad_venta_2
-                        const factor = Number(i.productos_terminados?.factor_conversion_2 || 1)
-                        const esSecundaria = uv === '2' || (uv2 && uv === uv2)
-                        if (esSecundaria && factor > 1) cant = cant / factor
-                    }
-                    const precio = Number(i.precio_unitario)
-                    const desc = Number(i.descuento_item || 0)
-                    const linea = cant * precio * (1 - desc / 100) * (1 - Number(descuentoGlobal || 0) / 100)
-                    return s + linea
-                }, 0)
-                setTotal(t)
-            })
-    }, [pedidoId])
-    return <span>{total !== null ? fmt(total) : '—'}</span>
-}
+// Total con IVA del pedido: lo mantiene la base de datos en el encabezado
+// (recalcular_totales_pedido, iva_base_imponible_fase1.sql); facturado = el de su nota.
+const TotalPedido = ({ pedido }) => <span>{pedido.total != null ? fmt(pedido.total) : '—'}</span>
 
 // ── Ver Pedido (solo lectura) ──────────────────────────────────
 function VerPedido({ pedido, onVolver }) {
@@ -754,12 +728,12 @@ function VerPedido({ pedido, onVolver }) {
         const uv2 = item.productos_terminados?.unidad_venta_2
         return uv === '2' || (uv2 && uv === uv2)
     }
-    // "Precio lista" se muestra SIEMPRE por unidad primaria, igual que la columna de
-    // cantidad. precio_unitario está en la unidad de venta de la línea (caja en UM2):
-    // es solo visual, el subtotal se sigue calculando con cantFn × precio_unitario.
+    // "Precio lista" se muestra SIEMPRE sin IVA y por unidad primaria, igual que la
+    // columna de cantidad. precio_unitario está en la unidad de venta de la línea
+    // (caja en UM2): es solo visual, el subtotal sale de cantFn × precio base.
     const precioPrimario = (item) => {
         const factor = Number(item.productos_terminados?.factor_conversion_2 || 1)
-        return (esUM2(item) && factor > 1) ? Number(item.precio_unitario) / factor : Number(item.precio_unitario)
+        return (esUM2(item) && factor > 1) ? precioBaseItem(item) / factor : precioBaseItem(item)
     }
     const cantFn = (item) => {
         if (!esAlistado) return Number(item.cantidad)
@@ -780,20 +754,13 @@ function VerPedido({ pedido, onVolver }) {
     }
     const tieneUM2 = items.some(i => Number(i.productos_terminados?.factor_conversion_2 || 0) > 1 && i.productos_terminados?.unidad_venta_2)
 
-    const subtotalConDescItems = items.reduce((s, i) => {
-        const desc = Number(i.descuento_item || 0)
-        const precio = Number(i.precio_unitario) * (1 - desc / 100)
-        const aplica = itemAplicaIva(i)
-        return s + cantFn(i) * (aplica ? precio / 1.16 : precio)
-    }, 0)
-    const subtotalFinal = subtotalConDescItems * (1 - descGlobal / 100)
-    const iva = items.reduce((s, i) => {
-        if (!itemAplicaIva(i)) return s
-        const desc = Number(i.descuento_item || 0)
-        const base = cantFn(i) * Number(i.precio_unitario) / 1.16 * (1 - desc / 100) * (1 - descGlobal / 100)
-        return s + base * 0.16
-    }, 0)
-    const total = subtotalFinal + iva
+    // Fórmula única (src/lib/iva.js). Un pedido facturado muestra los montos de su nota.
+    const bruto = totalesDeItems(items, { cantidad: cantFn })
+    const montos = (pedido.venta_id && pedido.total != null)
+        ? totalesGuardados(pedido)
+        : totalesDeItems(items, { cantidad: cantFn, descGlobal })
+    const descGlobalMonto = pedido.venta_id ? 0 : Math.max(0, bruto.subtotal - montos.subtotal)
+    const { iva, total } = montos
 
     return (
         <div className="print-target" style={{ padding: '24px', maxWidth: '720px' }}>
@@ -869,10 +836,10 @@ function VerPedido({ pedido, onVolver }) {
                         </thead>
                         <tbody>
                             {items.map((item, idx) => {
-                                const precioConDesc = Number(item.precio_unitario) * (1 - Number(item.descuento_item || 0) / 100)
                                 const cantUsada = cantFn(item)
                                 const cancelado = esAlistado && Number(item.cantidad_alistada) === 0
-                                const subtotal = cantUsada * precioConDesc
+                                // Base de la línea (sin IVA), con la convención con la que se guardó
+                                const subtotal = baseLinea(item, cantUsada)
                                 return (
                                     <tr key={idx} style={{ borderBottom: '1px solid #f3f4f6', opacity: cancelado ? 0.5 : 1 }}>
                                         <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1f2937', fontWeight: 500 }}>
@@ -908,8 +875,10 @@ function VerPedido({ pedido, onVolver }) {
             {/* Totales */}
             <div style={{ backgroundColor: '#f9fafb', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px 20px' }}>
                 {[
-                    { label: 'Subtotal bruto', valor: fmt(subtotalConDescItems) },
-                    descGlobal > 0 && { label: `Descuento global (${descGlobal}%)`, valor: `-${fmt(subtotalConDescItems - subtotalFinal)}`, color: '#16a34a' },
+                    descGlobalMonto > 0 && { label: 'Subtotal bruto', valor: fmt(bruto.subtotal) },
+                    descGlobalMonto > 0 && { label: `Descuento global (${descGlobal}%)`, valor: `-${fmt(descGlobalMonto)}`, color: '#16a34a' },
+                    { label: 'Base imponible', valor: fmt(montos.base_gravada) },
+                    montos.base_exenta > 0 && { label: 'Exento', valor: fmt(montos.base_exenta) },
                     { label: 'IVA (16%)', valor: fmt(iva) },
                 ].filter(Boolean).map((f, i) => (
                     <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: f.color || '#6b7280', marginBottom: '6px' }}>
@@ -1306,8 +1275,10 @@ function RegistrarDevolucion({ onGuardado, onCancelar }) {
                 cantidad_recibida: Number(i.cantidad_recibida),
                 precio_unitario: Number(i.precio_unitario),
                 // La devolución hereda la condición de IVA de la venta original,
-                // no la que tenga el producto hoy.
+                // no la que tenga el producto hoy, y la convención de su precio.
                 aplica_iva: itemAplicaIva(i),
+                iva_pct: itemAplicaIva(i) ? IVA_PCT : 0,
+                precio_incluye_iva: precioIncluyeIva(i),
             }))
         )
         if (errItems) { setError('Error en ítems: ' + errItems.message); setGuardando(false); return }

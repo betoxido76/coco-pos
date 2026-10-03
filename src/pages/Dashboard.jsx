@@ -7,6 +7,7 @@ import { X, FileText } from 'lucide-react'
 import { Factura } from './Ventas'
 import TabResumen from './DashboardResumen'
 import { unidadesDeLinea } from '../lib/productos'
+import { baseLinea, conIva, itemAplicaIva } from '../lib/iva'
 import {
     PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer,
     LineChart, Line, XAxis, YAxis, CartesianGrid,
@@ -145,7 +146,7 @@ function TabComercial() {
                 const um = {}; (users || []).forEach(u => { um[u.id] = u.nombre })
 
                 // Líneas de venta con su factura y cliente (paginado por 1000)
-                const SELECT = 'cantidad, cantidad_primaria, precio_unitario, producto_id, venta_id, ' +
+                const SELECT = 'cantidad, cantidad_primaria, precio_unitario, aplica_iva, precio_incluye_iva, producto_id, venta_id, ' +
                     'productos_terminados(sku, nombre, tipo_producto), ' +
                     'ventas!inner(id, numero_factura, created_at, fecha_vencimiento_pago, total, estado_cobro, cliente_id, usuario_id, direccion_entrega_id, direccion_entrega_texto, pedidos!pedido_id(vendedor_id), clientes(nombre, codigo, cat1_id))'
                 const PAGE = 1000
@@ -222,7 +223,7 @@ function TabComercial() {
                 }
 
                 // Pedidos abiertos (por aprobación/alistar/registrar/despachar), sin filtro de fecha
-                const PSELECT = 'cantidad, cantidad_alistada, precio_unitario, descuento_item, unidad_venta, producto_id, pedido_id, ' +
+                const PSELECT = 'cantidad, cantidad_alistada, precio_unitario, descuento_item, unidad_venta, aplica_iva, precio_incluye_iva, producto_id, pedido_id, ' +
                     'productos_terminados(sku, nombre, unidad_venta_2, factor_conversion_2), ' +
                     'pedidos!inner(id, estado, descuento_global, cliente_id, vendedor_id, clientes(cat1_id))'
                 let pfrom = 0, pall = []
@@ -310,7 +311,8 @@ function TabComercial() {
             productoSku: prod.sku || '',
             productoNombre: prod.nombre || '—',
             cantidad, precio, unidadesPrimarias,
-            lineaTotal: cantidad * precio,
+            // Facturación con IVA, cada línea con su convención (src/lib/iva.js)
+            lineaTotal: conIva(baseLinea(r, cantidad, 0), itemAplicaIva(r)),
             diasCredito: (fecha && fechaVenc) ? Math.max(0, floorDias(fechaVenc - fecha)) : null,
             estatus,
         }
@@ -354,10 +356,9 @@ function TabComercial() {
             const esSecundaria = uv === '2' || (uv2 && uv === uv2)
             if (esSecundaria && factor > 1) cant = cant / factor
         }
-        const precio = Number(r.precio_unitario || 0)
         const desc = Number(r.descuento_item || 0)
         const dg = Number(p.descuento_global || 0)
-        const lineaTotal = (cant || 0) * precio * (1 - desc / 100) * (1 - dg / 100)
+        const lineaTotal = conIva(baseLinea(r, cant || 0, desc), itemAplicaIva(r)) * (1 - dg / 100)
         return {
             pedidoId: r.pedido_id,
             estado: p.estado,

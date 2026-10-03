@@ -14,7 +14,7 @@ import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import { X, Plus, Trash2, Search } from 'lucide-react'
 import { crearNotaCredito, calcularTotalesNC } from '../lib/notasCredito'
-import { itemAplicaIva } from '../lib/iva'
+import { itemAplicaIva, precioBaseItem } from '../lib/iva'
 import SelectorFechaTasa, { useTasasFecha, hoyYMD } from './SelectorFechaTasa'
 
 export const fmt = n => `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -120,7 +120,7 @@ export function ModalEmitirNC({ onCerrar, onEmitida }) {
         async function cargar() {
             const [{ data: items }, { data: previas }] = await Promise.all([
                 supabase.from('venta_items')
-                    .select('producto_id, cantidad, precio_unitario, aplica_iva, productos_terminados(nombre, sku, aplica_iva)')
+                    .select('producto_id, cantidad, precio_unitario, aplica_iva, precio_incluye_iva, productos_terminados(nombre, sku, aplica_iva)')
                     .eq('venta_id', ventaId),
                 supabase.from('devoluciones').select('devolucion_items(producto_id, cantidad_devuelta)')
                     .eq('venta_id', ventaId),
@@ -137,7 +137,9 @@ export function ModalEmitirNC({ onCerrar, onEmitida }) {
                 producto_id: i.producto_id,
                 nombre: i.productos_terminados?.nombre || '—',
                 sku: i.productos_terminados?.sku || '',
-                precio_unitario: Number(i.precio_unitario || 0),
+                // El precio de la NC se escribe en base: una factura anterior al
+                // cambio de convención traía el IVA embebido en la línea.
+                precio_unitario: Number(precioBaseItem(i).toFixed(4)),
                 aplica_iva: itemAplicaIva(i),
                 disponible: Math.max(0, Number(i.cantidad || 0) - (devueltas[i.producto_id] || 0)),
             })))
@@ -400,7 +402,7 @@ export function ModalEmitirNC({ onCerrar, onEmitida }) {
                         <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '18px' }}>
                             <thead>
                                 <tr style={{ backgroundColor: '#f9fafb' }}>
-                                    {['Descripción', 'Cant.', 'P. Unit.', 'IVA', 'Subtotal', ''].map((h, i) => (
+                                    {['Descripción', 'Cant.', 'P. Unit. (sin IVA)', 'IVA', 'Base', ''].map((h, i) => (
                                         <th key={i} style={{ padding: '8px 10px', fontSize: '11px', fontWeight: 500, color: '#6b7280', textAlign: i >= 1 && i <= 4 ? 'right' : 'left' }}>{h}</th>
                                     ))}
                                 </tr>

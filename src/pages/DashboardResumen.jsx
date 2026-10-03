@@ -10,6 +10,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import { fmt, fmtNum, GRIS_OTROS, colorCategoria } from '../lib/dataviz'
 import { unidadesDeLinea } from '../lib/productos'
+import { baseLinea, conIva, itemAplicaIva } from '../lib/iva'
 
 const MESES = ['ENERO', 'FEBRERO', 'MARZO', 'ABRIL', 'MAYO', 'JUNIO',
     'JULIO', 'AGOSTO', 'SEPTIEMBRE', 'OCTUBRE', 'NOVIEMBRE', 'DICIEMBRE']
@@ -96,7 +97,7 @@ export default function TabResumen() {
                 let ifrom = 0, iAll = []
                 while (true) {
                     const { data, error: e } = await supabase.from('venta_items')
-                        .select('venta_id, producto_id, cantidad, cantidad_primaria, precio_unitario, ventas!inner(created_at, estado_cobro), productos_terminados(nombre, sku, tipo_producto)')
+                        .select('venta_id, producto_id, cantidad, cantidad_primaria, precio_unitario, aplica_iva, precio_incluye_iva, ventas!inner(created_at, estado_cobro), productos_terminados(nombre, sku, tipo_producto)')
                         .eq('empresa_id', perfil.empresa_id)
                         .gte('ventas.created_at', desde).lte('ventas.created_at', hasta)
                         .range(ifrom, ifrom + PAGE - 1)
@@ -123,7 +124,8 @@ export default function TabResumen() {
                             // Un servicio no es mercancía: 0 unidades, pero su
                             // facturación sí cuenta. Ver lib/productos.js.
                             unidades: unidadesDeLinea(i),
-                            facturacion: cant * Number(i.precio_unitario || 0),
+                            // Con IVA, cada línea con su convención (src/lib/iva.js)
+                            facturacion: conIva(baseLinea(i, cant, 0), itemAplicaIva(i)),
                         }
                     })
                 // Cobros de las ventas del año elegido (los del año anterior no

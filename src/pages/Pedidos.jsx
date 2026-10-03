@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import { Check, X, FileText, ChevronRight, Clock, Search, Bell, Ban, Pencil, Trash2 } from 'lucide-react'
-import { itemAplicaIva } from '../lib/iva'
+import { precioBaseItem, baseLinea, totalesDeItems, totalesGuardados, camposIvaLinea, IVA_PCT } from '../lib/iva'
+import { prepararFacturaPedido, lineasFacturables, lineasParaInsert, camposTotalesVenta, cantidadPrimaria } from '../lib/facturacion'
 import { sinSaldoQueCobrar } from '../lib/cobro'
 import { almacenPredeterminado, verificarStock, moverStockLote } from '../lib/inventario'
 import ModalFaltanteStock from '../components/ModalFaltanteStock'
@@ -398,7 +399,7 @@ export default function Pedidos() {
                                         {p.fecha_despacho ? new Date(p.fecha_despacho + 'T00:00:00').toLocaleDateString('es-VE') : '—'}
                                     </td>
                                     <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937' }}>
-                                        <TotalPedido pedidoId={p.id} descuentoGlobal={p.descuento_global} estado={p.estado} />
+                                        <TotalPedido pedido={p} />
                                     </td>
                                     <td style={{ padding: '12px 16px' }}><BadgeEstado estado={p.estado} /></td>
                                     <td style={{ padding: '12px 16px' }}>
@@ -469,36 +470,9 @@ export default function Pedidos() {
     )
 }
 
-// ── Total calculado desde items ────────────────────────────────
-function TotalPedido({ pedidoId, descuentoGlobal, estado }) {
-    const [total, setTotal] = useState(null)
-    const usarAlistada = ['alistado', 'facturado', 'despachado'].includes(estado)
-    useEffect(() => {
-        supabase.from('pedido_items').select('cantidad, cantidad_alistada, precio_unitario, descuento_item, unidad_venta, aplica_iva, productos_terminados(aplica_iva, unidad_venta_2, factor_conversion_2)')
-            .eq('pedido_id', pedidoId)
-            .then(({ data }) => {
-                if (!data) return
-                // precio_unitario ya incluye IVA → el total es la suma directa de líneas
-                const total = data.reduce((s, i) => {
-                    let cant = usarAlistada ? Number(i.cantidad_alistada ?? i.cantidad) : Number(i.cantidad)
-                    if (cant === 0) return s
-                    if (usarAlistada) {
-                        const uv = i.unidad_venta
-                        const uv2 = i.productos_terminados?.unidad_venta_2
-                        const factor = Number(i.productos_terminados?.factor_conversion_2 || 1)
-                        const esSecundaria = uv === '2' || (uv2 && uv === uv2)
-                        if (esSecundaria && factor > 1) cant = cant / factor
-                    }
-                    const precio = Number(i.precio_unitario)
-                    const desc = Number(i.descuento_item || 0)
-                    const linea = cant * precio * (1 - desc / 100) * (1 - Number(descuentoGlobal || 0) / 100)
-                    return s + linea
-                }, 0)
-                setTotal(total)
-            })
-    }, [pedidoId])
-    return <span>{total !== null ? fmt(total) : '—'}</span>
-}
+// Total con IVA del pedido: lo mantiene la base de datos en el encabezado
+// (recalcular_totales_pedido, iva_base_imponible_fase1.sql); facturado = el de su nota.
+const TotalPedido = ({ pedido }) => <span>{pedido.total != null ? fmt(pedido.total) : '—'}</span>
 
 // ══════════════════════════════════════════════════════════════
 // DETALLE DEL PEDIDO
@@ -558,12 +532,12 @@ function DetallePedido({ pedido, onVolver }) {
         const factor = Number(item.productos_terminados?.factor_conversion_2 || 1)
         return (esUM2(item) && factor > 1) ? cantAlistada / factor : cantAlistada
     }
-    // "Precio lista" se muestra SIEMPRE por unidad primaria, igual que la columna de
-    // cantidad. precio_unitario está en la unidad de venta de la línea (caja en UM2):
-    // es solo visual, el subtotal se sigue calculando con cantFn × precio_unitario.
+    // "Precio lista" se muestra SIEMPRE sin IVA y por unidad primaria, igual que la
+    // columna de cantidad. precio_unitario está en la unidad de venta de la línea
+    // (caja en UM2): es solo visual, el subtotal sale de cantFn × precio base.
     const precioPrimario = (item) => {
         const factor = Number(item.productos_terminados?.factor_conversion_2 || 1)
-        return (esUM2(item) && factor > 1) ? Number(item.precio_unitario) / factor : Number(item.precio_unitario)
+        return (esUM2(item) && factor > 1) ? precioBaseItem(item) / factor : precioBaseItem(item)
     }
     // cantidad en unidades primarias para mostrar en columna principal
     const cantPrimaria = (item) => {
@@ -579,30 +553,25 @@ function DetallePedido({ pedido, onVolver }) {
         return cantPrimaria(item) / factor
     }
     const tieneUM2 = items.some(i => Number(i.productos_terminados?.factor_conversion_2 || 0) > 1 && i.productos_terminados?.unidad_venta_2)
-    // Fuente de los totales: los valores del formulario mientras se edita, los guardados si no
+    // Fuente de los totales: los valores del formulario mientras se edita, los guardados si no.
+    // En edición el precio que se escribe es base (precio_incluye_iva = false).
     const itemsCalc = editando
         ? itemsEdit.map(i => ({
             ...i,
             cantidad: Math.max(0, Number(i._cantidad) || 0),
             precio_unitario: Math.max(0, Number(i._precio) || 0),
             descuento_item: Math.min(100, Math.max(0, Number(i._descuento) || 0)),
+            precio_incluye_iva: false,
         }))
         : items
-    // precio_unitario ya incluye IVA para items con aplica_iva=true → extraer base
-    const subtotalConDescItems = itemsCalc.reduce((s, i) => {
-        const desc = Number(i.descuento_item || 0)
-        const precio = Number(i.precio_unitario) * (1 - desc / 100)
-        return s + cantFn(i) * (itemAplicaIva(i) ? precio / 1.16 : precio)
-    }, 0)
-    const subtotalBruto = subtotalConDescItems
-    const subtotalFinal = subtotalConDescItems * (1 - descGlobal / 100)
-    const iva = itemsCalc.reduce((s, i) => {
-        if (!itemAplicaIva(i)) return s
-        const desc = Number(i.descuento_item || 0)
-        const base = cantFn(i) * Number(i.precio_unitario) / 1.16 * (1 - desc / 100) * (1 - descGlobal / 100)
-        return s + base * 0.16
-    }, 0)
-    const total = subtotalFinal + iva
+    // Fórmula única (src/lib/iva.js). Un pedido facturado muestra los montos de su nota.
+    const bruto = totalesDeItems(itemsCalc, { cantidad: cantFn })
+    const montos = (pedido.venta_id && !editando && pedido.total != null)
+        ? totalesGuardados(pedido)
+        : totalesDeItems(itemsCalc, { cantidad: cantFn, descGlobal })
+    const subtotalBruto = bruto.subtotal
+    const descGlobalMonto = pedido.venta_id && !editando ? 0 : Math.max(0, bruto.subtotal - montos.subtotal)
+    const { iva, total } = montos
     const esContado = condicionCliente === 'contado'
 
     async function aprobar() {
@@ -633,7 +602,8 @@ function DetallePedido({ pedido, onVolver }) {
             ...i,
             _key: i.id,
             _cantidad: String(Number(i.cantidad)),
-            _precio: String(Number(i.precio_unitario).toFixed(4)),
+            // Se edita en base: una línea anterior al cambio traía el IVA embebido
+            _precio: String(precioBaseItem(i).toFixed(4)),
             _descuento: String(Number(i.descuento_item || 0)),
         })))
         setEliminados([])
@@ -644,8 +614,8 @@ function DetallePedido({ pedido, onVolver }) {
         cargarCatalogoEdit()
     }
 
-    // Productos para agregar al pedido: precio de SU lista de precios (con IVA
-    // embebido, igual que Ventas); sin lista, el precio de venta del catálogo.
+    // Productos para agregar al pedido: precio de SU lista de precios (base
+    // imponible, igual que Ventas); sin lista, el precio de venta del catálogo.
     async function cargarCatalogoEdit() {
         const campos = 'id, nombre, sku, precio_venta, aplica_iva, tipo_producto, unidad_medida, unidad_venta_2, factor_conversion_2'
         if (pedido.lista_precio_id) {
@@ -747,8 +717,8 @@ function DetallePedido({ pedido, onVolver }) {
                     subtotal: cantidad * precio * (1 - desc / 100),
                     unidad_venta: item.unidad_venta,
                     cantidad_primaria: (esUM2(item) && factor > 1) ? cantidad * factor : cantidad,
-                    // Snapshot de la condición de IVA al crear la línea (src/lib/iva.js)
-                    aplica_iva: item.aplica_iva ?? true,
+                    // Snapshot de la condición de IVA al crear la línea; precio en base (src/lib/iva.js)
+                    ...camposIvaLinea(item.aplica_iva ?? true),
                 }
             }))
             if (errIns) { setError('Error al agregar productos: ' + errIns.message); setGuardandoEdit(false); return }
@@ -766,10 +736,12 @@ function DetallePedido({ pedido, onVolver }) {
                 cantidad_primaria: (esUM2(item) && factor > 1) ? cantidad * factor : cantidad,
                 precio_unitario: precio,
                 descuento_item: desc,
-                // `subtotal` es columna almacenada, no derivada: la app del vendedor
-                // calcula sus totales desde ella. Sin recalcularla aquí, editar el
-                // pedido dejaba al vendedor viendo el monto anterior.
+                // `subtotal` es la base de la línea (columna almacenada). El total del
+                // pedido lo recalcula la base de datos en el encabezado.
                 subtotal: cantidad * precio * (1 - desc / 100),
+                // El precio editado es base: la línea queda con la convención nueva
+                precio_incluye_iva: false,
+                iva_pct: (item.aplica_iva ?? true) ? IVA_PCT : 0,
             }).eq('id', item.id)
             if (err) { setError('Error al guardar: ' + err.message); setGuardandoEdit(false); return }
         }
@@ -790,7 +762,7 @@ function DetallePedido({ pedido, onVolver }) {
         // Red de seguridad además del botón deshabilitado: nunca emitir una
         // factura sin líneas. Un pedido de muestras sí puede totalizar 0, pero
         // siempre tiene ítems; cero ítems solo ocurre si algo salió mal.
-        if (items.filter(i => Number(i.cantidad_alistada ?? i.cantidad) > 0).length === 0) {
+        if (lineasFacturables(items).length === 0) {
             setError('El pedido no tiene ítems por facturar. Recarga la pantalla e intenta de nuevo.')
             return
         }
@@ -798,12 +770,11 @@ function DetallePedido({ pedido, onVolver }) {
 
         // Stock a descontar, en unidades primarias (cantidad_alistada es lo
         // realmente despachado). El almacén sale del predeterminado de la empresa.
-        const itemsStock = items
-            .filter(i => Number(i.cantidad_alistada ?? i.cantidad) > 0)
+        const itemsStock = lineasFacturables(items)
             .map(i => ({
                 tipo_item: 'producto_terminado',
                 item_id: i.producto_id,
-                cantidad: Number(i.cantidad_alistada ?? i.cantidad),
+                cantidad: cantidadPrimaria(i),
             }))
         const almacenId = await almacenPredeterminado(perfil.empresa_id)
 
@@ -852,18 +823,20 @@ function DetallePedido({ pedido, onVolver }) {
             fechaVencimiento = d.toISOString().split('T')[0]
         }
 
+        // Líneas y totales de la nota: src/lib/facturacion.js (IVA del catálogo vigente)
+        const { lineas: lineasNota, totales: totalesNota } = prepararFacturaPedido(items, descGlobal)
+
         const { data: venta, error: errVenta } = await supabase
             .from('ventas')
             .insert({
                 cliente_id: pedido.cliente_id,
                 usuario_id: user.id,
                 numero_factura: numero,
-                subtotal: subtotalFinal,
-                total,
+                ...camposTotalesVenta(totalesNota),
                 // Toda nota con saldo nace 'pendiente', también las de contado: el
                 // cobro se registra en CxC cuando el cliente paga. Una nota en $0
                 // (muestra, reposición, cortesía) nace 'pagado' o quedaría atrapada.
-                estado_cobro: sinSaldoQueCobrar(total) ? 'pagado' : 'pendiente',
+                estado_cobro: sinSaldoQueCobrar(totalesNota.total) ? 'pagado' : 'pendiente',
                 empresa_id: perfil.empresa_id,
                 fecha_vencimiento_pago: fechaVencimiento,
                 oc_cliente: pedido.oc_cliente || null,
@@ -877,27 +850,7 @@ function DetallePedido({ pedido, onVolver }) {
 
         if (errVenta) { setError('Error al crear factura: ' + errVenta.message); setProcesando(false); return }
 
-        const itemsDespachar = items.filter(i => Number(i.cantidad_alistada ?? i.cantidad) > 0)
-
-        await supabase.from('venta_items').insert(
-            itemsDespachar.map(i => {
-                const cantAlistada = Number(i.cantidad_alistada ?? i.cantidad)
-                const factor = Number(i.productos_terminados?.factor_conversion_2 || 1)
-                const cantidad = (esUM2(i) && factor > 1) ? cantAlistada / factor : cantAlistada
-                return {
-                    venta_id: venta.id,
-                    producto_id: i.producto_id,
-                    cantidad,
-                    precio_unitario: Number(i.precio_unitario) * (1 - Number(i.descuento_item || 0) / 100) * (1 - descGlobal / 100),
-                    unidad_venta: i.unidad_venta || null,
-                    cantidad_primaria: cantPrimaria(i),
-                    // Sin esto la factura quedaba con aplica_iva NULL y la Nota de
-                    // Entrega, que hace `?? true`, extraía IVA de productos exentos.
-                    aplica_iva: itemAplicaIva(i),
-                    empresa_id: perfil.empresa_id,
-                }
-            })
-        )
+        await supabase.from('venta_items').insert(lineasParaInsert(lineasNota, venta.id, perfil.empresa_id))
 
         // Descontar stock — una sola transacción en la base (mover_stock_lote).
         // Antes esto eran 4 llamadas HTTP por ítem desde el navegador: si se
@@ -1121,10 +1074,10 @@ function DetallePedido({ pedido, onVolver }) {
                             </thead>
                             <tbody>
                                 {items.map((item, idx) => {
-                                    const precioConDesc = Number(item.precio_unitario) * (1 - Number(item.descuento_item || 0) / 100)
+                                    // Base de la línea (sin IVA), con la convención con la que se guardó
                                     const cantUsada = cantFn(item)
                                     const cancelado = esAlistado && Number(item.cantidad_alistada) === 0
-                                    const subtotal = cantUsada * precioConDesc
+                                    const subtotal = baseLinea(item, cantUsada)
                                     return (
                                         <tr key={idx} style={{ borderBottom: '1px solid #f3f4f6', opacity: cancelado ? 0.5 : 1 }}>
                                             <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1f2937', fontWeight: 500 }}>
@@ -1161,8 +1114,10 @@ function DetallePedido({ pedido, onVolver }) {
             {/* Totales */}
             <div style={{ backgroundColor: '#f9fafb', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px 20px', marginBottom: '20px' }}>
                 {[
-                    { label: 'Subtotal bruto', valor: fmt(subtotalBruto) },
-                    descGlobal > 0 && { label: `Descuento global (${descGlobal}%)`, valor: `-${fmt(subtotalConDescItems - subtotalFinal)}`, color: '#16a34a' },
+                    descGlobalMonto > 0 && { label: 'Subtotal bruto', valor: fmt(subtotalBruto) },
+                    descGlobalMonto > 0 && { label: `Descuento global (${descGlobal}%)`, valor: `-${fmt(descGlobalMonto)}`, color: '#16a34a' },
+                    { label: 'Base imponible', valor: fmt(montos.base_gravada) },
+                    montos.base_exenta > 0 && { label: 'Exento', valor: fmt(montos.base_exenta) },
                     { label: 'IVA (16%)', valor: fmt(iva) },
                 ].filter(Boolean).map((f, i) => (
                     <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: f.color || '#6b7280', marginBottom: '6px' }}>
