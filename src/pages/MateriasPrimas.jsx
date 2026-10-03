@@ -235,7 +235,7 @@ export default function MateriasPrimas({ tabInicial = 'materias_primas' }) {
                         rows={2} placeholder="Descripción opcional..." style={{ ...inputStyle, resize: 'vertical' }} />
                 </Campo>
 
-                <Campo label="Costo de compra promedio ($)">
+                <Campo label="Costo de compra promedio sin IVA ($)">
                     <input type="number" min="0" step="0.01" value={form.costo_compra_promedio}
                         onChange={e => campo('costo_compra_promedio', e.target.value)}
                         placeholder="0.00" style={inputStyle} />

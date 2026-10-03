@@ -355,7 +355,7 @@ export default function Productos() {
                 </Campo>
 
                 {/* Costo compra */}
-                <Campo label="Costo de compra ($)">
+                <Campo label="Costo de compra sin IVA ($)">
                     <input type="number" min="0" step="0.01" value={form.costo_promedio}
                         onChange={e => campo('costo_promedio', e.target.value)}
                         placeholder="0.00" style={inputStyle} />

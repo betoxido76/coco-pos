@@ -86,23 +86,24 @@ function VistaStock() {
     async function cargarInventario() {
         setLoading(true)
         let datos = []
-        const sinIVA = (val) => Number(val || 0) / 1.16
+        // Los costos están en base imponible desde 2026-10 (iva_base_imponible_fase4_costos.sql):
+        // antes se cargaban con IVA y aquí se dividían entre 1,16.
 
         if (tipoFiltro === 'todos' || tipoFiltro === 'pt') {
             const { data } = await supabase.from('productos_terminados').select('*').eq('activo', true).eq('empresa_id', perfil.empresa_id).neq('tipo_producto', 'servicio').limit(5000)
-            if (data) datos = [...datos, ...data.map(p => ({ ...p, tipo: 'Producto Terminado', codigo: p.sku, precio: p.aplica_iva ? sinIVA(p.costo_promedio) : Number(p.costo_promedio || 0), vencimiento: null }))]
+            if (data) datos = [...datos, ...data.map(p => ({ ...p, tipo: 'Producto Terminado', codigo: p.sku, precio: Number(p.costo_promedio || 0), vencimiento: null }))]
         }
         if (tipoFiltro === 'todos' || tipoFiltro === 'mp') {
             const { data } = await supabase.from('materias_primas').select('*').eq('activo', true).eq('empresa_id', perfil.empresa_id).limit(5000)
-            if (data) datos = [...datos, ...data.map(p => ({ ...p, tipo: 'Materia Prima', codigo: p.codigo, precio: p.aplica_iva ? sinIVA(p.costo_compra_promedio) : Number(p.costo_compra_promedio || 0), vencimiento: p.fecha_vencimiento }))]
+            if (data) datos = [...datos, ...data.map(p => ({ ...p, tipo: 'Materia Prima', codigo: p.codigo, precio: Number(p.costo_compra_promedio || 0), vencimiento: p.fecha_vencimiento }))]
         }
         if (tipoFiltro === 'todos' || tipoFiltro === 'emp') {
             const { data } = await supabase.from('materiales_empaque').select('*').eq('activo', true).eq('empresa_id', perfil.empresa_id).limit(5000)
-            if (data) datos = [...datos, ...data.map(p => ({ ...p, tipo: 'Material Empaque', codigo: p.codigo, precio: p.aplica_iva ? sinIVA(p.costo_compra_promedio) : Number(p.costo_compra_promedio || 0), vencimiento: p.fecha_vencimiento }))]
+            if (data) datos = [...datos, ...data.map(p => ({ ...p, tipo: 'Material Empaque', codigo: p.codigo, precio: Number(p.costo_compra_promedio || 0), vencimiento: p.fecha_vencimiento }))]
         }
         if (tipoFiltro === 'todos' || tipoFiltro === 'con') {
             const { data } = await supabase.from('consumibles').select('*').eq('activo', true).eq('empresa_id', perfil.empresa_id).limit(5000)
-            if (data) datos = [...datos, ...data.map(p => ({ ...p, tipo: 'Consumible', codigo: p.codigo, precio: p.aplica_iva ? sinIVA(p.costo_compra_promedio) : Number(p.costo_compra_promedio || 0), vencimiento: p.fecha_vencimiento }))]
+            if (data) datos = [...datos, ...data.map(p => ({ ...p, tipo: 'Consumible', codigo: p.codigo, precio: Number(p.costo_compra_promedio || 0), vencimiento: p.fecha_vencimiento }))]
         }
 
         setInventario(datos.sort((a, b) => a.nombre.localeCompare(b.nombre)))
