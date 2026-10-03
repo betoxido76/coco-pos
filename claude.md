@@ -369,12 +369,15 @@ Al cerrar un ítem, borrarlo de esta tabla.
 - Todos los INSERTs: `empresa_id: perfil.empresa_id`
 - Columna de movimientos es `notas` (con s), no `nota`
 - Mapeo de tipos de insumo: `materias_primas→materia_prima`, `materiales_empaque→material_empaque`, `consumibles→consumible`, `productos_terminados→producto_terminado`
-- Campo `aplica_iva boolean` existe en las 4 tablas de productos (PT, MP, ME, consumibles). **Nunca aplicar ni extraer IVA sin verificar este campo.** Patrón correcto en TODOS los módulos:
-  - Extraer base de precio con IVA: `aplica_iva ? precio / 1.16 : precio`
-  - Calcular IVA sobre base: `aplica_iva ? base * 0.16 : 0`
-  - Total: suma de precios (con IVA embebido para items que aplican, sin IVA para los demás)
-  - Los queries que calculan subtotal/IVA/total DEBEN incluir `aplica_iva` en el SELECT
-  - Ventas.jsx es la referencia correcta
+- **IVA — precios en base imponible (desde 2026-10, `docs/plan-iva-base-imponible.md`)**. Todo precio de lista, de línea y todo costo es **sin IVA**; el IVA se **suma**. Campo `aplica_iva boolean` en las 4 tablas de productos (PT, MP, ME, consumibles). Reglas en TODOS los módulos:
+  - **Toda la aritmética pasa por `src/lib/iva.js`**: `precioBaseItem`, `baseLinea`, `totalesDeItems` / `totalesDocumento`, `totalesGuardados`, `camposIvaLinea`, `camposIvaHeredados`. **Nunca escribir `/ 1.16` ni `* 0.16` en un módulo.**
+  - El IVA del documento se calcula UNA vez sobre la base gravada total (`round2(base_gravada × 16 %)`), no sumando IVA por línea.
+  - Cada línea guarda `aplica_iva`, `iva_pct` y `precio_incluye_iva`. Las líneas anteriores al cambio tienen `precio_incluye_iva = true` (precio con IVA embebido) y `precioBaseItem` las lee bien. **El default de la columna es `true` a propósito**: el código nuevo escribe `false` explícitamente (`camposIvaLinea`); una versión vieja de la app en caché queda marcada con la convención que usó.
+  - Los SELECT de líneas que se usan para calcular DEBEN traer `aplica_iva` y `precio_incluye_iva`.
+  - Documento emitido (nota de entrega, NC, recepción, ND, OC) = montos del encabezado (`base_gravada`, `base_exenta`, `iva`, `total`) vía `totalesGuardados`; no se recalcula.
+  - Pedidos: `pedidos.total`/`base_*`/`iva` los mantiene el trigger `recalcular_totales_pedido` (cualquier cambio de líneas, estado o descuento global); facturado = montos de su nota. Las listas leen ese total. `pedido_items.subtotal` es la base de la línea.
+  - Facturar un pedido: SOLO `src/lib/facturacion.js` (`prepararFacturaPedido`): cantidad en unidad de venta, IVA del catálogo vigente al facturar, totales de la nota.
+  - Una NC o SDR contra una factura hereda `aplica_iva` y `precio_incluye_iva` de la línea original (`camposIvaHeredados`).
 - **Invariante stock — patrón obligatorio en TODO movimiento de inventario** (alta, baja o reverso):
   1. Leer `stock_actual` actual antes de modificar (para `stock_anterior` en movimiento)
   2. Actualizar `stock_actual` en la tabla del producto
@@ -392,7 +395,7 @@ Al cerrar un ítem, borrarlo de esta tabla.
 - **localStorage cache keys** (prefijo `mipos_`):
   - `mipos_clientes_${empresa_id}` — lista de clientes
   - `mipos_listas_${empresa_id}` — listas de precio
-  - `mipos_productos_${empresa_id}_${listaId}` — productos con precio
+  - `mipos_productos_v2_${empresa_id}_${listaId}` — productos con precio (v2: precios en base imponible; la clave vieja traía precios con IVA)
   - `mipos_offline_queue` — pedidos pendientes de sincronizar (array JSON)
   - Cada entry de caché incluye `{ data, ts }` donde `ts` es `Date.now()`; TTL = 1 hora (`CACHE_TTL = 3600000`)
 

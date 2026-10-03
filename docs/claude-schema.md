@@ -29,10 +29,16 @@ Después de cada ajuste, transferencia o recepción se llama `sincronizarStockAc
 ### Ventas y cobros
 ```
 ventas                -- Facturas
+                      --   subtotal (= base_gravada + base_exenta), base_gravada, base_exenta, iva, total
+                      --   MONTOS OFICIALES del documento: leer con totalesGuardados() (src/lib/iva.js)
                       --   oc_cliente text (opcional, O/C del cliente)
                       --   direccion_entrega_id uuid, direccion_entrega_texto text
 venta_items           -- Detalle de facturas
+                      --   precio_unitario en base (con descuentos aplicados); aplica_iva, iva_pct,
+                      --   precio_incluye_iva (true = línea anterior a 2026-10, precio con IVA), base_linea
 pedidos               -- Pedidos de venta (Realtime habilitado: supabase_realtime publication)
+                      --   base_gravada, base_exenta, iva, total: los mantiene el trigger
+                      --   recalcular_totales_pedido; facturado = montos de su nota (venta_id)
                       --   estado CHECK IN ('pendiente','aprobado','alistado','rechazado','facturado','despachado')
                       --   origen text ('oficina' | 'campo')
                       --   oc_cliente text (opcional, O/C del cliente)
@@ -43,8 +49,9 @@ pedido_items          -- Detalle de pedidos
                       --   NO leer productos_terminados.aplica_iva al calcular: cambiar la
                       --   casilla en el catálogo reescribiría totales históricos.
                       --   Usar siempre itemAplicaIva() de src/lib/iva.js.
-                      --   subtotal es columna ALMACENADA: recalcularla en cada UPDATE
-                      --   (la app del vendedor totaliza desde ella).
+                      --   subtotal es columna ALMACENADA = base de la línea (cant × precio × desc).
+                      --   Recalcularla en cada UPDATE. El total del pedido está en pedidos.total.
+                      --   precio_incluye_iva (true = convención vieja, IVA embebido), iva_pct
 cobros                -- Cobros parciales/totales en multimoneda
                       --   nota text (singular, NOT notas), cuenta_bancaria_id uuid
                       --   devolucion_id uuid (NC aplicada como cobro)
@@ -54,11 +61,11 @@ cobros                -- Cobros parciales/totales en multimoneda
                       --   cliente al momento del pago. NULL = no registrado (cobros
                       --   viejos). NO hacer JOIN a clientes para reportes: el estatus
                       --   cambia en el tiempo y reescribiría el pasado.
-devoluciones          -- Notas de crédito
+devoluciones          -- Notas de crédito (monto_devuelto con IVA; subtotal, base_gravada, base_exenta, iva)
                       --   numero_nc, cliente_id, nota_liquidacion, fecha_liquidacion
                       --   estado_nc CHECK IN ('pendiente','aplicada','reembolsada','anulada')
                       --   solicitud_id uuid → solicitudes_devolucion (nullable, para flujo SDR manufactura)
-devolucion_items      -- Detalle de devoluciones
+devolucion_items      -- Detalle de devoluciones (aplica_iva, iva_pct, precio_incluye_iva heredado de la factura)
 solicitudes_devolucion     -- Paso 1 del flujo SDR (manufactura): almacén registra recepción física
                            --   numero_solicitud, venta_id, pedido_id (nullable), cliente_id
                            --   numero_pedido text (denormalizado para búsqueda por almacén)
@@ -70,10 +77,12 @@ solicitud_devolucion_items -- Detalle de SDR: producto_id, cantidad_recibida, pr
 
 ### Compras
 ```
-ordenes_compra        -- OC a proveedores
+ordenes_compra        -- OC a proveedores (subtotal, base_gravada, base_exenta, iva, total)
 orden_compra_items    -- Detalle de OC
-compras               -- Recepciones
+                      --   precio_unitario_esperado SIEMPRE sin IVA; aplica_iva, iva_pct
+compras               -- Recepciones (subtotal, base_gravada, base_exenta, iva, total)
 compra_items          -- Detalle de recepciones
+                      --   aplica_iva, iva_pct, precio_incluye_iva (true = recepción vieja), base_linea
                       --   tipo_insumo CHECK IN ('materia_prima','empaque','material_empaque','consumible','producto_terminado')
 pagos_proveedor       -- Pagos a proveedores
                       --   devolucion_proveedor_id → devoluciones_proveedor (ND)
@@ -96,7 +105,7 @@ anticipo_reembolsos   -- El proveedor devuelve dinero de un anticipo (entra al b
                       --   anticipo_id!, fecha, montos, cuenta_bancaria_id, anulado
 v_anticipos_saldo     -- Vista (security_invoker): anticipo + aplicado_usd, reembolsado_usd, saldo_usd
                       --   Sin embeds sobre la vista: resolver proveedor/OC con otra consulta
-devoluciones_proveedor     -- Notas de débito a proveedor
+devoluciones_proveedor     -- Notas de débito a proveedor (monto_total con IVA; subtotal, base_gravada, base_exenta, iva)
 devolucion_proveedor_items -- Detalle de ND
 ```
 

@@ -1,7 +1,8 @@
 # Plan — Precios sin IVA (base imponible) en todo el sistema
 
-Estado: **en ejecución** (orden 2026-10-02). Un commit por fase; el despliegue
-(push) va junto al corte, al terminar las fases 1–4.
+Estado: **fases 1–4 aplicadas y desplegadas (2026-10-02)**; fase 5 (corte) con
+pendientes del cliente, ver abajo. Commits: fase 1 `4171001`, fase 2 `ec2fca0`,
+fase 3 `56c651a`, fase 4 `0301f75`.
 
 ## El cambio
 
@@ -150,13 +151,22 @@ Todos pasan por `iva.js` y leen los encabezados:
 | `NuevoPedido.jsx` | Totales, límite de crédito, listas (inicio, historial, ficha) desde el encabezado |
 | `lib/notasCredito.js`, `NotasCredito.jsx`, `CuentasCobrar.jsx` | `baseDeLinea` respeta la convención; NC manual en base |
 | `Dashboard.jsx`, `DashboardResumen.jsx` | Facturación por línea vía helper (no mezclar convenciones) |
-| `Productos.jsx`, `ListasPrecios.jsx`, `CargaDatos.jsx` | Etiquetas "Precio (sin IVA)" |
+| `Productos.jsx`, `ListasPrecios.jsx`, `MateriasPrimas.jsx`, `Consumibles.jsx` | Etiquetas "sin IVA" en precio y costo. `CargaDatos.jsx` NO se tocó: su encabezado es la plantilla de importación |
 
 **App del vendedor — caché y cola offline:**
 - Nueva versión de las claves de caché de productos (`mipos_productos_v2_…`):
   al actualizar, se descartan los precios cacheados con la convención vieja.
-- Los pedidos en `mipos_offline_queue` llevan `convencion: 'base'` desde esta
-  versión; los que no la traen se sincronizan con `precio_incluye_iva = true`.
+- Cola offline: los pedidos nuevos llevan `precio_incluye_iva: false` en cada
+  línea (`camposIvaLinea`); los que quedaron en cola antes del cambio no traen
+  la columna y la base de datos los marca `true` (default). No hizo falta una
+  marca aparte.
+- Facturar un pedido quedó en un solo módulo, `src/lib/facturacion.js`, usado
+  por Pedidos y Ventas (antes eran dos implementaciones distintas).
+- De paso: el paso 3 de la app fallaba con descuento global (variable
+  `totalConIVA` inexistente). Arreglado.
+- Verificado con un flujo completo en la base (con rollback): pedido con línea
+  gravada nueva + exenta → alistado parcial → nota → los totales del pedido
+  siguen cada paso y al facturar copian los de la nota.
 
 ### Fase 3 — Lado compras
 
@@ -184,8 +194,12 @@ Script aplicado en el corte (Meraki):
 | Cuñete 20 lt (sin costo) | 1 | Sin cambio |
 | PT con IVA (10029, GALL) — `costo_promedio` | 2 | `costo ÷ 1,16` (Inventario hoy también los divide) |
 
+- **Aplicada 2026-10-02** (migración `iva_base_imponible_fase4_costos`):
+  21 consumibles + 36 empaques + 1 MP convertidos, Agua Potable sin cambio,
+  Botas PVC 2.038 → 17,569, Envase PET 1500 ml 0,0267 → 0,25, Cuñete sin
+  costo; los 2 PT con IVA convertidos.
 - `costo_compra_promedio` es `numeric(12,4)`: sin problema de redondeo.
-- Respaldo previo en tabla `backup_costos_iva_<fecha>`.
+- Respaldo previo en tabla `backup_costos_iva_20261002` (RLS sin políticas).
 - `Inventario.jsx` deja de dividir entre 1,16. Resultado: el valor que muestra
   Inventario **no cambia** para los insumos convertidos.
 - Mermas y requisiciones nuevas pasan a valorarse sin IVA; las ya registradas
@@ -197,6 +211,8 @@ Script aplicado en el corte (Meraki):
   ajusta a mano.
 
 ### Fase 5 — Corte coordinado (Meraki)
+
+Estado al 2026-10-02: pasos 2 y 3 hechos. **Pendientes del cliente: 1, 4 y 5.**
 
 1. Avisar a la fuerza de ventas: sincronizar pedidos pendientes y no tomar
    pedidos durante la ventana.
