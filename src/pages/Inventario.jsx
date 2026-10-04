@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import SaludInventario from '../components/SaludInventario'
 import { Package, AlertTriangle, Search, Layers, Beaker, Truck, ArrowDownLeft, ArrowUpRight, History, Filter, Warehouse, ArrowLeftRight, Plus, ShieldCheck } from 'lucide-react'
+import { useAltoBarra, useOrden, ordenarFilas, ThOrden, BarraFija, estiloTarjetaTabla } from '../components/TablaOrdenable'
 
 const TIPOS_INVENTARIO = [
     { key: 'todos', label: 'Todo el inventario', icon: Layers },
@@ -73,6 +74,7 @@ function VistaStock() {
     const [pageSize, setPageSize] = useState(50)
     const [sortCol, setSortCol] = useState('nombre')
     const [sortDir, setSortDir] = useState('asc')
+    const [barraRef, altoBarra] = useAltoBarra()
 
     useEffect(() => { cargarInventario() }, [tipoFiltro])
     useEffect(() => { setPagina(0) }, [busqueda, tipoFiltro, pageSize])
@@ -132,6 +134,9 @@ function VistaStock() {
             case 'precio':     av = Number(a.precio || 0);        bv = Number(b.precio || 0);        break
             case 'valorTotal': av = Number(a.precio || 0) * Number(a.stock_actual || 0);
                                bv = Number(b.precio || 0) * Number(b.stock_actual || 0);             break
+            // Estado: sin stock → stock bajo → OK (mismo criterio que BadgeStock)
+            case 'estado':     av = a.stock_actual === 0 ? 0 : a.stock_actual <= a.stock_minimo ? 1 : 2;
+                               bv = b.stock_actual === 0 ? 0 : b.stock_actual <= b.stock_minimo ? 1 : 2; break
             default:           return 0
         }
         if (typeof av === 'string') return sortDir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av)
@@ -164,7 +169,9 @@ function VistaStock() {
                 </div>
             </div>
 
-            <div className="flex gap-3 flex-wrap">
+            {/* Filtros fijos al hacer scroll */}
+            <BarraFija ref={barraRef}>
+            <div className="flex gap-3 flex-wrap" style={{ marginBottom: '8px' }}>
                 <div className="relative flex-1 min-w-48">
                     <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                     <input type="text" placeholder="Buscar por nombre o código..."
@@ -181,14 +188,15 @@ function VistaStock() {
                     ))}
                 </div>
             </div>
+            </BarraFija>
 
-            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+            <div style={estiloTarjetaTabla}>
                 {loading ? <div className="p-12 text-center text-sm text-gray-400">Cargando inventario...</div>
                     : filtrados.length === 0 ? <div className="p-12 text-center text-sm text-gray-400">No se encontraron registros</div>
                         : (
                             <table className="w-full">
                                 <thead>
-                                    <tr className="border-b border-gray-100 bg-gray-50">
+                                    <tr>
                                         {[
                                             { key: 'nombre',     label: 'Nombre',      align: 'left'   },
                                             { key: 'codigo',     label: 'Código',      align: 'left'   },
@@ -197,16 +205,13 @@ function VistaStock() {
                                             { key: 'minimo',     label: 'Mínimo',      align: 'right'  },
                                             { key: 'precio',     label: 'Valor unit.', align: 'right'  },
                                             { key: 'valorTotal', label: 'Valor total', align: 'right'  },
+                                            { key: 'estado',     label: 'Estado',      align: 'center' },
                                         ].map(col => (
-                                            <th key={col.key} onClick={() => handleSort(col.key)}
-                                                className={`text-${col.align} text-xs font-medium text-gray-500 px-4 py-3 cursor-pointer select-none hover:text-gray-800 whitespace-nowrap`}>
-                                                {col.label}{' '}
-                                                <span className={sortCol === col.key ? 'text-green-600' : 'text-gray-300'}>
-                                                    {sortCol === col.key ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}
-                                                </span>
-                                            </th>
+                                            <ThOrden key={col.key} col={col.key} orden={{ col: sortCol, dir: sortDir }} onOrdenar={handleSort}
+                                                top={altoBarra} align={col.align} style={{ padding: '12px 16px' }}>
+                                                {col.label}
+                                            </ThOrden>
                                         ))}
-                                        <th className="text-center text-xs font-medium text-gray-500 px-4 py-3">Estado</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -318,6 +323,8 @@ function VistaPorAlmacen() {
     const [cantTransf, setCantTransf] = useState('')
     const [guardandoTransf, setGuardandoTransf] = useState(false)
     const [errorTransf, setErrorTransf] = useState('')
+    const [barraRef, altoBarra] = useAltoBarra([almacenId])
+    const [orden, ordenarPor] = useOrden({ col: 'producto', dir: 'asc' }, ['cantidad'])
 
     useEffect(() => {
         supabase.from('almacenes').select('*')
@@ -505,7 +512,13 @@ function VistaPorAlmacen() {
 
     const totalUnidades = filtrados.reduce((s, i) => s + Number(i.cantidad), 0)
     const totalPaginasAlm = Math.ceil(filtrados.length / pageSize)
-    const paginados = filtrados.slice(pagina * pageSize, (pagina + 1) * pageSize)
+    const paginados = ordenarFilas(filtrados, {
+        producto: s => s.nombre,
+        codigo: s => s.codigo,
+        tipo: s => TIPO_LABEL[s.tipo_item] || s.tipo_item,
+        ubicacion: s => s.ubicacion_nombre,
+        cantidad: s => Number(s.cantidad),
+    }, orden).slice(pagina * pageSize, (pagina + 1) * pageSize)
 
     // ── Ajuste manual ──
     async function confirmarAjuste() {
@@ -691,8 +704,9 @@ function VistaPorAlmacen() {
                         </button>
                     </div>
 
-                    {/* Filtros */}
-                    <div className="flex gap-3 flex-wrap">
+                    {/* Filtros fijos al hacer scroll */}
+                    <BarraFija ref={barraRef}>
+                    <div className="flex gap-3 flex-wrap" style={{ marginBottom: '8px' }}>
                         <div className="relative flex-1 min-w-48">
                             <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                             <input type="text" placeholder="Buscar producto..."
@@ -709,9 +723,10 @@ function VistaPorAlmacen() {
                             ))}
                         </div>
                     </div>
+                    </BarraFija>
 
                     {/* Tabla */}
-                    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                    <div style={estiloTarjetaTabla}>
                         {loading ? (
                             <div className="p-12 text-center text-sm text-gray-400">Cargando...</div>
                         ) : filtrados.length === 0 ? (
@@ -731,9 +746,9 @@ function VistaPorAlmacen() {
                         ) : (
                             <table className="w-full">
                                 <thead>
-                                    <tr className="border-b border-gray-100 bg-gray-50">
-                                        {['Producto', 'Código', 'Tipo', 'Ubicación', 'Cantidad', ''].map(h => (
-                                            <th key={h} className="text-left text-xs font-medium text-gray-500 px-4 py-3">{h}</th>
+                                    <tr>
+                                        {[['Producto', 'producto'], ['Código', 'codigo'], ['Tipo', 'tipo'], ['Ubicación', 'ubicacion'], ['Cantidad', 'cantidad'], ['', null]].map(([h, col]) => (
+                                            <ThOrden key={h} col={col} orden={orden} onOrdenar={ordenarPor} top={altoBarra} style={{ padding: '12px 16px' }}>{h}</ThOrden>
                                         ))}
                                     </tr>
                                 </thead>
@@ -1022,9 +1037,11 @@ function VistaMovimientos() {
     const [pagina, setPagina] = useState(0)
     const [pageSize, setPageSize] = useState(50)
     const [totalMov, setTotalMov] = useState(0)
+    const [barraRef, altoBarra] = useAltoBarra()
+    const [orden, ordenarPor] = useOrden({ col: 'fecha', dir: 'desc' }, ['fecha', 'cantidad', 'stock_actual'])
 
-    useEffect(() => { setPagina(0) }, [tipoFiltro, busqueda, fechaDesde, fechaHasta, pageSize])
-    useEffect(() => { cargarMovimientos() }, [tipoFiltro, busqueda, fechaDesde, fechaHasta, pagina, pageSize])
+    useEffect(() => { setPagina(0) }, [tipoFiltro, busqueda, fechaDesde, fechaHasta, pageSize, orden])
+    useEffect(() => { cargarMovimientos() }, [tipoFiltro, busqueda, fechaDesde, fechaHasta, pagina, pageSize, orden])
 
     async function cargarMovimientos() {
         setLoading(true)
@@ -1034,6 +1051,9 @@ function VistaMovimientos() {
             .eq('empresa_id', perfil.empresa_id)
             .gte('fecha', `${fechaDesde}T00:00:00`)
             .lte('fecha', `${fechaHasta}T23:59:59`)
+            // Orden en la base (la tabla está paginada allí). Almacén se ordena por
+            // el nombre del almacén embebido; a igualdad, lo más reciente primero.
+            .order(orden.col === 'almacen' ? 'almacenes(nombre)' : orden.col, { ascending: orden.dir === 'asc', nullsFirst: false })
             .order('fecha', { ascending: false })
             .range(pagina * pageSize, (pagina + 1) * pageSize - 1)
 
@@ -1051,7 +1071,9 @@ function VistaMovimientos() {
 
     return (
         <>
-            <div className="bg-white p-4 rounded-xl border border-gray-200 space-y-4">
+            {/* Filtros fijos al hacer scroll */}
+            <BarraFija ref={barraRef}>
+            <div className="bg-white p-4 rounded-xl border border-gray-200 space-y-4" style={{ marginBottom: '8px' }}>
                 <div className="flex items-center gap-2 text-sm font-medium text-gray-700">
                     <Filter size={14} /> Filtros de consulta
                 </div>
@@ -1082,8 +1104,9 @@ function VistaMovimientos() {
                     </div>
                 </div>
             </div>
+            </BarraFija>
 
-            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+            <div style={estiloTarjetaTabla}>
                 {loading ? (
                     <div className="p-12 text-center text-sm text-gray-400">Cargando movimientos...</div>
                 ) : movimientos.length === 0 ? (
@@ -1091,9 +1114,11 @@ function VistaMovimientos() {
                 ) : (
                     <table className="w-full">
                         <thead>
-                            <tr className="border-b border-gray-100 bg-gray-50">
-                                {['Fecha', 'Tipo', 'Código', 'Producto', 'Movimiento', 'Cantidad', 'Stock Result.', 'Almacén', 'Origen'].map(h => (
-                                    <th key={h} className="text-left text-xs font-medium text-gray-500 px-4 py-3">{h}</th>
+                            <tr>
+                                {[['Fecha', 'fecha'], ['Tipo', 'tipo_item'], ['Código', 'item_codigo'], ['Producto', 'item_nombre'],
+                                  ['Movimiento', 'tipo_movimiento'], ['Cantidad', 'cantidad'], ['Stock Result.', 'stock_actual'],
+                                  ['Almacén', 'almacen'], ['Origen', 'origen']].map(([h, col]) => (
+                                    <ThOrden key={h} col={col} orden={orden} onOrdenar={ordenarPor} top={altoBarra} style={{ padding: '12px 16px' }}>{h}</ThOrden>
                                 ))}
                             </tr>
                         </thead>

@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useContext, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import { PackageCheck, ChevronRight, Check, AlertTriangle, Truck, FileText, Ban, RotateCcw, Search, Plus, X } from 'lucide-react'
 import { itemAplicaIva, precioIncluyeIva, precioBaseItem, baseLinea, totalesDeItems, totalesGuardados, IVA_PCT } from '../lib/iva'
 import FiltroCombo from '../components/FiltroCombo'
+import { useAltoBarra, useOrden, ordenarFilas, ThOrden, BarraFija, TopTitulos, estiloTarjetaTabla } from '../components/TablaOrdenable'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 
@@ -26,13 +27,14 @@ function BadgeEstado({ estado }) {
     )
 }
 
-// Encabezado de columna ordenable (patrón de Ventas)
+// Encabezado de columna ordenable y fijo al hacer scroll (TablaOrdenable).
+// El alto de la barra fija llega por el contexto TopTitulos.
 function SortableTh({ label, col, sortCol, sortDir, onSort, right }) {
     return (
-        <th onClick={col ? () => onSort(col) : undefined}
-            style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, textAlign: right ? 'right' : 'left', whiteSpace: 'nowrap', userSelect: 'none', cursor: col ? 'pointer' : 'default', color: col && sortCol === col ? '#16a34a' : '#6b7280' }}>
-            {label}{col && <span style={{ marginLeft: '4px', fontSize: '10px' }}>{sortCol === col ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}</span>}
-        </th>
+        <ThOrden col={col} orden={{ col: sortCol, dir: sortDir }} onOrdenar={onSort}
+            align={right ? 'right' : 'left'} style={{ padding: '10px 16px' }}>
+            {label}
+        </ThOrden>
     )
 }
 
@@ -58,6 +60,7 @@ export default function Despacho() {
     const [pageSize, setPageSize] = useState(50)
     const [sortCol, setSortCol] = useState('fecha_pedido')
     const [sortDir, setSortDir] = useState('desc')
+    const [barraRef, altoBarra] = useAltoBarra([pedidoVer, pedidoActual, tabActiva])
 
     useEffect(() => { cargar(); cargarConteos() }, [tabActiva])
 
@@ -106,6 +109,7 @@ export default function Despacho() {
             case 'fecha_pedido': return p.fecha_pedido ? new Date(p.fecha_pedido).getTime() : 0
             case 'fecha_entrega': return p.fecha_entrega || ''
             case 'fecha_despacho': return p.fecha_despacho || ''
+            case 'total': return Number(p.total || 0)
             default: return ''
         }
     }
@@ -192,8 +196,9 @@ export default function Despacho() {
                 <p style={{ fontSize: '13px', color: '#6b7280', margin: '4px 0 0' }}>Gestión de alistamiento y salida de pedidos</p>
             </div>
 
-            {/* Tabs */}
-            <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', flexWrap: 'wrap' }}>
+            {/* Tabs + filtros: fijos al hacer scroll */}
+            <BarraFija ref={barraRef}>
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
                 {[
                     { key: 'alistamiento',  label: 'Por Alistar',    count: conteos.alistamiento,  badgeBg: '#fff7ed', badgeColor: '#c2410c' },
                     { key: 'porregistrar',  label: 'Por Registrar',  count: conteos.porregistrar,  badgeBg: '#fef9c3', badgeColor: '#854d0e' },
@@ -243,8 +248,10 @@ export default function Despacho() {
                     </div>
                 </div>
             )}
+            </BarraFija>
 
-            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+            <TopTitulos.Provider value={altoBarra}>
+            <div style={estiloTarjetaTabla}>
                 {tabActiva === 'devoluciones' ? (
                     <TablaDevoluciones onConteoChange={cargarConteos} />
                 ) : loading ? (
@@ -306,6 +313,7 @@ export default function Despacho() {
                     </div>
                 )}
             </div>
+            </TopTitulos.Provider>
 
             {/* Modal Anulación */}
             {modalAnulacion && (
@@ -431,7 +439,7 @@ function TablaPorRegistrar({ pedidos, onVer, onAnular, sortCol, sortDir, onSort 
                         { label: 'Fecha pedido', col: 'fecha_pedido' },
                         { label: 'F. Prometida', col: 'fecha_entrega' },
                         { label: 'F. Programada', col: 'fecha_despacho' },
-                        { label: 'Total', col: null },
+                        { label: 'Total', col: 'total' },
                         { label: 'Estado', col: 'estado' },
                         { label: '', col: null },
                     ].map((c, i) => <SortableTh key={i} {...c} sortCol={sortCol} sortDir={sortDir} onSort={onSort} />)}
@@ -663,7 +671,7 @@ function TablaCompletados({ pedidos, onVer, sortCol, sortDir, onSort }) {
                         { label: 'Vendedor', col: 'vendedor' },
                         { label: 'Fecha pedido', col: 'fecha_pedido' },
                         { label: 'F. Programada', col: 'fecha_despacho' },
-                        { label: 'Total', col: null },
+                        { label: 'Total', col: 'total' },
                         { label: 'Estado', col: 'estado' },
                         { label: '', col: null },
                     ].map((c, i) => <SortableTh key={i} {...c} sortCol={sortCol} sortDir={sortDir} onSort={onSort} />)}
@@ -1087,6 +1095,11 @@ function TablaDevoluciones({ onConteoChange }) {
     const [solicitudes, setSolicitudes] = useState([])
     const [loading, setLoading] = useState(true)
     const [filtroEstado, setFiltroEstado] = useState('todas')
+    // La fila de filtros queda fija debajo de la barra de pestañas, y los
+    // títulos debajo de ella
+    const topBarra = useContext(TopTitulos)
+    const [filtrosRef, altoFiltros] = useAltoBarra([vista])
+    const [orden, ordenarPor] = useOrden({ col: 'fecha', dir: 'desc' }, ['numero', 'fecha'])
 
     useEffect(() => { cargar() }, [])
 
@@ -1107,11 +1120,19 @@ function TablaDevoluciones({ onConteoChange }) {
             onCancelar={() => setVista('lista')}
         />
 
-    const filtradas = filtroEstado === 'todas' ? solicitudes : solicitudes.filter(s => s.estado === filtroEstado)
+    const filtradas = ordenarFilas(filtroEstado === 'todas' ? solicitudes : solicitudes.filter(s => s.estado === filtroEstado), {
+        numero: s => s.numero_solicitud,
+        pedido: s => s.numero_pedido,
+        nota: s => s.ventas?.numero_factura,
+        cliente: s => s.clientes?.nombre,
+        almacen: s => s.almacenes?.nombre,
+        estado: s => s.estado,
+        fecha: s => s.fecha_recepcion,
+    }, orden)
 
     return (
         <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px', borderBottom: '1px solid #e5e7eb', flexWrap: 'wrap', gap: '10px' }}>
+            <div ref={filtrosRef} style={{ position: 'sticky', top: topBarra, zIndex: 15, backgroundColor: '#fff', display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px', borderBottom: '1px solid #e5e7eb', flexWrap: 'wrap', gap: '10px' }}>
                 <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                     {['todas', 'recibida', 'autorizada', 'rechazada'].map(e => (
                         <button key={e} onClick={() => setFiltroEstado(e)}
@@ -1135,9 +1156,10 @@ function TablaDevoluciones({ onConteoChange }) {
             ) : (
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead>
-                        <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                            {['Nro. Solicitud', 'Nro. Pedido', 'Nota de Entrega', 'Cliente', 'Almacén', 'Estado', 'Fecha'].map(h => (
-                                <th key={h} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left' }}>{h}</th>
+                        <tr>
+                            {[['Nro. Solicitud', 'numero'], ['Nro. Pedido', 'pedido'], ['Nota de Entrega', 'nota'], ['Cliente', 'cliente'],
+                              ['Almacén', 'almacen'], ['Estado', 'estado'], ['Fecha', 'fecha']].map(([h, col]) => (
+                                <ThOrden key={h} col={col} orden={orden} onOrdenar={ordenarPor} top={topBarra + altoFiltros} style={{ padding: '10px 16px' }}>{h}</ThOrden>
                             ))}
                         </tr>
                     </thead>

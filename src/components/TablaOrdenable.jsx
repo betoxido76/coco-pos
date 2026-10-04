@@ -1,4 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { createContext, forwardRef, useContext, useEffect, useRef, useState } from 'react'
+
+// Alto de la barra fija para los títulos de tablas anidadas en subcomponentes:
+// <TopTitulos.Provider value={altoBarra}> evita pasar `top` tabla por tabla.
+export const TopTitulos = createContext(0)
 
 // Piezas compartidas por las tablas con títulos fijos y orden por columna
 // (CxC, CxP). Uso:
@@ -49,10 +53,30 @@ export function useAltoBarra(deps = []) {
     return [ref, alto]
 }
 
+// Barra de pestañas/filtros fija arriba al hacer scroll. Se extiende sobre el
+// padding de la página (`gutter`) con el fondo de la página, para que la tabla
+// no se vea por detrás. Recibe el ref de useAltoBarra.
+export const BarraFija = forwardRef(function BarraFija({ gutter = 24, style, children }, ref) {
+    return (
+        <div ref={ref} style={{
+            position: 'sticky', top: 0, zIndex: 20, backgroundColor: '#f9fafb',
+            marginLeft: -gutter, marginRight: -gutter, padding: `12px ${gutter}px 4px`, ...style,
+        }}>
+            {children}
+        </div>
+    )
+})
+
+// Contenedor (tarjeta) de una tabla con títulos fijos: overflow 'clip' en vez
+// de 'hidden', que crearía su propio contenedor de scroll.
+export const estiloTarjetaTabla = { backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'clip' }
+
 // Título de columna fijo al hacer scroll y, con `col`, ordenable con clic.
 // El contenedor de la tabla debe usar overflow 'clip' (no 'hidden'): 'hidden'
 // crea su propio contenedor de scroll y el título deja de quedar fijo.
-export function ThOrden({ col, orden, onOrdenar, top = 0, align = 'left', style, children }) {
+export function ThOrden({ col, orden, onOrdenar, top, align = 'left', style, children }) {
+    const topContexto = useContext(TopTitulos)
+    if (top == null) top = topContexto
     const activa = col && orden?.col === col
     return (
         <th onClick={col ? () => onOrdenar(col) : undefined}

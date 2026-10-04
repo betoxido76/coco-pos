@@ -11,6 +11,7 @@ import { almacenPredeterminado, verificarStock, moverStockLote } from '../lib/in
 import ModalFaltanteStock from '../components/ModalFaltanteStock'
 import FiltroCombo from '../components/FiltroCombo'
 import { ymdCaracas } from '../components/SelectorFechaTasa'
+import { useAltoBarra, useOrden, ordenarFilas, ThOrden, estiloTarjetaTabla } from '../components/TablaOrdenable'
 
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
@@ -58,6 +59,9 @@ export default function Ventas() {
     const [solicitudesDevCount, setSolicitudesDevCount] = useState(0)
     const [filtros, setFiltros] = useState(FILTROS_VACIOS)
     const setFiltro = (campo, valor) => { setFiltros(f => ({ ...f, [campo]: valor })); setPagina(0) }
+    // Alto de la barra fija de filtros: los títulos de la tabla se pegan debajo
+    const [barraRef, altoBarra] = useAltoBarra([tabActiva, vista])
+    const [ordenPedidos, ordenarPedidos] = useOrden({ col: 'pedido', dir: 'desc' }, ['pedido', 'entrega'])
 
     useEffect(() => { cargarVentas(); cargarConteoSolicitudes() }, [])
     useEffect(() => { if (tabActiva === 'pedidos') cargarPedidosAprobados() }, [tabActiva])
@@ -151,6 +155,7 @@ export default function Ventas() {
         if (sortCol === 'numero_factura') { va = a.numero_factura || ''; vb = b.numero_factura || '' }
         else if (sortCol === 'numero_pedido') { va = a.pedidos?.numero_pedido || ''; vb = b.pedidos?.numero_pedido || '' }
         else if (sortCol === 'nro_referencia') { va = a.nro_referencia || ''; vb = b.nro_referencia || '' }
+        else if (sortCol === 'oc_cliente') { va = a.oc_cliente || ''; vb = b.oc_cliente || '' }
         else if (sortCol === 'cliente') { va = a.clientes?.nombre || ''; vb = b.clientes?.nombre || '' }
         else if (sortCol === 'fecha') { va = new Date(a.fecha_venta || a.created_at); vb = new Date(b.fecha_venta || b.created_at) }
         else if (sortCol === 'total') { va = Number(a.total || 0); vb = Number(b.total || 0) }
@@ -232,7 +237,7 @@ export default function Ventas() {
 
             {/* Barra de filtros de notas (fija al hacer scroll) */}
             {tabActiva === 'ventas' && (
-                <div style={{ position: 'sticky', top: 0, zIndex: 30, backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px 20px', marginBottom: '20px', boxShadow: '0 4px 12px rgba(0,0,0,0.06)', display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                <div ref={barraRef} style={{ position: 'sticky', top: 0, zIndex: 30, backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px 20px', marginBottom: '20px', boxShadow: '0 4px 12px rgba(0,0,0,0.06)', display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
                     <div>
                         <label style={estiloLabelFiltro}>Desde</label>
                         <input type="date" value={filtros.desde} onChange={e => setFiltro('desde', e.target.value)} style={estiloInputFiltro(filtros.desde, '140px')} />
@@ -269,7 +274,7 @@ export default function Ventas() {
 
             {/* Tab Ventas */}
             {tabActiva === 'ventas' && (
-                <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                <div style={estiloTarjetaTabla}>
                     {loading ? (
                         <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
                     ) : ventas.length === 0 ? (
@@ -279,22 +284,22 @@ export default function Ventas() {
                     ) : (
                         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                             <thead>
-                                <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                                <tr>
                                     {[
                                         { label: 'Nota de Entrega', col: 'numero_factura' },
                                         { label: 'N° Pedido', col: 'numero_pedido' },
                                         { label: 'Referencia', col: 'nro_referencia' },
-                                        { label: 'O/C Cliente', col: null },
+                                        { label: 'O/C Cliente', col: 'oc_cliente' },
                                         { label: 'Cliente', col: 'cliente' },
                                         { label: 'Fecha', col: 'fecha' },
                                         { label: 'Total', col: 'total', right: true },
                                         { label: 'Estado', col: 'estado' },
                                         { label: '', col: null },
                                     ].map(({ label, col, right }) => (
-                                        <th key={label || 'acc'} onClick={col ? () => handleSort(col) : undefined}
-                                            style={{ padding: '10px 16px', textAlign: right ? 'right' : 'left', fontSize: '12px', fontWeight: 500, color: col && sortCol === col ? '#16a34a' : '#6b7280', cursor: col ? 'pointer' : 'default', userSelect: 'none', whiteSpace: 'nowrap' }}>
-                                            {label}{col && <span style={{ marginLeft: '4px', fontSize: '10px' }}>{sortCol === col ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}</span>}
-                                        </th>
+                                        <ThOrden key={label || 'acc'} col={col} orden={{ col: sortCol, dir: sortDir }} onOrdenar={handleSort}
+                                            top={altoBarra} align={right ? 'right' : 'left'} style={{ padding: '10px 16px' }}>
+                                            {label}
+                                        </ThOrden>
                                     ))}
                                 </tr>
                             </thead>
@@ -373,7 +378,7 @@ export default function Ventas() {
 
             {/* Tab Pedidos por facturar (solo manufactura) */}
             {!esRetail && tabActiva === 'pedidos' && (
-                <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                <div style={estiloTarjetaTabla}>
                     {loadingPedidos ? (
                         <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
                     ) : pedidosAprobados.length === 0 ? (
@@ -381,14 +386,20 @@ export default function Ventas() {
                     ) : (
                         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                             <thead>
-                                <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                    {['Pedido', 'O/C Cliente', 'Cliente', 'Vendedor', 'Entrega', ''].map((h, i) => (
-                                        <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left' }}>{h}</th>
+                                <tr>
+                                    {[['Pedido', 'pedido'], ['O/C Cliente', 'oc'], ['Cliente', 'cliente'], ['Vendedor', 'vendedor'], ['Entrega', 'entrega'], ['', null]].map(([h, col], i) => (
+                                        <ThOrden key={i} col={col} orden={ordenPedidos} onOrdenar={ordenarPedidos} style={{ padding: '10px 16px' }}>{h}</ThOrden>
                                     ))}
                                 </tr>
                             </thead>
                             <tbody>
-                                {pedidosAprobados.map(p => (
+                                {ordenarFilas(pedidosAprobados, {
+                                    pedido: p => p.numero_pedido,
+                                    oc: p => p.oc_cliente,
+                                    cliente: p => p.clientes?.nombre,
+                                    vendedor: p => p.usuarios?.nombre,
+                                    entrega: p => p.fecha_entrega,
+                                }, ordenPedidos).map(p => (
                                     <tr key={p.id} style={{ borderBottom: '1px solid #f3f4f6' }}
                                         onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
                                         onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
@@ -3168,6 +3179,8 @@ function TabSolicitudesDevoluciones({ onConteoChange }) {
     const [motivoRechazo, setMotivoRechazo] = useState('')
     const [guardandoRechazo, setGuardandoRechazo] = useState(false)
     const [errorRechazo, setErrorRechazo] = useState('')
+    const [barraRef, altoBarra] = useAltoBarra([autorizando])
+    const [orden, ordenarPor] = useOrden({ col: 'numero', dir: 'desc' }, ['numero', 'items'])
 
     useEffect(() => { cargar() }, [])
 
@@ -3205,12 +3218,21 @@ function TabSolicitudesDevoluciones({ onConteoChange }) {
             onCancelar={() => setAutorizando(null)}
         />
 
-    const filtradas = filtroEstado === 'todas' ? solicitudes : solicitudes.filter(s => s.estado === filtroEstado)
+    const filtradas = ordenarFilas(filtroEstado === 'todas' ? solicitudes : solicitudes.filter(s => s.estado === filtroEstado), {
+        numero: s => s.numero_solicitud,
+        pedido: s => s.numero_pedido,
+        nota: s => s.ventas?.numero_factura,
+        cliente: s => s.clientes?.nombre,
+        almacen: s => s.almacenes?.nombre,
+        items: s => s.solicitud_devolucion_items?.length || 0,
+        estado: s => s.estado,
+    }, orden)
     const countPendientes = solicitudes.filter(s => s.estado === 'recibida').length
 
     return (
-        <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
-            <div style={{ display: 'flex', gap: '6px', padding: '16px 20px', borderBottom: '1px solid #e5e7eb', flexWrap: 'wrap', alignItems: 'center' }}>
+        <div style={estiloTarjetaTabla}>
+            {/* Filtro fijo al hacer scroll, dentro de la tarjeta */}
+            <div ref={barraRef} style={{ position: 'sticky', top: 0, zIndex: 20, backgroundColor: '#fff', display: 'flex', gap: '6px', padding: '16px 20px', borderBottom: '1px solid #e5e7eb', flexWrap: 'wrap', alignItems: 'center' }}>
                 <span style={{ fontSize: '13px', color: '#6b7280', marginRight: '4px' }}>Filtrar:</span>
                 {['recibida', 'autorizada', 'rechazada', 'todas'].map(e => (
                     <button key={e} onClick={() => setFiltroEstado(e)}
@@ -3232,9 +3254,10 @@ function TabSolicitudesDevoluciones({ onConteoChange }) {
             ) : (
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead>
-                        <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                            {['Nro. Solicitud', 'Nro. Pedido', 'Nota de Entrega', 'Cliente', 'Almacén', 'Ítems', 'Estado', ''].map(h => (
-                                <th key={h || 'acc'} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left' }}>{h}</th>
+                        <tr>
+                            {[['Nro. Solicitud', 'numero'], ['Nro. Pedido', 'pedido'], ['Nota de Entrega', 'nota'], ['Cliente', 'cliente'],
+                              ['Almacén', 'almacen'], ['Ítems', 'items'], ['Estado', 'estado'], ['', null]].map(([h, col]) => (
+                                <ThOrden key={h || 'acc'} col={col} orden={orden} onOrdenar={ordenarPor} top={altoBarra} style={{ padding: '10px 16px' }}>{h}</ThOrden>
                             ))}
                         </tr>
                     </thead>

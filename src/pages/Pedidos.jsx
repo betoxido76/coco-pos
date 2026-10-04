@@ -8,6 +8,7 @@ import { sinSaldoQueCobrar } from '../lib/cobro'
 import { almacenPredeterminado, verificarStock, moverStockLote } from '../lib/inventario'
 import ModalFaltanteStock from '../components/ModalFaltanteStock'
 import FiltroCombo from '../components/FiltroCombo'
+import { useAltoBarra, ThOrden, BarraFija, estiloTarjetaTabla } from '../components/TablaOrdenable'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 
@@ -38,13 +39,13 @@ const inputStyle = {
 
 // Mismas opciones que el cobro de contado en Ventas.jsx
 
-// Encabezado de columna ordenable (patrón de Ventas)
-function SortableTh({ label, col, sortCol, sortDir, onSort, right }) {
+// Encabezado de columna ordenable y fijo al hacer scroll (TablaOrdenable)
+function SortableTh({ label, col, sortCol, sortDir, onSort, right, top }) {
     return (
-        <th onClick={col ? () => onSort(col) : undefined}
-            style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, textAlign: right ? 'right' : 'left', whiteSpace: 'nowrap', userSelect: 'none', cursor: col ? 'pointer' : 'default', color: col && sortCol === col ? '#16a34a' : '#6b7280' }}>
-            {label}{col && <span style={{ marginLeft: '4px', fontSize: '10px' }}>{sortCol === col ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}</span>}
-        </th>
+        <ThOrden col={col} orden={{ col: sortCol, dir: sortDir }} onOrdenar={onSort} top={top}
+            align={right ? 'right' : 'left'} style={{ padding: '10px 16px' }}>
+            {label}
+        </ThOrden>
     )
 }
 
@@ -73,6 +74,7 @@ export default function Pedidos() {
     const [pageSize, setPageSize] = useState(50)
     const [sortCol, setSortCol] = useState('fecha_pedido')
     const [sortDir, setSortDir] = useState('desc')
+    const [barraRef, altoBarra] = useAltoBarra([pedidoActual])
 
     useEffect(() => { cargar(); cargarConteos() }, [tabActiva, reloadKey])
 
@@ -155,6 +157,7 @@ export default function Pedidos() {
             case 'fecha_pedido': return p.fecha_pedido ? new Date(p.fecha_pedido).getTime() : 0
             case 'fecha_entrega': return p.fecha_entrega || ''
             case 'fecha_despacho': return p.fecha_despacho || ''
+            case 'total': return Number(p.total || 0)
             default: return ''
         }
     }
@@ -242,8 +245,9 @@ export default function Pedidos() {
                 )}
             </div>
 
-            {/* Tabs */}
-            <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', flexWrap: 'wrap' }}>
+            {/* Tabs + filtros: fijos al hacer scroll */}
+            <BarraFija ref={barraRef}>
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
                 {[
                     { key: 'pendientes',   label: 'Pendientes por Aprobación', estado: 'pendiente',  badgeBg: '#fef9c3', badgeColor: '#854d0e' },
                     { key: 'aprobados',    label: 'Por Alistar',               estado: 'aprobado',   badgeBg: '#dbeafe', badgeColor: '#1e40af' },
@@ -281,7 +285,7 @@ export default function Pedidos() {
             </div>
 
             {/* Filtros */}
-            <div style={{ display: 'flex', gap: '10px', marginBottom: '16px', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: '10px', marginBottom: '12px', flexWrap: 'wrap' }}>
                 <div style={{ position: 'relative', flex: 1, minWidth: '200px' }}>
                     <Search size={15} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
                     <input type="text" placeholder="Buscar por cliente, pedido o vendedor..."
@@ -302,9 +306,10 @@ export default function Pedidos() {
                         style={{ ...inputStyle, width: 'auto' }} />
                 </div>
             </div>
+            </BarraFija>
 
             {/* Tabla */}
-            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+            <div style={estiloTarjetaTabla}>
                 {loading ? (
                     <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
                 ) : filtrados.length === 0 ? (
@@ -323,7 +328,7 @@ export default function Pedidos() {
                                     { label: 'Fecha pedido', col: 'fecha_pedido' },
                                     { label: 'Motivo anulación', col: 'motivo' },
                                     { label: '', col: null },
-                                ].map(c => <SortableTh key={c.label || 'acc'} {...c} sortCol={sortCol} sortDir={sortDir} onSort={handleSort} />)}
+                                ].map(c => <SortableTh key={c.label || 'acc'} {...c} sortCol={sortCol} sortDir={sortDir} onSort={handleSort} top={altoBarra} />)}
                             </tr>
                         </thead>
                         <tbody>
@@ -366,10 +371,10 @@ export default function Pedidos() {
                                     { label: 'Fecha pedido', col: 'fecha_pedido' },
                                     { label: 'F. Prometida', col: 'fecha_entrega' },
                                     { label: 'F. Programada', col: 'fecha_despacho' },
-                                    { label: 'Total', col: null },
+                                    { label: 'Total', col: 'total' },
                                     { label: 'Estado', col: 'estado' },
                                     { label: '', col: null },
-                                ].map(c => <SortableTh key={c.label || 'acc'} {...c} sortCol={sortCol} sortDir={sortDir} onSort={handleSort} />)}
+                                ].map(c => <SortableTh key={c.label || 'acc'} {...c} sortCol={sortCol} sortDir={sortDir} onSort={handleSort} top={altoBarra} />)}
                             </tr>
                         </thead>
                         <tbody>
