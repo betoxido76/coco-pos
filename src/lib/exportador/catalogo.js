@@ -177,8 +177,129 @@ const CAMPOS_CARTERA_CXC = [
     { col: 'tramo_antiguedad', label: 'Tramo de antigüedad', tipo: 'texto', grupo: 'Cobranza', def: true },
 ].map(c => c.col === 'vencimiento' || c.col === 'dias_vencida' ? { ...c, def: true } : c)
 
+// ── Compras (recepciones) ──
+const CAMPOS_COMPRAS = [
+    { col: 'numero_doc', label: 'N° recepción', tipo: 'texto', grupo: 'Documento', def: true },
+    { col: 'nro_doc_proveedor', label: 'Factura del proveedor', tipo: 'texto', grupo: 'Documento', def: true },
+    { col: 'fecha', label: 'Fecha', tipo: 'fecha', grupo: 'Documento', def: true },
+    { col: 'numero_oc', label: 'N° OC', tipo: 'texto', grupo: 'Documento' },
+    { col: 'almacen', label: 'Almacén', tipo: 'texto', grupo: 'Documento' },
+    { col: 'recibido_por', label: 'Recibido por', tipo: 'texto', grupo: 'Documento' },
+    { col: 'estado_cobro', label: 'Estado de pago', tipo: 'texto', grupo: 'Documento' },
+    { col: 'estatus', label: 'Estatus (pagado / al día / vencido)', tipo: 'texto', grupo: 'Documento', def: true },
+    { col: 'anulada', label: 'Anulada', tipo: 'bool', grupo: 'Documento' },
+    { col: 'proveedor', label: 'Proveedor', tipo: 'texto', grupo: 'Proveedor', def: true },
+    { col: 'proveedor_rif', label: 'RIF proveedor', tipo: 'texto', grupo: 'Proveedor' },
+    { col: 'condicion_pago', label: 'Condición de pago', tipo: 'texto', grupo: 'Proveedor' },
+    { col: 'dias_credito', label: 'Días de crédito', tipo: 'numero', grupo: 'Proveedor' },
+    { col: 'tipo_insumo', label: 'Tipo de insumo', tipo: 'texto', grupo: 'Insumo', modos: PROD },
+    { col: 'insumo_codigo', label: 'Código', tipo: 'texto', grupo: 'Insumo', def: true, modos: PROD },
+    { col: 'insumo', label: 'Insumo', tipo: 'texto', grupo: 'Insumo', def: true, modos: PROD },
+    { col: 'unidad', label: 'Unidad', tipo: 'texto', grupo: 'Insumo', modos: PROD },
+    { col: 'cantidad', label: 'Cantidad', tipo: 'numero', grupo: 'Insumo', def: true, modos: PROD },
+    { col: 'precio_base', label: 'Precio sin IVA', tipo: 'moneda', grupo: 'Montos de la línea', def: true, modos: PROD },
+    { col: 'descuento_item', label: 'Descuento ítem %', tipo: 'pct', grupo: 'Montos de la línea', modos: PROD },
+    { col: 'aplica_iva', label: 'Aplica IVA', tipo: 'bool', grupo: 'Montos de la línea', modos: PROD },
+    { col: 'base_linea', label: 'Base de la línea (con descuentos)', tipo: 'moneda', grupo: 'Montos de la línea', def: true, modos: PROD },
+    { col: 'iva_linea', label: 'IVA de la línea (prorrateado)', tipo: 'moneda', grupo: 'Montos de la línea', modos: PROD,
+      aviso: 'El IVA oficial es el de la recepción, calculado sobre su base total: la suma por línea puede diferir por céntimos' },
+    { col: 'total_linea', label: 'Total de la línea', tipo: 'moneda', grupo: 'Montos de la línea', def: true, modos: PROD },
+    { col: 'descuento_global', label: 'Descuento global %', tipo: 'pct', grupo: 'Montos del documento' },
+    { col: 'base_gravada', label: 'Base gravada', tipo: 'moneda', grupo: 'Montos del documento' },
+    { col: 'base_exenta', label: 'Base exenta', tipo: 'moneda', grupo: 'Montos del documento' },
+    { col: 'iva', label: 'IVA', tipo: 'moneda', grupo: 'Montos del documento' },
+    { col: 'total', label: 'Total', tipo: 'moneda', grupo: 'Montos del documento', def: true },
+    { col: 'descuento_pronto_pago', label: 'Descuento por pronto pago', tipo: 'moneda', grupo: 'Montos del documento' },
+    { col: 'pagado', label: 'Pagado (incluye anticipos y ND aplicados)', tipo: 'moneda', grupo: 'Montos del documento' },
+    { col: 'aplicado_anticipos', label: 'Anticipos aplicados', tipo: 'moneda', grupo: 'Montos del documento' },
+    { col: 'aplicado_notas_debito', label: 'Notas de débito aplicadas', tipo: 'moneda', grupo: 'Montos del documento' },
+    { col: 'saldo', label: 'Saldo pendiente', tipo: 'moneda', grupo: 'Montos del documento', def: true },
+    { col: 'vencimiento', label: 'Vencimiento', tipo: 'fecha', grupo: 'Pago' },
+    { col: 'dias_vencida', label: 'Días vencida', tipo: 'numero', grupo: 'Pago' },
+    { col: 'lineas', label: 'Cantidad de líneas', tipo: 'numero', grupo: 'Montos del documento', modos: DOC },
+]
+
+const CAMPOS_CARTERA_CXP = [
+    ...CAMPOS_COMPRAS.filter(c => !c.modos || c.modos.includes('documento')).filter(c => !['anulada', 'lineas'].includes(c.col)),
+    { col: 'antiguedad_dias', label: 'Antigüedad (días desde la recepción)', tipo: 'numero', grupo: 'Pago', def: true },
+].map(c => c.col === 'vencimiento' || c.col === 'dias_vencida' ? { ...c, def: true } : c)
+
+// ── Pagos a proveedor ──
+const CAMPOS_PAGOS_PROV = [
+    { col: 'fecha', label: 'Fecha del pago', tipo: 'fecha', grupo: 'Pago', def: true },
+    { col: 'tipo', label: 'Tipo (pago / contado / anticipo / aplicación / ND)', tipo: 'texto', grupo: 'Pago', def: true },
+    { col: 'sale_de_caja', label: 'Sale de caja', tipo: 'bool', grupo: 'Pago', def: true,
+      aviso: 'Las aplicaciones de anticipo y de ND no son dinero: el anticipo ya salió en su propio renglón' },
+    { col: 'monto_usd', label: 'Monto USD', tipo: 'moneda', grupo: 'Pago', def: true },
+    { col: 'monto_bs', label: 'Monto Bs.', tipo: 'moneda', grupo: 'Pago', def: true },
+    { col: 'tasa_cambio', label: 'Tasa', tipo: 'numero', grupo: 'Pago' },
+    { col: 'tipo_tasa', label: 'Tipo de tasa', tipo: 'texto', grupo: 'Pago' },
+    { col: 'monto_equiv_usd', label: 'Equivalente USD', tipo: 'moneda', grupo: 'Pago', def: true },
+    { col: 'metodo_usd', label: 'Método USD', tipo: 'texto', grupo: 'Pago' },
+    { col: 'metodo_bs', label: 'Método Bs.', tipo: 'texto', grupo: 'Pago' },
+    { col: 'banco', label: 'Banco', tipo: 'texto', grupo: 'Pago' },
+    { col: 'cuenta', label: 'Cuenta', tipo: 'texto', grupo: 'Pago' },
+    { col: 'nota', label: 'Nota', tipo: 'texto', grupo: 'Pago' },
+    { col: 'registrado_por', label: 'Registrado por', tipo: 'texto', grupo: 'Pago' },
+    { col: 'anulado', label: 'Anulado', tipo: 'bool', grupo: 'Pago' },
+    { col: 'motivo_anulacion', label: 'Motivo de anulación', tipo: 'texto', grupo: 'Pago' },
+    { col: 'recepcion', label: 'N° recepción', tipo: 'texto', grupo: 'Documento', def: true },
+    { col: 'nro_doc_proveedor', label: 'Factura del proveedor', tipo: 'texto', grupo: 'Documento' },
+    { col: 'numero_anticipo', label: 'N° anticipo', tipo: 'texto', grupo: 'Documento' },
+    { col: 'proveedor', label: 'Proveedor', tipo: 'texto', grupo: 'Proveedor', def: true },
+    { col: 'proveedor_rif', label: 'RIF proveedor', tipo: 'texto', grupo: 'Proveedor' },
+]
+
+// ── Gastos ──
+const CAMPOS_GASTOS = [
+    { col: 'numero_gasto', label: 'N° gasto', tipo: 'texto', grupo: 'Gasto', def: true },
+    { col: 'fecha', label: 'Fecha', tipo: 'fecha', grupo: 'Gasto', def: true },
+    { col: 'tipo_gasto', label: 'Tipo de gasto', tipo: 'texto', grupo: 'Gasto', def: true },
+    { col: 'categoria', label: 'Categoría', tipo: 'texto', grupo: 'Gasto' },
+    { col: 'concepto', label: 'Concepto', tipo: 'texto', grupo: 'Gasto', def: true },
+    { col: 'descripcion', label: 'Descripción', tipo: 'texto', grupo: 'Gasto' },
+    { col: 'numero_factura', label: 'N° factura', tipo: 'texto', grupo: 'Gasto' },
+    { col: 'estado', label: 'Estado', tipo: 'texto', grupo: 'Gasto', def: true },
+    { col: 'anulado', label: 'Anulado', tipo: 'bool', grupo: 'Gasto' },
+    { col: 'motivo_anulacion', label: 'Motivo de anulación', tipo: 'texto', grupo: 'Gasto' },
+    { col: 'registrado_por', label: 'Registrado por', tipo: 'texto', grupo: 'Gasto' },
+    { col: 'proveedor', label: 'Proveedor', tipo: 'texto', grupo: 'Proveedor' },
+    { col: 'monto_usd', label: 'Monto USD', tipo: 'moneda', grupo: 'Montos' },
+    { col: 'monto_bs', label: 'Monto Bs.', tipo: 'moneda', grupo: 'Montos' },
+    { col: 'tasa_cambio', label: 'Tasa', tipo: 'numero', grupo: 'Montos' },
+    { col: 'tipo_tasa', label: 'Tipo de tasa', tipo: 'texto', grupo: 'Montos' },
+    { col: 'total_usd', label: 'Total USD', tipo: 'moneda', grupo: 'Montos', def: true },
+    { col: 'abonado', label: 'Abonado', tipo: 'moneda', grupo: 'Montos' },
+    { col: 'saldo', label: 'Saldo pendiente', tipo: 'moneda', grupo: 'Montos', def: true },
+    { col: 'vencimiento', label: 'Vencimiento', tipo: 'fecha', grupo: 'Pago' },
+    { col: 'metodo_pago', label: 'Método de pago', tipo: 'texto', grupo: 'Pago' },
+    { col: 'banco', label: 'Banco', tipo: 'texto', grupo: 'Pago' },
+    { col: 'cuenta', label: 'Cuenta', tipo: 'texto', grupo: 'Pago' },
+]
+
+// ── Movimientos de inventario ──
+const CAMPOS_MOVIMIENTOS = [
+    { col: 'fecha', label: 'Fecha', tipo: 'fecha', grupo: 'Movimiento', def: true },
+    { col: 'hora', label: 'Hora', tipo: 'texto', grupo: 'Movimiento' },
+    { col: 'tipo_movimiento', label: 'Entrada / salida', tipo: 'texto', grupo: 'Movimiento', def: true },
+    { col: 'origen', label: 'Origen', tipo: 'texto', grupo: 'Movimiento', def: true },
+    { col: 'notas', label: 'Notas', tipo: 'texto', grupo: 'Movimiento' },
+    { col: 'almacen', label: 'Almacén', tipo: 'texto', grupo: 'Movimiento', def: true },
+    { col: 'ubicacion', label: 'Ubicación', tipo: 'texto', grupo: 'Movimiento' },
+    { col: 'usuario', label: 'Usuario', tipo: 'texto', grupo: 'Movimiento' },
+    { col: 'tipo_item', label: 'Tipo de ítem', tipo: 'texto', grupo: 'Ítem' },
+    { col: 'item_codigo', label: 'Código', tipo: 'texto', grupo: 'Ítem', def: true },
+    { col: 'item_nombre', label: 'Ítem', tipo: 'texto', grupo: 'Ítem', def: true },
+    { col: 'cantidad', label: 'Cantidad', tipo: 'numero', grupo: 'Cantidades', def: true },
+    { col: 'stock_anterior', label: 'Stock anterior', tipo: 'numero', grupo: 'Cantidades' },
+    { col: 'stock_actual', label: 'Stock después', tipo: 'numero', grupo: 'Cantidades' },
+    { col: 'costo_actual', label: 'Costo unitario actual', tipo: 'moneda', grupo: 'Valor' },
+    { col: 'valor_costo_actual', label: 'Valor a costo actual', tipo: 'moneda', grupo: 'Valor',
+      aviso: 'Se valora con el costo promedio de hoy, no con el del día del movimiento' },
+]
+
 // Montos del documento repetidos en el detalle por producto
-const COLS_DEL_DOC = new Set(['base_gravada', 'base_exenta', 'iva', 'total', 'cobrado', 'nc_aplicadas', 'saldo',
+const COLS_DEL_DOC = new Set(['pagado', 'aplicado_anticipos', 'aplicado_notas_debito', 'descuento_pronto_pago', 'base_gravada', 'base_exenta', 'iva', 'total', 'cobrado', 'nc_aplicadas', 'saldo',
     'unidades_primarias', 'descuento_global', 'unidades_pedidas', 'unidades_alistadas'])
 
 const AVISO_COSTO = 'Costo estimado = Sí: venta anterior a 2026-10-03, sin foto del costo al facturar; se usa el costo promedio actual del producto'
@@ -234,6 +355,54 @@ export const FUENTES = {
         campos: CAMPOS_CARTERA_CXC,
         avisos: ['Estado actual de la cartera: no se filtra por fechas (igual que los indicadores de CxC del Dashboard)'],
         filtros: { fechaCol: null, cliente: 'cliente_id', canal: 'canal', vendedor: 'vendedor_id' },
+    },
+    compras: {
+        etiqueta: 'Compras',
+        vistas: {
+            documento: { vista: 'v_export_compras', orden: ['fecha_compra', 'compra_id'] },
+            producto: { vista: 'v_export_compras_detalle', orden: ['fecha_compra', 'compra_id', 'linea_id'] },
+        },
+        etiquetaDocumento: 'Por recepción',
+        campos: CAMPOS_COMPRAS,
+        avisos: ['Recepciones anteriores a 2026-10: la suma de sus líneas puede no coincidir con el total (esas líneas no guardaban si llevaban IVA y se tomó del catálogo actual). El total oficial es el de la recepción'],
+        // El filtro de producto del Dashboard aplica si ese producto se compró (PT comprado)
+        filtros: {
+            fechaCol: 'fecha_compra',
+            producto: { documento: { col: 'insumo_ids', op: 'contains' }, producto: { col: 'linea_insumo_id', op: 'eq' } },
+            anulados: 'anulada',
+        },
+    },
+    pagos_proveedor: {
+        etiqueta: 'Pagos a proveedor',
+        vistas: { documento: { vista: 'v_export_pagos_proveedor', orden: ['fecha', 'pago_id'] } },
+        etiquetaDocumento: 'Por pago',
+        campos: CAMPOS_PAGOS_PROV,
+        avisos: ['Incluye pagos contra recepciones, pagos de contado al recibir y anticipos. Para cuadrar con Bancos usa solo "Sale de caja = Sí"'],
+        filtros: { fechaCol: 'fecha', fechaTipo: 'date', anulados: 'anulado' },
+    },
+    cartera_cxp: {
+        etiqueta: 'Cartera CxP',
+        vistas: { documento: { vista: 'v_export_cartera_cxp', orden: ['fecha_compra', 'compra_id'] } },
+        etiquetaDocumento: 'Por recepción pendiente',
+        campos: CAMPOS_CARTERA_CXP,
+        avisos: ['Estado actual de las cuentas por pagar: no se filtra por fechas (igual que CxP)'],
+        filtros: { fechaCol: null },
+    },
+    gastos: {
+        etiqueta: 'Gastos',
+        vistas: { documento: { vista: 'v_export_gastos', orden: ['fecha', 'gasto_id'] } },
+        etiquetaDocumento: 'Por gasto',
+        campos: CAMPOS_GASTOS,
+        avisos: [],
+        filtros: { fechaCol: 'fecha', fechaTipo: 'date', anulados: 'anulado' },
+    },
+    movimientos: {
+        etiqueta: 'Movimientos de inventario',
+        vistas: { documento: { vista: 'v_export_movimientos', orden: ['fecha_hora', 'movimiento_id'] } },
+        etiquetaDocumento: 'Por movimiento',
+        campos: CAMPOS_MOVIMIENTOS,
+        avisos: [],
+        filtros: { fechaCol: 'fecha_hora', producto: { documento: { col: 'item_id', op: 'eq' } } },
     },
 }
 

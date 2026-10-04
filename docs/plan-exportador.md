@@ -1,6 +1,23 @@
 # Plan — Exportador de datos del Dashboard
 
-Estado: **Fase 1 desplegada (2026-10-03)**. Fases 2–3 pendientes de orden.
+Estado: **Fases 1–3 desplegadas (2026-10-03)**. Fase 4 (opcional) sin orden.
+
+Fase 2 — hecho (`exportador_fase2`): pedidos (documento/línea), cobros, cartera
+CxC + índice `pedido_items(pedido_id)`. Verificado: pedidos abiertos 6.420,24
+(tabla = vista = suma de líneas), cobros de septiembre 90.661,94 = tabla,
+cartera 67.496,89.
+
+Fase 3 — hecho (`exportador_fase3`, `exportador_fase3b_contado`): compras
+(documento/línea), pagos a proveedor (pagos, contado al recibir, anticipos y
+aplicaciones), cartera CxP, gastos, movimientos + índice
+`compra_items(compra_id)`. El pago de contado vive en la recepción
+(`compras.pago_usd/pago_bs`), no en `pagos_proveedor`: la 3b lo suma. Verificado:
+cartera CxP 9.343,40 = KPI de CxP; compras 69.019,53 = tabla; movimientos 4.107 =
+tabla. 18 recepciones viejas no cuadran líneas vs. total (sus líneas no
+guardaban IVA y se tomó del catálogo actual): avisado en el archivo.
+
+Fechas: todos los rangos se cortan a medianoche de Venezuela (Dashboard incluido,
+commit `b0c9126`).
 Fase por fase: cada una se despliega y se prueba antes de la siguiente.
 
 Fase 1 — hecho: migraciones `exportador_fase1` (vistas `v_export_ventas`,
