@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import { moverStock, moverStockLote, almacenPredeterminado } from '../lib/inventario'
 import { Plus, ChevronRight, X, AlertTriangle, Check, FlaskConical, Package, Search } from 'lucide-react'
+import { useAltoBarra, ThOrden, BarraFija, estiloTarjetaTabla } from '../components/TablaOrdenable'
 
 const fmt = (n, dec = 2) => Number(n || 0).toLocaleString('es-VE', { minimumFractionDigits: dec, maximumFractionDigits: dec })
 
@@ -81,6 +82,7 @@ export default function Produccion() {
     const [pageSize, setPageSize] = useState(50)
     const [sortCol, setSortCol] = useState('')
     const [sortDir, setSortDir] = useState('asc')
+    const [barraRef, altoBarra] = useAltoBarra([vista])
 
     useEffect(() => { cargar() }, [filtroEstado])
     useEffect(() => { setPagina(0) }, [busqueda, fechaDesde, fechaHasta, filtroEstado, pageSize])
@@ -189,8 +191,9 @@ export default function Produccion() {
                 ))}
             </div>
 
-            {/* Filtros */}
-            <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
+            {/* Filtros: fijos al hacer scroll */}
+            <BarraFija ref={barraRef}>
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
                 {[['todos', 'Todas'], ...Object.entries(ESTADO).map(([k, v]) => [k, v.label])].map(([val, lbl]) => (
                     <button key={val} onClick={() => setFiltroEstado(val)}
                         style={{
@@ -205,7 +208,7 @@ export default function Produccion() {
             </div>
 
             {/* Filtros: búsqueda + rango de fechas */}
-            <div style={{ display: 'flex', gap: '12px', marginBottom: '16px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            <div style={{ display: 'flex', gap: '12px', marginBottom: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
                 <div style={{ flex: 1, minWidth: '220px' }}>
                     <label style={{ fontSize: '12px', color: '#6b7280', display: 'block', marginBottom: '4px' }}>Buscar por SKU o descripción</label>
                     <div style={{ position: 'relative' }}>
@@ -232,9 +235,10 @@ export default function Produccion() {
                     </button>
                 )}
             </div>
+            </BarraFija>
 
             {/* Tabla */}
-            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+            <div style={estiloTarjetaTabla}>
                 {loading
                     ? <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
                     : filtrados.length === 0
@@ -244,7 +248,7 @@ export default function Produccion() {
                         : (
                             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                                 <thead>
-                                    <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                                    <tr>
                                         {[
                                             { key: 'numero',   label: 'N° Orden' },
                                             { key: 'lote',     label: 'Lote' },
@@ -255,15 +259,9 @@ export default function Produccion() {
                                             { key: 'estado',   label: 'Estado' },
                                             { key: '',         label: '' },
                                         ].map(col => (
-                                            <th key={col.key || 'acc'} onClick={() => handleSort(col.key)}
-                                                style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left', whiteSpace: 'nowrap', cursor: col.key ? 'pointer' : 'default', userSelect: 'none' }}>
-                                                {col.label}{col.key && ' '}
-                                                {col.key && (
-                                                    <span style={{ color: sortCol === col.key ? '#16a34a' : '#d1d5db' }}>
-                                                        {sortCol === col.key ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}
-                                                    </span>
-                                                )}
-                                            </th>
+                                            <ThOrden key={col.key || 'acc'} col={col.key || null} orden={{ col: sortCol, dir: sortDir }} onOrdenar={handleSort} top={altoBarra}>
+                                                {col.label}
+                                            </ThOrden>
                                         ))}
                                     </tr>
                                 </thead>

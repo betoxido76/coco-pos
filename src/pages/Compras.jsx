@@ -9,6 +9,8 @@ import { ConfirmacionPago, METODOS_USD, METODOS_BS } from '../components/ModalPa
 import FiltroCombo from '../components/FiltroCombo'
 import { totalesDeItems, totalesDocumento, totalesGuardados, precioBaseItem, camposIvaLinea, camposIvaHeredados, itemAplicaIva, IVA_PCT } from '../lib/iva'
 import AnticiposOC, { SelectorAnticipos, totalAplicaciones, aplicacionesALista, anticiposConSaldoDeOC, ModalCancelarOCConAnticipo } from '../components/AnticiposOC'
+import { useAltoBarra, useOrden, ordenarFilas, ThOrden, BarraFija, TopTitulos, estiloTarjetaTabla } from '../components/TablaOrdenable'
+import { traerTodas } from '../lib/traerTodas'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 
@@ -69,14 +71,25 @@ export default function Compras() {
     const [anticiposPorOC, setAnticiposPorOC] = useState({}) // oc_id -> { anticipado, saldo }
     const [ocCancelando, setOcCancelando] = useState(null)   // { oc, anticipos } al cancelar una OC con anticipo
 
-    useEffect(() => { if (perfil?.empresa_id) cargarOpcionesFiltros() }, [perfil?.empresa_id])
-    useEffect(() => { setPaginaOrdenes(0) }, [fOC, fProveedor, fEstado])
+    // Orden de cada lista (clic en el título) y alto de la barra fija
+    const DESC = ['numero', 'emision', 'entrega', 'fecha', 'total', 'anticipo', 'monto']
+    const [ordenOC, ordenarOC] = useOrden({ col: 'emision', dir: 'desc' }, DESC)
+    const [ordenRec, ordenarRec] = useOrden({ col: 'fecha', dir: 'desc' }, DESC)
+    const [ordenDev, ordenarDev] = useOrden({ col: 'fecha', dir: 'desc' }, DESC)
+    const [barraRef, altoBarra] = useAltoBarra([vista, tabActiva])
 
+    useEffect(() => { if (perfil?.empresa_id) cargarOpcionesFiltros() }, [perfil?.empresa_id])
+    useEffect(() => { setPaginaOrdenes(0) }, [fOC, fProveedor, fEstado, ordenOC])
+    useEffect(() => { setPaginaRecepciones(0) }, [ordenRec])
+    useEffect(() => { setPaginaDevoluciones(0) }, [ordenDev])
+
+    // Las listas traen todas las filas y se ordenan/paginan en el navegador,
+    // para poder ordenar por cualquier columna
     useEffect(() => {
         if (tabActiva === 'ordenes') cargarOrdenes()
         else if (tabActiva === 'recepciones') cargarRecepciones()
         else cargarDevoluciones()
-    }, [tabActiva, paginaOrdenes, paginaRecepciones, paginaDevoluciones, fOC, fProveedor, fEstado])
+    }, [tabActiva, fOC, fProveedor, fEstado])
 
     async function cargarOpcionesFiltros() {
         const [{ data: ocs }, { data: provs }] = await Promise.all([
@@ -93,28 +106,31 @@ export default function Compras() {
 
     async function cargarOrdenes() {
         setLoading(true)
-        let q = supabase
-            .from('ordenes_compra')
-            .select(`*, proveedores(nombre)`, { count: 'exact' })
-            .eq('empresa_id', perfil.empresa_id)
-        if (fOC) q = q.eq('id', fOC)
-        if (fProveedor) q = q.eq('proveedor_id', fProveedor)
-        if (fEstado) q = q.eq('estado', fEstado)
-        const { data, count } = await q
-            .order('created_at', { ascending: false })
-            .range(paginaOrdenes * PAGE_SIZE, (paginaOrdenes + 1) * PAGE_SIZE - 1)
-        if (data) setOrdenes(data)
-        if (count !== null) setTotalOrdenes(count)
+        const data = await traerTodas(() => {
+            let q = supabase
+                .from('ordenes_compra')
+                .select(`*, proveedores(nombre)`)
+                .eq('empresa_id', perfil.empresa_id)
+            if (fOC) q = q.eq('id', fOC)
+            if (fProveedor) q = q.eq('proveedor_id', fProveedor)
+            if (fEstado) q = q.eq('estado', fEstado)
+            return q.order('created_at', { ascending: false }).order('id')
+        }).catch(() => null)
+        if (data) { setOrdenes(data); setTotalOrdenes(data.length) }
 
+        // Anticipos de las OC, en bloques de 100 ids en paralelo
         const ids = (data || []).map(o => o.id)
         const mapa = {}
         if (ids.length > 0) {
-            const { data: ants } = await supabase.from('v_anticipos_saldo')
+            const bloques = []
+            for (let i = 0; i < ids.length; i += 100) bloques.push(ids.slice(i, i + 100))
+            const resp = await Promise.all(bloques.map(b => supabase.from('v_anticipos_saldo')
                 .select('orden_compra_id, monto_equiv_usd, saldo_usd')
                 .eq('empresa_id', perfil.empresa_id)
-                .in('orden_compra_id', ids)
-                .neq('estado', 'anulado')
-            ;(ants || []).forEach(a => {
+                .in('orden_compra_id', b)
+                .neq('estado', 'anulado')))
+            const ants = resp.flatMap(r => r.data || [])
+            ;ants.forEach(a => {
                 const m = mapa[a.orden_compra_id] || { anticipado: 0, saldo: 0 }
                 m.anticipado += Number(a.monto_equiv_usd || 0)
                 m.saldo += Number(a.saldo_usd || 0)
@@ -127,26 +143,25 @@ export default function Compras() {
 
     async function cargarRecepciones() {
         setLoading(true)
-        const { data, count } = await supabase
+        const data = await traerTodas(() => supabase
             .from('compras')
-            .select(`*, proveedores(nombre), ordenes_compra(numero_oc)`, { count: 'exact' })
+            .select(`*, proveedores(nombre), ordenes_compra(numero_oc)`)
+            .eq('empresa_id', perfil.empresa_id)
             .order('created_at', { ascending: false })
-            .range(paginaRecepciones * PAGE_SIZE, (paginaRecepciones + 1) * PAGE_SIZE - 1)
-        if (data) setRecepciones(data)
-        if (count !== null) setTotalRecepciones(count)
+            .order('id')).catch(() => null)
+        if (data) { setRecepciones(data); setTotalRecepciones(data.length) }
         setLoading(false)
     }
 
     async function cargarDevoluciones() {
         setLoading(true)
-        const { data, count } = await supabase
+        const data = await traerTodas(() => supabase
             .from('devoluciones_proveedor')
-            .select(`*, proveedores(nombre), compras(numero_doc)`, { count: 'exact' })
+            .select(`*, proveedores(nombre), compras(numero_doc)`)
             .eq('empresa_id', perfil.empresa_id)
             .order('created_at', { ascending: false })
-            .range(paginaDevoluciones * PAGE_SIZE, (paginaDevoluciones + 1) * PAGE_SIZE - 1)
-        if (data) setDevoluciones(data)
-        if (count !== null) setTotalDevoluciones(count)
+            .order('id')).catch(() => null)
+        if (data) { setDevoluciones(data); setTotalDevoluciones(data.length) }
         setLoading(false)
     }
 
@@ -162,6 +177,34 @@ export default function Compras() {
         await supabase.from('ordenes_compra').update({ estado: 'cancelada' }).eq('id', oc.id).eq('empresa_id', perfil.empresa_id)
         cargarOrdenes()
     }
+
+    const pagina = (filas, p) => filas.slice(p * PAGE_SIZE, (p + 1) * PAGE_SIZE)
+    const ordenesPagina = pagina(ordenarFilas(ordenes, {
+        numero: o => o.numero_oc,
+        proveedor: o => o.proveedores?.nombre,
+        emision: o => o.fecha_emision,
+        entrega: o => o.fecha_entrega_esperada,
+        total: o => Number(o.total || 0),
+        anticipo: o => anticiposPorOC[o.id] ? (anticiposPorOC[o.id].saldo > 0.01 ? anticiposPorOC[o.id].saldo : anticiposPorOC[o.id].anticipado) : null,
+        estado: o => o.estado,
+    }, ordenOC), paginaOrdenes)
+    const recepcionesPagina = pagina(ordenarFilas(recepciones, {
+        numero: r => r.numero_doc,
+        doc_prov: r => r.nro_doc_proveedor,
+        proveedor: r => r.proveedores?.nombre,
+        fecha: r => r.fecha_compra,
+        oc: r => r.ordenes_compra?.numero_oc,
+        total: r => Number(r.total || 0),
+        cobro: r => r.estado_cobro || 'pendiente',
+    }, ordenRec), paginaRecepciones)
+    const devolucionesPagina = pagina(ordenarFilas(devoluciones, {
+        numero: d => d.numero_nd,
+        proveedor: d => d.proveedores?.nombre,
+        fecha: d => d.created_at,
+        recepcion: d => d.compras?.numero_doc,
+        monto: d => Number(d.monto_total || 0),
+        estado: d => d.estado_nd,
+    }, ordenDev), paginaDevoluciones)
 
     if (vista === 'editar_oc')
         return <EditarOrden oc={ocAEditar} onGuardada={() => { cargarOrdenes(); setVista('lista') }} onCancelar={() => setVista('lista')} />
@@ -199,7 +242,9 @@ export default function Compras() {
                 </div>
             </div>
 
-            <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
+            {/* Pestañas + filtros: fijos al hacer scroll */}
+            <BarraFija ref={barraRef}>
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
                 {[
                     { key: 'ordenes', label: 'Órdenes de Compra', icon: ClipboardList },
                     { key: 'recepciones', label: 'Recepciones', icon: Truck },
@@ -219,7 +264,7 @@ export default function Compras() {
                 ))}
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: '12px', flexWrap: 'wrap', marginBottom: '16px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: '12px', flexWrap: 'wrap', marginBottom: '12px' }}>
                 {tabActiva === 'ordenes' ? (
                     <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
                         <FiltroCombo label="OC" value={fOC} onChange={setFOC} options={opcOC} width="160px" />
@@ -238,10 +283,12 @@ export default function Compras() {
                     <Plus size={16} /> {tabActiva === 'ordenes' ? 'Nueva Orden' : tabActiva === 'recepciones' ? 'Nueva Recepción' : 'Nueva Devolución'}
                 </button>
             </div>
+            </BarraFija>
 
+            <TopTitulos.Provider value={altoBarra}>
             {tabActiva === 'ordenes' && (
                 <>
-                    <TablaOrdenes ordenes={ordenes} loading={loading} onVer={abrirDetalleOC} filtrado={!!(fOC || fProveedor || fEstado)} anticipos={anticiposPorOC}
+                    <TablaOrdenes ordenes={ordenesPagina} orden={ordenOC} onOrdenar={ordenarOC} loading={loading} onVer={abrirDetalleOC} filtrado={!!(fOC || fProveedor || fEstado)} anticipos={anticiposPorOC}
                     onEditar={oc => { setOcAEditar(oc); setVista('editar_oc') }}
                     onAnular={anularOC} />
                     {totalOrdenes > PAGE_SIZE && (
@@ -265,7 +312,7 @@ export default function Compras() {
             )}
             {tabActiva === 'recepciones' && (
                 <>
-                    <TablaRecepciones recepciones={recepciones} loading={loading} onVer={abrirDetalleRecepcion} />
+                    <TablaRecepciones recepciones={recepcionesPagina} orden={ordenRec} onOrdenar={ordenarRec} loading={loading} onVer={abrirDetalleRecepcion} />
                     {totalRecepciones > PAGE_SIZE && (
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', marginTop: '8px' }}>
                             <span style={{ fontSize: '13px', color: '#6b7280' }}>
@@ -293,7 +340,7 @@ export default function Compras() {
             )}
             {tabActiva === 'devoluciones' && (
                 <>
-                    <TablaDevoluciones devoluciones={devoluciones} loading={loading} onVer={abrirDetalleDevolucion} />
+                    <TablaDevoluciones devoluciones={devolucionesPagina} orden={ordenDev} onOrdenar={ordenarDev} loading={loading} onVer={abrirDetalleDevolucion} />
                     {totalDevoluciones > PAGE_SIZE && (
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', marginTop: '8px' }}>
                             <span style={{ fontSize: '13px', color: '#6b7280' }}>
@@ -313,22 +360,25 @@ export default function Compras() {
                     )}
                 </>
             )}
+            </TopTitulos.Provider>
         </div>
     )
 }
 
 // ─── Tablas de Listado ──────────────────────────────────────
-function TablaOrdenes({ ordenes, loading, onVer, onEditar, onAnular, filtrado, anticipos = {} }) {
+// Títulos fijos (el alto de la barra llega por TopTitulos) y ordenables
+function TablaOrdenes({ ordenes, orden, onOrdenar, loading, onVer, onEditar, onAnular, filtrado, anticipos = {} }) {
     const editable = (estado) => estado === 'pendiente' || estado === 'aprobada'
     return (
-        <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+        <div style={estiloTarjetaTabla}>
             {loading ? <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af' }}>Cargando...</div> : ordenes.length === 0 ?
                 <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af' }}>{filtrado ? 'No hay órdenes para los filtros seleccionados.' : 'No hay órdenes registradas.'}</div> : (
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
-                            <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                {['OC #', 'Proveedor', 'Emisión', 'Entrega', 'Total', 'Anticipo', 'Estado', ''].map((h, i) => (
-                                    <th key={i} style={{ padding: '10px 16px', textAlign: i === 4 || i === 5 ? 'right' : 'left', fontSize: '12px', fontWeight: 500, color: '#6b7280' }}>{h}</th>
+                            <tr>
+                                {[['OC #', 'numero'], ['Proveedor', 'proveedor'], ['Emisión', 'emision'], ['Entrega', 'entrega'], ['Total', 'total'],
+                                  ['Anticipo', 'anticipo'], ['Estado', 'estado'], ['', null]].map(([h, col], i) => (
+                                    <ThOrden key={i} col={col} orden={orden} onOrdenar={onOrdenar} align={i === 4 || i === 5 ? 'right' : 'left'} style={{ padding: '10px 16px' }}>{h}</ThOrden>
                                 ))}
                             </tr>
                         </thead>
@@ -374,16 +424,17 @@ function TablaOrdenes({ ordenes, loading, onVer, onEditar, onAnular, filtrado, a
     )
 }
 
-function TablaRecepciones({ recepciones, loading, onVer }) {
+function TablaRecepciones({ recepciones, orden, onOrdenar, loading, onVer }) {
     return (
-        <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+        <div style={estiloTarjetaTabla}>
             {loading ? <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af' }}>Cargando...</div> : recepciones.length === 0 ?
                 <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af' }}>No hay recepciones registradas.</div> : (
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
-                            <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                {['Doc', 'Doc. Prov.', 'Proveedor', 'Fecha', 'OC Vinculada', 'Total', 'Cobro', ''].map((h, i) => (
-                                    <th key={i} style={{ padding: '10px 16px', textAlign: i === 5 ? 'right' : 'left', fontSize: '12px', fontWeight: 500, color: '#6b7280' }}>{h}</th>
+                            <tr>
+                                {[['Doc', 'numero'], ['Doc. Prov.', 'doc_prov'], ['Proveedor', 'proveedor'], ['Fecha', 'fecha'], ['OC Vinculada', 'oc'],
+                                  ['Total', 'total'], ['Cobro', 'cobro'], ['', null]].map(([h, col], i) => (
+                                    <ThOrden key={i} col={col} orden={orden} onOrdenar={onOrdenar} align={i === 5 ? 'right' : 'left'} style={{ padding: '10px 16px' }}>{h}</ThOrden>
                                 ))}
                             </tr>
                         </thead>
@@ -419,7 +470,7 @@ function TablaRecepciones({ recepciones, loading, onVer }) {
     )
 }
 
-function TablaDevoluciones({ devoluciones, loading, onVer }) {
+function TablaDevoluciones({ devoluciones, orden, onOrdenar, loading, onVer }) {
     const ND_ESTADOS = {
         pendiente:   { bg: '#fffbeb', color: '#854d0e', label: 'Pendiente' },
         aplicada:    { bg: '#dcfce7', color: '#166534', label: 'Aplicada' },
@@ -427,14 +478,15 @@ function TablaDevoluciones({ devoluciones, loading, onVer }) {
         anulada:     { bg: '#f3f4f6', color: '#6b7280', label: 'Anulada' },
     }
     return (
-        <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+        <div style={estiloTarjetaTabla}>
             {loading ? <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af' }}>Cargando...</div> : devoluciones.length === 0 ?
                 <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af' }}>No hay devoluciones registradas.</div> : (
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
-                            <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                {['N° ND', 'Proveedor', 'Fecha', 'Recepción origen', 'Monto', 'Estado', ''].map((h, i) => (
-                                    <th key={i} style={{ padding: '10px 16px', textAlign: i === 4 ? 'right' : 'left', fontSize: '12px', fontWeight: 500, color: '#6b7280' }}>{h}</th>
+                            <tr>
+                                {[['N° ND', 'numero'], ['Proveedor', 'proveedor'], ['Fecha', 'fecha'], ['Recepción origen', 'recepcion'], ['Monto', 'monto'],
+                                  ['Estado', 'estado'], ['', null]].map(([h, col], i) => (
+                                    <ThOrden key={i} col={col} orden={orden} onOrdenar={onOrdenar} align={i === 4 ? 'right' : 'left'} style={{ padding: '10px 16px' }}>{h}</ThOrden>
                                 ))}
                             </tr>
                         </thead>

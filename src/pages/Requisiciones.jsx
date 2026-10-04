@@ -15,6 +15,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { Plus, X, FileText, Trash2, Settings, Check } from 'lucide-react'
 import FiltroCombo from '../components/FiltroCombo'
 import { fmtFechaCorta } from '../components/SelectorFechaTasa'
+import { useAltoBarra, useOrden, ordenarFilas, ThOrden, BarraFija, estiloTarjetaTabla } from '../components/TablaOrdenable'
 
 const fmt = (n, dec = 2) => Number(n || 0).toLocaleString('es-VE', { minimumFractionDigits: 0, maximumFractionDigits: dec })
 const fmtUsd = n => `$${Number(n || 0).toFixed(2)}`
@@ -67,6 +68,8 @@ export default function Requisiciones() {
     const [fArea, setFArea] = useState('')
     const [fSolicitante, setFSolicitante] = useState('')
     const [modalAreas, setModalAreas] = useState(false)
+    const [barraRef, altoBarra] = useAltoBarra([vista])
+    const [orden, ordenarPor] = useOrden({ col: 'numero', dir: 'desc' }, ['numero', 'fecha', 'items'])
 
     async function cargarAreas() {
         const { data } = await supabase.from('areas_consumo').select('id, nombre, activa')
@@ -101,7 +104,15 @@ export default function Requisiciones() {
 
     const opcSolicitantes = [...new Map(reqs.filter(r => r.usuarios).map(r => [r.solicitante_id, { value: r.solicitante_id, label: r.usuarios.nombre }])).values()]
         .sort((a, b) => a.label.localeCompare(b.label))
-    const filtradas = reqs.filter(r => (!fArea || r.area_id === fArea) && (!fSolicitante || r.solicitante_id === fSolicitante))
+    const filtradas = ordenarFilas(reqs.filter(r => (!fArea || r.area_id === fArea) && (!fSolicitante || r.solicitante_id === fSolicitante)), {
+        numero: r => r.numero_requisicion,
+        fecha: r => r.fecha,
+        area: r => r.areas_consumo?.nombre,
+        solicitante: r => r.usuarios?.nombre,
+        almacen: r => r.almacenes?.nombre,
+        items: r => r.requisicion_items?.length || 0,
+        estado: r => r.estado,
+    }, orden)
 
     return (
         <div style={{ padding: '24px' }}>
@@ -124,24 +135,28 @@ export default function Requisiciones() {
                 </div>
             </div>
 
-            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: '16px' }}>
+            {/* Filtros: fijos al hacer scroll */}
+            <BarraFija ref={barraRef}>
+            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: '12px' }}>
                 <FiltroCombo label="Estado" value={fEstado} onChange={setFEstado} width="160px"
                     options={Object.entries(ESTADOS).map(([value, s]) => ({ value, label: s.label }))} />
                 <FiltroCombo label="Área" value={fArea} onChange={setFArea} width="200px"
                     options={areas.map(a => ({ value: a.id, label: a.nombre }))} />
                 <FiltroCombo label="Solicitante" value={fSolicitante} onChange={setFSolicitante} width="220px" options={opcSolicitantes} />
             </div>
+            </BarraFija>
 
-            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+            <div style={estiloTarjetaTabla}>
                 {cargando ? <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af' }}>Cargando...</div>
                     : filtradas.length === 0 ? <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af' }}>
                         {reqs.length === 0 && !fEstado ? 'No hay requisiciones registradas.' : 'No hay requisiciones para los filtros seleccionados.'}
                     </div> : (
                         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                             <thead>
-                                <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                    {['N°', 'Fecha', 'Área', 'Solicitante', 'Almacén', 'Ítems', 'Estado', ''].map((h, i) => (
-                                        <th key={i} style={{ padding: '10px 16px', textAlign: 'left', fontSize: '12px', fontWeight: 500, color: '#6b7280' }}>{h}</th>
+                                <tr>
+                                    {[['N°', 'numero'], ['Fecha', 'fecha'], ['Área', 'area'], ['Solicitante', 'solicitante'], ['Almacén', 'almacen'],
+                                      ['Ítems', 'items'], ['Estado', 'estado'], ['', null]].map(([h, col], i) => (
+                                        <ThOrden key={i} col={col} orden={orden} onOrdenar={ordenarPor} top={altoBarra} style={{ padding: '10px 16px' }}>{h}</ThOrden>
                                     ))}
                                 </tr>
                             </thead>

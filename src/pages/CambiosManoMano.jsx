@@ -3,6 +3,8 @@ import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import { moverStock, almacenPredeterminado } from '../lib/inventario'
 import { Plus, Search, Check, X, RefreshCw, Trash2, ArrowRight, ClipboardList, Eye } from 'lucide-react'
+import { useAltoBarra, useOrden, ordenarFilas, ThOrden, BarraFija, TopTitulos, estiloTarjetaTabla } from '../components/TablaOrdenable'
+import { traerTodas } from '../lib/traerTodas'
 
 const fmt = (n) => Number(n || 0).toLocaleString('es-VE', { minimumFractionDigits: 0, maximumFractionDigits: 3 })
 
@@ -56,7 +58,13 @@ export default function CambiosManoMano() {
     const [totalSolicitudes, setTotalSolicitudes] = useState(0)
     const [solicitudAProcesar, setSolicitudAProcesar] = useState(null)
 
-    useEffect(() => { cargarCambios(); cargarSolicitudes() }, [paginaCambios])
+    const [barraRef, altoBarra] = useAltoBarra([vista])
+    const DESC = ['numero', 'fecha', 'cantidad']
+    const [ordenCambios, ordenarCambios] = useOrden({ col: 'fecha', dir: 'desc' }, DESC)
+    const [ordenSolic, ordenarSolic] = useOrden({ col: 'fecha', dir: 'desc' }, DESC)
+
+    useEffect(() => { cargarCambios(); cargarSolicitudes() }, [])
+    useEffect(() => { setPaginaCambios(0) }, [ordenCambios])
     useEffect(() => {
         if (tabActiva === 'reproceso') cargarStock()
         if (tabActiva === 'solicitudes') cargarSolicitudes()
@@ -65,7 +73,8 @@ export default function CambiosManoMano() {
     async function cargarCambios() {
         setLoadingCambios(true)
 
-        const [{ data: kpiItems }, { count: docsCount }, { data, count }] = await Promise.all([
+        // Todos los cambios ejecutados: se ordenan y paginan en el navegador
+        const [{ data: kpiItems }, { count: docsCount }, data] = await Promise.all([
             supabase.from('cambio_items')
                 .select('cantidad, cambios_mano_mano!inner(estado)')
                 .eq('empresa_id', perfil.empresa_id)
@@ -74,19 +83,18 @@ export default function CambiosManoMano() {
                 .select('id', { count: 'exact', head: true })
                 .eq('empresa_id', perfil.empresa_id)
                 .eq('estado', 'ejecutado'),
-            supabase.from('cambios_mano_mano')
-                .select(`*, clientes(nombre), usuarios!cambios_mano_mano_despachador_id_fkey(nombre), almacenes(nombre), cambio_items(*, productos_terminados(nombre, sku, unidad_medida))`, { count: 'exact' })
+            traerTodas(() => supabase.from('cambios_mano_mano')
+                .select(`*, clientes(nombre), usuarios!cambios_mano_mano_despachador_id_fkey(nombre), almacenes(nombre), cambio_items(*, productos_terminados(nombre, sku, unidad_medida))`)
                 .eq('empresa_id', perfil.empresa_id)
                 .eq('estado', 'ejecutado')
                 .order('fecha', { ascending: false })
                 .order('created_at', { ascending: false })
-                .range(paginaCambios * PAGE_SIZE, (paginaCambios + 1) * PAGE_SIZE - 1),
+                .order('id')).catch(() => null),
         ])
 
         setKpiCambios(kpiItems || [])
         setTotalDocsCount(docsCount || 0)
-        if (data) setCambios(data)
-        if (count !== null) setTotalCambiosCount(count)
+        if (data) { setCambios(data); setTotalCambiosCount(data.length) }
         setLoadingCambios(false)
     }
 
@@ -123,6 +131,21 @@ export default function CambiosManoMano() {
     const totalCambios = totalDocsCount
     const unidadesEntregadas = kpiCambios.reduce((s, c) => s + Number(c.cantidad), 0)
     const enReproceso = stockReproceso.length
+
+    // Valores para ordenar: los de las columnas resumidas salen de resumirItems
+    const lectoresCambio = {
+        numero: c => c.numero_cambio,
+        fecha: c => c.fecha,
+        cliente: c => c.clientes?.nombre,
+        despachador: c => c.usuarios?.nombre,
+        producto: c => c.cambio_items?.[0]?.productos_terminados?.nombre,
+        cantidad: c => resumirItems(c.cambio_items).total,
+        motivo: c => { const r = resumirItems(c.cambio_items); return r.motivos.length === 1 ? (MOTIVOS.find(m => m.key === r.motivos[0])?.label || r.motivos[0]) : r.motivos.length ? 'Varios' : null },
+        destino: c => { const r = resumirItems(c.cambio_items); return r.destinos.length === 1 ? r.destinos[0] : r.destinos.length ? 'varios' : 'pendiente' },
+    }
+    const cambiosPagina = ordenarFilas(cambios, lectoresCambio, ordenCambios)
+        .slice(paginaCambios * PAGE_SIZE, (paginaCambios + 1) * PAGE_SIZE)
+    const solicitudesOrdenadas = ordenarFilas(solicitudes, lectoresCambio, ordenSolic)
 
     if (vista === 'ver')
         return <DocumentoCambio
@@ -179,8 +202,9 @@ export default function CambiosManoMano() {
                 ))}
             </div>
 
-            {/* Tabs */}
-            <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
+            {/* Tabs: fijas al hacer scroll */}
+            <BarraFija ref={barraRef}>
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
                 {[
                     { key: 'cambios', label: 'Cambios registrados' },
                     { key: 'solicitudes', label: 'Solicitudes de campo', badge: totalSolicitudes },
@@ -204,10 +228,12 @@ export default function CambiosManoMano() {
                     </button>
                 ))}
             </div>
+            </BarraFija>
 
+            <TopTitulos.Provider value={altoBarra}>
             {/* Tab Cambios */}
             {tabActiva === 'cambios' && (
-                <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                <div style={estiloTarjetaTabla}>
                     {loadingCambios ? (
                         <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
                     ) : cambios.length === 0 ? (
@@ -215,14 +241,15 @@ export default function CambiosManoMano() {
                     ) : (
                         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                             <thead>
-                                <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                    {['N° Cambio', 'Fecha', 'Cliente', 'Despachador', 'Producto', 'Cantidad', 'Motivo', 'Destino', ''].map((h, i) => (
-                                        <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
+                                <tr>
+                                    {[['N° Cambio', 'numero'], ['Fecha', 'fecha'], ['Cliente', 'cliente'], ['Despachador', 'despachador'], ['Producto', 'producto'],
+                                      ['Cantidad', 'cantidad'], ['Motivo', 'motivo'], ['Destino', 'destino'], ['', null]].map(([h, col], i) => (
+                                        <ThOrden key={i} col={col} orden={ordenCambios} onOrdenar={ordenarCambios} style={{ padding: '10px 16px' }}>{h}</ThOrden>
                                     ))}
                                 </tr>
                             </thead>
                             <tbody>
-                                {cambios.map(c => (
+                                {cambiosPagina.map(c => (
                                     <tr key={c.id} style={{ borderBottom: '1px solid #f3f4f6' }}
                                         onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
                                         onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
@@ -296,7 +323,7 @@ export default function CambiosManoMano() {
 
             {/* Tab Solicitudes de campo */}
             {tabActiva === 'solicitudes' && (
-                <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                <div style={estiloTarjetaTabla}>
                     {loadingSolicitudes ? (
                         <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
                     ) : solicitudes.length === 0 ? (
@@ -307,14 +334,15 @@ export default function CambiosManoMano() {
                     ) : (
                         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                             <thead>
-                                <tr style={{ backgroundColor: '#fffbeb', borderBottom: '1px solid #e5e7eb' }}>
-                                    {['N° Cambio', 'Fecha', 'Cliente', 'Producto', 'Cantidad', 'Motivo', '', ''].map((h, i) => (
-                                        <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
+                                <tr>
+                                    {[['N° Cambio', 'numero'], ['Fecha', 'fecha'], ['Cliente', 'cliente'], ['Producto', 'producto'],
+                                      ['Cantidad', 'cantidad'], ['Motivo', 'motivo'], ['', null], ['', null]].map(([h, col], i) => (
+                                        <ThOrden key={i} col={col} orden={ordenSolic} onOrdenar={ordenarSolic} style={{ padding: '10px 16px', backgroundColor: '#fffbeb' }}>{h}</ThOrden>
                                     ))}
                                 </tr>
                             </thead>
                             <tbody>
-                                {solicitudes.map(s => (
+                                {solicitudesOrdenadas.map(s => (
                                     <tr key={s.id} style={{ borderBottom: '1px solid #f3f4f6' }}
                                         onMouseEnter={e => e.currentTarget.style.backgroundColor = '#fffbeb'}
                                         onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
@@ -366,6 +394,7 @@ export default function CambiosManoMano() {
                     onActualizado={cargarStock}
                 />
             )}
+            </TopTitulos.Provider>
         </div>
     )
 }
@@ -376,6 +405,7 @@ export default function CambiosManoMano() {
 function TabStockReproceso({ stock, loading, onActualizado }) {
     const { perfil } = useAuth()
     const [modalSalida, setModalSalida] = useState(null)
+    const [orden, ordenarPor] = useOrden({ col: 'fecha', dir: 'desc' }, ['cantidad', 'fecha', 'origen'])
 
     async function procesarSalida(item, accion, notas, almacenDestino) {
         const { data: { user } } = await supabase.auth.getUser()
@@ -438,17 +468,23 @@ function TabStockReproceso({ stock, loading, onActualizado }) {
 
     return (
         <>
-            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+            <div style={estiloTarjetaTabla}>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead>
-                        <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                            {['Producto', 'Cantidad', 'Origen', 'Cliente', 'Fecha entrada', ''].map((h, i) => (
-                                <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
+                        <tr>
+                            {[['Producto', 'producto'], ['Cantidad', 'cantidad'], ['Origen', 'origen'], ['Cliente', 'cliente'], ['Fecha entrada', 'fecha'], ['', null]].map(([h, col], i) => (
+                                <ThOrden key={i} col={col} orden={orden} onOrdenar={ordenarPor} style={{ padding: '10px 16px' }}>{h}</ThOrden>
                             ))}
                         </tr>
                     </thead>
                     <tbody>
-                        {stock.map(item => (
+                        {ordenarFilas(stock, {
+                            producto: i => i.productos_terminados?.nombre,
+                            cantidad: i => Number(i.cantidad || 0),
+                            origen: i => i.cambios_mano_mano?.numero_cambio,
+                            cliente: i => i.cambios_mano_mano?.clientes?.nombre,
+                            fecha: i => i.fecha_entrada,
+                        }, orden).map(item => (
                             <tr key={item.id} style={{ borderBottom: '1px solid #f3f4f6' }}
                                 onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
                                 onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>

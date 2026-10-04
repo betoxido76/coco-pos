@@ -3,6 +3,8 @@ import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import { moverStock } from '../lib/inventario'
 import { Plus, Search, X, Check, AlertTriangle } from 'lucide-react'
+import { useAltoBarra, useOrden, ordenarFilas, ThOrden, BarraFija, estiloTarjetaTabla } from '../components/TablaOrdenable'
+import { traerTodas } from '../lib/traerTodas'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 
@@ -49,10 +51,11 @@ export default function Mermas() {
     const [modalAnular, setModalAnular] = useState(null)
     const [errorAnular, setErrorAnular] = useState('')
     const [pagina, setPagina] = useState(0)
-    const [totalRegistros, setTotalRegistros] = useState(0)
+    const [barraRef, altoBarra] = useAltoBarra([vista])
+    const [orden, ordenarPor] = useOrden({ col: 'fecha', dir: 'desc' }, ['numero', 'fecha', 'cantidad', 'perdida'])
 
-    useEffect(() => { setPagina(0) }, [filtroTipo, filtroMes, busqueda])
-    useEffect(() => { cargar() }, [filtroTipo, filtroMes, busqueda, pagina])
+    useEffect(() => { setPagina(0) }, [filtroTipo, filtroMes, busqueda, orden])
+    useEffect(() => { cargar() }, [filtroTipo, filtroMes, busqueda])
 
     async function cargar() {
         setLoading(true)
@@ -72,21 +75,25 @@ export default function Mermas() {
         if (filtroTipo !== 'todos') kpiQ = kpiQ.eq('tipo_merma', filtroTipo)
         kpiQ = buildFiltroMes(kpiQ)
 
-        let q = supabase.from('mermas')
-            .select('*, ventas(numero_factura), ubicaciones(nombre), usuarios(nombre)', { count: 'exact' })
-            .eq('empresa_id', perfil.empresa_id)
-            .eq('anulada', false)
-            .order('fecha', { ascending: false })
-            .order('created_at', { ascending: false })
-            .range(pagina * PAGE_SIZE, (pagina + 1) * PAGE_SIZE - 1)
-        if (filtroTipo !== 'todos') q = q.eq('tipo_merma', filtroTipo)
-        q = buildFiltroMes(q)
-        if (busqueda) q = q.or(`item_nombre.ilike.%${busqueda}%,item_codigo.ilike.%${busqueda}%,motivo.ilike.%${busqueda}%`)
+        // Todas las mermas del filtro: se ordenan y paginan en el navegador para
+        // poder ordenar por cualquier columna (también la pérdida estimada).
+        const construir = () => {
+            let q = supabase.from('mermas')
+                .select('*, ventas(numero_factura), ubicaciones(nombre), usuarios(nombre)')
+                .eq('empresa_id', perfil.empresa_id)
+                .eq('anulada', false)
+                .order('fecha', { ascending: false })
+                .order('created_at', { ascending: false })
+                .order('id')
+            if (filtroTipo !== 'todos') q = q.eq('tipo_merma', filtroTipo)
+            q = buildFiltroMes(q)
+            if (busqueda) q = q.or(`item_nombre.ilike.%${busqueda}%,item_codigo.ilike.%${busqueda}%,motivo.ilike.%${busqueda}%`)
+            return q
+        }
 
-        const [{ data: kpi }, { data, count }] = await Promise.all([kpiQ, q])
+        const [{ data: kpi }, data] = await Promise.all([kpiQ, traerTodas(construir).catch(() => null)])
         if (kpi) setKpiData(kpi)
         if (data) setMermas(data)
-        if (count !== null) setTotalRegistros(count)
         setLoading(false)
     }
 
@@ -124,6 +131,20 @@ export default function Mermas() {
     const perdidaTotal = kpiData.reduce((s, m) => s + (Number(m.cantidad) * Number(m.costo_unitario || 0)), 0)
     const porInventario = kpiData.filter(m => m.tipo_merma === 'inventario').length
     const porDespacho = kpiData.filter(m => m.tipo_merma === 'despacho').length
+
+    const mermasOrdenadas = ordenarFilas(mermas, {
+        numero: m => m.numero_merma,
+        fecha: m => m.fecha,
+        tipo: m => m.tipo_merma,
+        item: m => m.item_nombre,
+        cantidad: m => Number(m.cantidad || 0),
+        motivo: m => m.motivo,
+        perdida: m => m.costo_unitario ? Number(m.cantidad) * Number(m.costo_unitario) : null,
+        factura: m => m.ventas?.numero_factura,
+        usuario: m => m.usuarios?.nombre,
+    }, orden)
+    const totalRegistros = mermasOrdenadas.length
+    const mermasPagina = mermasOrdenadas.slice(pagina * PAGE_SIZE, (pagina + 1) * PAGE_SIZE)
 
     if (vista === 'nueva')
         return <NuevaMerma
@@ -172,8 +193,9 @@ export default function Mermas() {
                 </div>
             )}
 
-            {/* Filtros */}
-            <div style={{ display: 'flex', gap: '10px', marginBottom: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
+            {/* Filtros: fijos al hacer scroll */}
+            <BarraFija ref={barraRef}>
+            <div style={{ display: 'flex', gap: '10px', marginBottom: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
                 <div style={{ position: 'relative', flex: 1, minWidth: '200px' }}>
                     <Search size={15} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
                     <input type="text" placeholder="Buscar por ítem, código o motivo..."
@@ -203,9 +225,10 @@ export default function Mermas() {
                     </button>
                 )}
             </div>
+            </BarraFija>
 
             {/* Tabla */}
-            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+            <div style={estiloTarjetaTabla}>
                 {loading ? (
                     <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
                 ) : mermas.length === 0 ? (
@@ -213,16 +236,15 @@ export default function Mermas() {
                 ) : (
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead >
-                            <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }} >
-                                {['N° Merma', 'Fecha', 'Tipo', 'Ítem', 'Cantidad', 'Motivo', 'Pérdida est.', 'Factura vinculada', 'Usuario', ''].map((h, i) => (
-                                    <th key={i} style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left', whiteSpace: 'nowrap' }}>
-                                        {h}
-                                    </th>
+                            <tr>
+                                {[['N° Merma', 'numero'], ['Fecha', 'fecha'], ['Tipo', 'tipo'], ['Ítem', 'item'], ['Cantidad', 'cantidad'], ['Motivo', 'motivo'],
+                                  ['Pérdida est.', 'perdida'], ['Factura vinculada', 'factura'], ['Usuario', 'usuario'], ['', null]].map(([h, col], i) => (
+                                    <ThOrden key={i} col={col} orden={orden} onOrdenar={ordenarPor} top={altoBarra}>{h}</ThOrden>
                                 ))}
                             </tr>
                         </thead>
                         <tbody >
-                            {mermas.map(m => (
+                            {mermasPagina.map(m => (
                                 <tr key={m.id} style={{ borderBottom: '1px solid #f3f4f6' }}
                                     onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
                                     onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
