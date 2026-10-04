@@ -15,8 +15,8 @@ function aplicarFiltros(q, fuente, modo, f) {
     const m = fuente.filtros
     q = q.eq('empresa_id', f.empresaId)
     const esDate = m.fechaTipo === 'date'
-    if (f.desde) q = q.gte(m.fechaCol, esDate ? f.desde : inicioDiaCaracas(f.desde))
-    if (f.hasta) q = q.lte(m.fechaCol, esDate ? f.hasta : finDiaCaracas(f.hasta))
+    if (f.desde && m.fechaCol) q = q.gte(m.fechaCol, esDate ? f.desde : inicioDiaCaracas(f.desde))
+    if (f.hasta && m.fechaCol) q = q.lte(m.fechaCol, esDate ? f.hasta : finDiaCaracas(f.hasta))
     if (f.cliente && m.cliente) q = q.eq(m.cliente, f.cliente)
     if (f.canal && m.canal) q = q.eq(m.canal, f.canal)
     if (f.vendedor && m.vendedor) q = q.eq(m.vendedor, f.vendedor)

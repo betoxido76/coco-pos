@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { X, Download } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
-import { FUENTES, camposDe, gruposDe } from '../lib/exportador/catalogo'
+import { FUENTES, camposDe, gruposDe, filtrosIgnorados } from '../lib/exportador/catalogo'
 import { contarFilas, descargarFilas, generarArchivo } from '../lib/exportador/archivo'
 
 const claveSeleccion = (fuente, modo) => `mipos_export_${fuente}_${modo}`
@@ -35,7 +35,15 @@ export default function ExportadorDatos({ filtros, filtrosTexto, onCerrar }) {
     const { perfil } = useAuth()
     const [fuente, setFuente] = useState('ventas')
     const [modo, setModo] = useState('documento')
+    const modos = Object.keys(FUENTES[fuente].vistas)
     const campos = useMemo(() => camposDe(fuente, modo), [fuente, modo])
+    const ignorados = filtrosIgnorados(fuente, modo, filtros)
+
+    // Una fuente con un solo detalle (cobros, cartera) fuerza 'documento'
+    function elegirFuente(k) {
+        setFuente(k)
+        if (!FUENTES[k].vistas[modo]) setModo('documento')
+    }
     const [seleccion, setSeleccion] = useState(() => leerSeleccion('ventas', 'documento', camposDe('ventas', 'documento')))
     const [formato, setFormato] = useState('xlsx')
     const [incluirAnulados, setIncluirAnulados] = useState(false)
@@ -89,12 +97,13 @@ export default function ExportadorDatos({ filtros, filtrosTexto, onCerrar }) {
         try {
             const filas = await descargarFilas(fuente, modo, elegidos.map(c => c.col), filtrosConsulta, setProgreso)
             const def = FUENTES[fuente]
-            const detalle = modo === 'documento' ? 'Por documento' : 'Por producto'
+            const detalle = modo === 'documento' ? (def.etiquetaDocumento || 'Por documento') : 'Por producto'
             generarArchivo(filas, elegidos, formato, {
                 fuente: def.etiqueta, detalle,
-                filtrosTexto: [filtrosTexto, incluirAnulados ? 'Incluye anulados' : 'Sin anulados'].filter(Boolean).join(' · '),
+                filtrosTexto: [filtrosTexto, def.filtros.anulados && (incluirAnulados ? 'Incluye anulados' : 'Sin anulados'),
+                    ignorados.length && `No aplicados en esta fuente: ${ignorados.join(', ')}`].filter(Boolean).join(' · '),
                 filas: filas.length, usuario: perfil?.nombre, avisos: def.avisos,
-            }, `MiPOS_${def.etiqueta}_${modo === 'documento' ? 'documentos' : 'productos'}_${filtros.desde || ''}_${filtros.hasta || ''}`)
+            }, `MiPOS_${def.etiqueta.replace(/\s+/g, '_')}_${modo === 'documento' ? 'documentos' : 'productos'}${def.filtros.fechaCol ? `_${filtros.desde || ''}_${filtros.hasta || ''}` : ''}`)
         } catch (e) {
             setError('No se pudo generar el archivo: ' + e.message)
         } finally {
@@ -117,20 +126,25 @@ export default function ExportadorDatos({ filtros, filtrosTexto, onCerrar }) {
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                         <span style={{ fontSize: '12px', fontWeight: 600, color: '#6b7280', width: '64px' }}>Qué</span>
                         {Object.entries(FUENTES).map(([k, f]) => (
-                            <button key={k} onClick={() => setFuente(k)} style={radio(fuente === k)}>{f.etiqueta}</button>
+                            <button key={k} onClick={() => elegirFuente(k)} style={radio(fuente === k)}>{f.etiqueta}</button>
                         ))}
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <span style={{ fontSize: '12px', fontWeight: 600, color: '#6b7280', width: '64px' }}>Detalle</span>
-                        <button onClick={() => setModo('documento')} style={radio(modo === 'documento')}>Por documento</button>
-                        <button onClick={() => setModo('producto')} style={radio(modo === 'producto')}>Por producto</button>
+                        <button onClick={() => setModo('documento')} style={radio(modo === 'documento')}>{FUENTES[fuente].etiquetaDocumento || 'Por documento'}</button>
+                        {modos.includes('producto') && <button onClick={() => setModo('producto')} style={radio(modo === 'producto')}>Por producto</button>}
                     </div>
                     <div style={{ fontSize: '12px', color: '#6b7280', backgroundColor: '#f9fafb', borderRadius: '8px', padding: '8px 10px' }}>
                         <strong>Filtros del dashboard:</strong> {filtrosTexto || 'ninguno'}
+                        {ignorados.length > 0 && (
+                            <div style={{ color: '#92400e', marginTop: '4px' }}>⚠ Esta fuente no aplica: {ignorados.join(', ')}</div>
+                        )}
                     </div>
-                    <label style={{ fontSize: '13px', color: '#374151', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
-                        <input type="checkbox" checked={incluirAnulados} onChange={e => setIncluirAnulados(e.target.checked)} /> Incluir anulados
-                    </label>
+                    {FUENTES[fuente].filtros.anulados && (
+                        <label style={{ fontSize: '13px', color: '#374151', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
+                            <input type="checkbox" checked={incluirAnulados} onChange={e => setIncluirAnulados(e.target.checked)} /> Incluir anulados
+                        </label>
+                    )}
                 </div>
 
                 <div style={{ flex: 1, overflowY: 'auto', padding: '12px 20px' }}>

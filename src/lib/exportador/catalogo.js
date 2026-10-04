@@ -86,8 +86,100 @@ const CAMPOS_VENTAS = [
     { col: 'linea_costo_estimado', label: 'Costo estimado', tipo: 'bool', grupo: 'Costo y margen', modos: PROD },
 ]
 
+// ── Pedidos ──
+const CAMPOS_PEDIDOS = [
+    { col: 'numero_pedido', label: 'N° pedido', tipo: 'texto', grupo: 'Documento', def: true },
+    { col: 'fecha', label: 'Fecha', tipo: 'fecha', grupo: 'Documento', def: true },
+    { col: 'hora', label: 'Hora', tipo: 'texto', grupo: 'Documento' },
+    { col: 'estado', label: 'Estado', tipo: 'texto', grupo: 'Documento', def: true },
+    { col: 'origen', label: 'Origen (oficina / campo)', tipo: 'texto', grupo: 'Documento' },
+    { col: 'anulado', label: 'Rechazado / anulado', tipo: 'bool', grupo: 'Documento' },
+    { col: 'fecha_entrega', label: 'Fecha de entrega', tipo: 'fecha', grupo: 'Documento' },
+    { col: 'fecha_despacho', label: 'Fecha de despacho (programada)', tipo: 'fecha', grupo: 'Documento' },
+    { col: 'oc_cliente', label: 'O/C del cliente', tipo: 'texto', grupo: 'Documento' },
+    { col: 'nota_entrega', label: 'Nota de entrega', tipo: 'texto', grupo: 'Documento' },
+    { col: 'notas', label: 'Notas', tipo: 'texto', grupo: 'Documento' },
+    { col: 'motivo_rechazo', label: 'Motivo de rechazo', tipo: 'texto', grupo: 'Documento' },
+    { col: 'motivo_anulacion', label: 'Motivo de anulación', tipo: 'texto', grupo: 'Documento' },
+    { col: 'cliente_codigo', label: 'Código cliente', tipo: 'texto', grupo: 'Cliente' },
+    { col: 'cliente', label: 'Cliente', tipo: 'texto', grupo: 'Cliente', def: true },
+    { col: 'cliente_rif', label: 'RIF / CI', tipo: 'texto', grupo: 'Cliente' },
+    { col: 'canal', label: 'Canal (categoría 1)', tipo: 'texto', grupo: 'Cliente' },
+    { col: 'cliente_cat2', label: 'Categoría 2', tipo: 'texto', grupo: 'Cliente' },
+    { col: 'direccion_entrega_nombre', label: 'Punto de entrega', tipo: 'texto', grupo: 'Entrega' },
+    { col: 'direccion_entrega_texto', label: 'Dirección de entrega', tipo: 'texto', grupo: 'Entrega' },
+    { col: 'direccion_ciudad', label: 'Ciudad', tipo: 'texto', grupo: 'Entrega' },
+    { col: 'vendedor', label: 'Vendedor', tipo: 'texto', grupo: 'Vendedor', def: true },
+    { col: 'lista_precio', label: 'Lista de precio', tipo: 'texto', grupo: 'Vendedor' },
+    { col: 'sku', label: 'SKU', tipo: 'texto', grupo: 'Producto', def: true, modos: PROD },
+    { col: 'producto', label: 'Producto', tipo: 'texto', grupo: 'Producto', def: true, modos: PROD },
+    { col: 'tipo_producto', label: 'Tipo de producto', tipo: 'texto', grupo: 'Producto', modos: PROD },
+    { col: 'producto_cat1', label: 'Categoría producto 1', tipo: 'texto', grupo: 'Producto', modos: PROD },
+    { col: 'producto_cat2', label: 'Categoría producto 2', tipo: 'texto', grupo: 'Producto', modos: PROD },
+    { col: 'unidad_venta', label: 'Unidad de venta', tipo: 'texto', grupo: 'Producto', modos: PROD },
+    { col: 'cantidad_pedida', label: 'Cantidad pedida (unidad de venta)', tipo: 'numero', grupo: 'Producto', def: true, modos: PROD },
+    { col: 'linea_unidades_pedidas', label: 'Unidades pedidas (primaria)', tipo: 'numero', grupo: 'Producto', modos: PROD },
+    { col: 'linea_unidades_alistadas', label: 'Unidades alistadas (primaria)', tipo: 'numero', grupo: 'Producto', modos: PROD },
+    { col: 'estado_linea', label: 'Estado de la línea', tipo: 'texto', grupo: 'Producto', modos: PROD },
+    { col: 'precio_base', label: 'Precio sin IVA', tipo: 'moneda', grupo: 'Montos de la línea', def: true, modos: PROD },
+    { col: 'descuento_item', label: 'Descuento ítem %', tipo: 'pct', grupo: 'Montos de la línea', modos: PROD },
+    { col: 'aplica_iva', label: 'Aplica IVA', tipo: 'bool', grupo: 'Montos de la línea', modos: PROD },
+    { col: 'base_linea', label: 'Base de la línea (con descuentos)', tipo: 'moneda', grupo: 'Montos de la línea', def: true, modos: PROD },
+    { col: 'iva_linea', label: 'IVA de la línea (prorrateado)', tipo: 'moneda', grupo: 'Montos de la línea', modos: PROD,
+      aviso: 'El IVA oficial es el del pedido, calculado sobre su base total: la suma por línea puede diferir por céntimos' },
+    { col: 'total_linea', label: 'Total de la línea', tipo: 'moneda', grupo: 'Montos de la línea', def: true, modos: PROD },
+    { col: 'descuento_global', label: 'Descuento global %', tipo: 'pct', grupo: 'Montos del documento' },
+    { col: 'base_gravada', label: 'Base gravada', tipo: 'moneda', grupo: 'Montos del documento' },
+    { col: 'base_exenta', label: 'Base exenta', tipo: 'moneda', grupo: 'Montos del documento' },
+    { col: 'iva', label: 'IVA', tipo: 'moneda', grupo: 'Montos del documento' },
+    { col: 'total', label: 'Total', tipo: 'moneda', grupo: 'Montos del documento', def: true },
+    { col: 'lineas', label: 'Cantidad de líneas', tipo: 'numero', grupo: 'Montos del documento', modos: DOC },
+    { col: 'unidades_pedidas', label: 'Unidades pedidas del pedido', tipo: 'numero', grupo: 'Montos del documento' },
+    { col: 'unidades_alistadas', label: 'Unidades alistadas del pedido', tipo: 'numero', grupo: 'Montos del documento' },
+]
+
+// ── Cobros ──
+const CAMPOS_COBROS = [
+    { col: 'fecha', label: 'Fecha del pago', tipo: 'fecha', grupo: 'Cobro', def: true },
+    { col: 'registrado_el', label: 'Registrado el', tipo: 'fecha', grupo: 'Cobro' },
+    { col: 'registrado_por', label: 'Registrado por', tipo: 'texto', grupo: 'Cobro' },
+    { col: 'monto_usd', label: 'Monto USD', tipo: 'moneda', grupo: 'Cobro', def: true },
+    { col: 'monto_bs', label: 'Monto Bs.', tipo: 'moneda', grupo: 'Cobro', def: true },
+    { col: 'tasa_cambio', label: 'Tasa', tipo: 'numero', grupo: 'Cobro' },
+    { col: 'tipo_tasa', label: 'Tipo de tasa', tipo: 'texto', grupo: 'Cobro' },
+    { col: 'monto_equiv_usd', label: 'Equivalente USD', tipo: 'moneda', grupo: 'Cobro', def: true },
+    { col: 'metodo_usd', label: 'Método USD', tipo: 'texto', grupo: 'Cobro' },
+    { col: 'metodo_bs', label: 'Método Bs.', tipo: 'texto', grupo: 'Cobro' },
+    { col: 'banco', label: 'Banco', tipo: 'texto', grupo: 'Cobro' },
+    { col: 'cuenta', label: 'Cuenta', tipo: 'texto', grupo: 'Cobro' },
+    { col: 'numero_cuenta', label: 'N° de cuenta', tipo: 'texto', grupo: 'Cobro' },
+    { col: 'nota', label: 'Nota', tipo: 'texto', grupo: 'Cobro' },
+    { col: 'es_nota_credito', label: 'Es nota de crédito aplicada', tipo: 'bool', grupo: 'Cobro', def: true,
+      aviso: 'Una NC aplicada como cobro no es dinero: fíltrala para cuadrar con Bancos' },
+    { col: 'numero_nc', label: 'N° NC', tipo: 'texto', grupo: 'Cobro' },
+    { col: 'contribuyente_especial', label: 'Contribuyente especial (al pagar)', tipo: 'bool', grupo: 'Cobro' },
+    { col: 'numero_factura', label: 'N° nota', tipo: 'texto', grupo: 'Nota cobrada', def: true },
+    { col: 'fecha_nota', label: 'Fecha de la nota', tipo: 'fecha', grupo: 'Nota cobrada' },
+    { col: 'total_nota', label: 'Total de la nota', tipo: 'moneda', grupo: 'Nota cobrada' },
+    { col: 'estado_cobro', label: 'Estado de cobro', tipo: 'texto', grupo: 'Nota cobrada' },
+    { col: 'cliente_codigo', label: 'Código cliente', tipo: 'texto', grupo: 'Cliente' },
+    { col: 'cliente', label: 'Cliente', tipo: 'texto', grupo: 'Cliente', def: true },
+    { col: 'cliente_rif', label: 'RIF / CI', tipo: 'texto', grupo: 'Cliente' },
+    { col: 'canal', label: 'Canal (categoría 1)', tipo: 'texto', grupo: 'Cliente' },
+    { col: 'vendedor', label: 'Vendedor', tipo: 'texto', grupo: 'Cliente' },
+]
+
+// ── Cartera CxC: estado actual ──
+const CAMPOS_CARTERA_CXC = [
+    ...CAMPOS_VENTAS.filter(c => !c.modos || c.modos.includes('documento'))
+        .filter(c => !['anulada', 'costo', 'margen', 'margen_pct', 'costo_estimado', 'lineas'].includes(c.col)),
+    { col: 'antiguedad_dias', label: 'Antigüedad (días desde la emisión)', tipo: 'numero', grupo: 'Cobranza', def: true },
+    { col: 'tramo_antiguedad', label: 'Tramo de antigüedad', tipo: 'texto', grupo: 'Cobranza', def: true },
+].map(c => c.col === 'vencimiento' || c.col === 'dias_vencida' ? { ...c, def: true } : c)
+
 // Montos del documento repetidos en el detalle por producto
-const COLS_DEL_DOC = new Set(['base_gravada', 'base_exenta', 'iva', 'total', 'cobrado', 'nc_aplicadas', 'saldo', 'unidades_primarias'])
+const COLS_DEL_DOC = new Set(['base_gravada', 'base_exenta', 'iva', 'total', 'cobrado', 'nc_aplicadas', 'saldo',
+    'unidades_primarias', 'descuento_global', 'unidades_pedidas', 'unidades_alistadas'])
 
 const AVISO_COSTO = 'Costo estimado = Sí: venta anterior a 2026-10-03, sin foto del costo al facturar; se usa el costo promedio actual del producto'
 
@@ -112,6 +204,49 @@ export const FUENTES = {
             anulados: 'anulada',
         },
     },
+    pedidos: {
+        etiqueta: 'Pedidos',
+        vistas: {
+            documento: { vista: 'v_export_pedidos', orden: ['fecha_pedido', 'pedido_id'] },
+            producto: { vista: 'v_export_pedidos_detalle', orden: ['fecha_pedido', 'pedido_id', 'linea_id'] },
+        },
+        campos: CAMPOS_PEDIDOS,
+        avisos: ['Los montos de un pedido alistado/facturado usan lo alistado; uno pendiente o aprobado, lo pedido'],
+        filtros: {
+            fechaCol: 'fecha_pedido',
+            cliente: 'cliente_id', canal: 'canal', vendedor: 'vendedor_id',
+            producto: { documento: { col: 'producto_ids', op: 'contains' }, producto: { col: 'linea_producto_id', op: 'eq' } },
+            anulados: 'anulado',
+        },
+    },
+    cobros: {
+        etiqueta: 'Cobros',
+        vistas: { documento: { vista: 'v_export_cobros', orden: ['fecha_cobro', 'cobro_id'] } },
+        etiquetaDocumento: 'Por cobro',
+        campos: CAMPOS_COBROS,
+        avisos: ['Fecha = fecha real del pago (no la del registro), en hora de Venezuela'],
+        filtros: { fechaCol: 'fecha_cobro', cliente: 'cliente_id', canal: 'canal', vendedor: 'vendedor_id', anulados: 'anulado' },
+    },
+    cartera_cxc: {
+        etiqueta: 'Cartera CxC',
+        vistas: { documento: { vista: 'v_export_cartera_cxc', orden: ['created_at', 'venta_id'] } },
+        etiquetaDocumento: 'Por nota pendiente',
+        campos: CAMPOS_CARTERA_CXC,
+        avisos: ['Estado actual de la cartera: no se filtra por fechas (igual que los indicadores de CxC del Dashboard)'],
+        filtros: { fechaCol: null, cliente: 'cliente_id', canal: 'canal', vendedor: 'vendedor_id' },
+    },
+}
+
+// Filtros del Dashboard que una fuente no puede aplicar (para avisar en el panel)
+export function filtrosIgnorados(fuenteKey, modo, filtros) {
+    const m = FUENTES[fuenteKey].filtros
+    const fuera = []
+    if ((filtros.desde || filtros.hasta) && !m.fechaCol) fuera.push('fechas')
+    if (filtros.cliente && !m.cliente) fuera.push('cliente')
+    if (filtros.canal && !m.canal) fuera.push('canal')
+    if (filtros.vendedor && !m.vendedor) fuera.push('vendedor')
+    if (filtros.producto && !m.producto?.[modo]) fuera.push('producto')
+    return fuera
 }
 
 // Campos de una fuente disponibles para un detalle, con el aviso de "del documento"
