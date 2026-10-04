@@ -501,7 +501,7 @@ function DetallePedido({ pedido, onVolver }) {
 
     useEffect(() => {
         supabase.from('pedido_items')
-            .select('*, productos_terminados(nombre, sku, aplica_iva, factor_conversion_2, unidad_medida, unidad_venta_2)')
+            .select('*, productos_terminados(nombre, sku, aplica_iva, factor_conversion_2, unidad_medida, unidad_venta_2, costo_promedio)')
             .eq('pedido_id', pedido.id)
             .then(({ data }) => { if (data) setItems(data); setLoading(false) })
     }, [pedido.id])
@@ -748,7 +748,7 @@ function DetallePedido({ pedido, onVolver }) {
         const nuevoDescGlobal = Math.min(100, Math.max(0, Number(descGlobalEdit) || 0))
         await supabase.from('pedidos').update({ descuento_global: nuevoDescGlobal }).eq('id', pedido.id)
         const { data } = await supabase.from('pedido_items')
-            .select('*, productos_terminados(nombre, sku, aplica_iva, factor_conversion_2, unidad_medida, unidad_venta_2)')
+            .select('*, productos_terminados(nombre, sku, aplica_iva, factor_conversion_2, unidad_medida, unidad_venta_2, costo_promedio)')
             .eq('pedido_id', pedido.id)
         if (data) setItems(data)
         setDescGlobalActual(nuevoDescGlobal)

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
-import { X, FileText } from 'lucide-react'
+import { X, FileText, Download } from 'lucide-react'
 import { Factura } from './Ventas'
 import TabResumen from './DashboardResumen'
 import { unidadesDeLinea } from '../lib/productos'
@@ -13,6 +13,7 @@ import {
     LineChart, Line, XAxis, YAxis, CartesianGrid,
 } from 'recharts'
 import FiltroCombo from '../components/FiltroCombo'
+import ExportadorDatos from '../components/ExportadorDatos'
 
 // ─── Formato ───────────────────────────────────────────────────
 const fmt = n => `$${Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -116,6 +117,7 @@ function TabComercial() {
 
     // Vista de Nota de Entrega (misma pantalla que el botón "Ver" de Ventas)
     const [ventaVista, setVentaVista] = useState(null)
+    const [exportando, setExportando] = useState(false)   // panel "Exportar datos" (docs/plan-exportador.md)
     const [cargandoVenta, setCargandoVenta] = useState(null) // id en curso
 
     async function abrirFactura(ventaId) {
@@ -721,7 +723,24 @@ function TabComercial() {
                         style={{ padding: '8px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 500, border: '1px solid #e5e7eb', backgroundColor: '#f9fafb', color: '#374151', cursor: 'pointer' }}>
                         Limpiar
                     </button>
+                    <button onClick={() => setExportando(true)}
+                        style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 600, border: '1px solid #16a34a', backgroundColor: '#f0fdf4', color: '#166534', cursor: 'pointer' }}>
+                        <Download size={15} /> Exportar datos
+                    </button>
                 </div>
+                {exportando && (
+                    <ExportadorDatos
+                        filtros={{ desde, hasta, producto: fProducto, cliente: fCliente, canal: fCanal, vendedor: fVendedor }}
+                        filtrosTexto={[
+                            `${desde.split('-').reverse().join('/')} – ${hasta.split('-').reverse().join('/')}`,
+                            fProducto && `Producto: ${opcProductos.find(([id]) => id === fProducto)?.[1] || ''}`,
+                            fCliente && `Cliente: ${opcClientes.find(([id]) => id === fCliente)?.[1] || ''}`,
+                            fCanal && `Canal: ${fCanal}`,
+                            fVendedor && `Vendedor: ${opcVendedores.find(([id]) => id === fVendedor)?.[1] || ''}`,
+                        ].filter(Boolean).join(' · ')}
+                        onCerrar={() => setExportando(false)}
+                    />
+                )}
                 <div style={{ marginTop: '14px', paddingTop: '12px', borderTop: '1px solid #f3f4f6', fontSize: '12px', color: '#9ca3af' }}>
                     {totalFacturas.toLocaleString('es-VE')} factura{totalFacturas === 1 ? '' : 's'} en el rango filtrado
                 </div>

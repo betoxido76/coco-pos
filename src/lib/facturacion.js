@@ -11,7 +11,7 @@
 
 import { precioBaseItem, itemAplicaIva, totalesDocumento, IVA_PCT } from './iva'
 
-// Los items deben traer productos_terminados(aplica_iva, unidad_venta_2, factor_conversion_2)
+// Los items deben traer productos_terminados(aplica_iva, unidad_venta_2, factor_conversion_2, costo_promedio)
 export const esLineaUM2 = (item) => {
     const uv = item.unidad_venta
     const uv2 = item.productos_terminados?.unidad_venta_2
@@ -62,6 +62,10 @@ export function prepararFacturaPedido(items, descGlobalPct = 0) {
             iva_pct: aplica ? IVA_PCT : 0,
             precio_incluye_iva: false,
             base_linea: Math.round(cantidad * precio * 10000) / 10000,
+            // Foto del costo al facturar, por unidad de venta (exportador: margen)
+            costo_unitario: i.productos_terminados?.costo_promedio != null
+                ? Math.round(Number(i.productos_terminados.costo_promedio) * factorLinea(i) * 10000) / 10000
+                : null,
             _cantPrim: cantidadPrimaria(i),
         }
     })

@@ -390,6 +390,7 @@ Al cerrar un ítem, borrarlo de esta tabla.
 - **Filtros de lista**: usar `src/components/FiltroCombo.jsx` (lista + búsqueda por
   cualquier parte del texto, sin acentos ni mayúsculas; `value=''` = Todos; prop
   `disabled`). No usar `<select>` para filtros; los `<select>` de formularios siguen igual.
+- **Exportador del Dashboard** (`docs/plan-exportador.md`): una vista plana `v_export_*` por fuente (security_invoker) + catálogo de campos en `src/lib/exportador/catalogo.js`. Agregar un campo = columna en la vista + entrada en el catálogo; no cruzar tablas desde la pantalla.
 - Formato de moneda USD: `fmt(n)` → `$X.XX`
 - Formato de moneda Bs: `fmtBs(n)` → `X.XX Bs.`
 - **localStorage cache keys** (prefijo `mipos_`):

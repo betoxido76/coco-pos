@@ -364,7 +364,7 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
 
     useEffect(() => {
         supabase.from('pedido_items')
-            .select('*, productos_terminados(nombre, sku, stock_actual, aplica_iva, tipo_producto, unidad_venta_2, factor_conversion_2)')
+            .select('*, productos_terminados(nombre, sku, stock_actual, aplica_iva, tipo_producto, unidad_venta_2, factor_conversion_2, costo_promedio)')
             .eq('pedido_id', pedido.id)
             .then(({ data }) => {
                 // Cantidades, IVA y precios de la nota: src/lib/facturacion.js
@@ -784,12 +784,12 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
     useEffect(() => {
         if (!perfil?.empresa_id) return
         if (!listaId) {
-            supabase.from('productos_terminados').select('id, nombre, sku, precio_venta, stock_actual, unidad_medida, aplica_iva, tipo_producto, unidad_venta_2, factor_conversion_2').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
+            supabase.from('productos_terminados').select('id, nombre, sku, precio_venta, stock_actual, unidad_medida, aplica_iva, tipo_producto, unidad_venta_2, factor_conversion_2, costo_promedio').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
                 .then(({ data }) => setProductos(data || []))
             return
         }
         supabase.from('producto_precios')
-            .select('precio, productos_terminados(id, nombre, sku, stock_actual, unidad_medida, aplica_iva, tipo_producto, unidad_venta_2, factor_conversion_2)')
+            .select('precio, productos_terminados(id, nombre, sku, stock_actual, unidad_medida, aplica_iva, tipo_producto, unidad_venta_2, factor_conversion_2, costo_promedio)')
             .eq('lista_id', listaId).eq('empresa_id', perfil.empresa_id)
             .then(({ data }) => {
                 if (data) setProductos(data.filter(p => p.productos_terminados).map(p => ({ ...p.productos_terminados, precio_venta: p.precio })))
@@ -891,7 +891,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
 
         if (tieneAutoparteFilter || tieneVehiculoFilter) {
             let apQ = supabase.from('productos_autopartes')
-                .select('nro_parte, marca, tipo, producto_id, productos_terminados!inner(id, nombre, sku, precio_venta, stock_actual, categoria_1, aplica_iva, tipo_producto, unidad_venta_2, factor_conversion_2)')
+                .select('nro_parte, marca, tipo, producto_id, productos_terminados!inner(id, nombre, sku, precio_venta, stock_actual, categoria_1, aplica_iva, tipo_producto, unidad_venta_2, factor_conversion_2, costo_promedio)')
                 .eq('empresa_id', perfil.empresa_id)
                 .eq('productos_terminados.activo', true)
             if (tieneNroParte) apQ = apQ.ilike('nro_parte', `%${tieneNroParte}%`)
@@ -910,7 +910,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
             })))
         } else {
             let ptQ = supabase.from('productos_terminados')
-                .select('id, nombre, sku, precio_venta, stock_actual, categoria_1, aplica_iva, tipo_producto, unidad_venta_2, factor_conversion_2')
+                .select('id, nombre, sku, precio_venta, stock_actual, categoria_1, aplica_iva, tipo_producto, unidad_venta_2, factor_conversion_2, costo_promedio')
                 .eq('empresa_id', perfil.empresa_id).eq('activo', true)
             if (filtroCat) ptQ = ptQ.eq('categoria_1', filtroCat)
             if (busqueda.trim()) ptQ = ptQ.or(`nombre.ilike.%${busqueda.trim()}%,sku.ilike.%${busqueda.trim()}%,descripcion.ilike.%${busqueda.trim()}%`)
@@ -953,6 +953,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                 unidad_medida: producto.unidad_medida || 'unidad',
                 unidad_venta_2: producto.unidad_venta_2 || null,
                 factor_conversion_2: producto.factor_conversion_2 || 1,
+                costo_promedio: producto.costo_promedio ?? null,
                 unidadVenta: '1',
             }]
         })
@@ -1102,6 +1103,10 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                     precio_unitario: i.precio_unitario * (1 - Number(i.descuento_item || 0) / 100) * (1 - descGlobal / 100),
                     ...camposIvaLinea(i.aplica_iva ?? true),
                     base_linea: i.cantidad * i.precio_unitario * (1 - Number(i.descuento_item || 0) / 100) * (1 - descGlobal / 100),
+                    // Foto del costo al vender, por unidad de venta (exportador: margen)
+                    costo_unitario: i.costo_promedio != null
+                        ? Number(i.costo_promedio) * (i.unidadVenta === '2' ? (i.factor_conversion_2 || 1) : 1)
+                        : null,
                     empresa_id: perfil.empresa_id,
                     unidad_venta: i.unidadVenta === '2' ? i.unidad_venta_2 : i.unidad_medida,
                     cantidad_primaria: i.unidadVenta === '2' ? i.cantidad * (i.factor_conversion_2 || 1) : i.cantidad,
