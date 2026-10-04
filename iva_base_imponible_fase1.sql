@@ -252,3 +252,10 @@ DO $$ DECLARE r record; BEGIN
         PERFORM recalcular_totales_pedido(r.id);
     END LOOP;
 END $$;
+
+-- ── Endurecimiento (migración iva_endurecer_funciones_totales, 2026-10-03) ──
+-- Solo las usan los triggers; no deben poder llamarse por la API.
+REVOKE EXECUTE ON FUNCTION recalcular_totales_pedido(uuid) FROM PUBLIC, anon, authenticated;
+REVOKE EXECUTE ON FUNCTION _pedido_items_totales() FROM PUBLIC, anon, authenticated;
+REVOKE EXECUTE ON FUNCTION _pedidos_totales() FROM PUBLIC, anon, authenticated;
+ALTER FUNCTION _split_iva(numeric, numeric) SET search_path = public;
