@@ -8,6 +8,7 @@ import { sinSaldoQueCobrar } from '../lib/cobro'
 import { almacenPredeterminado, verificarStock, moverStockLote } from '../lib/inventario'
 import ModalFaltanteStock from '../components/ModalFaltanteStock'
 import FiltroCombo from '../components/FiltroCombo'
+import AvisoDocumentoEntrega from '../components/AvisoDocumentoEntrega'
 import { useAltoBarra, ThOrden, BarraFija, estiloTarjetaTabla } from '../components/TablaOrdenable'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
@@ -911,6 +912,9 @@ function DetallePedido({ pedido, onVolver }) {
                     <Check size={16} /> {exito}
                 </div>
             )}
+
+            {/* Pestaña Por Registrar: recordar con qué documento se entrega al cliente */}
+            {pedido.estado === 'alistado' && <AvisoDocumentoEntrega clienteId={pedido.cliente_id} />}
 
             {/* Info cabecera */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '20px' }}>

@@ -10,6 +10,7 @@ import { sinSaldoQueCobrar } from '../lib/cobro'
 import { almacenPredeterminado, verificarStock, moverStockLote } from '../lib/inventario'
 import ModalFaltanteStock from '../components/ModalFaltanteStock'
 import FiltroCombo from '../components/FiltroCombo'
+import AvisoDocumentoEntrega from '../components/AvisoDocumentoEntrega'
 import { ymdCaracas } from '../components/SelectorFechaTasa'
 import { useAltoBarra, useOrden, ordenarFilas, ThOrden, estiloTarjetaTabla } from '../components/TablaOrdenable'
 
@@ -2830,6 +2831,8 @@ export function Factura({ venta, onVolver, onDevolucionCreada }) {
                 )}
 
             </div>
+
+            <AvisoDocumentoEntrega clienteId={venta.cliente_id} />
 
             <div className="print-target" style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '32px', marginBottom: '16px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '32px' }}>

@@ -9,6 +9,7 @@ const VACIO = {
     descripcion: '',
     condicion_pago: 'contado', dias_credito: 0, limite_credito: 0, activo: true,
     contribuyente_especial: false, tipo_cliente_id: '',
+    documento_entrega: '', // 'factura' | 'nota_entrega' | '' (sin indicar)
     direccion_fiscal: '',
     cat1_id: '', cat2_id: '', cat3_id: '', cat4_id: '',
     contacto_comercial: '', email_comercial: '', telefono_comercial: '',
@@ -126,6 +127,7 @@ export default function Clientes() {
             activo: c.activo ?? true,
             contribuyente_especial: c.contribuyente_especial ?? false,
             tipo_cliente_id: c.tipo_cliente_id || '',
+            documento_entrega: c.documento_entrega || '',
             direccion_fiscal: c.direccion_fiscal || '',
             cat1_id: c.cat1_id || '',
             cat2_id: c.cat2_id || '',
@@ -174,6 +176,7 @@ export default function Clientes() {
             activo: form.activo,
             contribuyente_especial: form.contribuyente_especial,
             tipo_cliente_id: form.tipo_cliente_id || null,
+            documento_entrega: form.documento_entrega || null,
             direccion_fiscal: form.direccion_fiscal.trim() || null,
             cat1_id: form.cat1_id || null,
             cat2_id: form.cat2_id || null,
@@ -395,6 +398,14 @@ export default function Clientes() {
                             onChange={e => campo('limite_credito', e.target.value)}
                             placeholder="Ej: 5000"
                             style={inputStyle} />
+                    </Campo>
+                    {/* Se muestra como aviso al ver la nota (Ventas) y el pedido (Pedidos) */}
+                    <Campo label="Se entrega con" span={2}>
+                        <select value={form.documento_entrega} onChange={e => campo('documento_entrega', e.target.value)} style={inputStyle}>
+                            <option value="">— Sin indicar —</option>
+                            <option value="factura">Factura</option>
+                            <option value="nota_entrega">Nota de entrega</option>
+                        </select>
                     </Campo>
                     <Campo label="Tipo de cliente" span={2}>
                         <select value={form.tipo_cliente_id} onChange={e => campo('tipo_cliente_id', e.target.value)} style={inputStyle}>

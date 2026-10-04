@@ -137,6 +137,8 @@ lotes_produccion      -- Lotes de PT producidos
 clientes              -- cat1_id..cat4_id, limite_credito numeric, vehiculo text
                       --   contacto_comercial, email_comercial, telefono_comercial
                       --   contacto_administrativo, email_administrativo, telefono_administrativo
+                      --   documento_entrega ('factura'|'nota_entrega', NULL = sin indicar): aviso
+                      --   en Ventas → Ver y Pedidos → Por Registrar → Ver (AvisoDocumentoEntrega)
 categorias_clientes   -- 4 niveles de categorías por empresa
 perfilamiento_clientes -- Perfiles de segmentación de clientes
 proveedores           -- condicion_pago, dias_credito
