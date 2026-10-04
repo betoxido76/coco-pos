@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { opcionesUnidad } from '../lib/unidades'
 import { ajustarStockMaestro } from '../lib/inventario'
 import FiltroCombo from '../components/FiltroCombo'
+import { useAltoBarra, useOrden, ordenarFilas, ThOrden, BarraFija, estiloTarjetaTabla } from '../components/TablaOrdenable'
 
 const TIPOS = ['producido', 'comprado']
 
@@ -37,6 +38,8 @@ export default function MateriasPrimas({ tabInicial = 'materias_primas' }) {
     const [almacenes, setAlmacenes] = useState([])
     const [almacenStock, setAlmacenStock] = useState('')
     const [stockOriginal, setStockOriginal] = useState(0)
+    const [barraRef, altoBarra] = useAltoBarra([vista])
+    const [orden, ordenarPor] = useOrden({ col: 'nombre', dir: 'asc' }, ['costo', 'stock', 'vencimiento'])
 
     const tabla = tabActiva === 'materias_primas' ? 'materias_primas' : 'materiales_empaque'
     const tipoItemMotor = tabActiva === 'materias_primas' ? 'materia_prima' : 'material_empaque'
@@ -382,8 +385,9 @@ export default function MateriasPrimas({ tabInicial = 'materias_primas' }) {
                 </button>
             </div>
 
-            {/* Tabs */}
-            <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
+            {/* Tabs + filtros: fijos al hacer scroll (fondo blanco: la página vive en la tarjeta de Administración) */}
+            <BarraFija ref={barraRef} style={{ backgroundColor: '#fff' }}>
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
                 {[
                     { key: 'materias_primas', label: 'Materias Primas', icon: Package },
                     { key: 'materiales_empaque', label: 'Materiales de Empaque', icon: Layers }
@@ -409,7 +413,7 @@ export default function MateriasPrimas({ tabInicial = 'materias_primas' }) {
             )}
 
             {/* Filtros */}
-            <div style={{ display: 'flex', gap: '10px', marginBottom: '16px', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: '10px', marginBottom: '12px', flexWrap: 'wrap' }}>
                 <div style={{ position: 'relative', flex: 1, minWidth: '200px' }}>
                     <Search size={15} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
                     <input type="text" placeholder="Buscar por nombre o código..."
@@ -421,9 +425,10 @@ export default function MateriasPrimas({ tabInicial = 'materias_primas' }) {
                         options={categorias.map(x => ({ value: x, label: x }))} placeholder="Todas las categorías" width="220px" />
                 )}
             </div>
+            </BarraFija>
 
             {/* Tabla */}
-            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+            <div style={estiloTarjetaTabla}>
                 {loading ? (
                     <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
                 ) : filtrados.length === 0 ? (
@@ -431,14 +436,24 @@ export default function MateriasPrimas({ tabInicial = 'materias_primas' }) {
                 ) : (
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
-                            <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                {['Nombre', 'Código', 'Tipo', 'Costo', 'Stock', 'Vencimiento', 'Categoría', 'Estado', ''].map(h => (
-                                    <th key={h} style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
+                            <tr>
+                                {[['Nombre', 'nombre'], ['Código', 'codigo'], ['Tipo', 'tipo'], ['Costo', 'costo'], ['Stock', 'stock'],
+                                  ['Vencimiento', 'vencimiento'], ['Categoría', 'categoria'], ['Estado', 'estado'], ['', null]].map(([h, col]) => (
+                                    <ThOrden key={h || 'acc'} col={col} orden={orden} onOrdenar={ordenarPor} top={altoBarra}>{h}</ThOrden>
                                 ))}
                             </tr>
                         </thead>
                         <tbody>
-                            {filtrados.map(p => (
+                            {ordenarFilas(filtrados, {
+                                nombre: p => p.nombre,
+                                codigo: p => p.codigo,
+                                tipo: p => p.tipo_producto,
+                                costo: p => p.costo_compra_promedio != null ? Number(p.costo_compra_promedio) : null,
+                                stock: p => Number(p.stock_actual ?? 0),
+                                vencimiento: p => p.fecha_vencimiento,
+                                categoria: p => p.categoria_1,
+                                estado: p => p.activo ? 'activo' : 'inactivo',
+                            }, orden).map(p => (
                                 <tr key={p.id} style={{ borderBottom: '1px solid #f3f4f6' }}
                                     onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
                                     onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>

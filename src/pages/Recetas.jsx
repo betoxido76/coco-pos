@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import { Plus, X, FlaskConical, Trash2, Pencil } from 'lucide-react'
+import { useAltoBarra, useOrden, ordenarFilas, ThOrden, BarraFija, estiloTarjetaTabla } from '../components/TablaOrdenable'
 
 const fmt = (n, dec = 4) => Number(n || 0).toLocaleString('es-VE', { minimumFractionDigits: 0, maximumFractionDigits: dec })
 
@@ -33,6 +34,8 @@ export default function Recetas() {
     const [tab, setTab] = useState('pt')
     const [modalAbierto, setModalAbierto] = useState(false)
     const [recetaEditar, setRecetaEditar] = useState(null)
+    const [barraRef, altoBarra] = useAltoBarra()
+    const [orden, ordenarPor] = useOrden({ col: 'nombre', dir: 'asc' }, ['rinde', 'merma', 'insumos'])
 
     useEffect(() => { cargar() }, [])
 
@@ -73,7 +76,14 @@ export default function Recetas() {
         cargar()
     }
 
-    const recetasFiltradas = recetas.filter(r => tab === 'pt' ? r.producto_id !== null : r.mp_id !== null)
+    const recetasFiltradas = ordenarFilas(recetas.filter(r => tab === 'pt' ? r.producto_id !== null : r.mp_id !== null), {
+        nombre: r => r.producto_id !== null ? r.productos_terminados?.nombre : r.materias_primas?.nombre,
+        rinde: r => Number(r.rinde_unidades || 0),
+        merma: r => Number(r.merma_pct) > 0 ? Number(r.merma_pct) : null,
+        insumos: r => r.receta_items?.length || 0,
+        descripcion: r => r.descripcion,
+        estado: r => r.activo ? 'Activa' : 'Inactiva',
+    }, orden)
 
     return (
         <div>
@@ -90,8 +100,9 @@ export default function Recetas() {
                 </button>
             </div>
 
-            {/* Tabs */}
-            <div style={{ display: 'flex', gap: '4px', marginBottom: '16px', borderBottom: '1px solid #e5e7eb', paddingBottom: '0' }}>
+            {/* Tabs: fijas al hacer scroll (fondo blanco: la página vive en la tarjeta de Administración) */}
+            <BarraFija ref={barraRef} gutter={0} style={{ backgroundColor: '#fff', paddingBottom: '12px' }}>
+            <div style={{ display: 'flex', gap: '4px', borderBottom: '1px solid #e5e7eb', paddingBottom: '0' }}>
                 {TABS.map(t => {
                     const count = recetas.filter(r => t.key === 'pt' ? r.producto_id !== null : r.mp_id !== null).length
                     const activo = tab === t.key
@@ -113,9 +124,10 @@ export default function Recetas() {
                     )
                 })}
             </div>
+            </BarraFija>
 
             {/* Lista */}
-            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+            <div style={estiloTarjetaTabla}>
                 {loading
                     ? <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
                     : recetasFiltradas.length === 0
@@ -131,9 +143,10 @@ export default function Recetas() {
                         : (
                             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                                 <thead>
-                                    <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                        {[tab === 'pt' ? 'Producto' : 'MP Producida', 'Rinde', '% Merma', 'Insumos', 'Descripción', 'Estado', ''].map(h => (
-                                            <th key={h} style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
+                                    <tr>
+                                        {[[tab === 'pt' ? 'Producto' : 'MP Producida', 'nombre'], ['Rinde', 'rinde'], ['% Merma', 'merma'], ['Insumos', 'insumos'],
+                                          ['Descripción', 'descripcion'], ['Estado', 'estado'], ['', null]].map(([h, col]) => (
+                                            <ThOrden key={h || 'acc'} col={col} orden={orden} onOrdenar={ordenarPor} top={altoBarra}>{h}</ThOrden>
                                         ))}
                                     </tr>
                                 </thead>

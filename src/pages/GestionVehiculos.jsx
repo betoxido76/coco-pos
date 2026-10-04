@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { Plus, Search, Pencil, Trash2, Check } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
+import { useAltoBarra, useOrden, ordenarFilas, ThOrden, BarraFija, estiloTarjetaTabla } from '../components/TablaOrdenable'
 
 const VACIO = { marca: '', modelo: '', submodelo: '', tipo: '' }
 const TIPOS = ['sedan', 'camioneta', 'SUV', 'moto', 'camión', 'van', 'otro']
@@ -23,6 +24,8 @@ export default function GestionVehiculos() {
     const [guardando, setGuardando] = useState(false)
     const [error, setError] = useState('')
     const [exito, setExito] = useState('')
+    const [barraRef, altoBarra] = useAltoBarra([vista])
+    const [orden, ordenarPor] = useOrden({ col: 'marca', dir: 'asc' }, [])
 
     useEffect(() => { cargar() }, [])
 
@@ -143,14 +146,17 @@ export default function GestionVehiculos() {
 
             {exito && <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '10px 14px', fontSize: '13px', color: '#166534', marginBottom: '16px' }}>{exito}</div>}
 
-            <div style={{ position: 'relative', marginBottom: '16px', maxWidth: '360px' }}>
+            {/* Búsqueda: fija al hacer scroll (fondo blanco: la página vive en la tarjeta de Administración) */}
+            <BarraFija ref={barraRef} style={{ backgroundColor: '#fff' }}>
+            <div style={{ position: 'relative', marginBottom: '12px', maxWidth: '360px' }}>
                 <Search size={15} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
                 <input type="text" placeholder="Buscar por marca o modelo..."
                     value={busqueda} onChange={e => setBusqueda(e.target.value)}
                     style={{ ...inputStyle, paddingLeft: '32px' }} />
             </div>
+            </BarraFija>
 
-            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+            <div style={estiloTarjetaTabla}>
                 {loading ? (
                     <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
                 ) : filtrados.length === 0 ? (
@@ -160,14 +166,19 @@ export default function GestionVehiculos() {
                 ) : (
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
-                            <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                {['Marca', 'Modelo', 'Submódelo', 'Tipo', ''].map(h => (
-                                    <th key={h} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left' }}>{h}</th>
+                            <tr>
+                                {[['Marca', 'marca'], ['Modelo', 'modelo'], ['Submódelo', 'submodelo'], ['Tipo', 'tipo'], ['', null]].map(([h, col]) => (
+                                    <ThOrden key={h || 'acc'} col={col} orden={orden} onOrdenar={ordenarPor} top={altoBarra} style={{ padding: '10px 16px' }}>{h}</ThOrden>
                                 ))}
                             </tr>
                         </thead>
                         <tbody>
-                            {filtrados.map(v => (
+                            {ordenarFilas(filtrados, {
+                                marca: v => v.marca,
+                                modelo: v => v.modelo,
+                                submodelo: v => v.submodelo,
+                                tipo: v => v.tipo,
+                            }, orden).map(v => (
                                 <tr key={v.id} style={{ borderBottom: '1px solid #f3f4f6' }}
                                     onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
                                     onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>

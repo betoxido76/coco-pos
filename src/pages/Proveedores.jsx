@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { Plus, Pencil, Check, Search, X, Star, Trash2 } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
+import { useAltoBarra, useOrden, ordenarFilas, ThOrden, BarraFija, estiloTarjetaTabla } from '../components/TablaOrdenable'
 
 const VACIO = {
     nombre: '', rif: '', telefono: '', contacto: '', tipo: '', codigo: '', activo: true, direccion_fiscal: '',
@@ -42,6 +43,8 @@ export default function Proveedores() {
     const [formCuenta, setFormCuenta] = useState(VACIO_CUENTA)
     const [guardandoCuenta, setGuardandoCuenta] = useState(false)
     const [errorCuenta, setErrorCuenta] = useState('')
+    const [barraRef, altoBarra] = useAltoBarra([vista])
+    const [orden, ordenarPor] = useOrden({ col: 'nombre', dir: 'asc' }, [])
 
     useEffect(() => { cargar() }, [])
 
@@ -427,25 +430,39 @@ export default function Proveedores() {
 
             {exito && <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '10px 14px', fontSize: '13px', color: '#166534', marginBottom: '16px' }}>{exito}</div>}
 
-            <div style={{ position: 'relative', marginBottom: '16px', maxWidth: '360px' }}>
+            {/* Búsqueda: fija al hacer scroll (fondo blanco: la página vive en la tarjeta de Administración) */}
+            <BarraFija ref={barraRef} style={{ backgroundColor: '#fff' }}>
+            <div style={{ position: 'relative', marginBottom: '12px', maxWidth: '360px' }}>
                 <Search size={15} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
                 <input type="text" placeholder="Buscar por nombre o RIF..."
                     value={busqueda} onChange={e => setBusqueda(e.target.value)}
                     style={{ ...inputStyle, paddingLeft: '32px' }} />
             </div>
+            </BarraFija>
 
-            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+            <div style={estiloTarjetaTabla}>
                 {loading ? <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div> : (
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
-                            <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                {['Código', 'Nombre', 'RIF', 'Tipo', 'Condición', 'Teléfono', 'Contacto', 'Estado', ''].map(h => (
-                                    <th key={h} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left' }}>{h}</th>
+                            <tr>
+                                {[['Código', 'codigo'], ['Nombre', 'nombre'], ['RIF', 'rif'], ['Tipo', 'tipo'], ['Condición', 'condicion'],
+                                  ['Teléfono', 'telefono'], ['Contacto', 'contacto'], ['Estado', 'estado'], ['', null]].map(([h, col]) => (
+                                    <ThOrden key={h || 'acc'} col={col} orden={orden} onOrdenar={ordenarPor} top={altoBarra} style={{ padding: '10px 16px' }}>{h}</ThOrden>
                                 ))}
                             </tr>
                         </thead>
                         <tbody>
-                            {filtrados.map(p => (
+                            {ordenarFilas(filtrados, {
+                                codigo: p => p.codigo,
+                                nombre: p => p.nombre,
+                                rif: p => p.rif,
+                                tipo: p => p.tipo,
+                                // contado primero; los de crédito por días
+                                condicion: p => p.condicion_pago === 'credito' ? Number(p.dias_credito || 0) : -1,
+                                telefono: p => p.telefono,
+                                contacto: p => p.contacto,
+                                estado: p => p.activo ? 'activo' : 'inactivo',
+                            }, orden).map(p => (
                                 <tr key={p.id} style={{ borderBottom: '1px solid #f3f4f6' }}
                                     onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
                                     onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>

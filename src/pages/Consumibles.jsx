@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { opcionesUnidad } from '../lib/unidades'
 import { ajustarStockMaestro } from '../lib/inventario'
 import FiltroCombo from '../components/FiltroCombo'
+import { useAltoBarra, useOrden, ordenarFilas, ThOrden, BarraFija, estiloTarjetaTabla } from '../components/TablaOrdenable'
 
 const VACIO = {
     nombre: '', codigo: '', descripcion: '', unidad_medida: 'unidad',
@@ -31,6 +32,8 @@ export default function Consumibles() {
     const [almacenStock, setAlmacenStock] = useState('')
     const [stockOriginal, setStockOriginal] = useState(0)
     const [exito, setExito] = useState('')
+    const [barraRef, altoBarra] = useAltoBarra([vista])
+    const [orden, ordenarPor] = useOrden({ col: 'nombre', dir: 'asc' }, ['costo', 'stock', 'minimo'])
 
     const stockCambio = Number(form.stock_actual || 0) !== Number(stockOriginal || 0)
 
@@ -339,7 +342,9 @@ export default function Consumibles() {
                 </div>
             )}
 
-            <div style={{ display: 'flex', gap: '10px', marginBottom: '16px', flexWrap: 'wrap' }}>
+            {/* Filtros: fijos al hacer scroll (fondo blanco: la página vive en la tarjeta de Administración) */}
+            <BarraFija ref={barraRef} style={{ backgroundColor: '#fff' }}>
+            <div style={{ display: 'flex', gap: '10px', marginBottom: '12px', flexWrap: 'wrap' }}>
                 <div style={{ position: 'relative', flex: 1, minWidth: '200px' }}>
                     <Search size={15} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
                     <input type="text" placeholder="Buscar por nombre o código..."
@@ -351,8 +356,9 @@ export default function Consumibles() {
                         options={categorias.map(x => ({ value: x, label: x }))} placeholder="Todas las categorías" width="220px" />
                 )}
             </div>
+            </BarraFija>
 
-            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+            <div style={estiloTarjetaTabla}>
                 {loading ? (
                     <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
                 ) : filtrados.length === 0 ? (
@@ -360,14 +366,25 @@ export default function Consumibles() {
                 ) : (
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
-                            <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                {['Nombre', 'Código', 'Unidad', 'Costo', 'Stock', 'Mín.', 'IVA', 'Categoría', 'Estado', ''].map((h, i) => (
-                                    <th key={i} style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
+                            <tr>
+                                {[['Nombre', 'nombre'], ['Código', 'codigo'], ['Unidad', 'unidad'], ['Costo', 'costo'], ['Stock', 'stock'], ['Mín.', 'minimo'],
+                                  ['IVA', 'iva'], ['Categoría', 'categoria'], ['Estado', 'estado'], ['', null]].map(([h, col], i) => (
+                                    <ThOrden key={i} col={col} orden={orden} onOrdenar={ordenarPor} top={altoBarra}>{h}</ThOrden>
                                 ))}
                             </tr>
                         </thead>
                         <tbody>
-                            {filtrados.map(item => (
+                            {ordenarFilas(filtrados, {
+                                nombre: i => i.nombre,
+                                codigo: i => i.codigo,
+                                unidad: i => i.unidad_medida,
+                                costo: i => i.costo_compra_promedio ? Number(i.costo_compra_promedio) : null,
+                                stock: i => Number(i.stock_actual ?? 0),
+                                minimo: i => Number(i.stock_minimo ?? 0),
+                                iva: i => i.aplica_iva ? 'Sí' : 'No',
+                                categoria: i => i.categoria_1,
+                                estado: i => i.activo ? 'activo' : 'inactivo',
+                            }, orden).map(item => (
                                 <tr key={item.id} style={{ borderBottom: '1px solid #f3f4f6' }}
                                     onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
                                     onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { Save, Check } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
+import { useOrden, ordenarFilas, ThOrden, estiloTarjetaTabla } from '../components/TablaOrdenable'
 
 const TASAS = [
     { clave: 'tasa_bcv', label: 'USD · BCV', descripcion: 'Tasa oficial del Banco Central de Venezuela' },
@@ -28,6 +29,7 @@ export default function Configuracion() {
     const [exito, setExito] = useState(false)
     const [exitoConf, setExitoConf] = useState(false)
     const [error, setError] = useState('')
+    const [orden, ordenarPor] = useOrden({ col: 'fecha', dir: 'desc' }, ['fecha', 'tasa_bcv', 'tasa_euro', 'tasa_binance'])
 
     useEffect(() => { cargar() }, [])
     // Al cambiar la fecha se cargan las tasas de ESE día (vacías si aún no existe)
@@ -228,17 +230,22 @@ export default function Configuracion() {
                 <div style={{ marginTop: '28px' }}>
                     <h2 style={{ fontSize: '15px', fontWeight: 600, color: '#1f2937', margin: '0 0 4px' }}>Histórico de tasas</h2>
                     <p style={{ fontSize: '13px', color: '#6b7280', margin: '0 0 12px' }}>Últimos {historico.length} días cargados · haz clic en una fecha para editarla</p>
-                    <div style={{ backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '12px', overflow: 'hidden' }}>
+                    <div style={estiloTarjetaTabla}>
                         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                             <thead>
-                                <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                    {['Fecha', 'USD · BCV', 'EUR · BCV', 'USD · Binance'].map((h, i) => (
-                                        <th key={h} style={{ padding: '9px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: i === 0 ? 'left' : 'right' }}>{h}</th>
+                                <tr>
+                                    {[['Fecha', 'fecha'], ['USD · BCV', 'tasa_bcv'], ['EUR · BCV', 'tasa_euro'], ['USD · Binance', 'tasa_binance']].map(([h, col], i) => (
+                                        <ThOrden key={h} col={col} orden={orden} onOrdenar={ordenarPor} top={0} align={i === 0 ? 'left' : 'right'} style={{ padding: '9px 14px' }}>{h}</ThOrden>
                                     ))}
                                 </tr>
                             </thead>
                             <tbody>
-                                {historico.map(h => {
+                                {ordenarFilas(historico, {
+                                    fecha: h => h.fecha,
+                                    tasa_bcv: h => h.tasa_bcv != null ? Number(h.tasa_bcv) : null,
+                                    tasa_euro: h => h.tasa_euro != null ? Number(h.tasa_euro) : null,
+                                    tasa_binance: h => h.tasa_binance != null ? Number(h.tasa_binance) : null,
+                                }, orden).map(h => {
                                     const activa = h.fecha === fecha
                                     return (
                                         <tr key={h.fecha} onClick={() => setFecha(h.fecha)}

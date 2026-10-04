@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { Plus, Pencil, Check, Search, MapPin, X, Star, Trash2, AlertTriangle } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
+import { useAltoBarra, useOrden, ordenarFilas, ThOrden, BarraFija, estiloTarjetaTabla } from '../components/TablaOrdenable'
 
 const VACIO = {
     nombre: '', rif: '', telefono: '', email: '',
@@ -57,6 +58,8 @@ export default function Clientes() {
     const [formDir, setFormDir] = useState(VACIO_DIR)
     const [guardandoDir, setGuardandoDir] = useState(false)
     const [errorDir, setErrorDir] = useState('')
+    const [barraRef, altoBarra] = useAltoBarra([vista, tab])
+    const [orden, ordenarPor] = useOrden({ col: 'nombre', dir: 'asc' }, ['dias'])
 
     useEffect(() => {
         cargar()
@@ -671,8 +674,9 @@ export default function Clientes() {
                 )}
             </div>
 
-            {/* Tabs */}
-            <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
+            {/* Tabs + búsqueda: fijas al hacer scroll (fondo blanco: la página vive en la tarjeta de Administración) */}
+            <BarraFija ref={barraRef} style={{ backgroundColor: '#fff' }}>
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
                 {[
                     { key: 'clientes', label: 'Clientes' },
                     { key: 'categorias', label: '⚙️ Categorías' },
@@ -689,6 +693,15 @@ export default function Clientes() {
                     </button>
                 ))}
             </div>
+            {tab === 'clientes' && (
+                <div style={{ position: 'relative', marginBottom: '12px', maxWidth: '360px' }}>
+                    <Search size={15} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
+                    <input type="text" placeholder="Buscar por nombre, RIF o descripción..."
+                        value={busqueda} onChange={e => setBusqueda(e.target.value)}
+                        style={{ ...inputStyle, paddingLeft: '32px' }} />
+                </div>
+            )}
+            </BarraFija>
 
             {exito && <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '10px 14px', fontSize: '13px', color: '#166534', marginBottom: '16px' }}>{exito}</div>}
 
@@ -700,25 +713,27 @@ export default function Clientes() {
             {/* Tab Clientes */}
             {tab === 'clientes' && (<>
 
-            <div style={{ position: 'relative', marginBottom: '16px', maxWidth: '360px' }}>
-                <Search size={15} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
-                <input type="text" placeholder="Buscar por nombre, RIF o descripción..."
-                    value={busqueda} onChange={e => setBusqueda(e.target.value)}
-                    style={{ ...inputStyle, paddingLeft: '32px' }} />
-            </div>
-
-            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+            <div style={estiloTarjetaTabla}>
                 {loading ? <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div> : (
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
-                            <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                {['Código', 'Nombre', 'RIF', 'Teléfono', 'Condición', 'Días crédito', 'Estado', ''].map(h => (
-                                    <th key={h} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left' }}>{h}</th>
+                            <tr>
+                                {[['Código', 'codigo'], ['Nombre', 'nombre'], ['RIF', 'rif'], ['Teléfono', 'telefono'], ['Condición', 'condicion'],
+                                  ['Días crédito', 'dias'], ['Estado', 'estado'], ['', null]].map(([h, col]) => (
+                                    <ThOrden key={h || 'acc'} col={col} orden={orden} onOrdenar={ordenarPor} top={altoBarra} style={{ padding: '10px 16px' }}>{h}</ThOrden>
                                 ))}
                             </tr>
                         </thead>
                         <tbody>
-                            {filtrados.map(c => (
+                            {ordenarFilas(filtrados, {
+                                codigo: c => c.codigo,
+                                nombre: c => c.nombre,
+                                rif: c => c.rif,
+                                telefono: c => c.telefono,
+                                condicion: c => c.condicion_pago || 'contado',
+                                dias: c => c.condicion_pago === 'credito' ? Number(c.dias_credito || 0) : null,
+                                estado: c => c.activo ? 'activo' : 'inactivo',
+                            }, orden).map(c => (
                                 <tr key={c.id} style={{ borderBottom: '1px solid #f3f4f6' }}
                                     onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
                                     onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>

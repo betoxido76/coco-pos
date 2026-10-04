@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import { Save, Check, Search, Plus, X } from 'lucide-react'
+import { useAltoBarra, useOrden, ordenarFilas, ThOrden, BarraFija, estiloTarjetaTabla } from '../components/TablaOrdenable'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 
@@ -22,6 +23,8 @@ export default function ListasPrecios() {
     const [exito, setExito] = useState(false)
     const [error, setError] = useState('')
     const [loading, setLoading] = useState(false)
+    const [barraRef, altoBarra] = useAltoBarra()
+    const [orden, ordenarPor] = useOrden({ col: 'nombre', dir: 'asc' }, ['base', 'lista'])
     const [mostrarFormNueva, setMostrarFormNueva] = useState(false)
     const [nombreNueva, setNombreNueva] = useState('')
     const [esDefaultNueva, setEsDefaultNueva] = useState(false)
@@ -157,10 +160,23 @@ export default function ListasPrecios() {
 
     const listaActual = listas.find(l => l.id === listaId)
     const q = busqueda.toLowerCase()
+    // El orden se fija al elegir la columna (o al cargar la lista), no en cada
+    // tecla: ordenando por precio, la fila que se está editando saltaría de lugar.
+    const posicion = useMemo(() => {
+        const m = new Map()
+        ordenarFilas(productos, {
+            nombre: p => p.nombre,
+            sku: p => p.sku,
+            unidad: p => p.unidad_medida,
+            base: p => p.precio_venta ? Number(p.precio_venta) : null,
+            lista: p => Number(precios[p.id]) > 0 ? Number(precios[p.id]) : null,
+        }, orden).forEach((p, i) => m.set(p.id, i))
+        return m
+    }, [orden, productos, listaId, loading]) // eslint-disable-line react-hooks/exhaustive-deps
     const productosFiltrados = productos.filter(p =>
         (p.nombre || '').toLowerCase().includes(q) ||
         (p.sku || '').toLowerCase().includes(q)
-    )
+    ).sort((a, b) => (posicion.get(a.id) ?? 0) - (posicion.get(b.id) ?? 0))
     const conPrecio = productos.filter(p => precios[p.id] !== '' && Number(precios[p.id]) > 0).length
     const sinPrecio = productos.length - conPrecio
 
@@ -203,8 +219,23 @@ export default function ListasPrecios() {
                 </div>
             )}
 
-            {/* Selector de lista */}
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '20px' }}>
+            {/* KPIs */}
+            {!loading && productos.length > 0 && (
+                <div style={{ display: 'flex', gap: '12px', marginBottom: '20px' }}>
+                    <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '10px', padding: '10px 16px', fontSize: '13px', color: '#166534' }}>
+                        <strong>{conPrecio}</strong> productos con precio
+                    </div>
+                    {sinPrecio > 0 && (
+                        <div style={{ backgroundColor: '#fef9c3', border: '1px solid #fde68a', borderRadius: '10px', padding: '10px 16px', fontSize: '13px', color: '#854d0e' }}>
+                            <strong>{sinPrecio}</strong> productos sin precio en esta lista
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* Selector de lista + buscador: fijos al hacer scroll (fondo blanco: la página vive en la tarjeta de Administración) */}
+            <BarraFija ref={barraRef} style={{ backgroundColor: '#fff' }}>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
                 {listas.map(l => (
                     <button key={l.id} onClick={() => setListaId(l.id)}
                         style={{
@@ -224,41 +255,27 @@ export default function ListasPrecios() {
                 ))}
             </div>
 
-            {/* KPIs */}
-            {!loading && productos.length > 0 && (
-                <div style={{ display: 'flex', gap: '12px', marginBottom: '20px' }}>
-                    <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '10px', padding: '10px 16px', fontSize: '13px', color: '#166534' }}>
-                        <strong>{conPrecio}</strong> productos con precio
-                    </div>
-                    {sinPrecio > 0 && (
-                        <div style={{ backgroundColor: '#fef9c3', border: '1px solid #fde68a', borderRadius: '10px', padding: '10px 16px', fontSize: '13px', color: '#854d0e' }}>
-                            <strong>{sinPrecio}</strong> productos sin precio en esta lista
-                        </div>
-                    )}
-                </div>
-            )}
-
             {/* Buscador */}
-            <div style={{ position: 'relative', marginBottom: '16px', maxWidth: '360px' }}>
+            <div style={{ position: 'relative', marginBottom: '12px', maxWidth: '360px' }}>
                 <Search size={15} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
                 <input type="text" placeholder="Buscar producto..."
                     value={busqueda} onChange={e => setBusqueda(e.target.value)}
                     style={{ ...inputStyle, textAlign: 'left', paddingLeft: '32px' }} />
             </div>
+            </BarraFija>
 
             {/* Tabla */}
-            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden', marginBottom: '20px' }}>
+            <div style={{ ...estiloTarjetaTabla, marginBottom: '20px' }}>
                 {loading ? (
                     <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
                 ) : (
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
-                            <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                {['Producto', 'SKU', 'Unidad', 'Precio venta base (sin IVA)', `Precio en ${listaActual?.nombre || '—'} (sin IVA)`].map((h, i) => (
-                                    <th key={i} style={{
-                                        padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280',
-                                        textAlign: i >= 3 ? 'right' : 'left', whiteSpace: 'nowrap'
-                                    }}>{h}</th>
+                            <tr>
+                                {[['Producto', 'nombre'], ['SKU', 'sku'], ['Unidad', 'unidad'], ['Precio venta base (sin IVA)', 'base'],
+                                  [`Precio en ${listaActual?.nombre || '—'} (sin IVA)`, 'lista']].map(([h, col], i) => (
+                                    <ThOrden key={i} col={col} orden={orden} onOrdenar={ordenarPor} top={altoBarra}
+                                        align={i >= 3 ? 'right' : 'left'} style={{ padding: '10px 16px' }}>{h}</ThOrden>
                                 ))}
                             </tr>
                         </thead>

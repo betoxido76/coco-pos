@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { ajustarStockMaestro, almacenPredeterminado } from '../lib/inventario'
 import { opcionesUnidad } from '../lib/unidades'
 import FiltroCombo from '../components/FiltroCombo'
+import { useAltoBarra, ThOrden, BarraFija, estiloTarjetaTabla } from '../components/TablaOrdenable'
 
 const TIPOS = ['producido', 'comprado', 'servicio']
 
@@ -45,6 +46,7 @@ export default function Productos() {
     const [sortDir, setSortDir] = useState('asc')
     const [pagina, setPagina] = useState(0)
     const [pageSize, setPageSize] = useState(50)
+    const [barraRef, altoBarra] = useAltoBarra([vista])
 
     const marcasDisp = [...new Set(vehiculosData.map(v => v.marca))].sort()
     const modelosDisp = vehiculosData
@@ -655,8 +657,9 @@ export default function Productos() {
                 </div>
             )}
 
-            {/* Filtros */}
-            <div style={{ display: 'flex', gap: '10px', marginBottom: '16px', flexWrap: 'wrap' }}>
+            {/* Filtros: fijos al hacer scroll (fondo blanco: la página vive en la tarjeta de Administración) */}
+            <BarraFija ref={barraRef} style={{ backgroundColor: '#fff' }}>
+            <div style={{ display: 'flex', gap: '10px', marginBottom: '12px', flexWrap: 'wrap' }}>
                 <div style={{ position: 'relative', flex: 1, minWidth: '200px' }}>
                     <Search size={15} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
                     <input type="text" placeholder="Buscar por nombre o SKU..."
@@ -668,9 +671,10 @@ export default function Productos() {
                         options={categorias.map(x => ({ value: x, label: x }))} placeholder="Todas las categorías" width="220px" />
                 )}
             </div>
+            </BarraFija>
 
             {/* Tabla */}
-            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+            <div style={estiloTarjetaTabla}>
                 {loading ? (
                     <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
                 ) : filtrados.length === 0 ? (
@@ -678,7 +682,7 @@ export default function Productos() {
                 ) : (
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
-                            <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                            <tr>
                                 {[
                                     { label: 'Producto',  col: 'nombre' },
                                     { label: 'SKU',       col: 'sku' },
@@ -687,25 +691,13 @@ export default function Productos() {
                                     { label: 'Costo',     col: 'costo_promedio' },
                                     { label: 'Stock',     col: 'stock_actual' },
                                     { label: 'Categoría', col: 'categoria_1' },
-                                    { label: 'Estado',    col: null },
+                                    { label: 'Estado',    col: 'activo' },
                                     { label: '',          col: null },
-                                    { label: 'IVA',       col: null },
+                                    { label: 'IVA',       col: 'aplica_iva' },
                                 ].map(({ label, col }) => (
-                                    <th key={label}
-                                        onClick={col ? () => handleSort(col) : undefined}
-                                        style={{
-                                            padding: '10px 14px', fontSize: '12px', fontWeight: 500, textAlign: 'left', whiteSpace: 'nowrap',
-                                            color: col && sortCol === col ? '#16a34a' : '#6b7280',
-                                            cursor: col ? 'pointer' : 'default',
-                                            userSelect: 'none',
-                                        }}>
+                                    <ThOrden key={label} col={col} orden={{ col: sortCol, dir: sortDir }} onOrdenar={handleSort} top={altoBarra}>
                                         {label}
-                                        {col && (
-                                            <span style={{ marginLeft: '4px', fontSize: '10px', color: sortCol === col ? '#16a34a' : '#d1d5db' }}>
-                                                {sortCol === col ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}
-                                            </span>
-                                        )}
-                                    </th>
+                                    </ThOrden>
                                 ))}
                             </tr>
                         </thead>

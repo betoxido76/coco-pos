@@ -59,7 +59,8 @@ export default function Administracion() {
             </div>
 
             {/* Contenido del tab */}
-            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+            {/* overflow 'clip' (no 'hidden'): deja funcionar los filtros y títulos fijos de cada maestro */}
+            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'clip' }}>
                 {tabActiva === 'productos' && <Productos />}
                 {tabActiva === 'insumos' && <MateriasPrimas />}
                 {tabActiva === 'consumibles' && <Consumibles />}
