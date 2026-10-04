@@ -10,6 +10,7 @@ import { sinSaldoQueCobrar } from '../lib/cobro'
 import { almacenPredeterminado, verificarStock, moverStockLote } from '../lib/inventario'
 import ModalFaltanteStock from '../components/ModalFaltanteStock'
 import FiltroCombo from '../components/FiltroCombo'
+import { ymdCaracas } from '../components/SelectorFechaTasa'
 
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
@@ -19,6 +20,14 @@ function semaforo(stock) {
     if (stock < 10) return { color: '#d97706', bg: '#fffbeb', label: `${stock} uds.` }
     return { color: '#16a34a', bg: '#f0fdf4', label: `${stock} uds.` }
 }
+
+// Filtros de la lista de notas de entrega ('' = sin filtro)
+const FILTROS_VACIOS = { desde: '', hasta: '', nota: '', pedido: '', referencia: '', cliente: '', estado: '' }
+const estiloLabelFiltro = { fontSize: '11px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '4px' }
+const estiloInputFiltro = (valor, width) => ({
+    width, padding: '8px 12px', border: '1px solid', borderColor: valor ? '#16a34a' : '#d1d5db', borderRadius: '8px',
+    fontSize: '13px', color: '#374151', backgroundColor: valor ? '#f0fdf4' : '#fff', boxSizing: 'border-box',
+})
 
 const METODOS_USD = ['Efectivo', 'Zelle', 'Transferencia USD', 'Otros']
 const METODOS_BS = ['Pago Móvil', 'Transferencia', 'Punto de Venta', 'Efectivo Bs.']
@@ -47,6 +56,8 @@ export default function Ventas() {
     const [sortCol, setSortCol] = useState('fecha')
     const [sortDir, setSortDir] = useState('desc')
     const [solicitudesDevCount, setSolicitudesDevCount] = useState(0)
+    const [filtros, setFiltros] = useState(FILTROS_VACIOS)
+    const setFiltro = (campo, valor) => { setFiltros(f => ({ ...f, [campo]: valor })); setPagina(0) }
 
     useEffect(() => { cargarVentas(); cargarConteoSolicitudes() }, [])
     useEffect(() => { if (tabActiva === 'pedidos') cargarPedidosAprobados() }, [tabActiva])
@@ -115,7 +126,27 @@ export default function Ventas() {
         setPagina(0)
     }
 
-    const ventasOrdenadas = [...ventas].sort((a, b) => {
+    // La fecha de la nota se compara en hora de Venezuela, igual que se muestra
+    const contiene = (valor, buscado) => String(valor || '').toLowerCase().includes(buscado.trim().toLowerCase())
+    const ventasFiltradas = ventas.filter(v => {
+        const ymd = ymdCaracas(v.fecha_venta || v.created_at)
+        if (filtros.desde && ymd < filtros.desde) return false
+        if (filtros.hasta && ymd > filtros.hasta) return false
+        if (filtros.nota.trim() && !contiene(v.numero_factura, filtros.nota)) return false
+        if (filtros.pedido.trim() && !contiene(v.pedidos?.numero_pedido, filtros.pedido)) return false
+        if (filtros.referencia.trim() && !contiene(v.nro_referencia, filtros.referencia)) return false
+        if (filtros.cliente && v.cliente_id !== filtros.cliente) return false
+        if (filtros.estado && v.estado_cobro !== filtros.estado) return false
+        return true
+    })
+    const hayFiltros = Object.values(filtros).some(x => String(x).trim())
+    const opcClientes = [...new Map(ventas.filter(v => v.cliente_id).map(v => [v.cliente_id, v.clientes?.nombre || '—'])).entries()]
+        .map(([value, label]) => ({ value, label }))
+        .sort((a, b) => a.label.localeCompare(b.label))
+    const opcEstados = [...new Set(ventas.map(v => v.estado_cobro).filter(Boolean))].sort()
+        .map(e => ({ value: e, label: e.charAt(0).toUpperCase() + e.slice(1) }))
+
+    const ventasOrdenadas = [...ventasFiltradas].sort((a, b) => {
         let va, vb
         if (sortCol === 'numero_factura') { va = a.numero_factura || ''; vb = b.numero_factura || '' }
         else if (sortCol === 'numero_pedido') { va = a.pedidos?.numero_pedido || ''; vb = b.pedidos?.numero_pedido || '' }
@@ -199,6 +230,43 @@ export default function Ventas() {
                 )}
             </div>
 
+            {/* Barra de filtros de notas (fija al hacer scroll) */}
+            {tabActiva === 'ventas' && (
+                <div style={{ position: 'sticky', top: 0, zIndex: 30, backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px 20px', marginBottom: '20px', boxShadow: '0 4px 12px rgba(0,0,0,0.06)', display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                    <div>
+                        <label style={estiloLabelFiltro}>Desde</label>
+                        <input type="date" value={filtros.desde} onChange={e => setFiltro('desde', e.target.value)} style={estiloInputFiltro(filtros.desde, '140px')} />
+                    </div>
+                    <div>
+                        <label style={estiloLabelFiltro}>Hasta</label>
+                        <input type="date" value={filtros.hasta} onChange={e => setFiltro('hasta', e.target.value)} style={estiloInputFiltro(filtros.hasta, '140px')} />
+                    </div>
+                    <div>
+                        <label style={estiloLabelFiltro}>Nota de entrega</label>
+                        <input value={filtros.nota} onChange={e => setFiltro('nota', e.target.value)} placeholder="NE-…" style={estiloInputFiltro(filtros.nota, '130px')} />
+                    </div>
+                    <div>
+                        <label style={estiloLabelFiltro}>N° Pedido</label>
+                        <input value={filtros.pedido} onChange={e => setFiltro('pedido', e.target.value)} placeholder="PED-…" style={estiloInputFiltro(filtros.pedido, '130px')} />
+                    </div>
+                    <div>
+                        <label style={estiloLabelFiltro}>Referencia</label>
+                        <input value={filtros.referencia} onChange={e => setFiltro('referencia', e.target.value)} placeholder="Todas" style={estiloInputFiltro(filtros.referencia, '130px')} />
+                    </div>
+                    <FiltroCombo label="Cliente" value={filtros.cliente} onChange={v => setFiltro('cliente', v)} options={opcClientes} width="240px" />
+                    <FiltroCombo label="Estado" value={filtros.estado} onChange={v => setFiltro('estado', v)} options={opcEstados} width="150px" />
+                    <button onClick={() => { setFiltros(FILTROS_VACIOS); setPagina(0) }} disabled={!hayFiltros}
+                        style={{ padding: '8px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 500, border: '1px solid #e5e7eb', backgroundColor: '#f9fafb', color: hayFiltros ? '#374151' : '#d1d5db', cursor: hayFiltros ? 'pointer' : 'default' }}>
+                        Limpiar
+                    </button>
+                    {hayFiltros && !loading && (
+                        <span style={{ fontSize: '13px', color: '#6b7280', paddingBottom: '8px' }}>
+                            {ventasFiltradas.length} de {ventas.length} notas
+                        </span>
+                    )}
+                </div>
+            )}
+
             {/* Tab Ventas */}
             {tabActiva === 'ventas' && (
                 <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
@@ -206,6 +274,8 @@ export default function Ventas() {
                         <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
                     ) : ventas.length === 0 ? (
                         <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>No hay ventas registradas.</div>
+                    ) : ventasFiltradas.length === 0 ? (
+                        <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Ninguna nota coincide con los filtros.</div>
                     ) : (
                         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                             <thead>
