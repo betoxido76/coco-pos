@@ -6,7 +6,7 @@ import ModalPagoObligacion, { labelMetodo } from '../components/ModalPagoObligac
 import { SelectorAnticipos, totalAplicaciones, aplicacionesALista, PanelAnticiposCxP, saldoAnticiposEmpresa } from '../components/AnticiposOC'
 import ModalPagoGasto from '../components/ModalPagoGasto'
 import FiltroCombo from '../components/FiltroCombo'
-import { useOrden, ordenarFilas, useAltoBarra, ThOrden } from '../components/TablaOrdenable'
+import { useOrden, ordenarFilas, useAltoBarra, ThOrden, TopTitulos } from '../components/TablaOrdenable'
 import { precioBaseItem, totalesGuardados } from '../lib/iva'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
@@ -572,7 +572,7 @@ export default function CuentasPagar() {
                 </div>
             )}
 
-            {tabSeccion === 'anticipos' && <PanelAnticiposCxP />}
+            {tabSeccion === 'anticipos' && <TopTitulos.Provider value={altoBarra}><PanelAnticiposCxP /></TopTitulos.Provider>}
 
             {mostrarModal && compraSeleccionada && (
                 <ModalPago

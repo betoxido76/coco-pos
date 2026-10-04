@@ -8,12 +8,13 @@
 //
 // El registro usa la ventana única de pago (ModalPagoObligacion): fecha + tasa
 // de ESA fecha, montos USD/Bs, métodos y cuenta bancaria. No escribir otra.
-import { useEffect, useState } from 'react'
+import { useContext, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import ModalPagoObligacion, { labelMetodo } from './ModalPagoObligacion'
 import { fmtFechaCorta, ymdCaracas } from './SelectorFechaTasa'
 import FiltroCombo from './FiltroCombo'
+import { useAltoBarra, useOrden, ordenarFilas, ThOrden, TopTitulos, estiloTarjetaTabla } from './TablaOrdenable'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 const fmtBs = (n) => `${Number(n || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`
@@ -114,22 +115,39 @@ export default function AnticiposOC({ orden }) {
     )
 }
 
-// ── Tabla reutilizable (OC y, en la Fase 5, CxP) ────────────────────────────
-export function TablaAnticipos({ anticipos, puedeAnular, onAnular, onVer = null, mostrarOC = false }) {
-    const th = { padding: '8px 10px', fontSize: '11px', fontWeight: 500, color: '#6b7280', textAlign: 'left', whiteSpace: 'nowrap' }
+// ── Tabla reutilizable (OC y CxP) ───────────────────────────────────────────
+// Ordenable por columna. Con `topTitulos` (CxP) los títulos quedan fijos a esa
+// altura al hacer scroll; sin él (detalle de la OC) la tabla conserva su
+// scroll horizontal, que anula el título fijo.
+export function TablaAnticipos({ anticipos, puedeAnular, onAnular, onVer = null, mostrarOC = false, topTitulos = null }) {
     const td = { padding: '10px', fontSize: '13px', color: '#374151', whiteSpace: 'nowrap' }
+    const [orden, ordenarPor] = useOrden({ col: 'fecha', dir: 'desc' }, ['numero', 'fecha', 'pagado', 'aplicado', 'saldo'])
+    const filas = ordenarFilas(anticipos, {
+        numero: a => a.numero_anticipo,
+        fecha: a => a.fecha,
+        oc: a => a.ordenes_compra?.numero_oc,
+        proveedor: a => a.proveedores?.nombre,
+        pagado: a => Number(a.monto_equiv_usd || 0),
+        aplicado: a => Number(a.aplicado_usd || 0),
+        saldo: a => a.estado === 'anulado' ? null : Number(a.saldo_usd || 0),
+        estado: a => a.estado,
+    }, orden)
+    const columnas = [['N°', 'numero'], ['Fecha', 'fecha'], ...(mostrarOC ? [['OC', 'oc'], ['Proveedor', 'proveedor']] : []),
+        ['Pagado', 'pagado'], ['Aplicado', 'aplicado'], ['Saldo', 'saldo'], ['Estado', 'estado'], ['', null]]
     return (
-        <div style={{ overflowX: 'auto' }}>
+        <div style={{ overflowX: topTitulos == null ? 'auto' : 'visible' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
-                    <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                        {['N°', 'Fecha', ...(mostrarOC ? ['OC', 'Proveedor'] : []), 'Pagado', 'Aplicado', 'Saldo', 'Estado', ''].map((h, i) => (
-                            <th key={i} style={{ ...th, textAlign: ['Pagado', 'Aplicado', 'Saldo'].includes(h) ? 'right' : 'left' }}>{h}</th>
+                    <tr>
+                        {columnas.map(([h, col], i) => (
+                            <ThOrden key={i} col={col} orden={orden} onOrdenar={ordenarPor} top={topTitulos ?? 0}
+                                align={['pagado', 'aplicado', 'saldo'].includes(col) ? 'right' : 'left'}
+                                style={{ padding: '8px 10px', fontSize: '11px' }}>{h}</ThOrden>
                         ))}
                     </tr>
                 </thead>
                 <tbody>
-                    {anticipos.map(a => {
+                    {filas.map(a => {
                         const anulado = a.estado === 'anulado'
                         const metodos = [labelMetodo(a.metodo_usd), labelMetodo(a.metodo_bs)].filter(Boolean).join(' / ')
                         return (
@@ -453,6 +471,10 @@ export function PanelAnticiposCxP() {
     const [fEstado, setFEstado] = useState('con_saldo')
     const [ver, setVer] = useState(null)
     const [anulando, setAnulando] = useState(null)
+    // La fila de filtros queda fija debajo de la barra de pestañas de CxP
+    // (alto por TopTitulos) y los títulos de la tabla debajo de ella
+    const topBarra = useContext(TopTitulos)
+    const [filtrosRef, altoFiltros] = useAltoBarra([ver])
 
     async function cargar() {
         setCargando(true)
@@ -494,18 +516,18 @@ export function PanelAnticiposCxP() {
                 {kpi('Saldo en OC canceladas', fmt(saldoCanceladas), enCanceladas.length ? 'reclamar reembolso o aplicar a otra compra' : 'ninguno', enCanceladas.length > 0)}
             </div>
 
-            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: '16px' }}>
+            <div ref={filtrosRef} style={{ position: 'sticky', top: topBarra, zIndex: 15, backgroundColor: '#f9fafb', display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end', paddingBottom: '12px' }}>
                 <FiltroCombo label="Proveedor" value={fProveedor} onChange={setFProveedor} options={opcProv} width="240px" />
                 <FiltroCombo label="OC" value={fOC} onChange={setFOC} options={opcOC} width="160px" />
                 <FiltroCombo label="Estado" value={fEstado} onChange={setFEstado} options={FILTROS_ESTADO} width="170px" />
             </div>
 
-            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+            <div style={estiloTarjetaTabla}>
                 {cargando ? <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
                     : filtrados.length === 0 ? <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>
                         {anticipos.length === 0 ? 'No hay anticipos registrados. Se registran desde el detalle de una orden de compra.' : 'No hay anticipos para los filtros seleccionados.'}
                     </div>
-                    : <TablaAnticipos anticipos={filtrados} mostrarOC puedeAnular={puedeAnular} onAnular={setAnulando} onVer={setVer} />}
+                    : <TablaAnticipos anticipos={filtrados} mostrarOC puedeAnular={puedeAnular} onAnular={setAnulando} onVer={setVer} topTitulos={topBarra + altoFiltros} />}
             </div>
 
             {anulando && <ModalAnularAnticipo anticipo={anulando} onAnulado={() => { setAnulando(null); cargar() }} onCerrar={() => setAnulando(null)} />}

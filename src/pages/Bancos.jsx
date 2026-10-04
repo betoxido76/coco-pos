@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import { ArrowLeft, Plus, Edit2, Landmark, ArrowRightLeft } from 'lucide-react'
 import { ymdCaracas, inicioDiaCaracas, finDiaCaracas } from '../components/SelectorFechaTasa'
+import { useAltoBarra, useOrden, ordenarFilas, ThOrden, BarraFija, estiloTarjetaTabla } from '../components/TablaOrdenable'
 
 const fmt = n => '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const fmtBs = n => Number(n || 0).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' Bs.'
@@ -56,6 +57,7 @@ export default function Bancos() {
     const [tasas, setTasas] = useState({})
     const [cargando, setCargando] = useState(true)
     const [modalCuenta, setModalCuenta] = useState(null)
+    const [orden, ordenarPor] = useOrden({ col: 'cuenta', dir: 'asc' }, ['saldo'])
 
     useEffect(() => {
         if (perfil?.empresa_id) cargar()
@@ -136,17 +138,23 @@ export default function Bancos() {
                     <p style={{ margin: 0 }}>No hay cuentas bancarias registradas</p>
                 </div>
             ) : (
-                <div style={{ backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '12px', overflow: 'hidden' }}>
+                <div style={estiloTarjetaTabla}>
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
-                            <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                {['Cuenta', 'Banco', 'Tipo', 'Moneda', 'Saldo actual', 'Acciones'].map(h => (
-                                    <th key={h} style={{ padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</th>
+                            <tr>
+                                {[['Cuenta', 'cuenta'], ['Banco', 'banco'], ['Tipo', 'tipo'], ['Moneda', 'moneda'], ['Saldo actual', 'saldo'], ['Acciones', null]].map(([h, col]) => (
+                                    <ThOrden key={h} col={col} orden={orden} onOrdenar={ordenarPor} top={0} style={{ padding: '12px 16px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</ThOrden>
                                 ))}
                             </tr>
                         </thead>
                         <tbody>
-                            {cuentas.map(c => {
+                            {ordenarFilas(cuentas, {
+                                cuenta: c => c.nombre,
+                                banco: c => c.banco,
+                                tipo: c => c.tipo_cuenta,
+                                moneda: c => c.moneda,
+                                saldo: c => saldos[c.id] ?? 0,
+                            }, orden).map(c => {
                                 const saldo = saldos[c.id] ?? 0
                                 const badge = c.moneda === 'USD'
                                     ? { bg: '#dcfce7', color: '#166534' }
@@ -218,6 +226,9 @@ function VistaDetalle({ cuenta, tasas, onVolver }) {
     const [modalMovimiento, setModalMovimiento] = useState(false)
     const [modalTransferencia, setModalTransferencia] = useState(false)
     const [otrasCuentas, setOtrasCuentas] = useState([])
+    const [barraRef, altoBarra] = useAltoBarra()
+    const [orden, ordenarPor] = useOrden({ col: 'fecha', dir: 'desc' }, ['fecha', 'ingreso', 'egreso', 'saldo'])
+    useEffect(() => { setPagina(0) }, [orden])
 
     useEffect(() => {
         if (perfil?.empresa_id) {
@@ -349,7 +360,16 @@ function VistaDetalle({ cuenta, tasas, onVolver }) {
     const neto = totalIngresos - totalEgresos
 
     const totalPags = Math.ceil(movimientos.length / PAGE_SIZE)
-    const paginados = movimientos.slice(pagina * PAGE_SIZE, (pagina + 1) * PAGE_SIZE)
+    // El saldo acumulado de cada fila se calcula en orden cronológico (cargar);
+    // reordenar no lo cambia, solo cambia el orden en que se muestran
+    const paginados = ordenarFilas(movimientos, {
+        fecha: m => m.fecha,
+        origen: m => m.label,
+        descripcion: m => m.descripcion,
+        ingreso: m => m.signo === 1 ? m.monto : null,
+        egreso: m => m.signo === -1 ? m.monto : null,
+        saldo: m => m.saldoAcum,
+    }, orden).slice(pagina * PAGE_SIZE, (pagina + 1) * PAGE_SIZE)
 
     const fmtSaldo = v => cuenta.moneda === 'Bs' ? fmtBs(v) : fmt(v)
 
@@ -391,8 +411,9 @@ function VistaDetalle({ cuenta, tasas, onVolver }) {
                 </div>
             </div>
 
-            {/* Filtro fechas */}
-            <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-end', marginBottom: '20px' }}>
+            {/* Filtro fechas: fijo al hacer scroll */}
+            <BarraFija ref={barraRef} gutter={28} style={{ marginBottom: '16px' }}>
+            <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-end', marginBottom: '8px' }}>
                 {[{ label: 'Desde', val: desde, set: setDesde }, { label: 'Hasta', val: hasta, set: setHasta }].map(f => (
                     <div key={f.label}>
                         <label style={{ fontSize: '12px', color: '#6b7280', display: 'block', marginBottom: '4px' }}>{f.label}</label>
@@ -401,6 +422,7 @@ function VistaDetalle({ cuenta, tasas, onVolver }) {
                     </div>
                 ))}
             </div>
+            </BarraFija>
 
             {/* KPIs período */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginBottom: '24px' }}>
@@ -423,16 +445,17 @@ function VistaDetalle({ cuenta, tasas, onVolver }) {
                 <div style={{ textAlign: 'center', padding: '50px', color: '#9ca3af' }}>Sin movimientos en este período</div>
             ) : (
                 <>
-                    <div style={{ backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '12px', overflow: 'hidden' }}>
+                    <div style={estiloTarjetaTabla}>
                         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                             <thead>
-                                <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                                <tr>
                                     {[
-                                        { h: 'Fecha', right: false }, { h: 'Origen', right: false },
-                                        { h: 'Descripción', right: false }, { h: 'Ingreso', right: true },
-                                        { h: 'Egreso', right: true }, { h: 'Saldo', right: true },
-                                    ].map(({ h, right }) => (
-                                        <th key={h} style={{ padding: '11px 14px', textAlign: right ? 'right' : 'left', fontSize: '12px', fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{h}</th>
+                                        { h: 'Fecha', col: 'fecha' }, { h: 'Origen', col: 'origen' },
+                                        { h: 'Descripción', col: 'descripcion' }, { h: 'Ingreso', col: 'ingreso', right: true },
+                                        { h: 'Egreso', col: 'egreso', right: true }, { h: 'Saldo', col: 'saldo', right: true },
+                                    ].map(({ h, col, right }) => (
+                                        <ThOrden key={h} col={col} orden={orden} onOrdenar={ordenarPor} top={altoBarra} align={right ? 'right' : 'left'}
+                                            style={{ padding: '11px 14px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{h}</ThOrden>
                                     ))}
                                 </tr>
                             </thead>

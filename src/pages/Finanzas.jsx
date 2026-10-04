@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useContext, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import { Plus, X, Check, Trash2 } from 'lucide-react'
 import { ymdCaracas, inicioDiaCaracas, finDiaCaracas } from '../components/SelectorFechaTasa'
+import { useAltoBarra, useOrden, ordenarFilas, ThOrden, BarraFija, TopTitulos, estiloTarjetaTabla } from '../components/TablaOrdenable'
 
 const fmt = n => `$${Number(n || 0).toFixed(2)}`
 const fmtBs = n => `${Number(n || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`
@@ -80,6 +81,7 @@ export default function Finanzas() {
     const [tasas, setTasas] = useState({ tasa_bcv: 1, tasa_euro: 1, tasa_binance: 1 })
     const [loading, setLoading] = useState(true)
     const [modalManual, setModalManual] = useState(false)
+    const [barraRef, altoBarra] = useAltoBarra()
 
     const [filtroDesde, setFiltroDesde] = useState(primerDiaMes)
     const [filtroHasta, setFiltroHasta] = useState(hoyStr)
@@ -347,8 +349,9 @@ export default function Finanzas() {
                 </button>
             </div>
 
-            {/* Filtro de período */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px', flexWrap: 'wrap', backgroundColor: '#f9fafb', padding: '12px 16px', borderRadius: '10px', border: '1px solid #e5e7eb' }}>
+            {/* Período + pestañas: fijos al hacer scroll */}
+            <BarraFija ref={barraRef}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px', flexWrap: 'wrap', backgroundColor: '#fff', padding: '12px 16px', borderRadius: '10px', border: '1px solid #e5e7eb' }}>
                 <span style={{ fontSize: '13px', color: '#6b7280', fontWeight: 500 }}>Período realizados:</span>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                     <span style={{ fontSize: '13px', color: '#6b7280' }}>Desde</span>
@@ -370,7 +373,7 @@ export default function Finanzas() {
             </div>
 
             {/* Tabs */}
-            <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
                 {[
                     { key: 'resumen',   label: 'Resumen' },
                     { key: 'ingresos',  label: `Ingresos` },
@@ -389,7 +392,9 @@ export default function Finanzas() {
                     </button>
                 ))}
             </div>
+            </BarraFija>
 
+            <TopTitulos.Provider value={altoBarra}>
             {loading ? (
                 <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af' }}>Cargando...</div>
             ) : (
@@ -425,6 +430,7 @@ export default function Finanzas() {
                     )}
                 </>
             )}
+            </TopTitulos.Provider>
 
             {modalManual && (
                 <ModalMovimiento
@@ -529,13 +535,24 @@ function ResumenTab({ totalIngReal, totalEgrReal, totalIngProg, totalEgrProg, in
 // ══════════════════════════════════════════════════════════════
 function MovimientosTab({ realizados, programados, colorReal }) {
     const [subtab, setSubtab] = useState('realizados')
-    const lista = subtab === 'realizados' ? realizados : programados
+    const topBarra = useContext(TopTitulos)
+    const [subRef, altoSub] = useAltoBarra()
+    const [orden, ordenarPor] = useOrden({ col: 'fecha', dir: 'desc' }, ['fecha', 'usd', 'bs', 'equiv', 'venc'])
+    const lista = ordenarFilas(subtab === 'realizados' ? realizados : programados, {
+        fecha: i => i.fecha,
+        origen: i => i.origen,
+        descripcion: i => i.descripcion,
+        usd: i => Number(i.monto_usd) > 0 ? Number(i.monto_usd) : null,
+        bs: i => Number(i.monto_bs) > 0 ? Number(i.monto_bs) : null,
+        venc: i => subtab === 'programados' ? i.fecha_vencimiento : i.metodo,
+        equiv: i => equivUsd(i.monto_usd, i.monto_bs, i.tasa_cambio),
+    }, orden)
 
     const total = lista.reduce((s, i) => s + equivUsd(i.monto_usd, i.monto_bs, i.tasa_cambio), 0)
 
     return (
         <div>
-            <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+            <div ref={subRef} style={{ position: 'sticky', top: topBarra, zIndex: 15, backgroundColor: '#f9fafb', display: 'flex', gap: '8px', paddingBottom: '12px' }}>
                 {[
                     { key: 'realizados', label: `Realizados (${realizados.length})` },
                     { key: 'programados', label: `Programados (${programados.length})` },
@@ -556,7 +573,7 @@ function MovimientosTab({ realizados, programados, colorReal }) {
                 </span>
             </div>
 
-            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+            <div style={estiloTarjetaTabla}>
                 {lista.length === 0 ? (
                     <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>
                         No hay movimientos en esta sección
@@ -564,9 +581,10 @@ function MovimientosTab({ realizados, programados, colorReal }) {
                 ) : (
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
-                            <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                {['', 'Fecha', 'Origen', 'Descripción', 'USD', 'Bs.', subtab === 'programados' ? 'Vencimiento' : 'Método', 'Equiv. USD'].map((h, i) => (
-                                    <th key={i} style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: i >= 4 ? 'right' : 'left', whiteSpace: 'nowrap' }}>{h}</th>
+                            <tr>
+                                {[['', null], ['Fecha', 'fecha'], ['Origen', 'origen'], ['Descripción', 'descripcion'], ['USD', 'usd'], ['Bs.', 'bs'],
+                                  [subtab === 'programados' ? 'Vencimiento' : 'Método', 'venc'], ['Equiv. USD', 'equiv']].map(([h, col], i) => (
+                                    <ThOrden key={i} col={col} orden={orden} onOrdenar={ordenarPor} top={topBarra + altoSub} align={i >= 4 ? 'right' : 'left'}>{h}</ThOrden>
                                 ))}
                             </tr>
                         </thead>
@@ -624,6 +642,7 @@ function MovimientosTab({ realizados, programados, colorReal }) {
 function ManualTab({ movimientos, onNuevo, onActualizado }) {
     const { perfil } = useAuth()
     const [eliminando, setEliminando] = useState(null)
+    const [orden, ordenarPor] = useOrden({ col: 'fecha', dir: 'desc' }, ['fecha', 'usd', 'bs', 'venc'])
 
     async function eliminar(id) {
         setEliminando(id)
@@ -643,17 +662,26 @@ function ManualTab({ movimientos, onNuevo, onActualizado }) {
     )
 
     return (
-        <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+        <div style={estiloTarjetaTabla}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
-                    <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                        {['Fecha', 'Tipo', 'Estado', 'Concepto', 'USD', 'Bs.', 'Vencimiento', ''].map((h, i) => (
-                            <th key={i} style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
+                    <tr>
+                        {[['Fecha', 'fecha'], ['Tipo', 'tipo'], ['Estado', 'estado'], ['Concepto', 'concepto'], ['USD', 'usd'], ['Bs.', 'bs'],
+                          ['Vencimiento', 'venc'], ['', null]].map(([h, col], i) => (
+                            <ThOrden key={i} col={col} orden={orden} onOrdenar={ordenarPor}>{h}</ThOrden>
                         ))}
                     </tr>
                 </thead>
                 <tbody>
-                    {movimientos.map(m => {
+                    {ordenarFilas(movimientos, {
+                        fecha: m => m.fecha,
+                        tipo: m => m.tipo,
+                        estado: m => m.estado || 'pagado',
+                        concepto: m => m.concepto,
+                        usd: m => Number(m.monto_usd) > 0 ? Number(m.monto_usd) : null,
+                        bs: m => Number(m.monto_bs) > 0 ? Number(m.monto_bs) : null,
+                        venc: m => (m.estado || 'pagado') === 'pendiente' ? m.fecha_vencimiento : null,
+                    }, orden).map(m => {
                         const sem = (m.estado || 'pagado') === 'pendiente' ? semaforo(m.fecha_vencimiento) : null
                         return (
                             <tr key={m.id} style={{ borderBottom: '1px solid #f3f4f6' }}

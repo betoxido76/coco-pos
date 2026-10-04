@@ -6,6 +6,8 @@ import { useTasasFecha, fmtFechaCorta } from '../components/SelectorFechaTasa'
 import ModalPagoGasto from '../components/ModalPagoGasto'
 import { labelMetodo } from '../components/ModalPagoObligacion'
 import FiltroCombo from '../components/FiltroCombo'
+import { useAltoBarra, useOrden, ordenarFilas, ThOrden, BarraFija, estiloTarjetaTabla } from '../components/TablaOrdenable'
+import { traerTodas } from '../lib/traerTodas'
 
 const fmt = n => `$${Number(n || 0).toFixed(2)}`
 const fmtBs = n => `${Number(n || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`
@@ -52,7 +54,8 @@ export default function Gastos() {
     const [gastoAnulando, setGastoAnulando] = useState(null)
     const [gastoVer, setGastoVer] = useState(null)
     const [pagina, setPagina] = useState(0)
-    const [totalRegistros, setTotalRegistros] = useState(0)
+    const [barraRef, altoBarra] = useAltoBarra([vista, tab, gastoVer])
+    const [orden, ordenarPor] = useOrden({ col: 'fecha', dir: 'desc' }, ['documento', 'fecha', 'vencimiento', 'monto_usd', 'monto_bs'])
     const [pagadoPorGasto, setPagadoPorGasto] = useState({}) // gasto_id -> USD abonado
 
     // Filtros
@@ -62,8 +65,8 @@ export default function Gastos() {
     const [filtroEstado, setFiltroEstado] = useState('todos')
 
     useEffect(() => { cargarTasas(); cargarTipos() }, [])
-    useEffect(() => { setPagina(0) }, [filtroTipo, filtroDesde, filtroHasta, filtroEstado])
-    useEffect(() => { cargarGastos() }, [filtroTipo, filtroDesde, filtroHasta, filtroEstado, pagina])
+    useEffect(() => { setPagina(0) }, [filtroTipo, filtroDesde, filtroHasta, filtroEstado, orden])
+    useEffect(() => { cargarGastos() }, [filtroTipo, filtroDesde, filtroHasta, filtroEstado])
 
     async function cargarTasas() {
         const { data } = await supabase.from('configuracion')
@@ -95,22 +98,25 @@ export default function Gastos() {
         if (filtroEstado === 'porpagar') kpiQ = kpiQ.in('estado', ['pendiente', 'parcial'])
         else if (filtroEstado !== 'todos') kpiQ = kpiQ.eq('estado', filtroEstado)
 
-        let tablaQ = supabase.from('gastos')
-            .select('*, tipos_gastos(nombre), usuarios!usuario_id(nombre), proveedores(nombre)', { count: 'exact' })
-            .eq('empresa_id', perfil.empresa_id)
-            .order('fecha', { ascending: false })
-            .order('created_at', { ascending: false })
-            .range(pagina * PAGE_SIZE, (pagina + 1) * PAGE_SIZE - 1)
-        if (filtroTipo) tablaQ = tablaQ.eq('tipo_gasto_id', filtroTipo)
-        if (filtroDesde) tablaQ = tablaQ.gte('fecha', filtroDesde)
-        if (filtroHasta) tablaQ = tablaQ.lte('fecha', filtroHasta)
-        if (filtroEstado === 'porpagar') tablaQ = tablaQ.in('estado', ['pendiente', 'parcial'])
-        else if (filtroEstado !== 'todos') tablaQ = tablaQ.eq('estado', filtroEstado)
+        // Todos los gastos del filtro: se ordenan y paginan en el navegador
+        const construir = () => {
+            let q = supabase.from('gastos')
+                .select('*, tipos_gastos(nombre), usuarios!usuario_id(nombre), proveedores(nombre)')
+                .eq('empresa_id', perfil.empresa_id)
+                .order('fecha', { ascending: false })
+                .order('created_at', { ascending: false })
+                .order('id')
+            if (filtroTipo) q = q.eq('tipo_gasto_id', filtroTipo)
+            if (filtroDesde) q = q.gte('fecha', filtroDesde)
+            if (filtroHasta) q = q.lte('fecha', filtroHasta)
+            if (filtroEstado === 'porpagar') q = q.in('estado', ['pendiente', 'parcial'])
+            else if (filtroEstado !== 'todos') q = q.eq('estado', filtroEstado)
+            return q
+        }
 
-        const [{ data: kpi }, { data, count }] = await Promise.all([kpiQ, tablaQ])
+        const [{ data: kpi }, data] = await Promise.all([kpiQ, traerTodas(construir).catch(() => null)])
         if (kpi) setKpiData(kpi)
         if (data) setGastos(data)
-        if (count !== null) setTotalRegistros(count)
 
         // Abonos de los gastos parciales (para calcular saldo en KPIs y lista)
         const parcialIds = (kpi || []).filter(g => g.estado === 'parcial').map(g => g.id)
@@ -142,6 +148,21 @@ export default function Gastos() {
     }
 
     const hayFiltros = filtroTipo || filtroDesde || filtroHasta || filtroEstado !== 'todos'
+
+    const gastosOrdenados = ordenarFilas(gastos, {
+        documento: g => g.numero_gasto,
+        factura: g => g.numero_factura,
+        fecha: g => g.fecha,
+        nombre: g => g.nombre,
+        tipo: g => g.tipos_gastos?.nombre || g.categoria,
+        vencimiento: g => ['pendiente', 'parcial'].includes(g.estado) ? g.fecha_vencimiento : null,
+        monto_usd: g => Number(g.monto_usd) > 0 ? Number(g.monto_usd) : null,
+        monto_bs: g => Number(g.monto_bs) > 0 ? Number(g.monto_bs) : null,
+        metodo: g => g.metodo_pago,
+        usuario: g => g.usuarios?.nombre,
+    }, orden)
+    const totalRegistros = gastosOrdenados.length
+    const gastosPagina = gastosOrdenados.slice(pagina * PAGE_SIZE, (pagina + 1) * PAGE_SIZE)
 
     // KPIs — calculados sobre la query completa (kpiData), no la página visible
     const pagados = kpiData.filter(g => (g.estado || 'pagado') === 'pagado')
@@ -225,7 +246,8 @@ export default function Gastos() {
                         </div>
                     </div>
 
-                    {/* Filtro estado */}
+                    {/* Filtros: fijos al hacer scroll */}
+                    <BarraFija ref={barraRef}>
                     <div style={{ display: 'flex', gap: '6px', marginBottom: '12px' }}>
                         {[['todos', 'Todos'], ['pagado', 'Pagados'], ['porpagar', 'Por pagar']].map(([val, lbl]) => (
                             <button key={val} onClick={() => setFiltroEstado(val)}
@@ -247,7 +269,7 @@ export default function Gastos() {
                     </div>
 
                     {/* Filtros de fecha y tipo */}
-                    <div style={{ display: 'flex', gap: '10px', marginBottom: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', gap: '10px', marginBottom: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
                         <FiltroCombo value={filtroTipo} onChange={setFiltroTipo} options={tipos.map(x => ({ value: x.id, label: x.nombre }))} placeholder="Todos los tipos" width="200px" />
                         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                             <span style={{ fontSize: '13px', color: '#6b7280' }}>Desde</span>
@@ -266,9 +288,10 @@ export default function Gastos() {
                             </button>
                         )}
                     </div>
+                    </BarraFija>
 
                     {/* Tabla */}
-                    <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                    <div style={estiloTarjetaTabla}>
                         {loading ? (
                             <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af' }}>Cargando...</div>
                         ) : gastos.length === 0 ? (
@@ -276,14 +299,15 @@ export default function Gastos() {
                         ) : (
                             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                                 <thead>
-                                    <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                        {['', 'Documento', 'Nro Factura', 'Fecha', 'Nombre', 'Tipo', 'Vencimiento', 'Monto USD', 'Monto Bs.', 'Método', 'Usuario', ''].map((h, i) => (
-                                            <th key={i} style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
+                                    <tr>
+                                        {[['', null], ['Documento', 'documento'], ['Nro Factura', 'factura'], ['Fecha', 'fecha'], ['Nombre', 'nombre'], ['Tipo', 'tipo'],
+                                          ['Vencimiento', 'vencimiento'], ['Monto USD', 'monto_usd'], ['Monto Bs.', 'monto_bs'], ['Método', 'metodo'], ['Usuario', 'usuario'], ['', null]].map(([h, col], i) => (
+                                            <ThOrden key={i} col={col} orden={orden} onOrdenar={ordenarPor} top={altoBarra}>{h}</ThOrden>
                                         ))}
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {gastos.map(g => {
+                                    {gastosPagina.map(g => {
                                         const estado = g.estado || 'pagado'
                                         const esPorPagar = estado === 'pendiente' || estado === 'parcial'
                                         const sem = esPorPagar ? semaforo(g.fecha_vencimiento) : null
