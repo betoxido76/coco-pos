@@ -9,6 +9,7 @@ import { ModalEmitirNC, ModalMotivosNC } from '../components/NotasCredito'
 import ModalAnularNC from '../components/ModalAnularNC'
 import { sinSaldoQueCobrar } from '../lib/cobro'
 import FiltroCombo from '../components/FiltroCombo'
+import { useOrden, ordenarFilas, useAltoBarra, ThOrden } from '../components/TablaOrdenable'
 import { totalesGuardados, precioBaseItem } from '../lib/iva'
 
 const fmt = n => `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -75,10 +76,8 @@ export default function CuentasCobrar() {
     const [seleccionadas, setSeleccionadas] = useState([]) // ids seleccionados
     const [pagina, setPagina] = useState(0)
     // Orden de la tabla: por defecto la que vence primero
-    const [orden, setOrden] = useState({ col: 'vencimiento', dir: 'asc' })
-    // Alto de la barra fija de filtros: los títulos de la tabla se pegan justo debajo
-    const barraRef = useRef(null)
-    const [altoBarra, setAltoBarra] = useState(0)
+    const [orden, ordenarPor] = useOrden({ col: 'vencimiento', dir: 'asc' },
+        ['total', 'cobrado', 'saldo', 'dias_pago', 'emision', 'ultimo_pago'])
     const [vista, setVista] = useState('cxc')
     const [ncs, setNcs] = useState([])
     const [loadingNcs, setLoadingNcs] = useState(false)
@@ -91,13 +90,8 @@ export default function CuentasCobrar() {
     const [aprobando, setAprobando] = useState(null)
 
     useEffect(() => { setPagina(0) }, [filtro, filtroCliente, filtroCat1, orden])
-    useEffect(() => {
-        const el = barraRef.current
-        if (!el) return
-        const ro = new ResizeObserver(() => setAltoBarra(el.offsetHeight))
-        ro.observe(el)
-        return () => ro.disconnect()
-    }, [vista])
+    // Alto de la barra fija de filtros: los títulos de la tabla se pegan justo debajo
+    const [barraRef, altoBarra] = useAltoBarra([vista])
     useEffect(() => { cargar() }, [filtro, filtroCliente, filtroCat1])
     // Limpiar selección al cambiar filtro
     useEffect(() => { setSeleccionadas([]) }, [filtro, filtroCliente, filtroCat1])
@@ -367,7 +361,7 @@ export default function CuentasCobrar() {
             diasPago: diasEntre(v.created_at, cob?.ultimaFecha),
         }
     })
-    const valorOrden = {
+    const filasOrdenadas = ordenarFilas(filasCxc, {
         nota: f => f.v.numero_factura,
         factura: f => f.v.nro_referencia,
         cliente: f => f.v.clientes?.nombre,
@@ -379,21 +373,9 @@ export default function CuentasCobrar() {
         cobrado: f => f.cobrado,
         saldo: f => f.saldo,
         estado: f => f.v.estado_cobro,
-    }
-    const leer = valorOrden[orden.col]
-    const filasOrdenadas = [...filasCxc].sort((a, b) => {
-        const va = leer(a), vb = leer(b)
-        // Los vacíos van siempre al final, en cualquier sentido
-        const vacioA = va == null || va === '', vacioB = vb == null || vb === ''
-        if (vacioA || vacioB) return vacioA === vacioB ? 0 : vacioA ? 1 : -1
-        const c = typeof va === 'number' ? va - vb : String(va).localeCompare(String(vb), 'es', { numeric: true })
-        return orden.dir === 'asc' ? c : -c
-    })
+    }, orden)
     const totalRegistros = filasOrdenadas.length
     const filasPagina = filasOrdenadas.slice(pagina * PAGE_SIZE, (pagina + 1) * PAGE_SIZE)
-    const ordenarPor = col => setOrden(o => o.col === col
-        ? { col, dir: o.dir === 'asc' ? 'desc' : 'asc' }
-        : { col, dir: ['total', 'cobrado', 'saldo', 'dias_pago', 'emision', 'ultimo_pago'].includes(col) ? 'desc' : 'asc' })
     const columnasCxc = [
         { key: 'chk', label: mostrarCheckboxes ? '☑' : '' },
         { key: 'dot', label: '' },
@@ -518,16 +500,11 @@ export default function CuentasCobrar() {
                                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                                     <thead>
                                         <tr>
-                                            {columnasCxc.map(c => {
-                                                const activa = c.orden && orden.col === c.key
-                                                return (
-                                                    <th key={c.key} onClick={c.orden ? () => ordenarPor(c.key) : undefined}
-                                                        style={{ position: 'sticky', top: altoBarra, zIndex: 10, backgroundColor: '#f9fafb', boxShadow: 'inset 0 -1px 0 #e5e7eb', padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: activa ? '#16a34a' : '#6b7280', textAlign: 'left', whiteSpace: 'nowrap', cursor: c.orden ? 'pointer' : 'default', userSelect: 'none' }}>
-                                                        {c.label}
-                                                        {c.orden && <span style={{ marginLeft: '4px', fontSize: '10px' }}>{activa ? (orden.dir === 'asc' ? '↑' : '↓') : '↕'}</span>}
-                                                    </th>
-                                                )
-                                            })}
+                                            {columnasCxc.map(c => (
+                                                <ThOrden key={c.key} col={c.orden ? c.key : null} orden={orden} onOrdenar={ordenarPor} top={altoBarra}>
+                                                    {c.label}
+                                                </ThOrden>
+                                            ))}
                                         </tr>
                                     </thead>
                                     <tbody>

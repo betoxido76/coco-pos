@@ -6,6 +6,7 @@ import ModalPagoObligacion, { labelMetodo } from '../components/ModalPagoObligac
 import { SelectorAnticipos, totalAplicaciones, aplicacionesALista, PanelAnticiposCxP, saldoAnticiposEmpresa } from '../components/AnticiposOC'
 import ModalPagoGasto from '../components/ModalPagoGasto'
 import FiltroCombo from '../components/FiltroCombo'
+import { useOrden, ordenarFilas, useAltoBarra, ThOrden } from '../components/TablaOrdenable'
 import { precioBaseItem, totalesGuardados } from '../lib/iva'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
@@ -65,8 +66,14 @@ export default function CuentasPagar() {
     const [proveedores, setProveedores] = useState([])
     const [filtroProveedor, setFiltroProveedor] = useState('')
     const [pagina, setPagina] = useState(0)
-    const [totalRegistros, setTotalRegistros] = useState(0)
     const [tabSeccion, setTabSeccion] = useState('compras')
+    // Orden de cada tabla (clic en el título) y alto de la barra fija de
+    // pestañas/filtros, para pegar los títulos justo debajo
+    const MONTOS = ['total', 'pagado', 'abonado', 'saldo', 'monto', 'fecha']
+    const [ordenCompras, ordenarCompras] = useOrden({ col: 'vencimiento', dir: 'asc' }, MONTOS)
+    const [ordenGastos, ordenarGastos] = useOrden({ col: 'vencimiento', dir: 'asc' }, MONTOS)
+    const [ordenNds, ordenarNds] = useOrden({ col: 'fecha', dir: 'desc' }, MONTOS)
+    const [barraRef, altoBarra] = useAltoBarra([tabSeccion])
     const [gastosPend, setGastosPend] = useState([])
     const [abonosGasto, setAbonosGasto] = useState({})
     const [loadingGastos, setLoadingGastos] = useState(false)
@@ -80,8 +87,8 @@ export default function CuentasPagar() {
     const [modalLiquidarNd, setModalLiquidarNd] = useState(null)
     const [saldoAnticipos, setSaldoAnticipos] = useState(0)
 
-    useEffect(() => { setPagina(0) }, [filtro, filtroProveedor])
-    useEffect(() => { cargarDatos() }, [filtro, filtroProveedor, pagina])
+    useEffect(() => { setPagina(0) }, [filtro, filtroProveedor, ordenCompras])
+    useEffect(() => { cargarDatos() }, [filtro, filtroProveedor])
     useEffect(() => { if (tabSeccion === 'gastos') cargarGastosPendientes() }, [tabSeccion])
     useEffect(() => { if (tabSeccion === 'nd') cargarNds() }, [tabSeccion, filtroNdEstado])
     // Anticipos a favor: activo, NO se resta de la deuda (se muestran por separado)
@@ -104,20 +111,33 @@ export default function CuentasPagar() {
         if (filtro !== 'todos') kpiQ = kpiQ.eq('estado_cobro', filtro)
         if (filtroProveedor) kpiQ = kpiQ.eq('proveedor_id', filtroProveedor)
 
-        let tablaQ = supabase
-            .from('compras')
-            .select('*, proveedores(nombre), ordenes_compra(numero_oc)', { count: 'exact' })
-            .eq('empresa_id', perfil.empresa_id)
-            .eq('condicion_pago', 'credito')
-            .order('fecha_vencimiento_pago', { ascending: true })
-            .range(pagina * PAGE_SIZE, (pagina + 1) * PAGE_SIZE - 1)
-        if (filtro !== 'todos') tablaQ = tablaQ.eq('estado_cobro', filtro)
-        if (filtroProveedor) tablaQ = tablaQ.eq('proveedor_id', filtroProveedor)
+        // Se traen TODAS las recepciones del filtro (no solo la página) para poder
+        // ordenar por cualquier columna, incluidas pagado y saldo. La paginación
+        // es en el navegador. Bloques de 1000: la API corta cada respuesta ahí.
+        const traerCompras = async () => {
+            const filas = []
+            for (let desde = 0; ; desde += 1000) {
+                let q = supabase
+                    .from('compras')
+                    .select('*, proveedores(nombre), ordenes_compra(numero_oc)')
+                    .eq('empresa_id', perfil.empresa_id)
+                    .eq('condicion_pago', 'credito')
+                    .order('created_at', { ascending: true })
+                    .order('id', { ascending: true })
+                    .range(desde, desde + 999)
+                if (filtro !== 'todos') q = q.eq('estado_cobro', filtro)
+                if (filtroProveedor) q = q.eq('proveedor_id', filtroProveedor)
+                const { data, error } = await q
+                if (error) return null
+                filas.push(...(data || []))
+                if (!data || data.length < 1000) return filas
+            }
+        }
 
-        const [{ data: cfgData }, { data: kpi }, { data, count }] = await Promise.all([
+        const [{ data: cfgData }, { data: kpi }, data] = await Promise.all([
             supabase.from('configuracion').select('clave, valor'),
             kpiQ,
-            tablaQ,
+            traerCompras(),
         ])
 
         const t = {}
@@ -140,12 +160,14 @@ export default function CuentasPagar() {
         }
 
         if (!data) { setLoading(false); return }
-        if (count !== null) setTotalRegistros(count)
 
+        // Pagos en bloques de 100 ids en paralelo: un IN de miles satura PostgREST
         const ids = data.map(c => c.id)
-        const { data: pagosData } = ids.length > 0
-            ? await supabase.from('pagos_proveedor').select('*').in('compra_id', ids).eq('anulado', false)
-            : { data: [] }
+        const bloques = []
+        for (let i = 0; i < ids.length; i += 100) bloques.push(ids.slice(i, i + 100))
+        const resp = await Promise.all(bloques.map(b =>
+            supabase.from('pagos_proveedor').select('*').in('compra_id', b).eq('anulado', false)))
+        const pagosData = resp.flatMap(r => r.data || [])
 
         const pagosMap = {}
         pagosData?.forEach(p => {
@@ -222,6 +244,38 @@ export default function CuentasPagar() {
         : Number(g.monto_usd || 0) + Number(g.monto_bs || 0) / (tasas[g.tipo_tasa] || tasas.tasa_bcv || 1)
     const saldoGasto = g => Math.max(0, totalGasto(g) - (abonosGasto[g.id] || 0))
 
+    // Filas ordenadas de cada pestaña (los vacíos van siempre al final)
+    const comprasOrdenadas = ordenarFilas(compras, {
+        documento: c => c.numero_doc,
+        doc_prov: c => c.nro_doc_proveedor,
+        proveedor: c => c.proveedores?.nombre,
+        vencimiento: c => c.fecha_vencimiento_pago,
+        total: c => Number(c.total || 0),
+        pagado: c => calcularCobrado(c),
+        saldo: c => calcularSaldo(c),
+        estado: c => c.estado_cobro,
+    }, ordenCompras)
+    const totalRegistros = comprasOrdenadas.length
+    const comprasPagina = comprasOrdenadas.slice(pagina * PAGE_SIZE, (pagina + 1) * PAGE_SIZE)
+    const gastosOrdenados = ordenarFilas(gastosPend, {
+        documento: g => g.numero_gasto,
+        nombre: g => g.nombre,
+        tipo: g => g.tipos_gastos?.nombre || g.categoria,
+        vencimiento: g => g.fecha_vencimiento,
+        total: g => totalGasto(g),
+        abonado: g => abonosGasto[g.id] || 0,
+        saldo: g => saldoGasto(g),
+        estado: g => g.estado,
+    }, ordenGastos)
+    const ndsOrdenadas = ordenarFilas(nds, {
+        numero: nd => nd.numero_nd,
+        proveedor: nd => nd.proveedores?.nombre,
+        recepcion: nd => nd.compras?.numero_doc,
+        fecha: nd => nd.created_at,
+        monto: nd => Number(nd.monto_total || 0),
+        estado: nd => nd.estado_nd,
+    }, ordenNds)
+
     function abrirModal(compra) {
         setCompraSeleccionada(compra)
         setMostrarModal(true)
@@ -265,8 +319,11 @@ export default function CuentasPagar() {
                 </div>
             </div>
 
+            {/* Pestañas + filtros: fijos al hacer scroll. El fondo es el de la
+                página para que la tabla no se vea por detrás. */}
+            <div ref={barraRef} style={{ position: 'sticky', top: 0, zIndex: 20, backgroundColor: '#f9fafb', margin: '0 -24px', padding: '12px 24px 4px' }}>
             {/* Tabs de sección */}
-            <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
                 {[['compras', 'Compras a crédito'], ['gastos', 'Gastos programados'], ['nd', `Notas de Débito${nds.length && filtroNdEstado === 'pendiente' ? ` (${nds.length})` : ''}`], ['anticipos', 'Anticipos']].map(([key, label]) => (
                     <button key={key} onClick={() => setTabSeccion(key)}
                         style={{ padding: '8px 18px', borderRadius: '8px', fontSize: '13px', fontWeight: 500, border: '1px solid', cursor: 'pointer',
@@ -279,7 +336,7 @@ export default function CuentasPagar() {
             </div>
 
             {/* Filtros (solo para compras) */}
-            {tabSeccion === 'compras' && <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
+            {tabSeccion === 'compras' && <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
                 {[['pendiente', 'Pendientes'], ['parcial', 'Parciales'], ['pagado', 'Pagadas'], ['todos', 'Todas']].map(([val, label]) => (
                     <button key={val} onClick={() => setFiltro(val)}
                         style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', cursor: 'pointer', backgroundColor: filtro === val ? '#16a34a' : '#fff', color: filtro === val ? '#fff' : '#374151', fontWeight: filtro === val ? 500 : 400 }}>
@@ -289,8 +346,21 @@ export default function CuentasPagar() {
                 <FiltroCombo value={filtroProveedor} onChange={setFiltroProveedor} options={proveedores.map(x => ({ value: x.id, label: x.nombre }))} placeholder="Todos los proveedores" width="240px" />
             </div>}
 
-            {/* Tabla compras */}
-            {tabSeccion === 'compras' && <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+            {tabSeccion === 'nd' && (
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
+                    {[['pendiente', 'Pendientes'], ['aplicada', 'Aplicadas'], ['liquidada', 'Liquidadas'], ['todas', 'Todas']].map(([val, label]) => (
+                        <button key={val} onClick={() => setFiltroNdEstado(val)}
+                            style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', cursor: 'pointer', backgroundColor: filtroNdEstado === val ? '#dc2626' : '#fff', color: filtroNdEstado === val ? '#fff' : '#374151', fontWeight: filtroNdEstado === val ? 500 : 400 }}>
+                            {label}
+                        </button>
+                    ))}
+                </div>
+            )}
+            </div>
+
+            {/* Tabla compras. overflow 'clip' (no 'hidden') para que los títulos
+                puedan quedar fijos: 'hidden' crea su propio contenedor de scroll. */}
+            {tabSeccion === 'compras' && <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'clip' }}>
                 {loading ? (
                     <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
                 ) : compras.length === 0 ? (
@@ -298,14 +368,21 @@ export default function CuentasPagar() {
                 ) : (
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
-                            <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                {['', 'Documento', 'Doc. Prov.', 'Proveedor', 'Vencimiento', 'Total', 'Pagado', 'Saldo', 'Estado', 'Accion'].map((h, i) => (
-                                    <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: [5, 6, 7].includes(i) ? 'right' : 'left', width: i === 0 ? '28px' : undefined }}>{h}</th>
+                            <tr>
+                                {[
+                                    ['', null], ['Documento', 'documento'], ['Doc. Prov.', 'doc_prov'], ['Proveedor', 'proveedor'],
+                                    ['Vencimiento', 'vencimiento'], ['Total', 'total'], ['Pagado', 'pagado'], ['Saldo', 'saldo'],
+                                    ['Estado', 'estado'], ['Accion', null],
+                                ].map(([h, col], i) => (
+                                    <ThOrden key={i} col={col} orden={ordenCompras} onOrdenar={ordenarCompras} top={altoBarra}
+                                        align={[5, 6, 7].includes(i) ? 'right' : 'left'} style={{ padding: '10px 16px', width: i === 0 ? '28px' : undefined }}>
+                                        {h}
+                                    </ThOrden>
                                 ))}
                             </tr>
                         </thead>
                         <tbody>
-                            {compras.map(c => {
+                            {comprasPagina.map(c => {
                                 const saldo = calcularSaldo(c)
                                 const cobrado = calcularCobrado(c)
                                 return (
@@ -370,7 +447,7 @@ export default function CuentasPagar() {
 
             {/* Tabla gastos programados */}
             {tabSeccion === 'gastos' && (
-                <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'clip' }}>
                     {loadingGastos ? (
                         <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
                     ) : gastosPend.length === 0 ? (
@@ -378,14 +455,21 @@ export default function CuentasPagar() {
                     ) : (
                         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                             <thead>
-                                <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                    {['', 'Documento', 'Nombre', 'Tipo', 'Vencimiento', 'Total', 'Abonado', 'Saldo', 'Estado', ''].map((h, i) => (
-                                        <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: [5, 6, 7].includes(i) ? 'right' : 'left', width: i === 0 ? '28px' : undefined }}>{h}</th>
+                                <tr>
+                                    {[
+                                        ['', null], ['Documento', 'documento'], ['Nombre', 'nombre'], ['Tipo', 'tipo'],
+                                        ['Vencimiento', 'vencimiento'], ['Total', 'total'], ['Abonado', 'abonado'], ['Saldo', 'saldo'],
+                                        ['Estado', 'estado'], ['', null],
+                                    ].map(([h, col], i) => (
+                                        <ThOrden key={i} col={col} orden={ordenGastos} onOrdenar={ordenarGastos} top={altoBarra}
+                                            align={[5, 6, 7].includes(i) ? 'right' : 'left'} style={{ padding: '10px 16px', width: i === 0 ? '28px' : undefined }}>
+                                            {h}
+                                        </ThOrden>
                                     ))}
                                 </tr>
                             </thead>
                             <tbody>
-                                {gastosPend.map(g => {
+                                {gastosOrdenados.map(g => {
                                     const total = totalGasto(g)
                                     const abonado = abonosGasto[g.id] || 0
                                     const saldo = saldoGasto(g)
@@ -434,15 +518,7 @@ export default function CuentasPagar() {
             {/* Tab Notas de Débito */}
             {tabSeccion === 'nd' && (
                 <div>
-                    <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
-                        {[['pendiente', 'Pendientes'], ['aplicada', 'Aplicadas'], ['liquidada', 'Liquidadas'], ['todas', 'Todas']].map(([val, label]) => (
-                            <button key={val} onClick={() => setFiltroNdEstado(val)}
-                                style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', cursor: 'pointer', backgroundColor: filtroNdEstado === val ? '#dc2626' : '#fff', color: filtroNdEstado === val ? '#fff' : '#374151', fontWeight: filtroNdEstado === val ? 500 : 400 }}>
-                                {label}
-                            </button>
-                        ))}
-                    </div>
-                    <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                    <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'clip' }}>
                         {loadingNds ? (
                             <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
                         ) : nds.length === 0 ? (
@@ -450,14 +526,20 @@ export default function CuentasPagar() {
                         ) : (
                             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                                 <thead>
-                                    <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                        {['N° ND', 'Proveedor', 'Recepción origen', 'Fecha', 'Monto', 'Estado', 'Acciones'].map((h, i) => (
-                                            <th key={i} style={{ padding: '10px 16px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: i === 4 ? 'right' : 'left' }}>{h}</th>
+                                    <tr>
+                                        {[
+                                            ['N° ND', 'numero'], ['Proveedor', 'proveedor'], ['Recepción origen', 'recepcion'],
+                                            ['Fecha', 'fecha'], ['Monto', 'monto'], ['Estado', 'estado'], ['Acciones', null],
+                                        ].map(([h, col], i) => (
+                                            <ThOrden key={i} col={col} orden={ordenNds} onOrdenar={ordenarNds} top={altoBarra}
+                                                align={i === 4 ? 'right' : 'left'} style={{ padding: '10px 16px' }}>
+                                                {h}
+                                            </ThOrden>
                                         ))}
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {nds.map(nd => (
+                                    {ndsOrdenadas.map(nd => (
                                         <tr key={nd.id} style={{ borderBottom: '1px solid #f3f4f6' }}
                                             onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
                                             onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
