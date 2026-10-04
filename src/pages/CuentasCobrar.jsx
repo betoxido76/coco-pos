@@ -267,7 +267,7 @@ export default function CuentasCobrar() {
     async function cargarNcs() {
         setLoadingNcs(true)
         let q = supabase.from('devoluciones')
-            .select('id, numero_nc, monto_devuelto, subtotal, iva, estado_nc, tipo_devolucion, origen, es_total, motivo, referencia_fiscal, fecha_emision, created_at, cliente_id, venta_id, afecta_inventario, almacen_id, motivo_anulacion, nota_liquidacion, fecha_liquidacion, clientes(nombre), ventas(numero_factura)')
+            .select('id, numero_nc, monto_devuelto, subtotal, iva, estado_nc, tipo_devolucion, origen, es_total, motivo, referencia_fiscal, fecha_emision, created_at, cliente_id, venta_id, afecta_inventario, almacen_id, motivo_anulacion, nota_liquidacion, fecha_liquidacion, clientes(nombre), ventas(numero_factura, nro_referencia)')
             .eq('empresa_id', perfil.empresa_id)
             .not('numero_nc', 'is', null)
             .order('created_at', { ascending: false })
@@ -426,7 +426,7 @@ export default function CuentasCobrar() {
                                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                                     <thead>
                                         <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                            {[mostrarCheckboxes ? '☑' : '', '', 'Factura', 'Cliente', 'Emisión',
+                                            {[mostrarCheckboxes ? '☑' : '', '', 'Nota de Entrega', 'Factura', 'Cliente', 'Emisión',
                                               ...(mostrarColsPago ? ['Últ. pago', 'Días Pago'] : []),
                                               'Vencimiento', 'Total', 'Cobrado', 'Saldo', 'Estado', ''].map((h, i) => (
                                                 <th key={i} style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
@@ -462,6 +462,8 @@ export default function CuentasCobrar() {
                                                     </td>
                                                     <td style={{ padding: '12px 8px 12px 0', fontSize: '18px' }}>{sem?.dot || '⚪'}</td>
                                                     <td style={{ padding: '12px 14px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>{v.numero_factura}</td>
+                                                    {/* "Factura" = ventas.nro_referencia, la Ref que se carga en Ventas → ver nota */}
+                                                    <td style={{ padding: '12px 14px', fontSize: '13px', fontFamily: 'monospace', color: v.nro_referencia ? '#374151' : '#d1d5db' }}>{v.nro_referencia || '—'}</td>
                                                     <td style={{ padding: '12px 14px', fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>{v.clientes?.nombre || '—'}</td>
                                                     <td style={{ padding: '12px 14px', fontSize: '13px', color: '#6b7280' }}>{new Date(v.created_at).toLocaleDateString('es-VE')}</td>
                                                     {mostrarColsPago && (
@@ -551,8 +553,8 @@ export default function CuentasCobrar() {
                                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                                     <thead>
                                         <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                            {['N° NC', 'Cliente', 'Factura origen', 'Origen', 'Fecha', 'Monto', 'Estado', ''].map((h, i) => (
-                                                <th key={i} style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: i === 5 ? 'right' : 'left', whiteSpace: 'nowrap' }}>{h}</th>
+                                            {['N° NC', 'Cliente', 'Nota de Entrega origen', 'Factura', 'Origen', 'Fecha', 'Monto', 'Estado', ''].map((h, i) => (
+                                                <th key={i} style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: i === 6 ? 'right' : 'left', whiteSpace: 'nowrap' }}>{h}</th>
                                             ))}
                                         </tr>
                                     </thead>
@@ -562,6 +564,7 @@ export default function CuentasCobrar() {
                                                 <td style={{ padding: '12px 14px', fontSize: '13px', fontFamily: 'monospace', fontWeight: 600, color: '#374151' }}>{nc.numero_nc || '—'}</td>
                                                 <td style={{ padding: '12px 14px', fontSize: '13px', color: '#1f2937' }}>{nc.clientes?.nombre || '—'}</td>
                                                 <td style={{ padding: '12px 14px', fontSize: '13px', fontFamily: 'monospace', color: '#6b7280' }}>{nc.ventas?.numero_factura || '—'}</td>
+                                                <td style={{ padding: '12px 14px', fontSize: '13px', fontFamily: 'monospace', color: nc.ventas?.nro_referencia ? '#6b7280' : '#d1d5db' }}>{nc.ventas?.nro_referencia || '—'}</td>
                                                 <td style={{ padding: '12px 14px', fontSize: '12px', color: '#6b7280' }}>{nc.origen === 'manual' ? 'Manual' : 'Devolución'}</td>
                                                 <td style={{ padding: '12px 14px', fontSize: '13px', color: '#6b7280' }}>{new Date(nc.fecha_emision || nc.created_at).toLocaleDateString('es-VE')}</td>
                                                 <td style={{ padding: '12px 14px', fontSize: '13px', fontWeight: 700, color: '#1f2937', textAlign: 'right' }}>{fmt(nc.monto_devuelto)}</td>
@@ -894,9 +897,15 @@ function ModalCobro({ venta, onCerrar, onCobrado }) {
                 {/* Resumen de factura */}
                 <div style={{ backgroundColor: '#f9fafb', borderRadius: '10px', padding: '12px 16px', marginBottom: '20px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '4px' }}>
-                        <span style={{ color: '#6b7280' }}>Factura</span>
+                        <span style={{ color: '#6b7280' }}>Nota de Entrega</span>
                         <span style={{ fontFamily: 'monospace', fontWeight: 600, color: '#1f2937' }}>{venta.numero_factura}</span>
                     </div>
+                    {venta.nro_referencia && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '4px' }}>
+                            <span style={{ color: '#6b7280' }}>Factura</span>
+                            <span style={{ fontFamily: 'monospace', fontWeight: 600, color: '#1f2937' }}>{venta.nro_referencia}</span>
+                        </div>
+                    )}
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '4px' }}>
                         <span style={{ color: '#6b7280' }}>Total factura</span>
                         <span style={{ fontWeight: 600, color: '#1f2937' }}>{fmt(venta.total)}</span>
@@ -1331,7 +1340,7 @@ function ModalEstadoCuenta({ clienteId, tasaBcv, onCerrar }) {
                         .select('nombre, rif, direccion_fiscal, telefono, telefono_administrativo, email, email_administrativo, condicion_pago, dias_credito')
                         .eq('empresa_id', perfil.empresa_id).eq('id', clienteId).maybeSingle(),
                     supabase.from('ventas')
-                        .select('id, numero_factura, created_at, fecha_vencimiento_pago, total, estado_cobro, pago_usd, pago_bs, tasa_cambio')
+                        .select('id, numero_factura, nro_referencia, created_at, fecha_vencimiento_pago, total, estado_cobro, pago_usd, pago_bs, tasa_cambio')
                         .eq('empresa_id', perfil.empresa_id).eq('cliente_id', clienteId)
                         .in('estado_cobro', ['pendiente', 'parcial'])
                         .order('created_at', { ascending: true }),
@@ -1408,12 +1417,12 @@ function ModalEstadoCuenta({ clienteId, tasaBcv, onCerrar }) {
             ['RIF', cliente?.rif || ''],
             ['Fecha', fechaDoc],
             [],
-            ['Factura', 'Emisión', 'Vencimiento', 'Días vencida', 'Total USD', 'Abonado USD', 'Saldo USD'],
+            ['Nota de Entrega', 'Factura', 'Emisión', 'Vencimiento', 'Días vencida', 'Total USD', 'Abonado USD', 'Saldo USD'],
             ...facturas.map(f => [
-                f.numero_factura, fechaCorta(f.created_at), fechaCorta(f.fecha_vencimiento_pago),
+                f.numero_factura, f.nro_referencia || '', fechaCorta(f.created_at), fechaCorta(f.fecha_vencimiento_pago),
                 f.diasVencida > 0 ? f.diasVencida : 0, r2(Number(f.total || 0)), r2(f.abonado), r2(f.saldo),
             ]),
-            ['TOTAL', '', '', '', r2(totalFacturado), r2(totalAbonado), r2(totalSaldo)],
+            ['TOTAL', '', '', '', '', r2(totalFacturado), r2(totalAbonado), r2(totalSaldo)],
             [],
             ['Antigüedad del saldo'],
             ...tramos.map(t => [t.label, r2(t.monto)]),
@@ -1428,7 +1437,7 @@ function ModalEstadoCuenta({ clienteId, tasaBcv, onCerrar }) {
         if (conBs) filas.push([`Equivalente Bs. (tasa BCV ${tasaBcv})`, r2(Math.abs(deudaNeta) * tasaBcv)])
 
         const ws = XLSX.utils.aoa_to_sheet(filas)
-        ws['!cols'] = [{ wch: 26 }, { wch: 14 }, { wch: 14 }, { wch: 13 }, { wch: 13 }, { wch: 14 }, { wch: 13 }]
+        ws['!cols'] = [{ wch: 26 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 13 }, { wch: 13 }, { wch: 14 }, { wch: 13 }]
         const wb = XLSX.utils.book_new()
         XLSX.utils.book_append_sheet(wb, ws, 'Estado de cuenta')
         const nombre = (cliente?.nombre || 'cliente').replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_')
@@ -1505,7 +1514,7 @@ function ModalEstadoCuenta({ clienteId, tasaBcv, onCerrar }) {
                                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                                         <thead>
                                             <tr>
-                                                <th style={th}>Factura</th><th style={th}>Emisión</th><th style={th}>Vencimiento</th>
+                                                <th style={th}>Nota de Entrega</th><th style={th}>Factura</th><th style={th}>Emisión</th><th style={th}>Vencimiento</th>
                                                 <th style={{ ...th, ...num }}>Días venc.</th><th style={{ ...th, ...num }}>Total</th>
                                                 <th style={{ ...th, ...num }}>Abonado</th><th style={{ ...th, ...num }}>Saldo</th>
                                             </tr>
@@ -1514,6 +1523,7 @@ function ModalEstadoCuenta({ clienteId, tasaBcv, onCerrar }) {
                                             {facturas.map(f => (
                                                 <tr key={f.id}>
                                                     <td style={{ ...td, fontFamily: 'monospace' }}>{f.numero_factura}</td>
+                                                    <td style={{ ...td, fontFamily: 'monospace', color: f.nro_referencia ? '#374151' : '#d1d5db' }}>{f.nro_referencia || '—'}</td>
                                                     <td style={td}>{fechaCorta(f.created_at)}</td>
                                                     <td style={td}>{fechaCorta(f.fecha_vencimiento_pago)}</td>
                                                     <td style={{ ...td, ...num, color: f.diasVencida > 0 ? '#dc2626' : '#9ca3af', fontWeight: f.diasVencida > 0 ? 600 : 400 }}>
@@ -1525,7 +1535,7 @@ function ModalEstadoCuenta({ clienteId, tasaBcv, onCerrar }) {
                                                 </tr>
                                             ))}
                                             <tr>
-                                                <td colSpan={4} style={{ ...td, fontWeight: 700, color: '#1f2937', borderBottom: 'none' }}>Total ({facturas.length} {facturas.length === 1 ? 'factura' : 'facturas'})</td>
+                                                <td colSpan={5} style={{ ...td, fontWeight: 700, color: '#1f2937', borderBottom: 'none' }}>Total ({facturas.length} {facturas.length === 1 ? 'factura' : 'facturas'})</td>
                                                 <td style={{ ...td, ...num, fontWeight: 700, borderBottom: 'none' }}>{fmt(totalFacturado)}</td>
                                                 <td style={{ ...td, ...num, fontWeight: 700, borderBottom: 'none' }}>{fmt(totalAbonado)}</td>
                                                 <td style={{ ...td, ...num, fontWeight: 700, color: '#1f2937', borderBottom: 'none' }}>{fmt(totalSaldo)}</td>
@@ -1676,7 +1686,8 @@ function DetalleNC({ nc, onCerrar }) {
                 <div style={{ backgroundColor: '#f9fafb', borderRadius: '10px', padding: '14px 16px', marginBottom: '20px', display: 'flex', flexDirection: 'column', gap: '7px' }}>
                     <Row label="N° Nota de Crédito" value={nc.numero_nc || '—'} mono />
                     <Row label="Cliente" value={nc.clientes?.nombre || '—'} />
-                    <Row label="Factura origen" value={nc.ventas?.numero_factura || '—'} mono />
+                    <Row label="Nota de Entrega origen" value={nc.ventas?.numero_factura || '—'} mono />
+                    {nc.ventas?.nro_referencia && <Row label="Factura" value={nc.ventas.nro_referencia} mono />}
                     {nc.referencia_fiscal && <Row label="Referencia fiscal" value={nc.referencia_fiscal} mono />}
                     <Row label="Fecha emisión" value={new Date(nc.fecha_emision || nc.created_at).toLocaleDateString('es-VE')} />
                     <Row label="Origen" value={nc.origen === 'manual' ? 'Emisión manual' : 'Devolución de mercancía'} />
@@ -1893,7 +1904,7 @@ function TabAnularNE() {
         let ventasMap = {}
         if (ventaIds.length > 0) {
             const { data: vts } = await supabase.from('ventas')
-                .select('id, numero_factura, total, estado_cobro, created_at')
+                .select('id, numero_factura, nro_referencia, total, estado_cobro, created_at')
                 .in('id', ventaIds)
             vts?.forEach(v => { ventasMap[v.id] = v })
         }
@@ -1902,7 +1913,7 @@ function TabAnularNE() {
             return v ? {
                 pedidoId: p.id, numeroPedido: p.numero_pedido,
                 clienteNombre: p.clientes?.nombre || '—',
-                ventaId: v.id, numeroFactura: v.numero_factura,
+                ventaId: v.id, numeroFactura: v.numero_factura, referencia: v.nro_referencia,
                 total: v.total, estadoCobro: v.estado_cobro, fecha: v.created_at,
             } : null
         }).filter(Boolean)
@@ -1925,8 +1936,8 @@ function TabAnularNE() {
                             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                                 <thead>
                                     <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                        {['Nota de Entrega', 'N° Pedido', 'Cliente', 'Emisión', 'Total', 'Estado', ''].map((h, i) => (
-                                            <th key={i} style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: i === 4 ? 'right' : 'left', whiteSpace: 'nowrap' }}>{h}</th>
+                                        {['Nota de Entrega', 'Factura', 'N° Pedido', 'Cliente', 'Emisión', 'Total', 'Estado', ''].map((h, i) => (
+                                            <th key={i} style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: i === 5 ? 'right' : 'left', whiteSpace: 'nowrap' }}>{h}</th>
                                         ))}
                                     </tr>
                                 </thead>
@@ -1934,6 +1945,7 @@ function TabAnularNE() {
                                     {rows.map(r => (
                                         <tr key={r.ventaId} style={{ borderBottom: '1px solid #f3f4f6' }}>
                                             <td style={{ padding: '12px 14px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>{r.numeroFactura}</td>
+                                            <td style={{ padding: '12px 14px', fontSize: '13px', fontFamily: 'monospace', color: r.referencia ? '#374151' : '#d1d5db' }}>{r.referencia || '—'}</td>
                                             <td style={{ padding: '12px 14px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>{r.numeroPedido || '—'}</td>
                                             <td style={{ padding: '12px 14px', fontSize: '13px', color: '#1f2937' }}>{r.clienteNombre}</td>
                                             <td style={{ padding: '12px 14px', fontSize: '13px', color: '#6b7280' }}>{new Date(r.fecha).toLocaleDateString('es-VE')}</td>
