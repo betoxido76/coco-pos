@@ -9,7 +9,7 @@ import { ModalEmitirNC, ModalMotivosNC } from '../components/NotasCredito'
 import ModalAnularNC from '../components/ModalAnularNC'
 import { sinSaldoQueCobrar } from '../lib/cobro'
 import FiltroCombo from '../components/FiltroCombo'
-import { useOrden, ordenarFilas, useAltoBarra, ThOrden } from '../components/TablaOrdenable'
+import { useOrden, ordenarFilas, useAltoBarra, ThOrden, BarraFija, estiloTarjetaTabla } from '../components/TablaOrdenable'
 import { totalesGuardados, precioBaseItem } from '../lib/iva'
 
 const fmt = n => `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -92,6 +92,7 @@ export default function CuentasCobrar() {
     useEffect(() => { setPagina(0) }, [filtro, filtroCliente, filtroCat1, orden])
     // Alto de la barra fija de filtros: los títulos de la tabla se pegan justo debajo
     const [barraRef, altoBarra] = useAltoBarra([vista])
+    const [ordenNc, ordenarNc] = useOrden({ col: 'fecha', dir: 'desc' }, ['numero', 'fecha', 'monto'])
     useEffect(() => { cargar() }, [filtro, filtroCliente, filtroCat1])
     // Limpiar selección al cambiar filtro
     useEffect(() => { setSeleccionadas([]) }, [filtro, filtroCliente, filtroCat1])
@@ -590,8 +591,9 @@ export default function CuentasCobrar() {
 
             {/* ─── Vista NC ─── */}
             {vista === 'nc' && (<>
-                {/* Filtro estado + emisión */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+                {/* Filtro estado + emisión: fijos al hacer scroll (la barra de NC usa el mismo ref que la de CxC) */}
+                <BarraFija ref={barraRef}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
                     {[['todas', 'Todas'], ['en_revision', 'Por aprobar'], ['disponible', 'Disponibles'], ['aplicada', 'Aplicadas'], ['liquidada', 'Liquidadas']].map(([val, lbl]) => (
                         <button key={val} onClick={() => setFiltroNcEstado(val)}
                             style={{ padding: '7px 16px', borderRadius: '8px', fontSize: '13px', border: '1px solid', cursor: 'pointer', borderColor: filtroNcEstado === val ? '#d97706' : '#e5e7eb', backgroundColor: filtroNcEstado === val ? '#d97706' : '#fff', color: filtroNcEstado === val ? '#fff' : '#6b7280' }}>
@@ -607,22 +609,33 @@ export default function CuentasCobrar() {
                         <FileText size={14} /> Nueva NC
                     </button>
                 </div>
+                </BarraFija>
 
                 {/* Tabla NC */}
-                <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                <div style={estiloTarjetaTabla}>
                     {loadingNcs ? <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
                         : ncs.length === 0 ? <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>No hay notas de crédito</div>
                             : (
                                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                                     <thead>
-                                        <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                            {['N° NC', 'Cliente', 'Nota de Entrega origen', 'Factura', 'Origen', 'Fecha', 'Monto', 'Estado', ''].map((h, i) => (
-                                                <th key={i} style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: i === 6 ? 'right' : 'left', whiteSpace: 'nowrap' }}>{h}</th>
+                                        <tr>
+                                            {[['N° NC', 'numero'], ['Cliente', 'cliente'], ['Nota de Entrega origen', 'nota'], ['Factura', 'factura'], ['Origen', 'origen'],
+                                              ['Fecha', 'fecha'], ['Monto', 'monto'], ['Estado', 'estado'], ['', null]].map(([h, col], i) => (
+                                                <ThOrden key={i} col={col} orden={ordenNc} onOrdenar={ordenarNc} top={altoBarra} align={i === 6 ? 'right' : 'left'}>{h}</ThOrden>
                                             ))}
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {ncs.map(nc => (
+                                        {ordenarFilas(ncs, {
+                                            numero: nc => nc.numero_nc,
+                                            cliente: nc => nc.clientes?.nombre,
+                                            nota: nc => nc.ventas?.numero_factura,
+                                            factura: nc => nc.ventas?.nro_referencia,
+                                            origen: nc => nc.origen === 'manual' ? 'Manual' : 'Devolución',
+                                            fecha: nc => nc.fecha_emision || nc.created_at,
+                                            monto: nc => Number(nc.monto_devuelto || 0),
+                                            estado: nc => nc.estado_nc,
+                                        }, ordenNc).map(nc => (
                                             <tr key={nc.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
                                                 <td style={{ padding: '12px 14px', fontSize: '13px', fontFamily: 'monospace', fontWeight: 600, color: '#374151' }}>{nc.numero_nc || '—'}</td>
                                                 <td style={{ padding: '12px 14px', fontSize: '13px', color: '#1f2937' }}>{nc.clientes?.nombre || '—'}</td>
@@ -1953,6 +1966,7 @@ function TabAnularNE() {
     const [rows, setRows] = useState([])
     const [loading, setLoading] = useState(true)
     const [modal, setModal] = useState(null) // fila a anular
+    const [orden, ordenarPor] = useOrden({ col: 'emision', dir: 'desc' }, ['nota', 'pedido', 'emision', 'total'])
 
     async function cargar() {
         setLoading(true)
@@ -1992,20 +2006,29 @@ function TabAnularNE() {
                 Al anular se revierte el inventario al almacén que elijas, se eliminan los cobros y la nota sale de CxC.
             </div>
 
-            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+            <div style={estiloTarjetaTabla}>
                 {loading ? <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
                     : rows.length === 0 ? <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>No hay notas facturadas pendientes de despacho</div>
                         : (
                             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                                 <thead>
-                                    <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                        {['Nota de Entrega', 'Factura', 'N° Pedido', 'Cliente', 'Emisión', 'Total', 'Estado', ''].map((h, i) => (
-                                            <th key={i} style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: i === 5 ? 'right' : 'left', whiteSpace: 'nowrap' }}>{h}</th>
+                                    <tr>
+                                        {[['Nota de Entrega', 'nota'], ['Factura', 'factura'], ['N° Pedido', 'pedido'], ['Cliente', 'cliente'],
+                                          ['Emisión', 'emision'], ['Total', 'total'], ['Estado', 'estado'], ['', null]].map(([h, col], i) => (
+                                            <ThOrden key={i} col={col} orden={orden} onOrdenar={ordenarPor} top={0} align={i === 5 ? 'right' : 'left'}>{h}</ThOrden>
                                         ))}
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {rows.map(r => (
+                                    {ordenarFilas(rows, {
+                                        nota: r => r.numeroFactura,
+                                        factura: r => r.referencia,
+                                        pedido: r => r.numeroPedido,
+                                        cliente: r => r.clienteNombre,
+                                        emision: r => r.fecha,
+                                        total: r => Number(r.total || 0),
+                                        estado: r => r.estadoCobro,
+                                    }, orden).map(r => (
                                         <tr key={r.ventaId} style={{ borderBottom: '1px solid #f3f4f6' }}>
                                             <td style={{ padding: '12px 14px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>{r.numeroFactura}</td>
                                             <td style={{ padding: '12px 14px', fontSize: '13px', fontFamily: 'monospace', color: r.referencia ? '#374151' : '#d1d5db' }}>{r.referencia || '—'}</td>

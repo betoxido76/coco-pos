@@ -390,6 +390,14 @@ Al cerrar un ítem, borrarlo de esta tabla.
 - **Filtros de lista**: usar `src/components/FiltroCombo.jsx` (lista + búsqueda por
   cualquier parte del texto, sin acentos ni mayúsculas; `value=''` = Todos; prop
   `disabled`). No usar `<select>` para filtros; los `<select>` de formularios siguen igual.
+- **Listas: filtros y títulos fijos + orden por columna** con `src/components/TablaOrdenable.jsx`:
+  `BarraFija` (pestañas/filtros, recibe el ref de `useAltoBarra`), `ThOrden` (título fijo a
+  `top={altoBarra}`, ordenable con `col`), `useOrden` + `ordenarFilas` (vacíos al final) y
+  `estiloTarjetaTabla`. La tarjeta de la tabla y cualquier ancestro deben usar `overflow: 'clip'`,
+  nunca `'hidden'`/`'auto'` (crean su propio scroll y el título deja de quedar fijo). Para tablas
+  en subcomponentes, `<TopTitulos.Provider value={altoBarra}>`. Las listas que se ordenan por
+  columnas calculadas traen todo el filtro con `traerTodas` (`src/lib/traerTodas.js`) y paginan en
+  el navegador; Inventario → Movimientos ordena en la base (paginado allí).
 - **Exportador del Dashboard** (`docs/plan-exportador.md`): una vista plana `v_export_*` por fuente (security_invoker) + catálogo de campos en `src/lib/exportador/catalogo.js`. Agregar un campo = columna en la vista + entrada en el catálogo; no cruzar tablas desde la pantalla.
 - Formato de moneda USD: `fmt(n)` → `$X.XX`
 - Formato de moneda Bs: `fmtBs(n)` → `X.XX Bs.`

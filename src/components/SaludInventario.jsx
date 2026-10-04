@@ -11,6 +11,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import { ShieldCheck } from 'lucide-react'
+import { useAltoBarra, useOrden, ordenarFilas, ThOrden, BarraFija, estiloTarjetaTabla } from './TablaOrdenable'
 
 const TIPO_LABEL = {
     producto_terminado: 'PT', materia_prima: 'MP',
@@ -32,6 +33,9 @@ export default function SaludInventario() {
     const [filas, setFilas] = useState([])
     const [loading, setLoading] = useState(true)
     const [tipo, setTipo] = useState('todos')
+    // Por defecto, las diferencias más grandes primero (sin importar el signo)
+    const [orden, ordenarPor] = useOrden({ col: 'magnitud', dir: 'desc' }, ['catalogo', 'almacenes', 'diferencia'])
+    const [barraRef, altoBarra] = useAltoBarra([loading])
 
     useEffect(() => {
         if (!perfil?.empresa_id) return
@@ -61,7 +65,15 @@ export default function SaludInventario() {
     )
 
     const visibles = tipo === 'todos' ? filas : filas.filter(f => f.tipo_item === tipo)
-    const ordenadas = [...visibles].sort((a, b) => Math.abs(b.diferencia) - Math.abs(a.diferencia))
+    const ordenadas = ordenarFilas(visibles, {
+        magnitud: f => Math.abs(Number(f.diferencia)),
+        tipo: f => TIPO_LABEL[f.tipo_item] || f.tipo_item,
+        codigo: f => f.codigo,
+        item: f => f.nombre,
+        catalogo: f => Number(f.stock_catalogo),
+        almacenes: f => Number(f.stock_almacenes),
+        diferencia: f => Number(f.diferencia),
+    }, orden)
     const deMas = visibles.filter(f => f.diferencia > 0).reduce((s, f) => s + Number(f.diferencia), 0)
     const deMenos = visibles.filter(f => f.diferencia < 0).reduce((s, f) => s + Number(f.diferencia), 0)
 
@@ -90,6 +102,8 @@ export default function SaludInventario() {
                 ))}
             </div>
 
+            {/* Filtro por tipo: fijo al hacer scroll */}
+            <BarraFija ref={barraRef} style={{ paddingBottom: '8px' }}>
             <div className="flex flex-wrap bg-gray-100 p-1 rounded-lg w-fit">
                 {TIPOS.map(t => {
                     const n = t.key === 'todos' ? filas.length : filas.filter(f => f.tipo_item === t.key).length
@@ -104,17 +118,17 @@ export default function SaludInventario() {
                     )
                 })}
             </div>
+            </BarraFija>
 
-            <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
+            <div style={estiloTarjetaTabla}>
                 <table className="w-full">
-                    <thead className="bg-gray-50 border-b border-gray-200">
+                    <thead>
                         <tr>
-                            <th className="px-4 py-2.5 text-left text-xs font-medium text-gray-500">Tipo</th>
-                            <th className="px-4 py-2.5 text-left text-xs font-medium text-gray-500">Código</th>
-                            <th className="px-4 py-2.5 text-left text-xs font-medium text-gray-500">Ítem</th>
-                            <th className="px-4 py-2.5 text-right text-xs font-medium text-gray-500">Dice el catálogo</th>
-                            <th className="px-4 py-2.5 text-right text-xs font-medium text-gray-500">Hay en almacenes</th>
-                            <th className="px-4 py-2.5 text-right text-xs font-medium text-gray-500">Diferencia</th>
+                            {[['Tipo', 'tipo'], ['Código', 'codigo'], ['Ítem', 'item'], ['Dice el catálogo', 'catalogo', true],
+                              ['Hay en almacenes', 'almacenes', true], ['Diferencia', 'diferencia', true]].map(([h, col, der]) => (
+                                <ThOrden key={col} col={col} orden={orden} onOrdenar={ordenarPor} top={altoBarra}
+                                    align={der ? 'right' : 'left'} style={{ padding: '10px 16px' }}>{h}</ThOrden>
+                            ))}
                         </tr>
                     </thead>
                     <tbody>
