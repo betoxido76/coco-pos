@@ -74,7 +74,11 @@ export default function CuentasCobrar() {
     const cobrosReq = useRef(0)
     const [seleccionadas, setSeleccionadas] = useState([]) // ids seleccionados
     const [pagina, setPagina] = useState(0)
-    const [totalRegistros, setTotalRegistros] = useState(0)
+    // Orden de la tabla: por defecto la que vence primero
+    const [orden, setOrden] = useState({ col: 'vencimiento', dir: 'asc' })
+    // Alto de la barra fija de filtros: los títulos de la tabla se pegan justo debajo
+    const barraRef = useRef(null)
+    const [altoBarra, setAltoBarra] = useState(0)
     const [vista, setVista] = useState('cxc')
     const [ncs, setNcs] = useState([])
     const [loadingNcs, setLoadingNcs] = useState(false)
@@ -86,8 +90,15 @@ export default function CuentasCobrar() {
     const [modalAnularNc, setModalAnularNc] = useState(null)   // { nc, esRechazo }
     const [aprobando, setAprobando] = useState(null)
 
-    useEffect(() => { setPagina(0) }, [filtro, filtroCliente, filtroCat1])
-    useEffect(() => { cargar() }, [filtro, filtroCliente, filtroCat1, pagina])
+    useEffect(() => { setPagina(0) }, [filtro, filtroCliente, filtroCat1, orden])
+    useEffect(() => {
+        const el = barraRef.current
+        if (!el) return
+        const ro = new ResizeObserver(() => setAltoBarra(el.offsetHeight))
+        ro.observe(el)
+        return () => ro.disconnect()
+    }, [vista])
+    useEffect(() => { cargar() }, [filtro, filtroCliente, filtroCat1])
     // Limpiar selección al cambiar filtro
     useEffect(() => { setSeleccionadas([]) }, [filtro, filtroCliente, filtroCat1])
 
@@ -116,26 +127,38 @@ export default function CuentasCobrar() {
             ? 'clientes!inner(nombre, condicion_pago, dias_credito, contribuyente_especial)'
             : 'clientes(nombre, condicion_pago, dias_credito, contribuyente_especial)'
 
-        let tablaQ = supabase
-            .from('ventas')
-            .select(`*, ${embedCli}`, { count: 'exact' })
-            .eq('empresa_id', perfil.empresa_id)
-            .in('estado_cobro', estados)
-            .order('fecha_vencimiento_pago', { ascending: true })
-            .range(pagina * PAGE_SIZE, (pagina + 1) * PAGE_SIZE - 1)
-        if (filtroCliente) tablaQ = tablaQ.eq('cliente_id', filtroCliente)
-        if (filtroCat1) tablaQ = tablaQ.eq('clientes.cat1_id', filtroCat1)
+        // Se traen TODAS las notas del filtro (no solo la página) para poder
+        // ordenar por cualquier columna, incluidas las calculadas (cobrado,
+        // saldo, último pago). La paginación se hace en el navegador. Se pide en
+        // bloques de 1000 porque la API corta cada respuesta en ese tope.
+        const traerVentas = async () => {
+            const filas = []
+            for (let desde = 0; ; desde += 1000) {
+                let q = supabase
+                    .from('ventas')
+                    .select(`*, ${embedCli}`)
+                    .eq('empresa_id', perfil.empresa_id)
+                    .in('estado_cobro', estados)
+                    .order('created_at', { ascending: true })
+                    .order('id', { ascending: true })
+                    .range(desde, desde + 999)
+                if (filtroCliente) q = q.eq('cliente_id', filtroCliente)
+                if (filtroCat1) q = q.eq('clientes.cat1_id', filtroCat1)
+                const { data, error } = await q
+                if (error) throw error
+                filas.push(...(data || []))
+                if (!data || data.length < 1000) return filas
+            }
+        }
 
-        // La tabla (paginada) se resuelve y muestra de inmediato; los KPIs de
-        // cartera se cargan aparte para no bloquear el render si la query pesada
-        // tarda o falla.
+        // La tabla se resuelve y muestra de inmediato; los KPIs de cartera se
+        // cargan aparte para no bloquear el render si la query pesada tarda o falla.
         try {
-            const [{ data, count }, { data: cfg }] = await Promise.all([
-                tablaQ,
+            const [data, { data: cfg }] = await Promise.all([
+                traerVentas(),
                 supabase.from('configuracion').select('clave, valor'),
             ])
-            if (data) setVentas(data)
-            if (count !== null && count !== undefined) setTotalRegistros(count)
+            setVentas(data)
             if (cfg) {
                 const m = {}; cfg.forEach(r => { m[r.clave] = Number(r.valor) })
                 setTasas({ tasa_bcv: m.tasa_bcv || 1, tasa_euro: m.tasa_euro || 1, tasa_binance: m.tasa_binance || 1 })
@@ -151,21 +174,23 @@ export default function CuentasCobrar() {
         cargarSaldoFavor()
     }
 
-    // Cobros de las facturas de la página en UNA sola query. Antes cada fila
-    // montaba dos componentes que consultaban `cobros` por su cuenta (2 queries
-    // por fila = ~100 por página); ahora se resuelve todo aquí y las celdas solo
-    // leen del mapa. De paso el saldo y el "cobrado" salen de los mismos datos.
+    // Cobros de todas las notas cargadas, resueltos aquí: las celdas solo leen
+    // del mapa, y el saldo y el "cobrado" salen de los mismos datos. Los ids van
+    // en bloques de 100 en paralelo: un IN de miles de ids satura PostgREST.
     async function cargarCobrosPagina(filas) {
-        // Al cambiar de página rápido, la respuesta de la página anterior puede
-        // llegar después: solo se aplica la del último pedido.
+        // Si se cambia de filtro rápido, la respuesta anterior puede llegar
+        // después: solo se aplica la del último pedido.
         const req = ++cobrosReq.current
         setCobrosListos(false)
         const ids = filas.map(v => v.id)
         if (ids.length === 0) { setCobrosPagina({}); setCobrosListos(true); return }
-        const { data } = await supabase.from('cobros')
+        const bloques = []
+        for (let i = 0; i < ids.length; i += 100) bloques.push(ids.slice(i, i + 100))
+        const resp = await Promise.all(bloques.map(b => supabase.from('cobros')
             .select('venta_id, monto_usd, monto_bs, tasa_cambio, fecha_cobro, created_at')
-            .in('venta_id', ids)
+            .in('venta_id', b)))
         if (req !== cobrosReq.current) return
+        const data = resp.flatMap(r => r.data || [])
         const m = {}
         ;(data || []).forEach(c => {
             const acc = m[c.venta_id] || (m[c.venta_id] = { cobrado: 0, ultimaFecha: null })
@@ -325,6 +350,69 @@ export default function CuentasCobrar() {
     // En Pendientes no hay pagos todavía: las columnas de pago irían siempre vacías
     const mostrarColsPago = filtro !== 'pendiente'
 
+    // Filas con los valores calculados, para mostrarlas y para ordenar por ellos
+    const filasCxc = ventas.map(v => {
+        const cob = cobrosPagina[v.id]
+        const esPagada = v.estado_cobro === 'pagado'
+        // Lo efectivamente cobrado = abonos en `cobros` + pago directo en la
+        // venta. Si la factura está 'pagado' pero no hay ningún registro (ventas
+        // de contado), se muestra el total: el estado dice que se cobró completa
+        // y su saldo es 0.
+        const cobradoReg = (cob?.cobrado || 0) + pagoDirectoEnUsd(v)
+        const cobrado = esPagada ? Math.max(cobradoReg, v.total) : cobradoReg
+        return {
+            v, cob, cobrado,
+            saldo: esPagada ? 0 : v.total - cobrado,
+            // Días que tardó en pagarse: emisión → último cobro
+            diasPago: diasEntre(v.created_at, cob?.ultimaFecha),
+        }
+    })
+    const valorOrden = {
+        nota: f => f.v.numero_factura,
+        factura: f => f.v.nro_referencia,
+        cliente: f => f.v.clientes?.nombre,
+        emision: f => f.v.created_at,
+        ultimo_pago: f => f.cob?.ultimaFecha ? parseFecha(f.cob.ultimaFecha).getTime() : null,
+        dias_pago: f => f.diasPago,
+        vencimiento: f => f.v.fecha_vencimiento_pago,
+        total: f => Number(f.v.total || 0),
+        cobrado: f => f.cobrado,
+        saldo: f => f.saldo,
+        estado: f => f.v.estado_cobro,
+    }
+    const leer = valorOrden[orden.col]
+    const filasOrdenadas = [...filasCxc].sort((a, b) => {
+        const va = leer(a), vb = leer(b)
+        // Los vacíos van siempre al final, en cualquier sentido
+        const vacioA = va == null || va === '', vacioB = vb == null || vb === ''
+        if (vacioA || vacioB) return vacioA === vacioB ? 0 : vacioA ? 1 : -1
+        const c = typeof va === 'number' ? va - vb : String(va).localeCompare(String(vb), 'es', { numeric: true })
+        return orden.dir === 'asc' ? c : -c
+    })
+    const totalRegistros = filasOrdenadas.length
+    const filasPagina = filasOrdenadas.slice(pagina * PAGE_SIZE, (pagina + 1) * PAGE_SIZE)
+    const ordenarPor = col => setOrden(o => o.col === col
+        ? { col, dir: o.dir === 'asc' ? 'desc' : 'asc' }
+        : { col, dir: ['total', 'cobrado', 'saldo', 'dias_pago', 'emision', 'ultimo_pago'].includes(col) ? 'desc' : 'asc' })
+    const columnasCxc = [
+        { key: 'chk', label: mostrarCheckboxes ? '☑' : '' },
+        { key: 'dot', label: '' },
+        { key: 'nota', label: 'Nota de Entrega', orden: true },
+        { key: 'factura', label: 'Factura', orden: true },
+        { key: 'cliente', label: 'Cliente', orden: true },
+        { key: 'emision', label: 'Emisión', orden: true },
+        ...(mostrarColsPago ? [
+            { key: 'ultimo_pago', label: 'Últ. pago', orden: true },
+            { key: 'dias_pago', label: 'Días Pago', orden: true },
+        ] : []),
+        { key: 'vencimiento', label: 'Vencimiento', orden: true },
+        { key: 'total', label: 'Total', orden: true },
+        { key: 'cobrado', label: 'Cobrado', orden: true },
+        { key: 'saldo', label: 'Saldo', orden: true },
+        { key: 'estado', label: 'Estado', orden: true },
+        { key: 'acc', label: '' },
+    ]
+
     return (
         <div style={{ padding: '24px' }}>
             {/* Header con tabs de vista */}
@@ -350,7 +438,7 @@ export default function CuentasCobrar() {
             {/* ─── Vista CxC ─── */}
             {vista === 'cxc' && (<>
                 {/* KPI */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '24px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '24px' }}>
                     {[
                         { label: 'Total pendiente', valor: fmt(totalPendiente), sub: fmtBs(totalPendiente * tasas.tasa_bcv), color: '#1f2937' },
                         { label: 'Saldo a favor (NC)', valor: fmt(saldoFavor), sub: saldoFavor > 0.01 ? 'crédito del cliente sin aplicar' : 'sin notas de crédito vivas', color: '#d97706' },
@@ -372,8 +460,10 @@ export default function CuentasCobrar() {
                     ))}
                 </div>
 
-                {/* Filtros */}
-                <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
+                {/* Filtros + barra de cobro múltiple: fijos al hacer scroll. El fondo
+                    es el de la página para que la tabla no se vea por detrás. */}
+                <div ref={barraRef} style={{ position: 'sticky', top: 0, zIndex: 20, backgroundColor: '#f9fafb', margin: '0 -24px', padding: '12px 24px 4px' }}>
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
                     {[['por_cobrar', 'Por cobrar'], ['pendiente', 'Pendientes'], ['parcial', 'Parciales'], ['pagado', 'Pagadas'], ['todos', 'Todas']].map(([val, lbl]) => (
                         <button key={val} onClick={() => setFiltro(val)}
                             style={{ padding: '7px 16px', borderRadius: '8px', fontSize: '13px', border: '1px solid', cursor: 'pointer', borderColor: filtro === val ? '#16a34a' : '#e5e7eb', backgroundColor: filtro === val ? '#16a34a' : '#fff', color: filtro === val ? '#fff' : '#6b7280' }}>
@@ -398,7 +488,7 @@ export default function CuentasCobrar() {
 
                 {/* Barra de cobro múltiple */}
                 {seleccionadas.length > 1 && (
-                    <div style={{ backgroundColor: '#1d4ed8', borderRadius: '10px', padding: '12px 20px', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ backgroundColor: '#1d4ed8', borderRadius: '10px', padding: '12px 20px', marginBottom: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div style={{ color: '#fff' }}>
                             <span style={{ fontWeight: 700, fontSize: '15px' }}>{seleccionadas.length} facturas seleccionadas</span>
                             <span style={{ fontSize: '13px', marginLeft: '12px', opacity: 0.85 }}>
@@ -417,39 +507,35 @@ export default function CuentasCobrar() {
                         </div>
                     </div>
                 )}
+                </div>
 
-                {/* Tabla facturas */}
-                <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                {/* Tabla facturas. overflow 'clip' (no 'hidden') para que los títulos
+                    puedan quedar fijos: 'hidden' crea su propio contenedor de scroll. */}
+                <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'clip' }}>
                     {loading ? <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
                         : ventas.length === 0 ? <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>No hay facturas en este estado</div>
                             : (
                                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                                     <thead>
-                                        <tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                            {[mostrarCheckboxes ? '☑' : '', '', 'Nota de Entrega', 'Factura', 'Cliente', 'Emisión',
-                                              ...(mostrarColsPago ? ['Últ. pago', 'Días Pago'] : []),
-                                              'Vencimiento', 'Total', 'Cobrado', 'Saldo', 'Estado', ''].map((h, i) => (
-                                                <th key={i} style={{ padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
-                                            ))}
+                                        <tr>
+                                            {columnasCxc.map(c => {
+                                                const activa = c.orden && orden.col === c.key
+                                                return (
+                                                    <th key={c.key} onClick={c.orden ? () => ordenarPor(c.key) : undefined}
+                                                        style={{ position: 'sticky', top: altoBarra, zIndex: 10, backgroundColor: '#f9fafb', boxShadow: 'inset 0 -1px 0 #e5e7eb', padding: '10px 14px', fontSize: '12px', fontWeight: 500, color: activa ? '#16a34a' : '#6b7280', textAlign: 'left', whiteSpace: 'nowrap', cursor: c.orden ? 'pointer' : 'default', userSelect: 'none' }}>
+                                                        {c.label}
+                                                        {c.orden && <span style={{ marginLeft: '4px', fontSize: '10px' }}>{activa ? (orden.dir === 'asc' ? '↑' : '↓') : '↕'}</span>}
+                                                    </th>
+                                                )
+                                            })}
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {ventas.map(v => {
+                                        {filasPagina.map(({ v, cob, cobrado, saldo: saldoFila, diasPago }) => {
                                             const sem = semaforo(v.fecha_vencimiento_pago)
                                             const seleccionada = seleccionadas.includes(v.id)
                                             const deshabilitada = v.estado_cobro === 'pagado' ||
                                                 (clienteSeleccionado && v.cliente_id !== clienteSeleccionado && !seleccionada)
-                                            const cob = cobrosPagina[v.id]
-                                            const esPagada = v.estado_cobro === 'pagado'
-                                            // Lo efectivamente cobrado = abonos en `cobros` + pago directo
-                                            // en la venta. Si la factura está 'pagado' pero no hay ningún
-                                            // registro (ventas de contado), se muestra el total: el estado
-                                            // dice que se cobró completa y su saldo es 0.
-                                            const cobradoReg = (cob?.cobrado || 0) + pagoDirectoEnUsd(v)
-                                            const cobrado = esPagada ? Math.max(cobradoReg, v.total) : cobradoReg
-                                            const saldoFila = esPagada ? 0 : v.total - cobrado
-                                            // Días que tardó en pagarse: emisión → último cobro
-                                            const diasPago = diasEntre(v.created_at, cob?.ultimaFecha)
                                             return (
                                                 <tr key={v.id} style={{ borderBottom: '1px solid #f3f4f6', backgroundColor: seleccionada ? '#eff6ff' : sem?.bg || 'transparent', opacity: deshabilitada && mostrarCheckboxes ? 0.45 : 1, outline: seleccionada ? '2px solid #1d4ed8' : 'none', outlineOffset: '-2px' }}>
                                                     <td style={{ padding: '12px 8px 12px 14px' }}>
