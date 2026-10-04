@@ -4,17 +4,19 @@
 import * as XLSX from 'xlsx'
 import { supabase } from '../supabaseClient'
 import { FUENTES } from './catalogo'
+import { inicioDiaCaracas, finDiaCaracas } from '../../components/SelectorFechaTasa'
 
 const PAGE = 1000
 
 // filtros: { empresaId, desde, hasta, cliente, canal, vendedor, producto, incluirAnulados }
-// Las fechas se filtran igual que el Dashboard (created_at entre desde 00:00 y
-// hasta 23:59:59.999) para que el archivo cuadre con sus indicadores.
+// Días en hora de Venezuela, igual que el Dashboard, para que el archivo cuadre
+// con sus indicadores. Las columnas de fecha "de negocio" (date) se comparan tal cual.
 function aplicarFiltros(q, fuente, modo, f) {
     const m = fuente.filtros
     q = q.eq('empresa_id', f.empresaId)
-    if (f.desde) q = q.gte(m.fechaCol, f.desde + 'T00:00:00')
-    if (f.hasta) q = q.lte(m.fechaCol, f.hasta + 'T23:59:59.999')
+    const esDate = m.fechaTipo === 'date'
+    if (f.desde) q = q.gte(m.fechaCol, esDate ? f.desde : inicioDiaCaracas(f.desde))
+    if (f.hasta) q = q.lte(m.fechaCol, esDate ? f.hasta : finDiaCaracas(f.hasta))
     if (f.cliente && m.cliente) q = q.eq(m.cliente, f.cliente)
     if (f.canal && m.canal) q = q.eq(m.canal, f.canal)
     if (f.vendedor && m.vendedor) q = q.eq(m.vendedor, f.vendedor)

@@ -10,6 +10,10 @@ import { useAuth } from '../contexts/AuthContext'
 import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import { fmt, fmtNum, GRIS_OTROS, colorCategoria } from '../lib/dataviz'
 import { unidadesDeLinea } from '../lib/productos'
+import { inicioDiaCaracas, finDiaCaracas, ymdCaracas } from '../components/SelectorFechaTasa'
+
+// Año y mes de un timestamp en hora de Venezuela (no la del navegador ni UTC)
+const partesCaracas = (ts) => { const [y, m] = ymdCaracas(ts).split('-'); return { anio: Number(y), mes: Number(m) - 1 } }
 import { baseLinea, conIva, itemAplicaIva } from '../lib/iva'
 
 const MESES = ['ENERO', 'FEBRERO', 'MARZO', 'ABRIL', 'MAYO', 'JUNIO',
@@ -74,8 +78,8 @@ export default function TabResumen() {
         async function cargar() {
             setLoading(true); setError('')
             try {
-                const desde = `${anio - 1}-01-01T00:00:00`
-                const hasta = `${anio}-12-31T23:59:59.999`
+                const desde = inicioDiaCaracas(`${anio - 1}-01-01`)
+                const hasta = finDiaCaracas(`${anio}-12-31`)
 
                 const { data: cats } = await supabase.from('categorias_clientes')
                     .select('id, nombre').eq('empresa_id', perfil.empresa_id)
@@ -113,11 +117,11 @@ export default function TabResumen() {
                 const lineas = iAll
                     .filter(i => i.ventas?.estado_cobro !== 'anulado')
                     .map(i => {
-                        const d = new Date(i.ventas.created_at)
+                        const d = partesCaracas(i.ventas.created_at)
                         const cant = Number(i.cantidad || 0)
                         return {
                             ventaId: i.venta_id,
-                            anio: d.getFullYear(), mes: d.getMonth(),
+                            anio: d.anio, mes: d.mes,
                             productoId: i.producto_id,
                             nombre: i.productos_terminados?.nombre || 'Sin nombre',
                             sku: i.productos_terminados?.sku || '',
@@ -131,7 +135,7 @@ export default function TabResumen() {
                 // Cobros de las ventas del año elegido (los del año anterior no
                 // hacen falta: cobranzas solo reporta el año del filtro).
                 const idsAnio = vAll
-                    .filter(v => new Date(v.created_at).getFullYear() === anio && v.estado_cobro !== 'anulado')
+                    .filter(v => partesCaracas(v.created_at).anio === anio && v.estado_cobro !== 'anulado')
                     .map(v => v.id)
                 const cob = {}
                 for (let i = 0; i < idsAnio.length; i += 300) {
@@ -149,9 +153,9 @@ export default function TabResumen() {
                 setVentas(vAll
                     .filter(v => v.estado_cobro !== 'anulado')
                     .map(v => {
-                        const d = new Date(v.created_at)
+                        const d = partesCaracas(v.created_at)
                         return {
-                            id: v.id, anio: d.getFullYear(), mes: d.getMonth(),
+                            id: v.id, anio: d.anio, mes: d.mes,
                             total: Number(v.total || 0),
                             estadoCobro: v.estado_cobro,
                             fechaVenc: v.fecha_vencimiento_pago,

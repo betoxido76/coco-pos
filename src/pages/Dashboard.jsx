@@ -14,6 +14,7 @@ import {
 } from 'recharts'
 import FiltroCombo from '../components/FiltroCombo'
 import ExportadorDatos from '../components/ExportadorDatos'
+import { inicioDiaCaracas, finDiaCaracas, ymdCaracas } from '../components/SelectorFechaTasa'
 
 // ─── Formato ───────────────────────────────────────────────────
 const fmt = n => `$${Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -157,8 +158,10 @@ function TabComercial() {
                     const { data, error: e } = await supabase.from('venta_items')
                         .select(SELECT)
                         .eq('empresa_id', perfil.empresa_id)
-                        .gte('ventas.created_at', desde + 'T00:00:00')
-                        .lte('ventas.created_at', hasta + 'T23:59:59.999')
+                        // Días en hora de Venezuela (no UTC): una venta de las 21:00 del
+                        // último día del mes es de ese mes
+                        .gte('ventas.created_at', inicioDiaCaracas(desde))
+                        .lte('ventas.created_at', finDiaCaracas(hasta))
                         // Una nota anulada no es venta: se excluye igual que en
                         // DashboardResumen y CxC, o los dos tabs se contradicen.
                         .neq('ventas.estado_cobro', 'anulado')
@@ -600,7 +603,7 @@ function TabComercial() {
         const m = {}
         lineasFiltradas.forEach(l => {
             if (!l.fecha) return
-            m[toYMD(l.fecha)] = (m[toYMD(l.fecha)] || 0) + l.lineaTotal
+            m[ymdCaracas(l.fecha)] = (m[ymdCaracas(l.fecha)] || 0) + l.lineaTotal
         })
         const ini = new Date(desde + 'T00:00:00')
         const fin = new Date(hasta + 'T00:00:00')
@@ -792,7 +795,7 @@ function TabComercial() {
                                     <tbody>
                                         {facturasPagina.map((f, i) => (
                                             <tr key={i} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                                                <td style={{ padding: '10px 14px', fontSize: '13px', color: '#6b7280', whiteSpace: 'nowrap' }}>{f.fecha ? f.fecha.toLocaleDateString('es-VE') : '—'}</td>
+                                                <td style={{ padding: '10px 14px', fontSize: '13px', color: '#6b7280', whiteSpace: 'nowrap' }}>{f.fecha ? f.fecha.toLocaleDateString('es-VE', { timeZone: 'America/Caracas' }) : '—'}</td>
                                                 <td style={{ padding: '10px 14px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>{f.numeroFactura}</td>
                                                 <td style={{ padding: '10px 14px', fontSize: '13px', color: '#1f2937' }}>{f.clienteNombre}</td>
                                                 <td style={{ padding: '10px 14px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(f.total)}</td>
