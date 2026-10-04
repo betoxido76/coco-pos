@@ -1,6 +1,15 @@
 # Plan — Exportador de datos del Dashboard
 
-Estado: **Fases 1–3 desplegadas (2026-10-03)**. Fase 4 (opcional) sin orden.
+Estado: **Fases 1–3 y 4a desplegadas (2026-10-03)**. 4b (resumen agrupado) DESCARTADA.
+
+Fase 4a — hecho (`exportador_fase4_plantillas`): tabla `plantillas_exportacion`
+(fuente, detalle, campos en orden, formato, incluir anulados; alcance personal o
+empresa). Decisiones: cualquier usuario crea plantillas de ambos alcances;
+modificar/borrar = el creador o un admin si es de la empresa (política RLS +
+`_es_admin_empresa()`); con reordenamiento de columnas (↑↓); sin plantillas de
+ejemplo. Los filtros no se guardan: salen del Dashboard al exportar. Verificado
+con RLS: un usuario no ve las personales ajenas ni borra las de empresa ajenas;
+un admin sí edita/borra las de empresa y no ve las personales ajenas.
 
 Fase 2 — hecho (`exportador_fase2`): pedidos (documento/línea), cobros, cartera
 CxC + índice `pedido_items(pedido_id)`. Verificado: pedidos abiertos 6.420,24

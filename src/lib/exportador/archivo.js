@@ -92,6 +92,7 @@ function hojaInfo(meta, campos) {
         [],
         ['Fuente', meta.fuente],
         ['Detalle', meta.detalle],
+        ...(meta.plantilla ? [['Plantilla', meta.plantilla]] : []),
         ['Filtros', meta.filtrosTexto || 'Ninguno'],
         ['Filas', meta.filas],
         ['Generado', new Date().toLocaleString('es-VE')],
