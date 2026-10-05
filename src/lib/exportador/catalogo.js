@@ -213,6 +213,8 @@ const CAMPOS_COMPRAS = [
     { col: 'pagado', label: 'Pagado (incluye anticipos y ND aplicados)', tipo: 'moneda', grupo: 'Montos del documento' },
     { col: 'aplicado_anticipos', label: 'Anticipos aplicados', tipo: 'moneda', grupo: 'Montos del documento' },
     { col: 'aplicado_notas_debito', label: 'Notas de débito aplicadas', tipo: 'moneda', grupo: 'Montos del documento' },
+    { col: 'retenido', label: 'Retenido (IVA + ISLR)', tipo: 'moneda', grupo: 'Montos del documento',
+      aviso: 'Ya está incluido en Pagado: no se le paga al proveedor, se le debe al SENIAT' },
     { col: 'saldo', label: 'Saldo pendiente', tipo: 'moneda', grupo: 'Montos del documento', def: true },
     { col: 'vencimiento', label: 'Vencimiento', tipo: 'fecha', grupo: 'Pago' },
     { col: 'dias_vencida', label: 'Días vencida', tipo: 'numero', grupo: 'Pago' },
@@ -227,9 +229,9 @@ const CAMPOS_CARTERA_CXP = [
 // ── Pagos a proveedor ──
 const CAMPOS_PAGOS_PROV = [
     { col: 'fecha', label: 'Fecha del pago', tipo: 'fecha', grupo: 'Pago', def: true },
-    { col: 'tipo', label: 'Tipo (pago / contado / anticipo / aplicación / ND)', tipo: 'texto', grupo: 'Pago', def: true },
+    { col: 'tipo', label: 'Tipo (pago / contado / anticipo / aplicación / ND / retención)', tipo: 'texto', grupo: 'Pago', def: true },
     { col: 'sale_de_caja', label: 'Sale de caja', tipo: 'bool', grupo: 'Pago', def: true,
-      aviso: 'Las aplicaciones de anticipo y de ND no son dinero: el anticipo ya salió en su propio renglón' },
+      aviso: 'Las aplicaciones de anticipo y de ND y las retenciones no son dinero: el anticipo ya salió en su propio renglón y la retención se le debe al SENIAT' },
     { col: 'monto_usd', label: 'Monto USD', tipo: 'moneda', grupo: 'Pago', def: true },
     { col: 'monto_bs', label: 'Monto Bs.', tipo: 'moneda', grupo: 'Pago', def: true },
     { col: 'tasa_cambio', label: 'Tasa', tipo: 'numero', grupo: 'Pago' },
@@ -270,6 +272,8 @@ const CAMPOS_GASTOS = [
     { col: 'tipo_tasa', label: 'Tipo de tasa', tipo: 'texto', grupo: 'Montos' },
     { col: 'total_usd', label: 'Total USD', tipo: 'moneda', grupo: 'Montos', def: true },
     { col: 'abonado', label: 'Abonado', tipo: 'moneda', grupo: 'Montos' },
+    { col: 'retenido', label: 'Retenido (IVA + ISLR)', tipo: 'moneda', grupo: 'Montos',
+      aviso: 'Ya está incluido en Abonado: no se le paga al proveedor, se le debe al SENIAT' },
     { col: 'saldo', label: 'Saldo pendiente', tipo: 'moneda', grupo: 'Montos', def: true },
     { col: 'vencimiento', label: 'Vencimiento', tipo: 'fecha', grupo: 'Pago' },
     { col: 'metodo_pago', label: 'Método de pago', tipo: 'texto', grupo: 'Pago' },
@@ -299,7 +303,7 @@ const CAMPOS_MOVIMIENTOS = [
 ]
 
 // Montos del documento repetidos en el detalle por producto
-const COLS_DEL_DOC = new Set(['pagado', 'aplicado_anticipos', 'aplicado_notas_debito', 'descuento_pronto_pago', 'base_gravada', 'base_exenta', 'iva', 'total', 'cobrado', 'nc_aplicadas', 'saldo',
+const COLS_DEL_DOC = new Set(['pagado', 'aplicado_anticipos', 'aplicado_notas_debito', 'retenido', 'descuento_pronto_pago', 'base_gravada', 'base_exenta', 'iva', 'total', 'cobrado', 'nc_aplicadas', 'saldo',
     'unidades_primarias', 'descuento_global', 'unidades_pedidas', 'unidades_alistadas'])
 
 const AVISO_COSTO = 'Costo estimado = Sí: venta anterior a 2026-10-03, sin foto del costo al facturar; se usa el costo promedio actual del producto'

@@ -10,6 +10,7 @@ import { useOrden, ordenarFilas, useAltoBarra, ThOrden, TopTitulos } from '../co
 import { precioBaseItem, totalesGuardados } from '../lib/iva'
 import ModalPagoRecepcion, { pagoDirectoCompra } from '../components/ModalPagoRecepcion'
 import { fmtFechaCorta, ymdCaracas } from '../components/SelectorFechaTasa'
+import PanelRetenciones from '../components/PanelRetenciones'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 const fmtBs = (n, tasa) => `${(Number(n || 0) * Number(tasa || 1)).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`
@@ -328,7 +329,7 @@ export default function CuentasPagar() {
             <div ref={barraRef} style={{ position: 'sticky', top: 0, zIndex: 20, backgroundColor: '#f9fafb', margin: '0 -24px', padding: '12px 24px 4px' }}>
             {/* Tabs de sección */}
             <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
-                {[['compras', 'Compras'], ['gastos', 'Gastos programados'], ['nd', `Notas de Débito${nds.length && filtroNdEstado === 'pendiente' ? ` (${nds.length})` : ''}`], ['anticipos', 'Anticipos']].map(([key, label]) => (
+                {[['compras', 'Compras'], ['gastos', 'Gastos programados'], ['nd', `Notas de Débito${nds.length && filtroNdEstado === 'pendiente' ? ` (${nds.length})` : ''}`], ['anticipos', 'Anticipos'], ...(perfil?.empresas?.agente_retencion ? [['retenciones', 'Retenciones']] : [])].map(([key, label]) => (
                     <button key={key} onClick={() => setTabSeccion(key)}
                         style={{ padding: '8px 18px', borderRadius: '8px', fontSize: '13px', fontWeight: 500, border: '1px solid', cursor: 'pointer',
                             borderColor: tabSeccion === key ? '#16a34a' : '#e5e7eb',
@@ -577,6 +578,7 @@ export default function CuentasPagar() {
             )}
 
             {tabSeccion === 'anticipos' && <TopTitulos.Provider value={altoBarra}><PanelAnticiposCxP /></TopTitulos.Provider>}
+            {tabSeccion === 'retenciones' && <TopTitulos.Provider value={altoBarra}><PanelRetenciones /></TopTitulos.Provider>}
 
             {mostrarModal && compraSeleccionada && (
                 <ModalPagoRecepcion

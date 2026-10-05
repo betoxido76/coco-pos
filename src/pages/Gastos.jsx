@@ -1073,6 +1073,7 @@ function DetalleGasto({ gasto: g, tasas, onVolver }) {
                         <p style={label}>Proveedor</p>
                         <p style={value}>{g.proveedores?.nombre || '—'}</p>
                         {g.numero_factura && <p style={{ fontSize: '13px', color: '#6b7280', margin: '6px 0 0' }}>Factura: <span style={{ fontFamily: 'monospace' }}>{g.numero_factura}</span></p>}
+                        {g.base_imponible != null && <p style={{ fontSize: '13px', color: '#6b7280', margin: '4px 0 0' }}>Base imponible: {fmt(g.base_imponible)} · IVA: {fmt(g.monto_iva)}</p>}
                     </div>
                 </div>
             </div>

@@ -132,6 +132,8 @@ export default function Finanzas() {
                 .eq('anulado', false)
                 .is('devolucion_proveedor_id', null)
                 .is('anticipo_id', null)
+                // Una retención no sale de caja: se le debe al SENIAT
+                .is('retencion_id', null)
                 .gte('fecha_pago', inicioDiaCaracas(desde))
                 .lte('fecha_pago', finDiaCaracas(hasta)),
 
@@ -154,7 +156,7 @@ export default function Finanzas() {
             // Abonos a gastos (motor `pagos`) — sin filtro de período: se usan para
             // caja realizada (filtrando por fecha en JS) y para el saldo de parciales.
             supabase.from('pagos')
-                .select('origen_id, fecha, monto_usd, monto_bs, tasa_cambio, tipo_tasa, metodo_usd')
+                .select('origen_id, fecha, monto_usd, monto_bs, tasa_cambio, tipo_tasa, metodo_usd, retencion_id')
                 .eq('empresa_id', perfil.empresa_id)
                 .eq('origen_tipo', 'gasto'),
 
@@ -254,8 +256,9 @@ export default function Finanzas() {
             tasa_cambio: g.tasa_cambio, tipo_tasa: g.tipo_tasa,
             metodo: g.metodo_pago,
         })),
-        // Abonos a gastos programados/parciales, dentro del período
-        ...pagosGasto.filter(p => enPeriodo(p.fecha)).map(p => ({
+        // Abonos a gastos programados/parciales, dentro del período (las
+        // retenciones cuentan para el saldo, pero no son salida de caja)
+        ...pagosGasto.filter(p => enPeriodo(p.fecha) && !p.retencion_id).map(p => ({
             id: `pago-${p.origen_id}-${p.fecha}-${p.monto_usd}-${p.monto_bs}`, origen: 'gasto',
             fecha: p.fecha,
             descripcion: 'Abono a gasto',
