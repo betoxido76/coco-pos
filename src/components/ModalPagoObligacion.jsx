@@ -129,13 +129,14 @@ export default function ModalPagoObligacion({
     labelAbonado = 'Abonado',
     labelSaldo = 'Saldo pendiente',
     confirmacion = {},           // { titulo, aviso, textoBoton } para ConfirmacionPago
+    fechaInicial = null,         // fecha del pago propuesta (default: hoy)
     onConfirmar,                 // async (datos) => string | void   (string = mensaje de error)
     onCerrar,
 }) {
     const { perfil } = useAuth()
     const tope = saldoEfectivo === null ? saldo : saldoEfectivo
 
-    const [fecha, setFecha] = useState(hoyYMD())
+    const [fecha, setFecha] = useState(fechaInicial || hoyYMD())
     const [tipoTasa, setTipoTasa] = useState('tasa_bcv')
     const [montoUsd, setMontoUsd] = useState('')
     const [montoBs, setMontoBs] = useState('')

@@ -575,6 +575,8 @@ function NuevoGasto({ tasas, tipos, onGuardado, onCancelar }) {
     // Desglose de la factura (USD): lo necesita la retención de IVA/ISLR
     const [baseImponible, setBaseImponible] = useState('')
     const [montoIva, setMontoIva] = useState('')
+    // Gasto "pagado" recién registrado: se paga con la ventana única de pago
+    const [gastoAPagar, setGastoAPagar] = useState(null)
 
     useEffect(() => {
         if (perfil?.empresa_id) {
@@ -629,28 +631,36 @@ function NuevoGasto({ tasas, tipos, onGuardado, onCancelar }) {
             descripcion: descripcion.trim() || null,
             tipo_gasto_id: tipoGastoId,
             categoria: tipos.find(t => t.id === tipoGastoId)?.nombre || '',
-            cuenta_bancaria_id: estadoGasto === 'pagado' ? (cuentaBancariaId || null) : null,
+            // Todo gasto nace por pagar; el de contado vence en su fecha y se
+            // paga ya mismo en la ventana única (cuenta, método y retenciones)
+            cuenta_bancaria_id: null,
             proveedor_id: proveedorId || null,
             numero_factura: numeroFactura.trim() || null,
             fecha,
-            estado: estadoGasto,
-            fecha_vencimiento: estadoGasto === 'pendiente' ? fechaVencimiento : null,
+            estado: 'pendiente',
+            fecha_vencimiento: estadoGasto === 'pendiente' ? fechaVencimiento : fecha,
             monto_usd: Number(montoUsd || 0),
             monto_bs: Number(montoBs || 0),
             tasa_cambio: tasa,
             tipo_tasa: tipoTasa,
-            metodo_pago: estadoGasto === 'pagado' ? metodoPago : null,
+            metodo_pago: null,
             usuario_id: user.id,
             monto: totalEnUsd,
             base_imponible: pideDesglose ? Number(baseImponible) : null,
             monto_iva: pideDesglose ? Number(montoIva || 0) : null,
         }
 
-        const { error: err } = await supabase.from('gastos').insert(payload)
+        const { data: gasto, error: err } = await supabase.from('gastos').insert(payload).select().single()
         if (err) { setError('Error: ' + err.message); setGuardando(false); return }
         setGuardando(false)
-        onGuardado()
+        if (estadoGasto === 'pagado') setGastoAPagar(gasto)
+        else onGuardado()
     }
+
+    if (gastoAPagar) return (
+        <ModalPagoGasto gasto={gastoAPagar} tasas={tasas} fechaInicial={gastoAPagar.fecha}
+            onPagado={onGuardado} onCerrar={onGuardado} />
+    )
 
     return (
         <div style={{ padding: '24px', maxWidth: '680px' }}>
@@ -666,7 +676,7 @@ function NuevoGasto({ tasas, tipos, onGuardado, onCancelar }) {
                     <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '8px' }}>Tipo de registro</label>
                     <div style={{ display: 'flex', gap: '8px' }}>
                         {[
-                            { val: 'pagado', label: '✅ Pagado', sub: 'Erogación ya realizada' },
+                            { val: 'pagado', label: '✅ Pagado', sub: 'Se registra y se abre la ventana de pago' },
                             { val: 'pendiente', label: '📅 Programado', sub: 'Pago a realizar en fecha futura' },
                         ].map(opt => (
                             <button key={opt.val} onClick={() => setEstadoGasto(opt.val)}
@@ -730,7 +740,7 @@ function NuevoGasto({ tasas, tipos, onGuardado, onCancelar }) {
                 <div style={{ display: 'grid', gridTemplateColumns: estadoGasto === 'pendiente' ? '1fr 1fr' : '1fr 1fr', gap: '16px' }}>
                     <div>
                         <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>
-                            {estadoGasto === 'pendiente' ? 'Fecha de registro' : 'Fecha de pago *'}
+                            {estadoGasto === 'pendiente' ? 'Fecha de registro' : 'Fecha del gasto *'}
                         </label>
                         <input type="date" value={fecha} onChange={e => setFecha(e.target.value)} style={inputStyle} />
                     </div>
@@ -740,11 +750,8 @@ function NuevoGasto({ tasas, tipos, onGuardado, onCancelar }) {
                             <input type="date" value={fechaVencimiento} onChange={e => setFechaVencimiento(e.target.value)} style={inputStyle} />
                         </div>
                     ) : (
-                        <div>
-                            <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Método de pago</label>
-                            <select value={metodoPago} onChange={e => setMetodoPago(e.target.value)} style={inputStyle}>
-                                {METODOS_PAGO.map(m => <option key={m} value={m}>{m}</option>)}
-                            </select>
+                        <div style={{ fontSize: '12px', color: '#6b7280', alignSelf: 'end', paddingBottom: '10px' }}>
+                            Método, cuenta y retenciones se indican en la ventana de pago, que se abre al confirmar.
                         </div>
                     )}
                 </div>
@@ -840,17 +847,6 @@ function NuevoGasto({ tasas, tipos, onGuardado, onCancelar }) {
                     </div>
                 )}
 
-                {/* Cuenta bancaria (solo para gastos pagados) */}
-                {estadoGasto === 'pagado' && cuentasBancarias.length > 0 && (
-                    <div>
-                        <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Cuenta bancaria <span style={{ color: '#9ca3af', fontWeight: 400 }}>(opcional)</span></label>
-                        <select value={cuentaBancariaId} onChange={e => setCuentaBancariaId(e.target.value)} style={inputStyle}>
-                            <option value="">— Efectivo / sin cuenta —</option>
-                            {cuentasBancarias.map(c => <option key={c.id} value={c.id}>{c.nombre} ({c.banco} · {c.moneda})</option>)}
-                        </select>
-                    </div>
-                )}
-
                 {/* Descripción */}
                 <div>
                     <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>
@@ -871,7 +867,7 @@ function NuevoGasto({ tasas, tipos, onGuardado, onCancelar }) {
                     <button onClick={guardar} disabled={guardando}
                         style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '12px 24px', fontSize: '14px', fontWeight: 600, cursor: 'pointer', opacity: guardando ? 0.7 : 1 }}>
                         <Check size={16} />
-                        {guardando ? 'Guardando...' : estadoGasto === 'pendiente' ? 'Programar gasto' : 'Confirmar gasto'}
+                        {guardando ? 'Guardando...' : estadoGasto === 'pendiente' ? 'Programar gasto' : 'Registrar y pagar'}
                     </button>
                     <button onClick={onCancelar}
                         style={{ padding: '12px 20px', borderRadius: '8px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: '#374151', fontSize: '14px', cursor: 'pointer' }}>

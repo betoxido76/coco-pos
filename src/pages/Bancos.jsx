@@ -19,18 +19,32 @@ function monedaCampo(moneda) {
     return moneda === 'Bs' ? 'monto_bs' : 'monto_usd'
 }
 
+// Gastos: el dinero sale por sus abonos en `pagos` (con cuenta bancaria; las
+// retenciones no tienen cuenta y quedan fuera). Un gasto 'pagado' SIN abonos
+// —registrado de contado antes de pasar por la ventana de pago— se cuenta por
+// su propia fila. Contar las dos cosas duplicaría la salida.
+async function gastosSinAbonos(gastos) {
+    const ids = (gastos || []).map(g => g.id)
+    if (ids.length === 0) return []
+    const { data } = await supabase.from('pagos').select('origen_id').eq('origen_tipo', 'gasto').in('origen_id', ids)
+    const conAbono = new Set((data || []).map(p => p.origen_id))
+    return gastos.filter(g => !conAbono.has(g.id))
+}
+
 async function calcularSaldoCuenta(cuentaId, moneda, saldoInicial) {
     const campo = monedaCampo(moneda)
-    // Las aplicaciones de anticipo (pagos_proveedor.anticipo_id) no tienen cuenta
-    // bancaria: el dinero salió con el anticipo, que se cuenta aparte.
-    const [{ data: cobros }, { data: movs }, { data: pagos }, { data: gastos }, { data: anticipos }, { data: reembolsos }] = await Promise.all([
+    // Las aplicaciones de anticipo (pagos_proveedor.anticipo_id) y las
+    // retenciones no tienen cuenta bancaria: no son salida de esta cuenta.
+    const [{ data: cobros }, { data: movs }, { data: pagos }, { data: gastosPagados }, { data: abonosGasto }, { data: anticipos }, { data: reembolsos }] = await Promise.all([
         supabase.from('cobros').select('monto_usd, monto_bs').eq('cuenta_bancaria_id', cuentaId),
         supabase.from('movimientos_financieros').select('monto_usd, monto_bs, tipo').eq('cuenta_bancaria_id', cuentaId).eq('estado', 'pagado'),
         supabase.from('pagos_proveedor').select('monto_usd, monto_bs').eq('cuenta_bancaria_id', cuentaId).eq('anulado', false),
-        supabase.from('gastos').select('monto_usd, monto_bs').eq('cuenta_bancaria_id', cuentaId).eq('estado', 'pagado'),
+        supabase.from('gastos').select('id, monto_usd, monto_bs').eq('cuenta_bancaria_id', cuentaId).eq('estado', 'pagado'),
+        supabase.from('pagos').select('monto_usd, monto_bs').eq('cuenta_bancaria_id', cuentaId).eq('origen_tipo', 'gasto'),
         supabase.from('anticipos_proveedor').select('monto_usd, monto_bs').eq('cuenta_bancaria_id', cuentaId).neq('estado', 'anulado'),
         supabase.from('anticipo_reembolsos').select('monto_usd, monto_bs').eq('cuenta_bancaria_id', cuentaId).eq('anulado', false),
     ])
+    const gastos = [...await gastosSinAbonos(gastosPagados), ...(abonosGasto || [])]
 
     let saldo = Number(saldoInicial || 0)
     saldo += (cobros || []).reduce((s, c) => s + Number(c[campo] || 0), 0)
@@ -247,7 +261,7 @@ function VistaDetalle({ cuenta, tasas, onVolver }) {
 
         // Cobros y pagos se ubican por su fecha REAL (fecha_cobro / fecha_pago), no
         // por cuándo se cargaron: un pago registrado con fecha pasada va en su día.
-        const [{ data: cobros }, { data: movManuales }, { data: pagos }, { data: gastosData }, { data: anticipos }, { data: reembolsos }, saldo] = await Promise.all([
+        const [{ data: cobros }, { data: movManuales }, { data: pagos }, { data: gastosPagados }, { data: abonosGasto }, { data: anticipos }, { data: reembolsos }, saldo] = await Promise.all([
             supabase.from('cobros')
                 .select('id, monto_usd, monto_bs, fecha_cobro, ventas(numero_factura, clientes(nombre))')
                 .eq('cuenta_bancaria_id', cuenta.id)
@@ -271,6 +285,13 @@ function VistaDetalle({ cuenta, tasas, onVolver }) {
                 .eq('estado', 'pagado')
                 .gte('fecha', desde).lte('fecha', hasta),
 
+            // Abonos a gastos (motor `pagos`) pagados desde esta cuenta
+            supabase.from('pagos')
+                .select('id, monto_usd, monto_bs, fecha, origen_id, nota')
+                .eq('cuenta_bancaria_id', cuenta.id)
+                .eq('origen_tipo', 'gasto')
+                .gte('fecha', desde).lte('fecha', hasta),
+
             supabase.from('anticipos_proveedor')
                 .select('id, numero_anticipo, monto_usd, monto_bs, fecha, proveedores(nombre), ordenes_compra(numero_oc)')
                 .eq('cuenta_bancaria_id', cuenta.id)
@@ -287,6 +308,15 @@ function VistaDetalle({ cuenta, tasas, onVolver }) {
         ])
 
         setSaldoActual(saldo)
+
+        // Gastos de contado viejos (sin abonos) por su fila; el resto, por sus abonos
+        const gastosData = await gastosSinAbonos(gastosPagados)
+        const idsAbonados = [...new Set((abonosGasto || []).map(a => a.origen_id))]
+        const nombresGasto = {}
+        if (idsAbonados.length > 0) {
+            const { data: gs } = await supabase.from('gastos').select('id, nombre, numero_gasto').in('id', idsAbonados)
+            ;(gs || []).forEach(g => { nombresGasto[g.id] = [g.numero_gasto, g.nombre].filter(Boolean).join(' · ') })
+        }
 
         const LABEL = {
             ingreso: 'Ingreso manual',
@@ -325,6 +355,13 @@ function VistaDetalle({ cuenta, tasas, onVolver }) {
                 origen: 'gasto', label: 'Gasto',
                 descripcion: g.nombre,
                 monto: Number(g[campo] || 0), signo: -1,
+            })),
+            ...(abonosGasto || []).map(a => ({
+                id: a.id, key: 'abono-gasto-' + a.id,
+                fecha: a.fecha,
+                origen: 'gasto', label: 'Pago de gasto',
+                descripcion: nombresGasto[a.origen_id] || a.nota || 'Gasto',
+                monto: Number(a[campo] || 0), signo: -1,
             })),
             ...(anticipos || []).map(a => ({
                 id: a.id, key: 'anticipo-' + a.id,

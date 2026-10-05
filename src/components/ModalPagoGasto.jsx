@@ -14,7 +14,7 @@ import ModalPagoObligacion from './ModalPagoObligacion'
 
 const pagoEnUsd = p => Number(p.monto_usd || 0) + Number(p.monto_bs || 0) / (Number(p.tasa_cambio) || 1)
 
-export default function ModalPagoGasto({ gasto, tasas = {}, onPagado, onCerrar }) {
+export default function ModalPagoGasto({ gasto, tasas = {}, fechaInicial = null, onPagado, onCerrar }) {
     const { perfil } = useAuth()
     const [pagosPrevios, setPagosPrevios] = useState([])
     const [cargandoPagos, setCargandoPagos] = useState(true)
@@ -85,6 +85,7 @@ export default function ModalPagoGasto({ gasto, tasas = {}, onPagado, onCerrar }
             saldo={saldo}
             cargandoSaldo={cargandoPagos}
             proveedorId={gasto.proveedor_id}
+            fechaInicial={fechaInicial}
             onConfirmar={confirmar}
             onCerrar={onCerrar}
         />
