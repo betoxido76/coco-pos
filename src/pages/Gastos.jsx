@@ -63,10 +63,23 @@ export default function Gastos() {
     const [filtroDesde, setFiltroDesde] = useState('')
     const [filtroHasta, setFiltroHasta] = useState('')
     const [filtroEstado, setFiltroEstado] = useState('todos')
+    const [filtroProveedor, setFiltroProveedor] = useState('')
+    const [opcProveedores, setOpcProveedores] = useState([])
 
-    useEffect(() => { cargarTasas(); cargarTipos() }, [])
-    useEffect(() => { setPagina(0) }, [filtroTipo, filtroDesde, filtroHasta, filtroEstado, orden])
-    useEffect(() => { cargarGastos() }, [filtroTipo, filtroDesde, filtroHasta, filtroEstado])
+    useEffect(() => { cargarTasas(); cargarTipos(); cargarProveedores() }, [])
+    useEffect(() => { setPagina(0) }, [filtroTipo, filtroProveedor, filtroDesde, filtroHasta, filtroEstado, orden])
+    useEffect(() => { cargarGastos() }, [filtroTipo, filtroProveedor, filtroDesde, filtroHasta, filtroEstado])
+
+    // Solo los proveedores que tienen gastos: los demás darían siempre una lista vacía
+    async function cargarProveedores() {
+        const filas = await traerTodas(() => supabase.from('gastos')
+            .select('proveedor_id, proveedores(nombre)')
+            .eq('empresa_id', perfil.empresa_id)
+            .not('proveedor_id', 'is', null)
+            .order('id')).catch(() => [])
+        const mapa = new Map(filas.filter(f => f.proveedores).map(f => [f.proveedor_id, f.proveedores.nombre]))
+        setOpcProveedores([...mapa].map(([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label)))
+    }
 
     async function cargarTasas() {
         const { data } = await supabase.from('configuracion')
@@ -93,6 +106,7 @@ export default function Gastos() {
             .select('id, estado, monto, monto_usd, monto_bs, tipo_tasa, fecha_vencimiento')
             .eq('empresa_id', perfil.empresa_id)
         if (filtroTipo) kpiQ = kpiQ.eq('tipo_gasto_id', filtroTipo)
+        if (filtroProveedor) kpiQ = kpiQ.eq('proveedor_id', filtroProveedor)
         if (filtroDesde) kpiQ = kpiQ.gte('fecha', filtroDesde)
         if (filtroHasta) kpiQ = kpiQ.lte('fecha', filtroHasta)
         if (filtroEstado === 'porpagar') kpiQ = kpiQ.in('estado', ['pendiente', 'parcial'])
@@ -107,6 +121,7 @@ export default function Gastos() {
                 .order('created_at', { ascending: false })
                 .order('id')
             if (filtroTipo) q = q.eq('tipo_gasto_id', filtroTipo)
+            if (filtroProveedor) q = q.eq('proveedor_id', filtroProveedor)
             if (filtroDesde) q = q.gte('fecha', filtroDesde)
             if (filtroHasta) q = q.lte('fecha', filtroHasta)
             if (filtroEstado === 'porpagar') q = q.in('estado', ['pendiente', 'parcial'])
@@ -147,7 +162,7 @@ export default function Gastos() {
         return totalGasto(g) // pendiente
     }
 
-    const hayFiltros = filtroTipo || filtroDesde || filtroHasta || filtroEstado !== 'todos'
+    const hayFiltros = filtroTipo || filtroProveedor || filtroDesde || filtroHasta || filtroEstado !== 'todos'
 
     const gastosOrdenados = ordenarFilas(gastos, {
         documento: g => g.numero_gasto,
@@ -271,6 +286,7 @@ export default function Gastos() {
                     {/* Filtros de fecha y tipo */}
                     <div style={{ display: 'flex', gap: '10px', marginBottom: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
                         <FiltroCombo value={filtroTipo} onChange={setFiltroTipo} options={tipos.map(x => ({ value: x.id, label: x.nombre }))} placeholder="Todos los tipos" width="200px" />
+                        <FiltroCombo value={filtroProveedor} onChange={setFiltroProveedor} options={opcProveedores} placeholder="Todos los proveedores" width="240px" />
                         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                             <span style={{ fontSize: '13px', color: '#6b7280' }}>Desde</span>
                             <input type="date" value={filtroDesde} onChange={e => setFiltroDesde(e.target.value)}
@@ -282,7 +298,7 @@ export default function Gastos() {
                                 style={{ padding: '8px 10px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', color: '#374151', backgroundColor: '#fff' }} />
                         </div>
                         {hayFiltros && (
-                            <button onClick={() => { setFiltroTipo(''); setFiltroDesde(''); setFiltroHasta(''); setFiltroEstado('todos') }}
+                            <button onClick={() => { setFiltroTipo(''); setFiltroProveedor(''); setFiltroDesde(''); setFiltroHasta(''); setFiltroEstado('todos') }}
                                 style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '8px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: '#6b7280', fontSize: '13px', cursor: 'pointer' }}>
                                 <X size={14} /> Limpiar
                             </button>
