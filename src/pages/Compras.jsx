@@ -11,6 +11,7 @@ import { totalesDeItems, totalesDocumento, totalesGuardados, precioBaseItem, cam
 import AnticiposOC, { SelectorAnticipos, totalAplicaciones, aplicacionesALista, anticiposConSaldoDeOC, ModalCancelarOCConAnticipo } from '../components/AnticiposOC'
 import { useAltoBarra, useOrden, ordenarFilas, ThOrden, BarraFija, TopTitulos, estiloTarjetaTabla } from '../components/TablaOrdenable'
 import { traerTodas } from '../lib/traerTodas'
+import ModalPagoRecepcion from '../components/ModalPagoRecepcion'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 
@@ -1143,6 +1144,8 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
     const [guardando, setGuardando] = useState(false)
     const [error, setError] = useState('')
     const [mostrarModal, setMostrarModal] = useState(false)
+    // Recepción de contado recién guardada: se abre la ventana de pago única
+    const [recepcionAPagar, setRecepcionAPagar] = useState(null)
     const [mapaNombres, setMapaNombres] = useState({})
 
     const [nroDocProveedor, setNroDocProveedor] = useState('')
@@ -1311,7 +1314,7 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
         setError(''); setMostrarModal(true)
     }
 
-    async function confirmarRecepcion({ abonoInicial, aplicacionesAnticipo = [], ...datosPago }) {
+    async function confirmarRecepcion({ pagarAhora = false, aplicacionesAnticipo = [], ...datosPago }) {
         setGuardando(true); setError('')
         const { data: { user } } = await supabase.auth.getUser()
         const { data: numeroConsecutivo } = await supabase.rpc('obtener_siguiente_recepcion_numero', {
@@ -1332,18 +1335,6 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
 
         const { data: rec, error: err } = await supabase.from('compras').insert({ ...payload, empresa_id: perfil.empresa_id }).select().single()
         if (err) { setError('Error: ' + err.message); setGuardando(false); return }
-
-        // Pago parcial al recibir: la recepción queda a crédito y el anticipo
-        // es su primer abono en CxP, igual que si se hubiera pagado desde allí.
-        if (abonoInicial) {
-            const { error: errAbono } = await supabase.from('pagos_proveedor').insert({
-                ...abonoInicial, compra_id: rec.id, usuario_id: user.id, empresa_id: perfil.empresa_id,
-            })
-            if (errAbono) {
-                await supabase.from('compras').update({ estado_cobro: 'pendiente' }).eq('id', rec.id)
-                alert(`La recepción ${numero} se registró, pero el anticipo no se pudo guardar (${errAbono.message}). Regístralo desde Cuentas por Pagar.`)
-            }
-        }
 
         // Anticipos pagados antes de recibir (ANT-…): la RPC valida saldos y
         // recalcula estado_cobro con todo lo abonado.
@@ -1418,7 +1409,11 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
             ? ocsPendientes.find(o => o.id === ocSeleccionada)?.proveedores?.nombre
             : proveedores.find(p => p.id === proveedorLibreId)?.nombre || 'Recepción Libre'
         limpiarBorrador()
-        onCreada({ ...rec, proveedores: { nombre: provNombre } })
+        const recCompleta = { ...rec, proveedores: { nombre: provNombre } }
+        // Contado: la recepción ya está en CxP con vencimiento hoy; se abre la
+        // ventana de pago única para registrarlo en el acto
+        if (pagarAhora) setRecepcionAPagar(recCompleta)
+        else onCreada(recCompleta)
     }
 
     const TIPO_LABEL = {
@@ -1693,6 +1688,12 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
                         setMostrarNuevoProveedor(false)
                     }}
                 />
+            )}
+
+            {recepcionAPagar && (
+                <ModalPagoRecepcion compra={recepcionAPagar}
+                    onCerrar={() => { const r = recepcionAPagar; setRecepcionAPagar(null); onCreada(r) }}
+                    onPagado={() => { const r = recepcionAPagar; setRecepcionAPagar(null); onCreada(r) }} />
             )}
 
             {mostrarModal && <ModalPagoCompra total={total} condicionInicial={condicionProveedorInicial} diasInicial={diasCreditoProveedorInicial}
@@ -2280,105 +2281,64 @@ function ModalNuevoProveedor({ perfil, onCreado, onCerrar }) {
 //   - Contado con pago PARCIAL: la recepción pasa a crédito por el saldo y el
 //     anticipo queda como su primer abono en CxP.
 //   - A crédito no se registra ningún monto (el pago se hace luego en CxP).
+// Condición de pago de una recepción. El pago NO se registra aquí: toda
+// recepción va a Cuentas por Pagar (contado = vence hoy) y se paga con la
+// ventana única (ModalPagoRecepcion), que es donde se aplican descuentos, NDs y
+// retenciones. Con contado, al guardar se abre esa ventana para pagar en el
+// acto. Los anticipos pagados antes de recibir se aplican aquí mismo.
+// docs/plan-retenciones.md
+const sumarDiasYMD = (ymd, dias) => {
+    const d = new Date(ymd + 'T12:00:00')
+    d.setDate(d.getDate() + Number(dias || 0))
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 function ModalPagoCompra({ total, condicionInicial = 'contado', diasInicial = 0, proveedorId = null, ocId = null, onCerrar, onConfirmar }) {
-    const { perfil } = useAuth()
-    // Anticipos pagados antes de recibir: cubren parte (o todo) del total y el
-    // resto sigue el flujo normal. Con anticipo la recepción queda SIEMPRE a
-    // crédito, para que la aplicación y los abonos se vean en CxP.
     const [aplicaciones, setAplicaciones] = useState({})
     const [anticiposCargados, setAnticiposCargados] = useState([])
     const anticipoAplicado = totalAplicaciones(aplicaciones)
     const conAnticipo = anticipoAplicado > 0.001
     const aPagar = Math.max(0, total - anticipoAplicado)
     const cubiertoPorAnticipo = conAnticipo && aPagar <= 0.01
-    const [fechaPago, setFechaPago] = useState(hoyYMD())
     const [condicion, setCondicion] = useState(condicionInicial)
     const [diasCredito, setDiasCredito] = useState(diasInicial || 30)
-    const [tipoTasa, setTipoTasa] = useState('tasa_bcv')
-    const [pagoUsd, setPagoUsd] = useState('')
-    const [pagoBs, setPagoBs] = useState('')
-    const [metodoUsd, setMetodoUsd] = useState(METODOS_USD[0].value)
-    const [metodoBs, setMetodoBs] = useState(METODOS_BS[0].value)
     const [guardando, setGuardando] = useState(false)
     const [confirmando, setConfirmando] = useState(false)
     const [error, setError] = useState('')
 
-    // La tasa sale de la FECHA DE PAGO elegida, no de la vigente de hoy.
-    // Solo aplica al contado: a crédito el pago se registra después en CxP.
-    const { tasasFecha, cargandoTasas } = useTasasFecha(perfil?.empresa_id, fechaPago)
-    const tasaDia = Number(tasasFecha?.[tipoTasa]) || 0
-    const tasa = tasaDia > 0 ? tasaDia : 1   // evita dividir entre 0 mientras no hay tasa
-    const sinTasa = condicion === 'contado' && !cargandoTasas && tasaDia <= 0
-    const vencimiento = dias => new Date(Date.now() + dias * 86400000).toISOString().split('T')[0]
-
-    const usd = Number(pagoUsd || 0)
-    const bs = Number(pagoBs || 0)
-    const abonoEnUsd = usd + bs / tasa
-    const pendiente = Math.max(0, aPagar - abonoEnUsd)
-    const esParcial = condicion === 'contado' && abonoEnUsd > 0.001 && pendiente > 0.01
-
-    function saldarRestoEnBs() {
-        const resto = (aPagar - usd) * tasa
-        setPagoBs(resto > 0 ? resto.toFixed(2) : '0')
-    }
+    const hoy = hoyYMD()
+    const vence = condicion === 'contado' ? hoy : sumarDiasYMD(hoy, diasCredito)
 
     function revisar() {
         setError('')
         if (anticipoAplicado > total + 0.01) { setError('Los anticipos aplicados superan el total de la recepción'); return }
-        if (cubiertoPorAnticipo || condicion === 'credito') { setConfirmando(true); return }
-        if (sinTasa) { setError(`No hay tasa registrada para el ${fmtFechaCorta(fechaPago)}`); return }
-        if (abonoEnUsd <= 0.001) { setError('Ingresa el monto pagado, o elige Crédito si aún no se paga'); return }
-        if (abonoEnUsd > aPagar + 0.01) { setError(`El monto no puede superar lo que queda por pagar: ${fmt(aPagar)}`); return }
-        if (esParcial && !(Number(diasCredito) >= 1)) { setError('Indica los días de crédito para el saldo pendiente'); return }
+        if (!cubiertoPorAnticipo && condicion === 'credito' && !(Number(diasCredito) >= 1)) { setError('Indica los días de crédito'); return }
         setConfirmando(true)
     }
 
     async function confirmar() {
         setGuardando(true)
-        const sinPago = { pago_usd: 0, pago_bs: 0, metodo_usd: null, metodo_bs: null, fecha_pago: null }
-        const metodoBsFinal = bs > 0 ? (metodoBs || null) : null
-        if (conAnticipo) {
-            // estado_cobro lo recalcula aplicar_anticipo_proveedor con todo lo abonado
-            const datos = {
-                condicion_pago: 'credito', dias_credito: diasCredito, fecha_vencimiento_pago: vencimiento(diasCredito),
-                estado_cobro: 'pendiente', ...sinPago,
-                aplicacionesAnticipo: aplicacionesALista(aplicaciones, anticiposCargados),
-            }
-            if (!cubiertoPorAnticipo && condicion === 'contado' && abonoEnUsd > 0.001) {
-                datos.tasa_cambio = tasa; datos.tipo_tasa = tipoTasa
-                datos.abonoInicial = {
-                    monto_usd: usd, monto_bs: bs, tasa_cambio: tasa, tipo_tasa: tipoTasa, fecha_pago: fechaPago,
-                    metodo_usd: metodoUsd, metodo_bs: metodoBsFinal, nota: 'Pago al recibir',
-                }
-            }
-            await onConfirmar(datos)
-        } else if (condicion === 'credito') {
-            await onConfirmar({ condicion_pago: 'credito', dias_credito: diasCredito, fecha_vencimiento_pago: vencimiento(diasCredito), estado_cobro: 'pendiente', ...sinPago })
-        } else if (esParcial) {
-            await onConfirmar({
-                condicion_pago: 'credito', dias_credito: diasCredito, fecha_vencimiento_pago: vencimiento(diasCredito),
-                estado_cobro: 'parcial', tasa_cambio: tasa, tipo_tasa: tipoTasa, ...sinPago,
-                abonoInicial: {
-                    monto_usd: usd, monto_bs: bs, tasa_cambio: tasa, tipo_tasa: tipoTasa, fecha_pago: fechaPago,
-                    metodo_usd: metodoUsd, metodo_bs: metodoBsFinal, nota: 'Anticipo al recibir',
-                },
-            })
-        } else {
-            await onConfirmar({ condicion_pago: 'contado', dias_credito: 0, fecha_vencimiento_pago: null, estado_cobro: 'pagado', tasa_cambio: tasa, tipo_tasa: tipoTasa, fecha_pago: fechaPago, pago_usd: usd, pago_bs: bs, metodo_usd: metodoUsd, metodo_bs: metodoBsFinal })
-        }
+        await onConfirmar({
+            condicion_pago: condicion,
+            dias_credito: condicion === 'credito' ? Number(diasCredito) : 0,
+            fecha_vencimiento_pago: vence,
+            estado_cobro: 'pendiente',   // aplicar_anticipo_proveedor lo recalcula
+            pago_usd: 0, pago_bs: 0, metodo_usd: null, metodo_bs: null, fecha_pago: null,
+            aplicacionesAnticipo: aplicacionesALista(aplicaciones, anticiposCargados),
+            pagarAhora: condicion === 'contado' && !cubiertoPorAnticipo,
+        })
     }
 
     const lbl = { fontSize: '12px', fontWeight: 500, color: '#374151' }
-    const inp = { width: '100%', padding: '9px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '15px', fontWeight: 600, boxSizing: 'border-box' }
-    const sel = { width: '100%', padding: '9px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', backgroundColor: '#fff' }
-    const link = { fontSize: '11px', color: '#16a34a', background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontWeight: 500 }
+    const inp = { width: '100%', padding: '9px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', boxSizing: 'border-box' }
+    const fechaLarga = ymd => new Date(ymd + 'T00:00:00').toLocaleDateString('es-VE')
 
     return (
         <>
             <div onClick={onCerrar} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', zIndex: 40 }} />
             <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', backgroundColor: '#fff', borderRadius: '16px', padding: '28px', width: 'min(460px, calc(100vw - 32px))', boxSizing: 'border-box', zIndex: 50, boxShadow: '0 20px 60px rgba(0,0,0,0.2)', maxHeight: '90vh', overflowY: 'auto' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                    <h2 style={{ fontSize: '17px', fontWeight: 700, color: '#1f2937', margin: 0 }}>Confirmar pago</h2>
+                    <h2 style={{ fontSize: '17px', fontWeight: 700, color: '#1f2937', margin: 0 }}>Condición de pago</h2>
                     <button onClick={onCerrar} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af' }}><X size={20} /></button>
                 </div>
                 <div style={{ backgroundColor: '#f9fafb', borderRadius: '10px', padding: '12px 16px', marginBottom: '20px', textAlign: 'center' }}>
@@ -2394,108 +2354,50 @@ function ModalPagoCompra({ total, condicionInicial = 'contado', diasInicial = 0,
                 <SelectorAnticipos proveedorId={proveedorId} ocId={ocId} tope={total}
                     aplicaciones={aplicaciones} onChange={setAplicaciones} onCargados={setAnticiposCargados} />
 
-                {/* Condición de pago */}
                 {!cubiertoPorAnticipo && <>
-                <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
-                    {['contado', 'credito'].map(c => (
-                        <button key={c} onClick={() => { setCondicion(c); setError('') }} style={{ flex: 1, padding: '8px', borderRadius: '8px', fontSize: '13px', fontWeight: 500, border: '1px solid', cursor: 'pointer', borderColor: condicion === c ? '#16a34a' : '#e5e7eb', backgroundColor: condicion === c ? '#f0fdf4' : '#fff', color: condicion === c ? '#16a34a' : '#6b7280' }}>
-                            {c === 'contado' ? 'Contado' : 'Crédito'}
-                        </button>
-                    ))}
-                </div>
-
-                {condicion === 'credito' ? (
-                    <div style={{ marginBottom: '16px' }}>
-                        <label style={{ ...lbl, display: 'block', marginBottom: '6px' }}>Días de crédito</label>
-                        <input type="number" min="1" value={diasCredito} onChange={e => setDiasCredito(Number(e.target.value))} style={{ ...inp, fontSize: '14px', fontWeight: 400 }} />
-                        <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
-                            Vence: {new Date(vencimiento(diasCredito) + 'T00:00:00').toLocaleDateString('es-VE')} · el pago se registra luego en Cuentas por Pagar.
-                        </div>
+                    <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+                        {['contado', 'credito'].map(c => (
+                            <button key={c} onClick={() => { setCondicion(c); setError('') }} style={{ flex: 1, padding: '8px', borderRadius: '8px', fontSize: '13px', fontWeight: 500, border: '1px solid', cursor: 'pointer', borderColor: condicion === c ? '#16a34a' : '#e5e7eb', backgroundColor: condicion === c ? '#f0fdf4' : '#fff', color: condicion === c ? '#16a34a' : '#6b7280' }}>
+                                {c === 'contado' ? 'Contado' : 'Crédito'}
+                            </button>
+                        ))}
                     </div>
-                ) : (<>
-                    {/* Fecha del pago + tasa de esa fecha */}
-                    <SelectorFechaTasa
-                        fecha={fechaPago} onFecha={setFechaPago}
-                        tasasFecha={tasasFecha} cargandoTasas={cargandoTasas}
-                        tipoTasa={tipoTasa} onTipoTasa={setTipoTasa}
-                    />
 
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', margin: '16px 0 8px' }}>
-                        <div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                                <label style={lbl}>Pago USD ($)</label>
-                                <button type="button" onClick={() => { setPagoUsd(aPagar.toFixed(2)); setPagoBs('') }} style={link}>Total</button>
+                    {condicion === 'credito' ? (
+                        <div style={{ marginBottom: '16px' }}>
+                            <label style={{ ...lbl, display: 'block', marginBottom: '6px' }}>Días de crédito</label>
+                            <input type="number" min="1" value={diasCredito} onChange={e => setDiasCredito(Number(e.target.value))} style={inp} />
+                            <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
+                                Vence: {fechaLarga(vence)} · se paga luego desde Cuentas por Pagar.
                             </div>
-                            <input type="number" min="0" step="0.01" value={pagoUsd} placeholder="0.00" onChange={e => setPagoUsd(e.target.value)} style={inp} />
                         </div>
-                        <div>
-                            <label style={{ ...lbl, display: 'block', marginBottom: '6px' }}>Vía USD</label>
-                            <select value={metodoUsd} onChange={e => setMetodoUsd(e.target.value)} style={sel}>
-                                {METODOS_USD.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
-                            </select>
-                        </div>
-                    </div>
-
-                    <div style={{ backgroundColor: '#f9fafb', borderRadius: '8px', padding: '8px 12px', marginBottom: '12px', fontSize: '12px', color: '#6b7280' }}>
-                        Equivalente: <strong style={{ color: '#374151' }}>{(usd * tasa).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.</strong>
-                    </div>
-
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
-                        <div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                                <label style={lbl}>Pago Bs. (opcional)</label>
-                                <button type="button" onClick={saldarRestoEnBs} style={link}>Saldar resto</button>
-                            </div>
-                            <input type="number" min="0" step="0.01" value={pagoBs} placeholder="0.00" onChange={e => setPagoBs(e.target.value)} style={inp} />
-                        </div>
-                        <div>
-                            <label style={{ ...lbl, display: 'block', marginBottom: '6px' }}>Vía Bs.</label>
-                            <select value={metodoBs} onChange={e => setMetodoBs(e.target.value)} style={sel}>
-                                {METODOS_BS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
-                            </select>
-                        </div>
-                    </div>
-
-                    {esParcial && (
-                        <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: '8px', padding: '10px 12px', marginBottom: '16px', fontSize: '12px', color: '#92400e' }}>
-                            Pago parcial: el saldo de <strong>{fmt(pendiente)}</strong> pasará a Cuentas por Pagar a crédito.
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px' }}>
-                                <span>Días de crédito para el saldo</span>
-                                <input type="number" min="1" value={diasCredito} onChange={e => setDiasCredito(Number(e.target.value))}
-                                    style={{ width: '70px', padding: '4px 8px', border: '1px solid #fcd34d', borderRadius: '6px', fontSize: '13px' }} />
-                            </div>
+                    ) : (
+                        <div style={{ backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '8px', padding: '10px 12px', marginBottom: '16px', fontSize: '12px', color: '#1e40af' }}>
+                            Queda en Cuentas por Pagar con vencimiento hoy. Al confirmar se abre la ventana de pago para registrarlo en el acto
+                            (si el pago es parcial o se hace después, el saldo queda pendiente en CxP).
                         </div>
                     )}
-                </>)}
                 </>}
 
                 {error && <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px', fontSize: '13px', color: '#dc2626', marginBottom: '12px' }}>{error}</div>}
-                <button onClick={revisar} disabled={guardando || (!cubiertoPorAnticipo && (sinTasa || (condicion === 'contado' && cargandoTasas)))} style={{ width: '100%', backgroundColor: sinTasa && !cubiertoPorAnticipo ? '#d1d5db' : '#16a34a', color: '#fff', border: 'none', borderRadius: '10px', padding: '13px', fontSize: '15px', fontWeight: 700, cursor: 'pointer' }}>
-                    {cubiertoPorAnticipo ? 'Confirmar recepción' : condicion === 'credito' ? 'Confirmar recepción a crédito' : 'Confirmar recepción y pago'}
+                <button onClick={revisar} disabled={guardando} style={{ width: '100%', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '10px', padding: '13px', fontSize: '15px', fontWeight: 700, cursor: 'pointer' }}>
+                    {cubiertoPorAnticipo ? 'Confirmar recepción' : condicion === 'credito' ? 'Confirmar recepción a crédito' : 'Confirmar recepción y pagar'}
                 </button>
             </div>
 
-            {confirmando && (cubiertoPorAnticipo ? (
-                <ConfirmacionPago saldo={0} pago={0} pendiente={0} saldada={true} montoUsd={0} montoBs={0} tasa={tasa} fecha={fechaPago}
+            {confirmando && (
+                <ConfirmacionPago saldo={cubiertoPorAnticipo ? 0 : aPagar} pago={0} pendiente={aPagar} saldada={cubiertoPorAnticipo}
+                    montoUsd={0} montoBs={0} tasa={1} fecha={hoy}
                     titulo="¿Confirmas la recepción?"
-                    aviso={`Se aplican ${fmt(anticipoAplicado)} de anticipo. No se registra ningún pago nuevo.`}
-                    textoBoton="Sí, registrar recepción"
-                    guardando={guardando} onVolver={() => setConfirmando(false)} onConfirmar={confirmar} />
-            ) : condicion === 'credito' ? (
-                <ConfirmacionPago saldo={aPagar} pago={0} pendiente={aPagar} saldada={false} montoUsd={0} montoBs={0} tasa={tasa} fecha={fechaPago}
-                    titulo="¿Confirmas la recepción a crédito?"
-                    aviso={`${conAnticipo ? `Se aplican ${fmt(anticipoAplicado)} de anticipo. ` : ''}No se registra ningún pago ahora. Queda pendiente ${fmt(aPagar)}, con vencimiento el ${new Date(vencimiento(diasCredito) + 'T00:00:00').toLocaleDateString('es-VE')}.`}
-                    textoBoton="Sí, registrar recepción"
-                    guardando={guardando} onVolver={() => setConfirmando(false)} onConfirmar={confirmar} />
-            ) : (
-                <ConfirmacionPago saldo={aPagar} pago={abonoEnUsd} pendiente={pendiente} saldada={!esParcial} montoUsd={usd} montoBs={bs} tasa={tasa} fecha={fechaPago}
                     aviso={[
                         conAnticipo ? `Se aplican ${fmt(anticipoAplicado)} de anticipo.` : null,
-                        esParcial ? `La recepción queda a crédito por el saldo, con vencimiento el ${new Date(vencimiento(diasCredito) + 'T00:00:00').toLocaleDateString('es-VE')}.` : null,
-                    ].filter(Boolean).join(' ') || null}
-                    textoBoton="Sí, registrar recepción y pago"
+                        cubiertoPorAnticipo ? 'No se registra ningún pago nuevo.'
+                            : condicion === 'contado' ? 'Después se abre la ventana de pago.'
+                            : `Vence el ${fechaLarga(vence)}.`,
+                    ].filter(Boolean).join(' ')}
+                    textoBoton="Sí, registrar recepción"
                     guardando={guardando} onVolver={() => setConfirmando(false)} onConfirmar={confirmar} />
-            ))}
+            )}
         </>
     )
 }

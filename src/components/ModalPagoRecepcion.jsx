@@ -1,0 +1,193 @@
+// Pago de una recepción (compra) — la única puerta para pagarle a un proveedor
+// por mercancía: CxP → Pagar y la recepción de contado ("pagar ahora").
+//
+// El formulario (fecha + tasa, montos, métodos, cuenta, nota) vive en
+// ModalPagoObligacion, compartido con Gastos. Aquí queda lo propio de una
+// recepción: descuento por pronto pago, notas de débito, anticipos y el estado
+// de la compra. Calcula su propio saldo, así sirve igual desde cualquier lado.
+import { useEffect, useState } from 'react'
+import { supabase } from '../lib/supabaseClient'
+import { useAuth } from '../contexts/AuthContext'
+import ModalPagoObligacion from './ModalPagoObligacion'
+import { SelectorAnticipos, totalAplicaciones, aplicacionesALista } from './AnticiposOC'
+import { fechaAtimestamp } from './SelectorFechaTasa'
+
+const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
+const pagoEnUsd = (p) => Number(p.monto_usd || 0) + Number(p.monto_bs || 0) / Number(p.tasa_cambio || 1)
+
+// Pago registrado en la propia recepción (compras.pago_usd/pago_bs): así se
+// guardaban las recepciones de contado antes de pasar por CxP.
+export const pagoDirectoCompra = (c) => c?.condicion_pago === 'contado'
+    ? Number(c.pago_usd || 0) + Number(c.pago_bs || 0) / Number(c.tasa_cambio || 1)
+    : 0
+
+export default function ModalPagoRecepcion({ compra, onCerrar, onPagado }) {
+    const { perfil } = useAuth()
+    const [pagosPrevios, setPagosPrevios] = useState(null)
+    const [descPct, setDescPct] = useState(0)
+    const [ndsDisponibles, setNdsDisponibles] = useState([])
+    const [ndsSeleccionadas, setNdsSeleccionadas] = useState(new Set())
+    const [aplicaciones, setAplicaciones] = useState({}) // anticipo_id -> monto USD
+    const [anticiposCargados, setAnticiposCargados] = useState([])
+
+    useEffect(() => {
+        supabase.from('pagos_proveedor').select('monto_usd, monto_bs, tasa_cambio')
+            .eq('compra_id', compra.id).eq('anulado', false)
+            .then(({ data }) => setPagosPrevios(data || []))
+    }, [compra.id])
+
+    useEffect(() => {
+        if (perfil?.empresa_id && compra.proveedor_id) {
+            supabase.from('devoluciones_proveedor')
+                .select('id, numero_nd, monto_total, motivo')
+                .eq('empresa_id', perfil.empresa_id)
+                .eq('proveedor_id', compra.proveedor_id)
+                .eq('estado_nd', 'pendiente')
+                .then(({ data }) => setNdsDisponibles(data || []))
+        }
+    }, [perfil?.empresa_id, compra.proveedor_id])
+
+    const cargando = pagosPrevios === null
+    const debido = Number(compra.total || 0) - Number(compra.descuento_pago || 0)
+    const pagadoPrevio = (pagosPrevios || []).reduce((s, p) => s + pagoEnUsd(p), 0) + pagoDirectoCompra(compra)
+    const saldo = Math.max(0, debido - pagadoPrevio)
+
+    const montoNDs = [...ndsSeleccionadas].reduce((s, id) => {
+        const nd = ndsDisponibles.find(n => n.id === id)
+        return s + Number(nd?.monto_total || 0)
+    }, 0)
+    const descMonto = saldo * (Number(descPct) / 100)
+    const saldoConDesc = Math.max(0, saldo - descMonto)
+    const saldoTrasNDs = Math.max(0, saldoConDesc - montoNDs)
+    // Anticipos pagados antes de recibir: cubren saldo sin mover dinero hoy
+    const montoAnticipos = totalAplicaciones(aplicaciones)
+    const saldoEfectivo = Math.max(0, saldoTrasNDs - montoAnticipos)
+
+    function toggleNd(ndId) {
+        setNdsSeleccionadas(prev => {
+            const next = new Set(prev)
+            if (next.has(ndId)) next.delete(ndId)
+            else next.add(ndId)
+            return next
+        })
+    }
+
+    async function confirmar({ fecha, tipoTasa, tasa, montoUsd, montoBs, metodoUsd, metodoBs, cuentaBancariaId, nota }) {
+        const { data: { user } } = await supabase.auth.getUser()
+        // fecha_pago es timestamptz: 'AAAA-MM-DD' solo se guardaría como medianoche
+        // UTC, que en Venezuela es el día ANTERIOR. Mediodía lo deja en su día.
+        const fechaPago = fechaAtimestamp(fecha)
+
+        // El descuento reduce el valor de la factura; NO se registra como pago.
+        const descuentoTotal = Number(compra.descuento_pago || 0) + (descMonto > 0.001 ? descMonto : 0)
+
+        for (const ndId of ndsSeleccionadas) {
+            const nd = ndsDisponibles.find(n => n.id === ndId)
+            if (!nd) continue
+            await supabase.from('pagos_proveedor').insert({
+                compra_id: compra.id, usuario_id: user.id,
+                monto_usd: Number(nd.monto_total), monto_bs: 0,
+                tasa_cambio: tasa, tipo_tasa: tipoTasa, fecha_pago: fechaPago,
+                metodo_usd: 'Nota de Débito', metodo_bs: null,
+                nota: `ND ${nd.numero_nd}`, devolucion_proveedor_id: nd.id,
+                empresa_id: perfil.empresa_id,
+            })
+            await supabase.from('devoluciones_proveedor').update({ estado_nd: 'aplicada' }).eq('id', nd.id)
+        }
+
+        // Aplicación de anticipos: la RPC valida saldos (del anticipo y de la
+        // recepción) y escribe el abono sin cuenta bancaria.
+        for (const ap of aplicacionesALista(aplicaciones, anticiposCargados)) {
+            const { error: errAp } = await supabase.rpc('aplicar_anticipo_proveedor', {
+                p_anticipo_id: ap.anticipo_id, p_compra_id: compra.id, p_monto: ap.monto,
+            })
+            if (errAp) return `No se pudo aplicar el anticipo ${ap.numero}: ${errAp.message}`
+        }
+
+        if (saldoEfectivo > 0.001) {
+            const { error: errPago } = await supabase.from('pagos_proveedor').insert({
+                compra_id: compra.id, usuario_id: user.id,
+                monto_usd: montoUsd, monto_bs: montoBs,
+                tasa_cambio: tasa, tipo_tasa: tipoTasa, fecha_pago: fechaPago,
+                metodo_usd: metodoUsd, metodo_bs: metodoBs,
+                nota, cuenta_bancaria_id: cuentaBancariaId,
+                empresa_id: perfil.empresa_id,
+            })
+            if (errPago) return 'Error: ' + errPago.message
+        }
+
+        const { data: todosPagos } = await supabase
+            .from('pagos_proveedor').select('monto_usd, monto_bs, tasa_cambio').eq('compra_id', compra.id).eq('anulado', false)
+        const totalPagado = (todosPagos || []).reduce((s, p) => s + pagoEnUsd(p), 0) + pagoDirectoCompra(compra)
+        const montoDebido = Number(compra.total) - descuentoTotal
+        const nuevoEstado = totalPagado >= montoDebido - 0.01 ? 'pagado' : 'parcial'
+        const { error: errCompra } = await supabase.from('compras')
+            .update({ estado_cobro: nuevoEstado, descuento_pago: parseFloat(descuentoTotal.toFixed(2)) })
+            .eq('id', compra.id)
+        if (errCompra) return 'Error al actualizar la factura: ' + errCompra.message
+
+        onPagado()
+    }
+
+    const extras = (
+        <>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: ndsDisponibles.length > 0 ? '12px' : '20px' }}>
+                <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', whiteSpace: 'nowrap' }}>Descuento (%)</label>
+                <input type="number" min="0" max="100" step="0.1" value={descPct || ''} placeholder="0"
+                    onChange={e => setDescPct(Math.min(100, Math.max(0, Number(e.target.value) || 0)))}
+                    style={{ width: '80px', padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', textAlign: 'right' }} />
+                {descMonto > 0.001 && (
+                    <span style={{ fontSize: '13px', color: '#dc2626', fontWeight: 500 }}>
+                        -{fmt(descMonto)} · A pagar: {fmt(saldoConDesc)}
+                    </span>
+                )}
+            </div>
+
+            {ndsDisponibles.length > 0 && (
+                <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: '10px', padding: '12px 16px', marginBottom: '20px' }}>
+                    <p style={{ fontSize: '12px', fontWeight: 600, color: '#92400e', margin: '0 0 8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Notas de Débito disponibles</p>
+                    {ndsDisponibles.map(nd => (
+                        <label key={nd.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', padding: '6px 0', cursor: 'pointer', borderBottom: '1px solid #fde68a' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <input type="checkbox" checked={ndsSeleccionadas.has(nd.id)} onChange={() => toggleNd(nd.id)} />
+                                <span style={{ fontSize: '13px', color: '#78350f', fontFamily: 'monospace' }}>{nd.numero_nd}</span>
+                                {nd.motivo && <span style={{ fontSize: '11px', color: '#92400e' }}>{nd.motivo}</span>}
+                            </div>
+                            <span style={{ fontSize: '13px', fontWeight: 600, color: '#dc2626' }}>{fmt(nd.monto_total)}</span>
+                        </label>
+                    ))}
+                    {montoNDs > 0 && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px', fontSize: '13px' }}>
+                            <span style={{ color: '#92400e' }}>Crédito aplicado:</span>
+                            <span style={{ fontWeight: 600, color: '#dc2626' }}>-{fmt(montoNDs)}</span>
+                        </div>
+                    )}
+                    {saldoTrasNDs <= 0.001 && (
+                        <div style={{ marginTop: '8px', backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '6px', padding: '8px 12px', fontSize: '13px', color: '#166534', fontWeight: 500 }}>
+                            ✓ Saldo cubierto completamente por notas de débito
+                        </div>
+                    )}
+                </div>
+            )}
+
+            <SelectorAnticipos proveedorId={compra.proveedor_id} ocId={compra.orden_compra_id || null}
+                tope={saldoTrasNDs} aplicaciones={aplicaciones} onChange={setAplicaciones} onCargados={setAnticiposCargados} />
+        </>
+    )
+
+    return (
+        <ModalPagoObligacion
+            titulo="Registrar pago"
+            subtitulo={[compra.numero_doc, compra.proveedores?.nombre].filter(Boolean).join(' · ')}
+            total={Number(compra.total || 0)}
+            abonado={pagadoPrevio}
+            saldo={saldo}
+            saldoEfectivo={saldoEfectivo}
+            cargandoSaldo={cargando}
+            extras={extras}
+            proveedorId={compra.proveedor_id}
+            onConfirmar={confirmar}
+            onCerrar={onCerrar}
+        />
+    )
+}

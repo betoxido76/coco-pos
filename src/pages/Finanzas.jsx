@@ -135,10 +135,11 @@ export default function Finanzas() {
                 .gte('fecha_pago', inicioDiaCaracas(desde))
                 .lte('fecha_pago', finDiaCaracas(hasta)),
 
+            // Por pagar: contado y crédito (las de contado también pasan por CxP).
+            // Con sus abonos, para mostrar el SALDO y no el total de la factura.
             supabase.from('compras')
-                .select('id, total, fecha_vencimiento_pago, estado_cobro, proveedores(nombre)')
+                .select('id, total, descuento_pago, fecha_vencimiento_pago, estado_cobro, proveedores(nombre), pagos_proveedor(monto_usd, monto_bs, tasa_cambio, anulado)')
                 .eq('empresa_id', perfil.empresa_id)
-                .eq('condicion_pago', 'credito')
                 .in('estado_cobro', ['pendiente', 'parcial']),
 
             supabase.from('movimientos_financieros')
@@ -308,8 +309,12 @@ export default function Finanzas() {
         ...cxpPendiente.map(c => ({
             id: c.id, origen: 'cxp',
             fecha: c.fecha_vencimiento_pago,
-            descripcion: `Compra a: ${c.proveedores?.nombre || '—'}`,
-            monto_usd: c.total, monto_bs: 0,
+            descripcion: `Compra a: ${c.proveedores?.nombre || '—'}` + (c.estado_cobro === 'parcial' ? ' (saldo)' : ''),
+            // Saldo = total − descuento − abonos vigentes (dinero, NDs, anticipos, retenciones)
+            monto_usd: Math.max(0, Number(c.total || 0) - Number(c.descuento_pago || 0)
+                - (c.pagos_proveedor || []).filter(p => !p.anulado)
+                    .reduce((s, p) => s + Number(p.monto_usd || 0) + Number(p.monto_bs || 0) / (Number(p.tasa_cambio) || 1), 0)),
+            monto_bs: 0,
             tasa_cambio: 1, tipo_tasa: null, metodo: null,
             fecha_vencimiento: c.fecha_vencimiento_pago,
         })),
