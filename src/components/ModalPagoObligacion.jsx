@@ -50,9 +50,12 @@ export const METODOS_BS = [
 
 // Etiqueta legible de un método guardado ('pago_movil' → 'Pago móvil').
 // Los registros viejos ya traen texto legible: se devuelven tal cual.
-// 'anticipo' marca la aplicación de un anticipo (aplicar_anticipo_proveedor).
+// 'anticipo' marca la aplicación de un anticipo (aplicar_anticipo_proveedor);
+// 'retencion_iva' / 'retencion_islr', el abono de una retención (registrar_retenciones).
 export const labelMetodo = (v) =>
     v === 'anticipo' ? 'Anticipo'
+        : v === 'retencion_iva' ? 'Retención IVA'
+        : v === 'retencion_islr' ? 'Retención ISLR'
         : [...METODOS_USD, ...METODOS_BS].find(m => m.value === v)?.label || v || null
 
 const inputS = {
@@ -130,6 +133,7 @@ export default function ModalPagoObligacion({
     labelSaldo = 'Saldo pendiente',
     confirmacion = {},           // { titulo, aviso, textoBoton } para ConfirmacionPago
     fechaInicial = null,         // fecha del pago propuesta (default: hoy)
+    bloqueo = null,              // texto: impide confirmar (p. ej. retención sin desglose)
     onConfirmar,                 // async (datos) => string | void   (string = mensaje de error)
     onCerrar,
 }) {
@@ -173,6 +177,7 @@ export default function ModalPagoObligacion({
 
     // Paso 1: validar y mostrar el resumen (saldada / queda pendiente).
     function revisar() {
+        if (bloqueo) { setError(bloqueo); return }
         if (sinTasa) { setError(`No hay tasa registrada para el ${fmtFechaCorta(fecha)}`); return }
         if (tope > 0.001 && totalEnUsd <= 0.001) { setError('Ingresa el monto pagado'); return }
         if (totalEnUsd > tope + 0.01) { setError(`El monto no puede superar el saldo pendiente de ${fmt(tope)}`); return }

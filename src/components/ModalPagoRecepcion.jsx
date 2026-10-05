@@ -11,6 +11,7 @@ import { useAuth } from '../contexts/AuthContext'
 import ModalPagoObligacion from './ModalPagoObligacion'
 import { SelectorAnticipos, totalAplicaciones, aplicacionesALista } from './AnticiposOC'
 import { fechaAtimestamp } from './SelectorFechaTasa'
+import BloqueRetenciones from './BloqueRetenciones'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 const pagoEnUsd = (p) => Number(p.monto_usd || 0) + Number(p.monto_bs || 0) / Number(p.tasa_cambio || 1)
@@ -29,6 +30,8 @@ export default function ModalPagoRecepcion({ compra, onCerrar, onPagado }) {
     const [ndsSeleccionadas, setNdsSeleccionadas] = useState(new Set())
     const [aplicaciones, setAplicaciones] = useState({}) // anticipo_id -> monto USD
     const [anticiposCargados, setAnticiposCargados] = useState([])
+    // Retenciones de IVA/ISLR (docs/plan-retenciones.md): abono sin caja
+    const [ret, setRet] = useState({ monto: 0 })
 
     useEffect(() => {
         supabase.from('pagos_proveedor').select('monto_usd, monto_bs, tasa_cambio')
@@ -61,7 +64,9 @@ export default function ModalPagoRecepcion({ compra, onCerrar, onPagado }) {
     const saldoTrasNDs = Math.max(0, saldoConDesc - montoNDs)
     // Anticipos pagados antes de recibir: cubren saldo sin mover dinero hoy
     const montoAnticipos = totalAplicaciones(aplicaciones)
-    const saldoEfectivo = Math.max(0, saldoTrasNDs - montoAnticipos)
+    const saldoTrasAnticipos = Math.max(0, saldoTrasNDs - montoAnticipos)
+    // Lo retenido no se le paga al proveedor: se le debe al SENIAT
+    const saldoEfectivo = Math.max(0, saldoTrasAnticipos - Number(ret.monto || 0))
 
     function toggleNd(ndId) {
         setNdsSeleccionadas(prev => {
@@ -116,6 +121,17 @@ export default function ModalPagoRecepcion({ compra, onCerrar, onPagado }) {
             if (errPago) return 'Error: ' + errPago.message
         }
 
+        // Retenciones al final: la RPC recalcula y valida contra el saldo que
+        // queda tras el pago (= lo retenido). Si falla, el pago ya quedó y la
+        // retención se puede registrar volviendo a Pagar.
+        if (Number(ret.monto) > 0.001) {
+            const { error: errRet } = await supabase.rpc('registrar_retenciones', {
+                p_origen_tipo: 'compra', p_origen_id: compra.id, p_fecha: fecha, p_tasa: tasa, p_tipo_tasa: tipoTasa,
+                p_aplicar_iva: !!ret.aplicarIva, p_aplicar_islr: !!ret.aplicarIslr,
+            })
+            if (errRet) return `${saldoEfectivo > 0.001 ? 'El pago se registró, pero la retención no' : 'No se pudo registrar la retención'}: ${errRet.message}`
+        }
+
         const { data: todosPagos } = await supabase
             .from('pagos_proveedor').select('monto_usd, monto_bs, tasa_cambio').eq('compra_id', compra.id).eq('anulado', false)
         const totalPagado = (todosPagos || []).reduce((s, p) => s + pagoEnUsd(p), 0) + pagoDirectoCompra(compra)
@@ -131,6 +147,13 @@ export default function ModalPagoRecepcion({ compra, onCerrar, onPagado }) {
 
     const extras = (
         <>
+            {!cargando && (
+                <BloqueRetenciones origenTipo="compra" origenId={compra.id} proveedorId={compra.proveedor_id}
+                    base={compra.base_gravada == null && compra.base_exenta == null ? null : Number(compra.base_gravada || 0) + Number(compra.base_exenta || 0)}
+                    iva={compra.iva} totalDocumento={Number(compra.total || 0)}
+                    saldo={saldoTrasAnticipos} onChange={setRet} />
+            )}
+
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: ndsDisponibles.length > 0 ? '12px' : '20px' }}>
                 <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', whiteSpace: 'nowrap' }}>Descuento (%)</label>
                 <input type="number" min="0" max="100" step="0.1" value={descPct || ''} placeholder="0"
@@ -186,6 +209,8 @@ export default function ModalPagoRecepcion({ compra, onCerrar, onPagado }) {
             cargandoSaldo={cargando}
             extras={extras}
             proveedorId={compra.proveedor_id}
+            bloqueo={ret.error || null}
+            confirmacion={Number(ret.monto) > 0.001 ? { aviso: `Se retienen ${fmt(ret.monto)} (${[ret.aplicarIva && 'IVA', ret.aplicarIslr && 'ISLR'].filter(Boolean).join(' y ')}): no se le pagan al proveedor, se le deben al SENIAT.` } : {}}
             onConfirmar={confirmar}
             onCerrar={onCerrar}
         />

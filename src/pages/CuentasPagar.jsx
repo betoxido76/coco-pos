@@ -832,6 +832,7 @@ function ModalAnularPagoProveedor({ pago, compra, onCerrar, onAnulado }) {
                     El pago deja de contar y el saldo de la recepción vuelve a subir por ese monto.
                     {pago.metodo_usd === 'Nota de Débito' && ' La nota de débito aplicada vuelve a quedar disponible.'}
                     {pago.metodo_usd === 'anticipo' && ' El monto vuelve al saldo del anticipo, disponible para otra recepción.'}
+                    {(pago.metodo_usd === 'retencion_iva' || pago.metodo_usd === 'retencion_islr') && ' La retención queda anulada y el monto vuelve al saldo: al pagar de nuevo se propondrá otra vez.'}
                     {' '}El registro se conserva con el motivo.
                 </div>
                 <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '5px' }}>Motivo *</label>

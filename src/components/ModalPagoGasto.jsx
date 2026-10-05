@@ -11,6 +11,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import ModalPagoObligacion from './ModalPagoObligacion'
+import BloqueRetenciones from './BloqueRetenciones'
 
 const pagoEnUsd = p => Number(p.monto_usd || 0) + Number(p.monto_bs || 0) / (Number(p.tasa_cambio) || 1)
 
@@ -18,6 +19,8 @@ export default function ModalPagoGasto({ gasto, tasas = {}, fechaInicial = null,
     const { perfil } = useAuth()
     const [pagosPrevios, setPagosPrevios] = useState([])
     const [cargandoPagos, setCargandoPagos] = useState(true)
+    // Retenciones de IVA/ISLR (docs/plan-retenciones.md): abono sin caja
+    const [ret, setRet] = useState({ monto: 0 })
 
     // Total de la obligación en USD (congelado; NO se toca al abonar)
     const totalObligacion = Number(gasto.monto || 0) > 0
@@ -26,6 +29,7 @@ export default function ModalPagoGasto({ gasto, tasas = {}, fechaInicial = null,
 
     const pagadoPrevio = pagosPrevios.reduce((s, p) => s + pagoEnUsd(p), 0)
     const saldo = Math.max(0, totalObligacion - pagadoPrevio)
+    const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 
     useEffect(() => {
         if (!perfil?.empresa_id) return
@@ -37,26 +41,41 @@ export default function ModalPagoGasto({ gasto, tasas = {}, fechaInicial = null,
             .then(({ data }) => { setPagosPrevios(data || []); setCargandoPagos(false) })
     }, [perfil?.empresa_id, gasto.id])
 
-    async function confirmar({ fecha, tipoTasa, tasa, montoUsd, montoBs, metodoUsd, metodoBs, metodoUsdLabel, cuentaBancariaId, nota }) {
+    async function confirmar({ fecha, tipoTasa, tasa, montoUsd, montoBs, totalEnUsd, metodoUsd, metodoBs, metodoUsdLabel, cuentaBancariaId, nota }) {
         const { data: { user } } = await supabase.auth.getUser()
+        const hayDinero = Number(totalEnUsd) > 0.001
 
-        // 1) El abono es una fila nueva en `pagos` — la obligación queda intacta
-        const { error: errPago } = await supabase.from('pagos').insert({
-            empresa_id: perfil.empresa_id,
-            origen_tipo: 'gasto',
-            origen_id: gasto.id,
-            fecha,
-            monto_usd: montoUsd,
-            monto_bs: montoBs,
-            tasa_cambio: tasa,
-            tipo_tasa: tipoTasa,
-            metodo_usd: metodoUsd,
-            metodo_bs: metodoBs,
-            cuenta_bancaria_id: cuentaBancariaId,
-            nota,
-            usuario_id: user.id,
-        })
-        if (errPago) return 'Error: ' + errPago.message
+        // 1) El abono es una fila nueva en `pagos` — la obligación queda intacta.
+        //    Sin dinero (todo lo cubre la retención) no se escribe un abono en 0.
+        if (hayDinero) {
+            const { error: errPago } = await supabase.from('pagos').insert({
+                empresa_id: perfil.empresa_id,
+                origen_tipo: 'gasto',
+                origen_id: gasto.id,
+                fecha,
+                monto_usd: montoUsd,
+                monto_bs: montoBs,
+                tasa_cambio: tasa,
+                tipo_tasa: tipoTasa,
+                metodo_usd: metodoUsd,
+                metodo_bs: metodoBs,
+                cuenta_bancaria_id: cuentaBancariaId,
+                nota,
+                usuario_id: user.id,
+            })
+            if (errPago) return 'Error: ' + errPago.message
+        }
+
+        // 1b) Retenciones: la RPC calcula, valida contra el saldo que queda (= lo
+        //     retenido) y guarda el desglose del gasto si se indicó aquí.
+        if (Number(ret.monto) > 0.001) {
+            const { error: errRet } = await supabase.rpc('registrar_retenciones', {
+                p_origen_tipo: 'gasto', p_origen_id: gasto.id, p_fecha: fecha, p_tasa: tasa, p_tipo_tasa: tipoTasa,
+                p_aplicar_iva: !!ret.aplicarIva, p_aplicar_islr: !!ret.aplicarIslr,
+                p_base: ret.desgloseNuevo ? ret.base : null, p_iva: ret.desgloseNuevo ? ret.iva : null,
+            })
+            if (errRet) return `${hayDinero ? 'El pago se registró, pero la retención no' : 'No se pudo registrar la retención'}: ${errRet.message}`
+        }
 
         // 2) Estado derivado: releer todos los abonos y comparar contra la obligación
         const { data: todos } = await supabase.from('pagos')
@@ -68,8 +87,7 @@ export default function ModalPagoGasto({ gasto, tasas = {}, fechaInicial = null,
 
         const { error: err } = await supabase.from('gastos').update({
             estado: nuevoEstado,
-            metodo_pago: metodoUsdLabel,
-            cuenta_bancaria_id: cuentaBancariaId,
+            ...(hayDinero ? { metodo_pago: metodoUsdLabel, cuenta_bancaria_id: cuentaBancariaId } : {}),
         }).eq('id', gasto.id)
         if (err) return 'Error al actualizar el gasto: ' + err.message
 
@@ -84,6 +102,14 @@ export default function ModalPagoGasto({ gasto, tasas = {}, fechaInicial = null,
             abonado={pagadoPrevio}
             saldo={saldo}
             cargandoSaldo={cargandoPagos}
+            saldoEfectivo={Math.max(0, saldo - Number(ret.monto || 0))}
+            extras={!cargandoPagos && (
+                <BloqueRetenciones origenTipo="gasto" origenId={gasto.id} proveedorId={gasto.proveedor_id}
+                    base={gasto.base_imponible ?? null} iva={gasto.monto_iva} totalDocumento={totalObligacion}
+                    saldo={saldo} onChange={setRet} />
+            )}
+            bloqueo={ret.error || null}
+            confirmacion={Number(ret.monto) > 0.001 ? { aviso: `Se retienen ${fmt(ret.monto)} (${[ret.aplicarIva && 'IVA', ret.aplicarIslr && 'ISLR'].filter(Boolean).join(' y ')}): no se le pagan al proveedor, se le deben al SENIAT.` } : {}}
             proveedorId={gasto.proveedor_id}
             fechaInicial={fechaInicial}
             onConfirmar={confirmar}
