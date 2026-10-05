@@ -8,6 +8,8 @@ import { labelMetodo } from '../components/ModalPagoObligacion'
 import FiltroCombo from '../components/FiltroCombo'
 import { useAltoBarra, useOrden, ordenarFilas, ThOrden, BarraFija, estiloTarjetaTabla } from '../components/TablaOrdenable'
 import { traerTodas } from '../lib/traerTodas'
+import { desglosarTotalConIva } from '../lib/iva'
+import { proveedorRetiene, resumenRetencionProveedor } from '../lib/retenciones'
 
 const fmt = n => `$${Number(n || 0).toFixed(2)}`
 const fmtBs = n => `${Number(n || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`
@@ -570,12 +572,15 @@ function NuevoGasto({ tasas, tipos, onGuardado, onCancelar }) {
     const [proveedores, setProveedores] = useState([])
     const [proveedorId, setProveedorId] = useState('')
     const [numeroFactura, setNumeroFactura] = useState('')
+    // Desglose de la factura (USD): lo necesita la retención de IVA/ISLR
+    const [baseImponible, setBaseImponible] = useState('')
+    const [montoIva, setMontoIva] = useState('')
 
     useEffect(() => {
         if (perfil?.empresa_id) {
             Promise.all([
                 supabase.from('cuentas_bancarias').select('id, nombre, banco, moneda').eq('empresa_id', perfil.empresa_id).eq('activa', true),
-                supabase.from('proveedores').select('id, nombre').eq('empresa_id', perfil.empresa_id).order('nombre'),
+                supabase.from('proveedores').select('id, nombre, retiene_iva, pct_retencion_iva, retiene_islr, pct_retencion_islr').eq('empresa_id', perfil.empresa_id).order('nombre'),
             ]).then(([{ data: cuentas }, { data: provs }]) => {
                 setCuentasBancarias(cuentas || [])
                 setProveedores(provs || [])
@@ -589,6 +594,13 @@ function NuevoGasto({ tasas, tipos, onGuardado, onCancelar }) {
     const tasa = tasaDia > 0 ? tasaDia : 1
     const sinTasa = !cargandoTasas && tasaDia <= 0
     const totalEnUsd = Number(montoUsd || 0) + (Number(montoBs || 0) / tasa)
+    // Proveedor sujeto a retención: la factura debe venir desglosada en base e IVA
+    const provSel = proveedores.find(p => p.id === proveedorId)
+    const pideDesglose = proveedorRetiene(perfil?.empresas?.agente_retencion, provSel)
+    function sugerirDesglose() {
+        const d = desglosarTotalConIva(totalEnUsd)
+        setBaseImponible(d.base.toFixed(2)); setMontoIva(d.iva.toFixed(2))
+    }
 
     async function guardar() {
         if (sinTasa) { setError(`No hay tasa registrada para el ${fmtFechaCorta(fecha)}`); return }
@@ -599,6 +611,11 @@ function NuevoGasto({ tasas, tipos, onGuardado, onCancelar }) {
         }
         if (estadoGasto === 'pendiente' && !fechaVencimiento) {
             setError('Ingresa la fecha de vencimiento para el gasto programado'); return
+        }
+        if (pideDesglose) {
+            const b = Number(baseImponible), i = Number(montoIva || 0)
+            if (!(b > 0) || i < 0) { setError('Indica la base imponible y el IVA de la factura: el proveedor está sujeto a retención'); return }
+            if (b + i > totalEnUsd + 0.01) { setError(`Base imponible + IVA (${fmt(b + i)}) supera el total del gasto (${fmt(totalEnUsd)})`); return }
         }
         setGuardando(true); setError('')
 
@@ -625,6 +642,8 @@ function NuevoGasto({ tasas, tipos, onGuardado, onCancelar }) {
             metodo_pago: estadoGasto === 'pagado' ? metodoPago : null,
             usuario_id: user.id,
             monto: totalEnUsd,
+            base_imponible: pideDesglose ? Number(baseImponible) : null,
+            monto_iva: pideDesglose ? Number(montoIva || 0) : null,
         }
 
         const { error: err } = await supabase.from('gastos').insert(payload)
@@ -790,6 +809,34 @@ function NuevoGasto({ tasas, tipos, onGuardado, onCancelar }) {
                         <p style={{ fontSize: '11px', color: '#16a34a', margin: '2px 0 0' }}>
                             {fmt(montoUsd || 0)} USD + {fmtBs(montoBs || 0)} ÷ {tasa.toLocaleString('es-VE')}
                         </p>
+                    </div>
+                )}
+
+                {/* Desglose de la factura: solo con proveedor sujeto a retención */}
+                {pideDesglose && (
+                    <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: '10px', padding: '14px 16px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+                            <div>
+                                <p style={{ fontSize: '13px', fontWeight: 600, color: '#92400e', margin: 0 }}>Desglose de la factura (USD)</p>
+                                <p style={{ fontSize: '11px', color: '#a16207', margin: '2px 0 0' }}>
+                                    Proveedor sujeto a retención ({resumenRetencionProveedor(provSel)}): se calcula al pagar sobre estos montos.
+                                </p>
+                            </div>
+                            <button type="button" onClick={sugerirDesglose} disabled={totalEnUsd <= 0}
+                                style={{ flexShrink: 0, padding: '6px 10px', borderRadius: '8px', fontSize: '12px', border: '1px solid #fcd34d', backgroundColor: '#fff', color: '#92400e', cursor: totalEnUsd > 0 ? 'pointer' : 'default' }}>
+                                Sugerir del total
+                            </button>
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                            <div>
+                                <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Base imponible (sin IVA) *</label>
+                                <input type="number" min="0" step="0.01" value={baseImponible} onChange={e => setBaseImponible(e.target.value)} placeholder="0.00" style={inputStyle} />
+                            </div>
+                            <div>
+                                <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>IVA</label>
+                                <input type="number" min="0" step="0.01" value={montoIva} onChange={e => setMontoIva(e.target.value)} placeholder="0.00" style={inputStyle} />
+                            </div>
+                        </div>
                     </div>
                 )}
 

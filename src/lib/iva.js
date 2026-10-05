@@ -88,6 +88,15 @@ export function totalesGuardados(doc, campoTotal = 'total') {
     return { base_gravada, base_exenta, subtotal, iva, total }
 }
 
+// Desglose SUGERIDO de un total que trae el IVA dentro (p. ej. el total de una
+// factura de servicio cargada como gasto), suponiendo todo gravado. Es solo un
+// punto de partida: el usuario lo corrige si la factura tiene parte exenta.
+export function desglosarTotalConIva(total) {
+    const t = redondear2(total)
+    const base = redondear2(t / FACTOR)
+    return { base, iva: redondear2(t - base) }
+}
+
 // Campos de IVA que toda línea NUEVA lleva al insertarse.
 export const camposIvaLinea = (aplicaIva) => ({
     aplica_iva: !!aplicaIva,

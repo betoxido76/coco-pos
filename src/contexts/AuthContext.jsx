@@ -93,7 +93,7 @@ export function AuthProvider({ children }) {
     async function cargarPerfil(userId) {
         const { data } = await supabase
             .from('usuarios')
-            .select('*, empresas(nombre, rif, logo_url, activo, perfil_negocio, aprobacion_pedido, flujo_ventas)')
+            .select('*, empresas(nombre, rif, logo_url, activo, perfil_negocio, aprobacion_pedido, flujo_ventas, agente_retencion)')
             .eq('id', userId)
             .single()
 
@@ -137,6 +137,16 @@ export function AuthProvider({ children }) {
         setModulosActivos(mods ? mods.map(m => m.modulo_id) : [])
     }
 
+    // Tras cambiar un dato de la empresa (p. ej. agente_retencion en
+    // Configuración): lo refleja en el perfil sin cerrar sesión.
+    function actualizarEmpresa(cambios) {
+        if (perfilBase?.rol === 'superadmin' && empresaActiva) {
+            setEmpresaActiva(e => ({ ...e, ...cambios }))
+        } else {
+            setPerfilBase(p => p ? { ...p, empresas: { ...p.empresas, ...cambios } } : p)
+        }
+    }
+
     async function login(email, password) {
         const { data, error } = await supabase.auth.signInWithPassword({ email, password })
         if (error) return { error }
@@ -156,7 +166,7 @@ export function AuthProvider({ children }) {
     }
 
     return (
-        <AuthContext.Provider value={{ user, perfil, modulosActivos, loading, login, logout, recargarModulos, empresaActiva, setEmpresaActiva }}>
+        <AuthContext.Provider value={{ user, perfil, modulosActivos, loading, login, logout, recargarModulos, empresaActiva, setEmpresaActiva, actualizarEmpresa }}>
             {children}
         </AuthContext.Provider>
     )

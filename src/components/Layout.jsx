@@ -40,7 +40,7 @@ export default function Layout() {
     useEffect(() => {
         if (perfil?.rol !== 'superadmin') return
         supabase.from('empresas')
-            .select('id, nombre, rif, logo_url, activo, perfil_negocio, aprobacion_pedido, flujo_ventas')
+            .select('id, nombre, rif, logo_url, activo, perfil_negocio, aprobacion_pedido, flujo_ventas, agente_retencion')
             .order('nombre')
             .then(({ data }) => { if (data) setEmpresas(data) })
     }, [perfil?.rol])

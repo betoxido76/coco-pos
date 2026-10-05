@@ -3,10 +3,13 @@ import { supabase } from '../lib/supabaseClient'
 import { Plus, Pencil, Check, Search, X, Star, Trash2 } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { useAltoBarra, useOrden, ordenarFilas, ThOrden, BarraFija, estiloTarjetaTabla } from '../components/TablaOrdenable'
+import { resumenRetencionProveedor } from '../lib/retenciones'
 
 const VACIO = {
     nombre: '', rif: '', telefono: '', contacto: '', tipo: '', codigo: '', activo: true, direccion_fiscal: '',
     condicion_pago: 'contado', dias_credito: 0,
+    // Retenciones (solo si la empresa es agente de retención)
+    retiene_iva: false, pct_retencion_iva: 75, retiene_islr: false, pct_retencion_islr: '',
 }
 
 const VACIO_CUENTA = {
@@ -27,6 +30,7 @@ const inputStyle = {
 
 export default function Proveedores() {
     const { perfil } = useAuth()
+    const agente = !!perfil?.empresas?.agente_retencion
     const [proveedores, setProveedores] = useState([])
     const [loading, setLoading] = useState(true)
     const [busqueda, setBusqueda] = useState('')
@@ -83,6 +87,10 @@ export default function Proveedores() {
             activo: p.activo ?? true,
             condicion_pago: p.condicion_pago || 'contado',
             dias_credito: p.dias_credito || 0,
+            retiene_iva: !!p.retiene_iva,
+            pct_retencion_iva: p.pct_retencion_iva ?? 75,
+            retiene_islr: !!p.retiene_islr,
+            pct_retencion_islr: p.pct_retencion_islr ?? '',
         })
         cargarCuentas(p.id)
         setError(''); setVista('form')
@@ -93,6 +101,9 @@ export default function Proveedores() {
 
     async function guardar() {
         if (!form.nombre.trim()) { setError('El nombre es obligatorio'); return }
+        const pctValido = v => Number(v) > 0 && Number(v) <= 100
+        if (form.retiene_iva && !pctValido(form.pct_retencion_iva)) { setError('Indica el % de retención de IVA (entre 0 y 100)'); return }
+        if (form.retiene_islr && !pctValido(form.pct_retencion_islr)) { setError('Indica el % de retención de ISLR (entre 0 y 100)'); return }
         setGuardando(true); setError('')
         const payload = {
             nombre: form.nombre.trim(),
@@ -104,6 +115,13 @@ export default function Proveedores() {
             activo: form.activo,
             condicion_pago: form.condicion_pago,
             dias_credito: form.condicion_pago === 'credito' ? (form.dias_credito || 0) : 0,
+            // Con la empresa sin retenciones no se tocan: se conservan por si se reactiva
+            ...(agente ? {
+                retiene_iva: form.retiene_iva,
+                pct_retencion_iva: form.retiene_iva ? Number(form.pct_retencion_iva) : null,
+                retiene_islr: form.retiene_islr,
+                pct_retencion_islr: form.retiene_islr ? Number(form.pct_retencion_islr) : null,
+            } : {}),
         }
 
         let proveedorId = editando
@@ -284,6 +302,40 @@ export default function Proveedores() {
                     </div>
                 </div>
             </div>
+
+            {/* Retenciones: solo si la empresa es agente de retención (Configuración) */}
+            {agente && (
+                <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '20px', marginBottom: '20px' }}>
+                    <p style={{ fontSize: '13px', fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 4px' }}>Retenciones</p>
+                    <p style={{ fontSize: '12px', color: '#9ca3af', margin: '0 0 16px' }}>Se descuentan al pagarle a este proveedor, en compras y en gastos.</p>
+                    {[
+                        { k: 'iva', label: 'Sujeto a retención de IVA', ayuda: '% sobre el IVA de la factura (normalmente 75 o 100)' },
+                        { k: 'islr', label: 'Sujeto a retención de ISLR', ayuda: '% sobre la base imponible, sin IVA' },
+                    ].map(r => {
+                        const activo = form[`retiene_${r.k}`]
+                        return (
+                            <div key={r.k} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 0', borderTop: r.k === 'islr' ? '1px solid #f3f4f6' : 'none', flexWrap: 'wrap' }}>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: '220px', cursor: 'pointer' }}>
+                                    <input type="checkbox" checked={activo} onChange={e => campo(`retiene_${r.k}`, e.target.checked)}
+                                        style={{ width: '16px', height: '16px', accentColor: '#16a34a' }} />
+                                    <span>
+                                        <span style={{ fontSize: '14px', color: '#374151', display: 'block' }}>{r.label}</span>
+                                        <span style={{ fontSize: '11px', color: '#9ca3af' }}>{r.ayuda}</span>
+                                    </span>
+                                </label>
+                                {activo && (
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                        <input type="number" min="0" max="100" step="0.01" value={form[`pct_retencion_${r.k}`]}
+                                            onChange={e => campo(`pct_retencion_${r.k}`, e.target.value)} placeholder="%"
+                                            style={{ ...inputStyle, width: '90px', textAlign: 'right' }} />
+                                        <span style={{ fontSize: '14px', color: '#6b7280' }}>%</span>
+                                    </div>
+                                )}
+                            </div>
+                        )
+                    })}
+                </div>
+            )}
 
             {/* Cuentas bancarias */}
             <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '20px', marginBottom: '20px' }}>
@@ -467,7 +519,12 @@ export default function Proveedores() {
                                     onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
                                     onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
                                     <td style={{ padding: '12px 16px', fontSize: '12px', fontFamily: 'monospace', color: '#6b7280' }}>{p.codigo || '—'}</td>
-                                    <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>{p.nombre}</td>
+                                    <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>
+                                        {p.nombre}
+                                        {agente && resumenRetencionProveedor(p) && (
+                                            <div style={{ fontSize: '11px', fontWeight: 500, color: '#854d0e', marginTop: '2px' }}>Retiene {resumenRetencionProveedor(p)}</div>
+                                        )}
+                                    </td>
                                     <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280', fontFamily: 'monospace' }}>{p.rif || '—'}</td>
                                     <td style={{ padding: '12px 16px', fontSize: '12px', color: '#6b7280' }}>{p.tipo ? p.tipo.replace(/_/g, ' ') : '—'}</td>
                                     <td style={{ padding: '12px 16px' }}>

@@ -17,12 +17,13 @@ const hoyYMD = () => {
 const fmtFecha = (ymd) => new Date(ymd + 'T00:00:00').toLocaleDateString('es-VE', { day: '2-digit', month: 'short', year: 'numeric' })
 
 export default function Configuracion() {
-    const { perfil } = useAuth()
+    const { perfil, actualizarEmpresa } = useAuth()
     const [valores, setValores] = useState({ tasa_bcv: '', tasa_euro: '', tasa_binance: '' })
     const [fecha, setFecha] = useState(hoyYMD())
     const [historico, setHistorico] = useState([])   // últimas fechas cargadas
     const [existeFecha, setExisteFecha] = useState(false)
     const [aprobacionPedido, setAprobacionPedido] = useState(true)
+    const [agenteRetencion, setAgenteRetencion] = useState(false)
     const [loading, setLoading] = useState(true)
     const [guardando, setGuardando] = useState(false)
     const [guardandoConf, setGuardandoConf] = useState(false)
@@ -37,11 +38,14 @@ export default function Configuracion() {
 
     async function cargar() {
         const [{ data: empresa }] = await Promise.all([
-            supabase.from('empresas').select('aprobacion_pedido').eq('id', perfil.empresa_id).single(),
+            supabase.from('empresas').select('aprobacion_pedido, agente_retencion').eq('id', perfil.empresa_id).single(),
             cargarFecha(fecha),
             cargarHistorico(),
         ])
-        if (empresa) setAprobacionPedido(empresa.aprobacion_pedido ?? true)
+        if (empresa) {
+            setAprobacionPedido(empresa.aprobacion_pedido ?? true)
+            setAgenteRetencion(!!empresa.agente_retencion)
+        }
         setLoading(false)
     }
 
@@ -71,9 +75,13 @@ export default function Configuracion() {
 
     async function guardarConfiguracion() {
         setGuardandoConf(true)
-        const { error: err } = await supabase.from('empresas').update({ aprobacion_pedido: aprobacionPedido }).eq('id', perfil.empresa_id)
+        const { error: err } = await supabase.from('empresas')
+            .update({ aprobacion_pedido: aprobacionPedido, agente_retencion: agenteRetencion })
+            .eq('id', perfil.empresa_id)
         setGuardandoConf(false)
         if (err) { setError('Error al guardar configuración: ' + err.message); return }
+        // Las pantallas leen el interruptor del perfil: se refleja sin recargar
+        actualizarEmpresa({ aprobacion_pedido: aprobacionPedido, agente_retencion: agenteRetencion })
         setExitoConf(true)
         setTimeout(() => setExitoConf(false), 3000)
     }
@@ -283,6 +291,24 @@ export default function Configuracion() {
                         <span style={{ position: 'absolute', top: '2px', left: aprobacionPedido ? '22px' : '2px', width: '20px', height: '20px', borderRadius: '50%', backgroundColor: '#fff', transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }} />
                     </button>
                 </div>
+                {/* Retenciones de IVA/ISLR a proveedores (docs/plan-retenciones.md) */}
+                <h2 style={{ fontSize: '15px', fontWeight: 600, color: '#1f2937', margin: '20px 0 4px' }}>Retenciones a proveedores</h2>
+                <p style={{ fontSize: '13px', color: '#6b7280', margin: '0 0 16px' }}>Para empresas designadas agentes de retención de IVA y/o ISLR</p>
+                <div style={{ backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '12px', padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                        <p style={{ fontSize: '14px', fontWeight: 600, color: '#1f2937', margin: 0 }}>La empresa es agente de retención</p>
+                        <p style={{ fontSize: '12px', color: '#9ca3af', margin: '2px 0 0' }}>
+                            {agenteRetencion
+                                ? 'Al pagar a un proveedor marcado para retención, se descuentan las retenciones de IVA/ISLR. El % se configura en cada proveedor.'
+                                : 'No se calculan retenciones al pagar a proveedores'}
+                        </p>
+                    </div>
+                    <button onClick={() => setAgenteRetencion(v => !v)}
+                        style={{ width: '44px', height: '24px', borderRadius: '12px', border: 'none', cursor: 'pointer', position: 'relative', backgroundColor: agenteRetencion ? '#16a34a' : '#d1d5db', transition: 'background 0.2s', flexShrink: 0 }}>
+                        <span style={{ position: 'absolute', top: '2px', left: agenteRetencion ? '22px' : '2px', width: '20px', height: '20px', borderRadius: '50%', backgroundColor: '#fff', transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }} />
+                    </button>
+                </div>
+
                 <button onClick={guardarConfiguracion} disabled={guardandoConf}
                     style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '12px', backgroundColor: exitoConf ? '#166534' : '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px 20px', fontSize: '14px', fontWeight: 600, cursor: 'pointer', transition: 'background 0.2s' }}>
                     {exitoConf ? <><Check size={16} /> Guardado</> : <><Save size={16} /> {guardandoConf ? 'Guardando...' : 'Guardar configuración'}</>}
