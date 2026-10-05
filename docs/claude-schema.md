@@ -1,6 +1,7 @@
 ### Maestros
 ```
 empresas              -- Clientes del sistema
+                      --   agente_retencion boolean: retiene IVA/ISLR a proveedores (CLAUDE.md §7)
 usuarios              -- Roles: admin, vendedor, produccion, almacen, finanzas, superadmin
 modulos               -- Catálogo de módulos disponibles
 empresa_modulos       -- Módulos contratados por empresa
@@ -93,6 +94,18 @@ pagos_proveedor       -- Pagos a proveedores
                       --   anticipo_id → anticipos_proveedor: APLICACIÓN de un anticipo.
                       --   Siempre sin cuenta_bancaria_id (CHECK) y solo vía RPC (trigger).
                       --   Lectores de caja la excluyen: el dinero salió con el anticipo.
+                      --   retencion_id → retenciones: abono de una RETENCIÓN (metodo_usd
+                      --   'retencion_iva'/'retencion_islr'). Sin cuenta (CHECK), solo vía RPC
+                      --   registrar_retenciones (trigger). Lectores de caja la excluyen.
+                      --   fecha_pago timestamptz: escribir con fechaAtimestamp() (mediodía)
+retenciones           -- Retenciones de IVA/ISLR al pagar a un proveedor (docs/plan-retenciones.md)
+                      --   tipo ('iva'|'islr'), origen_tipo ('compra'|'gasto'), origen_id (sin FK),
+                      --   proveedor_id, fecha, base_calculo, porcentaje (foto), monto_usd,
+                      --   tasa_cambio, tipo_tasa, monto_bs, estado ('vigente'|'anulada') + anulación
+                      --   Única vigente por (origen_tipo, origen_id, tipo).
+                      --   Para el proceso completo (hoy NULL, lo lleva Galac): numero_comprobante,
+                      --   periodo, concepto_islr, fecha_enteramiento, referencia_enteramiento
+                      --   Escritura SOLO por RPC: registrar_retenciones / anular_retencion
 anticipos_proveedor   -- Anticipos pagados antes de recibir (ANT-000001), CLAUDE.md §7
                       --   proveedor_id!, orden_compra_id (nullable = saldo a favor sin OC)
                       --   fecha date, monto_usd, monto_bs, tasa_cambio, tipo_tasa,
@@ -142,6 +155,7 @@ clientes              -- cat1_id..cat4_id, limite_credito numeric, vehiculo text
 categorias_clientes   -- 4 niveles de categorías por empresa
 perfilamiento_clientes -- Perfiles de segmentación de clientes
 proveedores           -- condicion_pago, dias_credito
+                      --   retiene_iva + pct_retencion_iva, retiene_islr + pct_retencion_islr
 cuentas_proveedor     -- Cuentas bancarias del proveedor (multi-cuenta)
                       --   proveedor_id, banco, tipo_cuenta, numero_cuenta, titular,
                       --   rif_titular, es_predeterminada boolean, empresa_id
@@ -158,6 +172,10 @@ gastos                -- monto_usd, monto_bs, tipo_tasa, metodo_pago,
                       --   estado ('pagado'|'pendiente'), fecha_vencimiento,
                       --   cuenta_bancaria_id → cuentas_bancarias
                       --   numero_factura text (opcional, factura del proveedor)
+                      --   base_imponible, monto_iva (USD, como monto): desglose de la factura,
+                      --   lo exige la retención. NULL en gastos viejos
+                      --   Desde 2026-10-05 todo gasto nace 'pendiente' (el "Pagado" vence en su
+                      --   fecha y se paga en el acto por ModalPagoGasto)
 tipos_gastos          -- Tipos de gasto personalizables por empresa
 configuracion         -- Tasa VIGENTE: clave/valor por empresa_id
                       --   claves: tasa_bcv, tasa_euro, tasa_binance

@@ -160,10 +160,10 @@ guardado se bloquea (hay que cargarlas primero en Administración).
 | Módulo | Fecha guardada en |
 |---|---|
 | CxC — cobros (individual y múltiple) | `cobros.fecha_cobro` |
-| CxP — pagos a proveedor | `pagos_proveedor.fecha_pago` |
+| CxP — pagos a proveedor | `pagos_proveedor.fecha_pago` (timestamptz: escribir con `fechaAtimestamp()`, nunca 'AAAA-MM-DD' solo, que queda a medianoche UTC = día anterior en Venezuela) |
 | CxP / Gastos — abonos a gastos | `pagos.fecha` · `gastos.fecha` |
 | Gastos — alta del gasto | `gastos.fecha` |
-| Compras — recepción de contado | `compras.fecha_pago` |
+| Compras — recepción de contado | Ya no se paga en la recepción: va a CxP con vencimiento hoy (`pagos_proveedor.fecha_pago`). `compras.fecha_pago` solo en las de contado anteriores a 2026-10-05 |
 
 **Lectores de caja (Bancos, Finanzas):** ubicar cada movimiento por su fecha
 real (`cobros.fecha_cobro`, `pagos_proveedor.fecha_pago`), nunca por
@@ -171,8 +171,11 @@ real (`cobros.fecha_cobro`, `pagos_proveedor.fecha_pago`), nunca por
 `inicioDiaCaracas()`/`finDiaCaracas()`. No son dinero y se excluyen de caja: los
 cobros con `devolucion_id` (NC aplicada), los `pagos_proveedor` con
 `devolucion_proveedor_id` (ND aplicada) o con `anticipo_id` (aplicación de un
-anticipo: el dinero salió con el anticipo, `anticipos_proveedor`, en su `fecha`).
-Ver `docs/plan-anticipos-proveedor.md`.
+anticipo: el dinero salió con el anticipo, `anticipos_proveedor`, en su `fecha`),
+y los abonos con `retencion_id` en `pagos_proveedor` y `pagos` (retención: se le
+debe al SENIAT). Ver `docs/plan-anticipos-proveedor.md` y `docs/plan-retenciones.md`.
+Gastos en Bancos: el dinero sale por sus abonos en `pagos`; un gasto `pagado`
+se cuenta por su fila solo si no tiene abonos (contado anterior a 2026-10-05).
 
 La UI es un componente único: `src/components/SelectorFechaTasa.jsx`, que
 exporta también `useTasasFecha`, `OPCIONES_TASA`, `hoyYMD`, `fechaAtimestamp`,
@@ -192,18 +195,23 @@ llamador solo recibe los datos en `onConfirmar(datos)` y escribe en BD
   aplicados). Los montos arrancan **vacíos** (prellenar el saldo provocaba
   pagos parciales registrados como totales) y antes de guardar se muestra
   `ConfirmacionPago` (exportado del mismo archivo): "Pago TOTAL" o "Pago
-  PARCIAL — queda pendiente $X". La recepción de Compras (`ModalPagoCompra`)
-  usa la misma confirmación; un contado parcial pasa a crédito y el anticipo
-  queda como primer abono en `pagos_proveedor`.
+  PARCIAL — queda pendiente $X".
+- **No hay otra puerta de pago.** La recepción de contado (`ModalPagoCompra`
+  en Compras) solo elige la condición: contado = CxP con vencimiento hoy y se
+  abre `ModalPagoRecepcion` en el acto. El gasto "Pagado" se registra por pagar
+  (vence en su fecha) y abre `ModalPagoGasto`. Así descuentos, NDs, anticipos y
+  retenciones pasan siempre por el mismo lugar.
+- `bloqueo` (texto) impide confirmar; `fechaInicial` propone la fecha del pago.
 - Los pagos a proveedor se anulan (lógicamente) desde CxP → Ver recepción →
   Pagos registrados, vía RPC `anular_pago_proveedor` (`anular_pago_proveedor.sql`).
   **Todo lector de `pagos_proveedor` debe filtrar `.eq('anulado', false)`.**
-- `extras` inyecta los bloques propios del dominio (descuento por pronto pago,
-  notas de débito) entre el resumen y el formulario.
+- `extras` inyecta los bloques propios del dominio (retenciones, descuento por
+  pronto pago, notas de débito, anticipos) entre el resumen y el formulario.
 - `METODOS_USD` / `METODOS_BS` / `labelMetodo` son el vocabulario compartido de
   métodos de pago.
 
-La usan `CuentasPagar → ModalPago` (recepciones) y
+La usan `src/components/ModalPagoRecepcion.jsx` (recepciones: CxP → Pagar y la
+recepción de contado; calcula su propio saldo) y
 `src/components/ModalPagoGasto.jsx` (gastos), este último montado tanto desde
 **Gastos** como desde **CxP → tab Gastos** para que pagar un gasto se vea y
 funcione igual desde ambos lados. **No escribir una ventana de pago nueva.**
@@ -227,8 +235,31 @@ reembolsos vigentes` (vista `v_anticipos_saldo`).
 - UI en `src/components/AnticiposOC.jsx`: sección en el detalle de la OC,
   `SelectorAnticipos` (recepción y CxP → Pagar), pestaña CxP → Anticipos,
   detalle/reembolso y el modal al cancelar una OC con anticipo.
-- Con anticipo aplicado, una recepción se guarda SIEMPRE a crédito.
 - Diseño y decisiones: `docs/plan-anticipos-proveedor.md`.
+
+### Retenciones de IVA e ISLR a proveedores
+
+Para empresas agentes de retención (`empresas.agente_retencion`, Administración →
+Tasas/Configuración). El proveedor se marca con `retiene_iva` / `retiene_islr` y
+su % (Administración → Proveedores). Se retiene **al pagar**, en el primer pago
+del documento que no tenga esa retención (también facturas viejas pendientes):
+IVA = IVA del documento × %; ISLR = base imponible (sin IVA) × %.
+
+- La retención (`retenciones`) es un **abono sin caja**: fila en
+  `pagos_proveedor` (recepción) o `pagos` (gasto) con `retencion_id`, sin cuenta
+  bancaria. Todo lector de saldo ya la cuenta; los de caja la excluyen.
+- **Toda escritura por RPC**: `registrar_retenciones` (calcula en el servidor)
+  y `anular_retencion`. Un trigger impide escribir `retencion_id` fuera de ella.
+  `anular_pago_proveedor` sobre el abono de una retención la anula.
+- El % se congela en la retención: cambiar el proveedor no reescribe el pasado.
+- Gastos: necesitan `base_imponible` y `monto_iva` (USD); el formulario y la
+  ventana de pago los piden si el proveedor retiene.
+- UI: `BloqueRetenciones` en las dos ventanas de pago; CxP → pestaña
+  **Retenciones** (`PanelRetenciones`: totales por período, Excel, anulación).
+  Vista previa con `src/lib/retenciones.js` (misma fórmula que la RPC).
+- Comprobantes, numeración y declaraciones siguen en **Galac**; la tabla ya
+  trae `numero_comprobante`, `periodo`, `concepto_islr` y enteramiento vacíos.
+- Diseño y decisiones: `docs/plan-retenciones.md`.
 
 Los cobros y gastos manejan `monto_usd` + `monto_bs` + `tasa_cambio` + `tipo_tasa`.
 El equivalente en USD = `monto_usd + (monto_bs / tasa)`.
@@ -347,17 +378,17 @@ Al cerrar un ítem, borrarlo de esta tabla.
 
 | Item | Prioridad | Descripción |
 |---|---|---|
+| Recorrido de retenciones en producción | Alta | Nada del circuito de retenciones (`docs/plan-retenciones.md`) se probó en navegador (las RPC sí, en BEGIN/ROLLBACK). Activar Meraki como agente, marcar 1 proveedor y probar: recepción a crédito pagada desde CxP, recepción de contado (pagar en el acto), gasto "Pagado" con y sin desglose, pago parcial, anular el abono de una retención, pestaña Retenciones + Excel. Revisar Finanzas y Bancos después. |
+| Validar retenciones con el contador | Media | (1) ¿IVA e ISLR completos en el primer abono o el ISLR proporcional a cada abono? (2) ¿La base del ISLR incluye la parte exenta? (3) ¿Las NDs y el descuento por pronto pago reducen la base retenida? Hoy: completas en el primer pago, base gravada + exenta, sin ajuste por ND/descuento. |
 | Recorrido de anticipos en producción | Alta | Nada del circuito de anticipos (`docs/plan-anticipos-proveedor.md`) se probó en navegador. Correr los 7 casos de la Fase 7 con una OC real pequeña antes de anunciarlo a los usuarios. |
 | Revisar pedidos alistados sin facturar (Meraki) | Alta | Al 2026-09-28 había 15 pedidos `alistado` con fecha programada ≤ 28/09, algunos del 16-17/09. Si alguno se entregó sin facturar, el conteo físico no lo incluye y facturarlo lo descontaría dos veces. Revisar uno por uno con despacho. |
 | Recontar Helado Antojito 40g (Meraki) | Media | El 24/09 se ajustó a 520 y el conteo del 25/09 dio 812 sin producción registrada entre medio. Hoy está en 392 tras restar el pedido de Farmatodo. |
 | Factura del anticipo (IVA) | Media | Consultar al contador si el proveedor debe facturar el anticipo al cobrarlo. Si sí, volver obligatorio `anticipos_proveedor.nro_doc_proveedor`. |
 | Lámina de capacitación: anticipos | Media | Compras y CxP, formato de las presentaciones de Meraki, con capturas reales. Hacerla después del recorrido. |
-| Finanzas: CxP programada sin abonos | Media | Egresos programados muestran `compras.total` de cada recepción pendiente/parcial, sin restar abonos ni anticipos aplicados. Debe mostrar el saldo. |
-| Bancos: abonos parciales a gastos | Media | `calcularSaldoCuenta` y el extracto no leen la tabla `pagos` (abonos a gastos con cuenta bancaria). Latente: hoy hay 0 abonos con cuenta. |
 | Documento de origen en movimientos de inventario | Media | Los movimientos `pedido_facturado` no guardan NE/PED: enlazar una salida con su factura solo se puede por hora. Pasar `notas` con NE y PED en `moverStockLote` desde Pedidos y Ventas. |
 | Hora real de despacho | Media | `pedidos.fecha_despacho` es la fecha PROGRAMADA; la hora en que se marca despachado solo queda en los logs de la API (retención corta). Agregar `despachado_at`. |
 | Merma de la receta sin uso | Media | `recetas.merma_pct` se carga pero ninguna orden lo aplica: el factor es `cantidad ÷ rinde_unidades`. Confirmar con Meraki si el rinde que cargan ya es neto (p. ej. 30001: 529,411 L de 1.800 cocos con merma 3 %); si no, los estimados están inflados. |
-| Recepción no transaccional | Baja | La recepción se guarda en varios pasos desde el navegador (compra, abono, aplicación de anticipos, ítems, stock). Si un paso falla, avisa y queda para completarlo a mano. Llevarla a una RPC. |
+| Recepción no transaccional | Baja | La recepción se guarda en varios pasos desde el navegador (compra, aplicación de anticipos, ítems, stock); el pago va aparte por CxP. Si un paso falla, avisa y queda para completarlo a mano. Llevarla a una RPC. |
 
 ---
 
