@@ -56,6 +56,7 @@ export const labelMetodo = (v) =>
     v === 'anticipo' ? 'Anticipo'
         : v === 'retencion_iva' ? 'Retención IVA'
         : v === 'retencion_islr' ? 'Retención ISLR'
+        : v === 'nota_credito' ? 'Nota de crédito'
         : [...METODOS_USD, ...METODOS_BS].find(m => m.value === v)?.label || v || null
 
 const inputS = {

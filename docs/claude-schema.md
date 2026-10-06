@@ -118,8 +118,17 @@ anticipo_reembolsos   -- El proveedor devuelve dinero de un anticipo (entra al b
                       --   anticipo_id!, fecha, montos, cuenta_bancaria_id, anulado
 v_anticipos_saldo     -- Vista (security_invoker): anticipo + aplicado_usd, reembolsado_usd, saldo_usd
                       --   Sin embeds sobre la vista: resolver proveedor/OC con otra consulta
-devoluciones_proveedor     -- Notas de débito a proveedor (monto_total con IVA; subtotal, base_gravada, base_exenta, iva)
-devolucion_proveedor_items -- Detalle de ND
+devoluciones_proveedor     -- NOTA DE CRÉDITO DE PROVEEDOR (docs/plan-nc-proveedores.md)
+                           --   origen 'devolucion' (ND-, Compras → Devoluciones, mueve inventario)
+                           --   | 'manual' (NCP-, CxP, sin inventario). nro_doc_proveedor = N° del proveedor
+                           --   compra_id NULL = saldo a favor. monto_total con IVA; subtotal, base_*, iva
+                           --   fecha_emision, tasa_cambio, tipo_tasa, usuario_id, anulación
+                           --   estado_nd ('pendiente','parcial','aplicada','reembolsada','anulada'):
+                           --   lo recalcula la base. Saldo = monto_total − aplicaciones
+                           --   (pagos_proveedor/pagos con devolucion_proveedor_id) → saldo_credito_proveedor()
+                           --   Escritura por RPC: crear_nc_proveedor / aplicar_credito_proveedor /
+                           --   anular_credito_proveedor (trigger sobre devolucion_proveedor_id)
+devolucion_proveedor_items -- Detalle: tipo_linea 'insumo' (devolución) | 'valor' (concepto, sin insumo)
 ```
 
 ### Producción

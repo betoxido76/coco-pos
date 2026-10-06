@@ -530,7 +530,7 @@ function DetalleRecepcionCxP({ compra: compraInicial, onVolver }) {
     // Incluye los anulados: se muestran tachados con su motivo, como rastro.
     async function cargarPagos() {
         const { data } = await supabase.from('pagos_proveedor')
-            .select('id, fecha_pago, created_at, monto_usd, monto_bs, tasa_cambio, metodo_usd, metodo_bs, nota, anulado, motivo_anulacion, fecha_anulacion, usuarios!usuario_id(nombre)')
+            .select('id, fecha_pago, created_at, monto_usd, monto_bs, tasa_cambio, metodo_usd, metodo_bs, nota, devolucion_proveedor_id, anulado, motivo_anulacion, fecha_anulacion, usuarios!usuario_id(nombre)')
             .eq('compra_id', compra.id).eq('empresa_id', perfil.empresa_id)
             .order('created_at')
         setPagosRec(data || [])
@@ -740,7 +740,7 @@ function ModalAnularPagoProveedor({ pago, compra, onCerrar, onAnulado }) {
                 </p>
                 <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 12px', fontSize: '12px', color: '#991b1b', marginBottom: '14px' }}>
                     El pago deja de contar y el saldo de la recepción vuelve a subir por ese monto.
-                    {pago.metodo_usd === 'Nota de Débito' && ' La nota de débito aplicada vuelve a quedar disponible.'}
+                    {pago.devolucion_proveedor_id && ' Lo aplicado vuelve al saldo de la nota de crédito, disponible para otro pago.'}
                     {pago.metodo_usd === 'anticipo' && ' El monto vuelve al saldo del anticipo, disponible para otra recepción.'}
                     {(pago.metodo_usd === 'retencion_iva' || pago.metodo_usd === 'retencion_islr') && ' La retención queda anulada y el monto vuelve al saldo: al pagar de nuevo se propondrá otra vez.'}
                     {' '}El registro se conserva con el motivo.

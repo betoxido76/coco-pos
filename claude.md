@@ -170,7 +170,8 @@ real (`cobros.fecha_cobro`, `pagos_proveedor.fecha_pago`), nunca por
 `created_at`; convertir con `ymdCaracas()` y filtrar con
 `inicioDiaCaracas()`/`finDiaCaracas()`. No son dinero y se excluyen de caja: los
 cobros con `devolucion_id` (NC aplicada), los `pagos_proveedor` con
-`devolucion_proveedor_id` (ND aplicada) o con `anticipo_id` (aplicación de un
+`devolucion_proveedor_id` (nota de crédito de proveedor aplicada, también en
+`pagos` para gastos) o con `anticipo_id` (aplicación de un
 anticipo: el dinero salió con el anticipo, `anticipos_proveedor`, en su `fecha`),
 y los abonos con `retencion_id` en `pagos_proveedor` y `pagos` (retención: se le
 debe al SENIAT). Ver `docs/plan-anticipos-proveedor.md` y `docs/plan-retenciones.md`.
@@ -236,6 +237,27 @@ reembolsos vigentes` (vista `v_anticipos_saldo`).
   `SelectorAnticipos` (recepción y CxP → Pagar), pestaña CxP → Anticipos,
   detalle/reembolso y el modal al cancelar una OC con anticipo.
 - Diseño y decisiones: `docs/plan-anticipos-proveedor.md`.
+
+### Notas de crédito de proveedores
+
+`devoluciones_proveedor` es la **nota de crédito de proveedor**, con dos
+orígenes: `devolucion` (`ND-`, nace en Compras → Devoluciones y saca la
+mercancía) y `manual` (`NCP-`, la NC que emite el proveedor —descuento,
+ajuste—; se registra en CxP → Notas de crédito y no mueve inventario). Lleva el
+N° del documento del proveedor (`nro_doc_proveedor`) y puede o no apuntar a una
+recepción (sin recepción = saldo a favor).
+
+- Se aplica **al pagar**, en recepciones **y gastos** del mismo proveedor, en
+  forma parcial (bloque `BloqueCreditosProveedor`, como el de NC en CxC). La
+  aplicación es un abono sin caja con `devolucion_proveedor_id` en
+  `pagos_proveedor` o `pagos`. **Saldo derivado** de esas aplicaciones
+  (`saldo_credito_proveedor`, `cargarCreditosProveedor` en el front); el estado
+  (`pendiente`/`parcial`/`aplicada`) lo recalcula la base.
+- **Toda escritura por RPC**: `crear_nc_proveedor`, `aplicar_credito_proveedor`,
+  `anular_credito_proveedor` (revierte sus aplicaciones). Un trigger impide
+  escribir `devolucion_proveedor_id` fuera de la RPC. Liquidar por reembolso =
+  `estado_nd = 'reembolsada'`, sin movimiento de caja (decisión del usuario).
+- Diseño y decisiones: `docs/plan-nc-proveedores.md`.
 
 ### Retenciones de IVA e ISLR a proveedores
 
@@ -379,6 +401,7 @@ Al cerrar un ítem, borrarlo de esta tabla.
 | Item | Prioridad | Descripción |
 |---|---|---|
 | Recorrido de retenciones en producción | Alta | Nada del circuito de retenciones (`docs/plan-retenciones.md`) se probó en navegador (las RPC sí, en BEGIN/ROLLBACK). Activar Meraki como agente, marcar 1 proveedor y probar: recepción a crédito pagada desde CxP, recepción de contado (pagar en el acto), gasto "Pagado" con y sin desglose, pago parcial, anular el abono de una retención, pestaña Retenciones + Excel. Revisar Finanzas y Bancos después. |
+| Recorrido de NC de proveedores en producción | Alta | Nada se probó en navegador (las RPC sí, en BEGIN/ROLLBACK). Registrar una NCP con y sin recepción, aplicarla en parte a una recepción y el resto a un gasto del mismo proveedor, anular una aplicación desde CxP → Ver recepción, anular la nota, liquidar otra por reembolso. Revisar que las ND de Super Frenos se sigan viendo y aplicando. |
 | Validar retenciones con el contador | Media | (1) ¿IVA e ISLR completos en el primer abono o el ISLR proporcional a cada abono? (2) ¿La base del ISLR incluye la parte exenta? (3) ¿Las NDs y el descuento por pronto pago reducen la base retenida? Hoy: completas en el primer pago, base gravada + exenta, sin ajuste por ND/descuento. |
 | Recorrido de anticipos en producción | Alta | Nada del circuito de anticipos (`docs/plan-anticipos-proveedor.md`) se probó en navegador. Correr los 7 casos de la Fase 7 con una OC real pequeña antes de anunciarlo a los usuarios. |
 | Revisar pedidos alistados sin facturar (Meraki) | Alta | Al 2026-09-28 había 15 pedidos `alistado` con fecha programada ≤ 28/09, algunos del 16-17/09. Si alguno se entregó sin facturar, el conteo físico no lo incluye y facturarlo lo descontaría dos veces. Revisar uno por uno con despacho. |
