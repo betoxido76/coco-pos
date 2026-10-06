@@ -11,7 +11,7 @@ import { precioBaseItem, totalesGuardados } from '../lib/iva'
 import ModalPagoRecepcion, { pagoDirectoCompra } from '../components/ModalPagoRecepcion'
 import { fmtFechaCorta, ymdCaracas } from '../components/SelectorFechaTasa'
 import PanelRetenciones from '../components/PanelRetenciones'
-import PanelNotasCreditoProveedor from '../components/NotasCreditoProveedor'
+import PanelNotasCreditoProveedor, { cargarCreditosProveedor } from '../components/NotasCreditoProveedor'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 const fmtBs = (n, tasa) => `${(Number(n || 0) * Number(tasa || 1)).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`
@@ -84,12 +84,18 @@ export default function CuentasPagar() {
     const [compraVer, setCompraVer] = useState(null)
     const [gastoVerCxp, setGastoVerCxp] = useState(null)
     const [saldoAnticipos, setSaldoAnticipos] = useState(0)
+    const [saldoCreditos, setSaldoCreditos] = useState(0)   // notas de crédito de proveedores con saldo
 
     useEffect(() => { setPagina(0) }, [filtro, filtroProveedor, ordenCompras])
     useEffect(() => { cargarDatos() }, [filtro, filtroProveedor])
     useEffect(() => { if (tabSeccion === 'gastos') cargarGastosPendientes() }, [tabSeccion])
     // Anticipos a favor: activo, NO se resta de la deuda (se muestran por separado)
     useEffect(() => { if (perfil?.empresa_id) saldoAnticiposEmpresa(perfil.empresa_id).then(setSaldoAnticipos) }, [perfil?.empresa_id, tabSeccion])
+    // Notas de crédito a favor: activo, NO se resta de la deuda (se aplican al pagar)
+    useEffect(() => {
+        if (perfil?.empresa_id) cargarCreditosProveedor(perfil.empresa_id, { soloDisponibles: true })
+            .then(n => setSaldoCreditos(n.reduce((s, x) => s + x.saldo, 0)))
+    }, [perfil?.empresa_id, tabSeccion])
 
     useEffect(() => {
         supabase.from('proveedores').select('id, nombre')
@@ -273,7 +279,7 @@ export default function CuentasPagar() {
             </div>
 
             {/* KPIs */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '24px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '16px', marginBottom: '24px' }}>
                 <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px' }}>
                     <p style={{ fontSize: '12px', color: '#6b7280', margin: '0 0 4px' }}>Total pendiente</p>
                     <p style={{ fontSize: '22px', fontWeight: 700, color: '#16a34a', margin: 0 }}>{fmt(totalPendiente)}</p>
@@ -290,6 +296,11 @@ export default function CuentasPagar() {
                     style={{ backgroundColor: '#fff', borderRadius: '12px', border: saldoAnticipos > 0.01 ? '1px solid #fde68a' : '1px solid #e5e7eb', padding: '16px', cursor: 'pointer' }}>
                     <p style={{ fontSize: '12px', color: '#6b7280', margin: '0 0 4px' }}>Anticipos a favor</p>
                     <p style={{ fontSize: '22px', fontWeight: 700, color: saldoAnticipos > 0.01 ? '#854d0e' : '#1f2937', margin: 0 }}>{fmt(saldoAnticipos)}</p>
+                </div>
+                <div onClick={() => setTabSeccion('nd')} title="Ver notas de crédito"
+                    style={{ backgroundColor: '#fff', borderRadius: '12px', border: saldoCreditos > 0.01 ? '1px solid #fde68a' : '1px solid #e5e7eb', padding: '16px', cursor: 'pointer' }}>
+                    <p style={{ fontSize: '12px', color: '#6b7280', margin: '0 0 4px' }}>Notas de crédito a favor</p>
+                    <p style={{ fontSize: '22px', fontWeight: 700, color: saldoCreditos > 0.01 ? '#854d0e' : '#1f2937', margin: 0 }}>{fmt(saldoCreditos)}</p>
                 </div>
             </div>
 
