@@ -160,6 +160,8 @@ export default function Compras() {
             .from('devoluciones_proveedor')
             .select(`*, proveedores(nombre), compras(numero_doc)`)
             .eq('empresa_id', perfil.empresa_id)
+            // Solo devoluciones físicas: las NC manuales del proveedor viven en CxP
+            .eq('origen', 'devolucion')
             .order('created_at', { ascending: false })
             .order('id')).catch(() => null)
         if (data) { setDevoluciones(data); setTotalDevoluciones(data.length) }
