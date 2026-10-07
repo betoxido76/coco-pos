@@ -30,6 +30,14 @@ VITE_SUPABASE_URL=https://opndtxvomtlpgwyyloqd.supabase.co
 VITE_SUPABASE_ANON_KEY=eyJ...
 ```
 
+**PWA y versiones viejas:** la app guarda su código en el navegador. Con
+`registerType: 'prompt'` una pestaña abierta NO toma la versión nueva sola:
+`src/components/AvisoNuevaVersion.jsx` revisa cada 15 min y pide recargar. Un
+arreglo publicado no protege a quien tiene la pestaña abierta desde antes
+(NE-001226 se facturó con un bug corregido una hora antes): las reglas que no
+deben violarse van además como candado en la base (p. ej. el trigger
+`venta_items_cuadra_unidades`: cantidad × factor = cantidad_primaria).
+
 **Nota de build:** El proyecto usa `vite-plugin-pwa` instalado con `--legacy-peer-deps`. El `.npmrc` tiene `legacy-peer-deps=true` y el build command en Cloudflare es `npm install --legacy-peer-deps && npm run build`.
 
 ---

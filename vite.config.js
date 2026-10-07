@@ -17,7 +17,10 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: 'autoUpdate',
+      // 'prompt': la versión nueva espera a que el usuario recargue desde el aviso
+      // (AvisoNuevaVersion). Con 'autoUpdate' una pestaña abierta seguía con el
+      // código viejo sin enterarse (NE-001226).
+      registerType: 'prompt',
       includeAssets: ['icon-192.png', 'icon-512.png'],
       manifest: {
         name: 'Coco POS',

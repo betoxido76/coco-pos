@@ -25,6 +25,7 @@ import Despacho from './pages/Despacho'
 import Requisiciones from './pages/Requisiciones'
 import ResetPassword from './pages/ResetPassword'
 import './index.css'
+import AvisoNuevaVersion from './components/AvisoNuevaVersion'
 
 function RutaProtegida({ children }) {
   const { user, loading } = useAuth()
@@ -98,6 +99,7 @@ createRoot(document.getElementById('root')).render(
     <BrowserRouter>
       <AuthProvider>
         <App />
+        <AvisoNuevaVersion />
       </AuthProvider>
     </BrowserRouter>
   </StrictMode>
