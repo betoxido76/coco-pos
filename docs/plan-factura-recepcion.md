@@ -1,6 +1,10 @@
 # Plan: registrar la factura de una recepción en CxP
 
-Estado: **borrador para validar** (2026-10-09)
+Estado: **implementado** (fases 1–4, 2026-10-09). Falta la fase 5 (recorrido en navegador).
+
+Decisiones finales: A, C y D como se proponen abajo. E cambió: REC-000054 SÍ tiene
+factura; se corrige con "Corregir factura" (sin migración). Agregado al
+implementar: tampoco se corrigen precios si hay una devolución (ND) vigente.
 
 ## Problema
 

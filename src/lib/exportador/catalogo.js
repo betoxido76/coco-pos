@@ -182,6 +182,10 @@ const CAMPOS_COMPRAS = [
     { col: 'numero_doc', label: 'N° recepción', tipo: 'texto', grupo: 'Documento', def: true },
     { col: 'nro_doc_proveedor', label: 'Factura del proveedor', tipo: 'texto', grupo: 'Documento', def: true },
     { col: 'fecha', label: 'Fecha', tipo: 'fecha', grupo: 'Documento', def: true },
+    // docs/plan-factura-recepcion.md: 'pendiente' = llegó sin factura (montos estimados)
+    { col: 'estado_factura', label: 'Factura (registrada / pendiente)', tipo: 'texto', grupo: 'Documento' },
+    { col: 'fecha_factura', label: 'Fecha de la factura', tipo: 'fecha', grupo: 'Documento' },
+    { col: 'nro_nota_entrega', label: 'Nota de entrega del proveedor', tipo: 'texto', grupo: 'Documento' },
     { col: 'numero_oc', label: 'N° OC', tipo: 'texto', grupo: 'Documento' },
     { col: 'almacen', label: 'Almacén', tipo: 'texto', grupo: 'Documento' },
     { col: 'recibido_por', label: 'Recibido por', tipo: 'texto', grupo: 'Documento' },

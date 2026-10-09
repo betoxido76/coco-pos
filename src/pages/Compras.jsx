@@ -453,6 +453,7 @@ function TablaRecepciones({ recepciones, orden, onOrdenar, loading, onVer }) {
                                     <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>
                                         {r.numero_doc || 'S/N'}
                                         {esAnulada && <span style={{ marginLeft: '8px', fontFamily: 'system-ui', fontSize: '11px', fontWeight: 600, color: '#dc2626', backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '4px', padding: '1px 6px' }}>Anulada</span>}
+                                        {!esAnulada && r.estado_factura === 'pendiente' && <span style={{ marginLeft: '8px', fontFamily: 'system-ui', fontSize: '11px', fontWeight: 600, color: '#92400e', backgroundColor: '#fef3c7', borderRadius: '4px', padding: '1px 6px' }}>Sin factura</span>}
                                     </td>
                                     <td style={{ padding: '12px 16px', fontSize: '12px', fontFamily: 'monospace', color: '#6b7280' }}>{r.nro_doc_proveedor || '—'}</td>
                                     <td style={{ padding: '12px 16px', fontSize: '13px', color: '#374151' }}>{r.proveedores?.nombre || '—'}</td>
@@ -2764,12 +2765,20 @@ function DetalleRecepcion({ recepcion, onVolver }) {
                         <div style={{ fontSize: '16px', fontWeight: 700, color: '#1f2937' }}>Recepción</div>
                         <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>{recepcion.numero_doc}</div>
                         {recepcion.nro_doc_proveedor && (
-                            <div style={{ fontSize: '12px', color: '#9ca3af', marginTop: '2px' }}>Doc. proveedor: {recepcion.nro_doc_proveedor}</div>
+                            <div style={{ fontSize: '12px', color: '#9ca3af', marginTop: '2px' }}>
+                                Factura: {recepcion.nro_doc_proveedor}{recepcion.fecha_factura ? ` del ${fmtFechaCorta(recepcion.fecha_factura)}` : ''}
+                            </div>
+                        )}
+                        {recepcion.nro_nota_entrega && (
+                            <div style={{ fontSize: '12px', color: '#9ca3af', marginTop: '2px' }}>Nota de entrega: {recepcion.nro_nota_entrega}</div>
                         )}
                     </div>
                     <div style={{ textAlign: 'right' }}>
                         <div style={{ fontSize: '12px', color: '#6b7280' }}>{new Date(recepcion.fecha_compra).toLocaleDateString('es-VE')}</div>
                         <div style={{ marginTop: '6px', display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
+                            {recepcion.estado_factura === 'pendiente' && (
+                                <span style={{ padding: '3px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 500, backgroundColor: '#fef3c7', color: '#92400e' }}>Sin factura</span>
+                            )}
                             <BadgeCobro estado={recepcion.estado_cobro || 'pendiente'} />
                         </div>
                     </div>
@@ -2936,8 +2945,9 @@ function NuevaDevolucion({ onCreada, onCancelar }) {
 
     useEffect(() => {
         if (!proveedorId) { setComprasProveedor([]); setCompraOrigenId(''); return }
+        // Sin factura no se devuelve: la ND tomaría el precio estimado (plan-factura-recepcion, C)
         supabase.from('compras').select('id, numero_doc, fecha_compra, total')
-            .eq('empresa_id', perfil.empresa_id).eq('proveedor_id', proveedorId)
+            .eq('empresa_id', perfil.empresa_id).eq('proveedor_id', proveedorId).eq('estado_factura', 'registrada')
             .order('fecha_compra', { ascending: false }).limit(30)
             .then(({ data }) => setComprasProveedor(data || []))
     }, [proveedorId])

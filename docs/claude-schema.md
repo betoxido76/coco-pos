@@ -82,8 +82,14 @@ ordenes_compra        -- OC a proveedores (subtotal, base_gravada, base_exenta, 
 orden_compra_items    -- Detalle de OC
                       --   precio_unitario_esperado SIEMPRE sin IVA; aplica_iva, iva_pct
 compras               -- Recepciones (subtotal, base_gravada, base_exenta, iva, total)
+                      --   estado_factura ('pendiente' = llegó sin factura, no se paga | 'registrada',
+                      --   default), fecha_factura, nro_nota_entrega, factura_registrada_por/_at,
+                      --   motivo_diferencia_factura. 3 FKs a usuarios → hint usuarios!usuario_id
+                      --   Factura y precios: RPC registrar_factura_recepcion (plan-factura-recepcion)
 compra_items          -- Detalle de recepciones
                       --   aplica_iva, iva_pct, precio_incluye_iva (true = recepción vieja), base_linea
+                      --   precio_unitario numeric(14,6); precio_recepcion = precio sin IVA que cargó
+                      --   logística, se llena cuando CxP cambia el precio (referencia del 5 %)
                       --   tipo_insumo CHECK IN ('materia_prima','empaque','material_empaque','consumible','producto_terminado')
 pagos_proveedor       -- Pagos a proveedores
                       --   devolucion_proveedor_id → devoluciones_proveedor (ND)
