@@ -354,11 +354,19 @@ function DetalleNCProveedor({ nota: inicial, onVolver }) {
                 <button onClick={onVolver} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', fontSize: '13px' }}>← Volver</button>
                 <h2 style={{ fontSize: '18px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Nota de crédito {nota.numero_nd}</h2>
                 <BadgeNCProv estado={nota.estado_nd} />
-                <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px' }}>
-                    {vivo && (
+                <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    {/* Liquidar NO es aplicar: se aplica desde la ventana de pago. Discreto a propósito
+                        (NCP-000001 se marcó reembolsada por error un minuto después de crearla). */}
+                    {puedeAnular && vivo && nota.saldo > 0.01 && (
                         <button onClick={() => setModal('liquidar')}
-                            style={{ padding: '7px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #c7d2fe', backgroundColor: '#eef2ff', color: '#3730a3', cursor: 'pointer' }}>
-                            Liquidar (reembolso)
+                            style={{ padding: '7px 10px', border: 'none', background: 'none', fontSize: '12px', color: '#6b7280', textDecoration: 'underline', cursor: 'pointer' }}>
+                            El proveedor devolvió el dinero
+                        </button>
+                    )}
+                    {puedeAnular && nota.estado_nd === 'reembolsada' && (
+                        <button onClick={() => setModal('revertir')}
+                            style={{ padding: '7px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #c7d2fe', backgroundColor: '#fff', color: '#3730a3', cursor: 'pointer' }}>
+                            Revertir reembolso
                         </button>
                     )}
                     {puedeAnular && !['anulada', 'reembolsada'].includes(nota.estado_nd) && (
@@ -423,21 +431,24 @@ function DetalleNCProveedor({ nota: inicial, onVolver }) {
     )
 }
 
-// Anular (revierte aplicaciones, RPC) o liquidar por reembolso (sin caja)
+// Anular (revierte aplicaciones), liquidar por reembolso (sin caja) o revertir
+// un reembolso marcado por error. Las tres por RPC (nc_proveedores_reembolso.sql).
+const ACCIONES_NC = {
+    anular: { titulo: 'Anular nota de crédito', boton: 'Anular nota', color: '#dc2626', rpc: 'anular_credito_proveedor', param: 'p_motivo', placeholder: 'Motivo de la anulación', falta: 'El motivo es obligatorio' },
+    liquidar: { titulo: 'El proveedor devolvió el dinero', boton: 'Sí, el proveedor me devolvió el dinero', color: '#4f46e5', rpc: 'liquidar_credito_proveedor', param: 'p_referencia', placeholder: 'Referencia del reembolso (transferencia, fecha, banco…)', falta: 'La referencia del reembolso es obligatoria' },
+    revertir: { titulo: 'Revertir reembolso', boton: 'Revertir reembolso', color: '#4f46e5', rpc: 'revertir_reembolso_credito_proveedor', param: 'p_motivo', placeholder: 'Motivo (p. ej. se marcó por error)', falta: 'El motivo es obligatorio' },
+}
+
 function ModalAccionNC({ nota, accion, onCerrar, onListo }) {
     const [texto, setTexto] = useState('')
     const [guardando, setGuardando] = useState(false)
     const [error, setError] = useState('')
-    const anular = accion === 'anular'
+    const cfg = ACCIONES_NC[accion]
 
     async function confirmar() {
-        if (anular && !texto.trim()) { setError('El motivo es obligatorio'); return }
+        if (!texto.trim()) { setError(cfg.falta); return }
         setGuardando(true); setError('')
-        const { error: err } = anular
-            ? await supabase.rpc('anular_credito_proveedor', { p_id: nota.id, p_motivo: texto.trim() })
-            : await supabase.from('devoluciones_proveedor').update({
-                estado_nd: 'reembolsada', nota_liquidacion: texto.trim() || null, fecha_liquidacion: new Date().toISOString(),
-            }).eq('id', nota.id)
+        const { error: err } = await supabase.rpc(cfg.rpc, { p_id: nota.id, [cfg.param]: texto.trim() })
         setGuardando(false)
         if (err) { setError(err.message); return }
         onListo()
@@ -446,20 +457,28 @@ function ModalAccionNC({ nota, accion, onCerrar, onListo }) {
     return (
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
             <div style={{ backgroundColor: '#fff', borderRadius: '16px', padding: '24px', width: '100%', maxWidth: '420px' }}>
-                <h2 style={{ fontSize: '17px', fontWeight: 600, color: '#1f2937', margin: '0 0 6px' }}>{anular ? 'Anular nota de crédito' : 'Liquidar por reembolso'}</h2>
+                <h2 style={{ fontSize: '17px', fontWeight: 600, color: '#1f2937', margin: '0 0 6px' }}>{cfg.titulo}</h2>
+                {accion === 'liquidar' && (
+                    <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', color: '#92400e', margin: '0 0 12px' }}>
+                        <strong>¿Vas a descontar esta nota de un pago?</strong> Entonces no uses esta opción: cierra esta ventana
+                        y aplica la nota desde Cuentas por Pagar → Pagar, en la recepción o el gasto del proveedor.
+                    </div>
+                )}
                 <p style={{ fontSize: '13px', color: '#6b7280', margin: '0 0 14px' }}>
-                    {anular
+                    {accion === 'anular'
                         ? `${nota.numero_nd} · ${fmt(nota.monto_total)}. Sus aplicaciones se revierten: lo aplicado vuelve al saldo de cada recepción o gasto.${nota.origen === 'devolucion' ? ' La mercancía devuelta no regresa al inventario.' : ''}`
-                        : `El proveedor devolvió el saldo de ${fmt(nota.saldo)} en dinero. La nota deja de estar disponible para aplicar. No se registra movimiento de caja.`}
+                        : accion === 'liquidar'
+                            ? `Usar solo si el proveedor te devolvió los ${fmt(nota.saldo)} en dinero. La nota deja de estar disponible para aplicar. No se registra movimiento de caja.`
+                            : `${nota.numero_nd} vuelve a estar disponible para aplicar al pagar, con el saldo que tenía.`}
                 </p>
-                <textarea value={texto} onChange={e => setTexto(e.target.value)} rows={3} placeholder={anular ? 'Motivo de la anulación' : 'Nota (opcional): referencia del reembolso…'}
+                <textarea value={texto} onChange={e => setTexto(e.target.value)} rows={3} placeholder={cfg.placeholder}
                     style={{ width: '100%', padding: '10px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', boxSizing: 'border-box', fontFamily: 'inherit' }} />
                 {error && <div style={{ marginTop: '10px', fontSize: '13px', color: '#dc2626' }}>{error}</div>}
                 <div style={{ display: 'flex', gap: '10px', marginTop: '16px' }}>
                     <button onClick={onCerrar} disabled={guardando} style={{ flex: 1, padding: '10px', border: '1px solid #e5e7eb', borderRadius: '8px', backgroundColor: '#fff', cursor: 'pointer' }}>Cancelar</button>
                     <button onClick={confirmar} disabled={guardando}
-                        style={{ flex: 2, padding: '10px', border: 'none', borderRadius: '8px', backgroundColor: anular ? '#dc2626' : '#4f46e5', color: '#fff', fontWeight: 600, cursor: 'pointer', opacity: guardando ? 0.6 : 1 }}>
-                        {guardando ? 'Guardando...' : anular ? 'Anular nota' : 'Marcar reembolsada'}
+                        style={{ flex: 2, padding: '10px', border: 'none', borderRadius: '8px', backgroundColor: cfg.color, color: '#fff', fontWeight: 600, cursor: 'pointer', opacity: guardando ? 0.6 : 1 }}>
+                        {guardando ? 'Guardando...' : cfg.boton}
                     </button>
                 </div>
             </div>

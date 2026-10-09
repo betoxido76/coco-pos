@@ -264,7 +264,10 @@ recepción (sin recepción = saldo a favor).
 - **Toda escritura por RPC**: `crear_nc_proveedor`, `aplicar_credito_proveedor`,
   `anular_credito_proveedor` (revierte sus aplicaciones). Un trigger impide
   escribir `devolucion_proveedor_id` fuera de la RPC. Liquidar por reembolso =
-  `estado_nd = 'reembolsada'`, sin movimiento de caja (decisión del usuario).
+  `estado_nd = 'reembolsada'`, sin movimiento de caja (decisión del usuario),
+  vía `liquidar_credito_proveedor` (referencia obligatoria); se deshace con
+  `revertir_reembolso_credito_proveedor` (`nc_proveedores_reembolso.sql`).
+  Liquidar NO es aplicar: NCP-000001 se marcó reembolsada por error.
 - Diseño y decisiones: `docs/plan-nc-proveedores.md`.
 
 ### Retenciones de IVA e ISLR a proveedores
