@@ -11,6 +11,7 @@ import { precioBaseItem, totalesGuardados } from '../lib/iva'
 import ModalPagoRecepcion, { pagoDirectoCompra } from '../components/ModalPagoRecepcion'
 import { fmtFechaCorta, ymdCaracas } from '../components/SelectorFechaTasa'
 import PanelRetenciones from '../components/PanelRetenciones'
+import { calcularRetenciones } from '../lib/retenciones'
 import PanelNotasCreditoProveedor, { cargarCreditosProveedor } from '../components/NotasCreditoProveedor'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
@@ -19,6 +20,30 @@ const fmtPrecio = (n) => `$${Number(n || 0).toFixed(6).replace(/0{1,4}$/, '')}`
 const fmtBs = (n, tasa) => `${(Number(n || 0) * Number(tasa || 1)).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`
 // Equivalente en USD de un pago: parte en USD + parte en Bs convertida por su tasa.
 const pagoEnUsd = (p) => Number(p.monto_usd || 0) + Number(p.monto_bs || 0) / Number(p.tasa_cambio || 1)
+
+const PROV_RETENCION = 'retiene_iva, pct_retencion_iva, retiene_islr, pct_retencion_islr'
+
+// Pagado de una recepción SIN las retenciones (van en su propia columna):
+// dinero, NDs, anticipos + el pago guardado en la recepción (contado viejo)
+const pagadoSinRetenciones = (compra, pagosCompra) =>
+    pagosCompra.filter(p => !p.retencion_id).reduce((s, p) => s + pagoEnUsd(p), 0) + pagoDirectoCompra(compra)
+
+// Retenciones de una recepción (docs/plan-retenciones.md):
+//   registradas: abonos de retención vigentes en pagos_proveedor
+//   por retener: lo que se retendrá en el próximo pago según el proveedor, con la
+//                fórmula de la ventana de pago (src/lib/retenciones.js), sin
+//                pasar del saldo que queda
+function retencionesCompra(agente, compra, pagosCompra) {
+    const reg = pagosCompra.filter(p => p.retencion_id)
+    const registradas = reg.reduce((s, p) => s + pagoEnUsd(p), 0)
+    if (!agente || compra.estado_cobro === 'pagado') return registradas
+    const vigentes = Object.fromEntries(reg.map(p => [p.metodo_usd === 'retencion_iva' ? 'iva' : 'islr', true]))
+    const base = compra.base_gravada == null && compra.base_exenta == null
+        ? null : Number(compra.base_gravada || 0) + Number(compra.base_exenta || 0)
+    const r = calcularRetenciones({ prov: compra.proveedores, base, iva: compra.iva, vigentes })
+    const resto = Number(compra.total || 0) - Number(compra.descuento_pago || 0) - pagadoSinRetenciones(compra, pagosCompra) - registradas
+    return registradas + Math.min((r.iva?.monto || 0) + (r.islr?.monto || 0), Math.max(0, resto))
+}
 
 function BadgeEstado({ estado }) {
     const estilos = {
@@ -110,7 +135,7 @@ export default function CuentasPagar() {
 
         let kpiQ = supabase
             .from('compras')
-            .select('id, total, descuento_pago, estado_cobro, fecha_vencimiento_pago, condicion_pago, pago_usd, pago_bs, tasa_cambio')
+            .select(`id, total, descuento_pago, estado_cobro, fecha_vencimiento_pago, condicion_pago, pago_usd, pago_bs, tasa_cambio, base_gravada, base_exenta, iva, proveedores(${PROV_RETENCION})`)
             .eq('empresa_id', perfil.empresa_id)
             // Contado y crédito: una recepción de contado también pasa por CxP
             // (vence el día que se recibe) — docs/plan-retenciones.md
@@ -126,7 +151,7 @@ export default function CuentasPagar() {
             for (let desde = 0; ; desde += 1000) {
                 let q = supabase
                     .from('compras')
-                    .select('*, proveedores(nombre), ordenes_compra(numero_oc)')
+                    .select(`*, proveedores(nombre, ${PROV_RETENCION}), ordenes_compra(numero_oc)`)
                     .eq('empresa_id', perfil.empresa_id)
                     .neq('estado_cobro', 'anulado')
                     .order('created_at', { ascending: true })
@@ -156,7 +181,7 @@ export default function CuentasPagar() {
             const kpiIds = kpi.map(c => c.id)
             if (kpiIds.length > 0) {
                 const { data: kpiPagos } = await supabase
-                    .from('pagos_proveedor').select('compra_id, monto_usd, monto_bs, tasa_cambio').in('compra_id', kpiIds).eq('anulado', false)
+                    .from('pagos_proveedor').select('compra_id, monto_usd, monto_bs, tasa_cambio, retencion_id, metodo_usd').in('compra_id', kpiIds).eq('anulado', false)
                 const kpiPagosMap = {}
                 kpiPagos?.forEach(p => {
                     if (!kpiPagosMap[p.compra_id]) kpiPagosMap[p.compra_id] = []
@@ -187,20 +212,16 @@ export default function CuentasPagar() {
         setLoading(false)
     }
 
-    // Pagado = abonos en pagos_proveedor (dinero, NDs, anticipos, retenciones)
-    // + el pago guardado en la propia recepción por las de contado viejas
-    function calcularCobrado(compra) {
-        const pagosCompra = pagos[compra.id] || []
-        return pagosCompra.reduce((s, p) => s + pagoEnUsd(p), 0) + pagoDirectoCompra(compra)
-    }
-
-    function calcularSaldo(compra) {
-        return Number(compra.total || 0) - Number(compra.descuento_pago || 0) - calcularCobrado(compra)
-    }
+    // Saldo = total − pagado − retenciones (registradas y por retener)
+    const agente = !!perfil?.empresas?.agente_retencion
+    const calcularCobrado = c => pagadoSinRetenciones(c, pagos[c.id] || [])
+    const calcularRetencion = c => retencionesCompra(agente, c, pagos[c.id] || [])
+    const calcularSaldo = c => Number(c.total || 0) - Number(c.descuento_pago || 0) - calcularCobrado(c) - calcularRetencion(c)
 
     const totalPendiente = kpiData.reduce((s, c) => {
-        const pag = (pagosKpi[c.id] || []).reduce((a, p) => a + pagoEnUsd(p), 0) + pagoDirectoCompra(c)
-        return s + Math.max(0, Number(c.total || 0) - Number(c.descuento_pago || 0) - pag)
+        const pc = pagosKpi[c.id] || []
+        return s + Math.max(0, Number(c.total || 0) - Number(c.descuento_pago || 0)
+            - pagadoSinRetenciones(c, pc) - retencionesCompra(agente, c, pc))
     }, 0)
     const vencidas = kpiData.filter(c => c.fecha_vencimiento_pago && new Date(c.fecha_vencimiento_pago) < new Date()).length
     const alDia = kpiData.filter(c => c.fecha_vencimiento_pago && new Date(c.fecha_vencimiento_pago) >= new Date()).length
@@ -246,6 +267,7 @@ export default function CuentasPagar() {
         vencimiento: c => c.fecha_vencimiento_pago,
         total: c => Number(c.total || 0),
         pagado: c => calcularCobrado(c),
+        retenciones: c => calcularRetencion(c),
         saldo: c => calcularSaldo(c),
         estado: c => c.estado_cobro,
     }, ordenCompras)
@@ -348,11 +370,12 @@ export default function CuentasPagar() {
                             <tr>
                                 {[
                                     ['', null], ['Documento', 'documento'], ['Doc. Prov.', 'doc_prov'], ['Proveedor', 'proveedor'],
-                                    ['Vencimiento', 'vencimiento'], ['Total', 'total'], ['Pagado', 'pagado'], ['Saldo', 'saldo'],
+                                    ['Vencimiento', 'vencimiento'], ['Total', 'total'], ['Pagado', 'pagado'],
+                                    ...(agente ? [['Retenciones', 'retenciones']] : []), ['Saldo', 'saldo'],
                                     ['Estado', 'estado'], ['Accion', null],
                                 ].map(([h, col], i) => (
                                     <ThOrden key={i} col={col} orden={ordenCompras} onOrdenar={ordenarCompras} top={altoBarra}
-                                        align={[5, 6, 7].includes(i) ? 'right' : 'left'} style={{ padding: '10px 16px', width: i === 0 ? '28px' : undefined }}>
+                                        align={['total', 'pagado', 'retenciones', 'saldo'].includes(col) ? 'right' : 'left'} style={{ padding: '10px 16px', width: i === 0 ? '28px' : undefined }}>
                                         {h}
                                     </ThOrden>
                                 ))}
@@ -362,6 +385,7 @@ export default function CuentasPagar() {
                             {comprasPagina.map(c => {
                                 const saldo = calcularSaldo(c)
                                 const cobrado = calcularCobrado(c)
+                                const retencion = calcularRetencion(c)
                                 return (
                                     <tr key={c.id} style={{ borderBottom: '1px solid #f3f4f6' }}
                                         onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
@@ -380,6 +404,7 @@ export default function CuentasPagar() {
                                         </td>
                                         <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(c.total)}</td>
                                         <td style={{ padding: '12px 16px', fontSize: '13px', color: '#16a34a', textAlign: 'right' }}>{fmt(cobrado)}</td>
+                                        {agente && <td style={{ padding: '12px 16px', fontSize: '13px', color: retencion > 0 ? '#854d0e' : '#9ca3af', textAlign: 'right' }}>{fmt(retencion)}</td>}
                                         <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: saldo > 0 ? '#dc2626' : '#16a34a', textAlign: 'right' }}>{fmt(saldo)}</td>
                                         <td style={{ padding: '12px 16px' }}><BadgeEstado estado={c.estado_cobro} /></td>
                                         <td style={{ padding: '12px 16px' }}>
