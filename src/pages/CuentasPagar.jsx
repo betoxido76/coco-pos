@@ -14,6 +14,8 @@ import PanelRetenciones from '../components/PanelRetenciones'
 import PanelNotasCreditoProveedor, { cargarCreditosProveedor } from '../components/NotasCreditoProveedor'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
+// Precio unitario: los decimales reales (hasta 6), mínimo 2 — 0,09165 no es 0,09
+const fmtPrecio = (n) => `$${Number(n || 0).toFixed(6).replace(/0{1,4}$/, '')}`
 const fmtBs = (n, tasa) => `${(Number(n || 0) * Number(tasa || 1)).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`
 // Equivalente en USD de un pago: parte en USD + parte en Bs convertida por su tasa.
 const pagoEnUsd = (p) => Number(p.monto_usd || 0) + Number(p.monto_bs || 0) / Number(p.tasa_cambio || 1)
@@ -614,7 +616,7 @@ function DetalleRecepcionCxP({ compra: compraInicial, onVolver }) {
                                     <td style={{ padding: '10px 0', fontSize: '13px', color: '#1f2937' }}>{mapaNombres[item.insumo_id] || '—'}</td>
                                     <td style={{ padding: '10px 0', fontSize: '11px', color: '#6b7280', textTransform: 'uppercase' }}>{item.tipo_insumo?.replace(/_/g, ' ') || '—'}</td>
                                     <td style={{ padding: '10px 0', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{item.cantidad}</td>
-                                    <td style={{ padding: '10px 0', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{fmt(precioBaseItem(item))}</td>
+                                    <td style={{ padding: '10px 0', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{fmtPrecio(precioBaseItem(item))}</td>
                                     <td style={{ padding: '10px 0', fontSize: '13px', color: desc > 0 ? '#dc2626' : '#6b7280', textAlign: 'right' }}>{desc > 0 ? `${desc}%` : '—'}</td>
                                     <td style={{ padding: '10px 0', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(lineaTotal)}</td>
                                 </tr>

@@ -14,6 +14,8 @@ import { traerTodas } from '../lib/traerTodas'
 import ModalPagoRecepcion from '../components/ModalPagoRecepcion'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
+// Precio unitario: los decimales reales (hasta 6), mínimo 2 — 0,09165 no es 0,09
+const fmtPrecio = (n) => `$${Number(n || 0).toFixed(6).replace(/0{1,4}$/, '')}`
 
 // Precios de compra en base imponible (docs/plan-iva-base-imponible.md): la OC
 // siempre guardó precio_unitario_esperado sin IVA, y desde 2026-10 las pantallas
@@ -2786,7 +2788,7 @@ function DetalleRecepcion({ recepcion, onVolver }) {
                                         {item.cantidad}
                                     </td>
                                     <td style={{ padding: '10px 0', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>
-                                        {fmt(precioBaseItem(item))}
+                                        {fmtPrecio(precioBaseItem(item))}
                                     </td>
                                     <td style={{ padding: '10px 0', fontSize: '13px', color: desc > 0 ? '#dc2626' : '#6b7280', textAlign: 'right' }}>
                                         {desc > 0 ? `${desc}%` : '—'}
@@ -3188,7 +3190,7 @@ function DetalleDevolucion({ devolucion: dev, onVolver }) {
                                     <td style={{ padding: '10px 16px', fontSize: '13px', color: '#1f2937', fontWeight: 500 }}>{item.nombre_insumo || '—'}</td>
                                     <td style={{ padding: '10px 16px', fontSize: '11px', color: '#6b7280', textTransform: 'uppercase' }}>{item.tipo_insumo?.replace(/_/g, ' ') || '—'}</td>
                                     <td style={{ padding: '10px 16px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{Number(item.cantidad).toLocaleString('es-VE')}</td>
-                                    <td style={{ padding: '10px 16px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{fmt(precioBaseItem(item))}</td>
+                                    <td style={{ padding: '10px 16px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{fmtPrecio(precioBaseItem(item))}</td>
                                     <td style={{ padding: '10px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(Number(item.cantidad) * precioBaseItem(item))}</td>
                                 </tr>
                             ))}
