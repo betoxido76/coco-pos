@@ -30,13 +30,14 @@ Este plan resuelve el caso diario sin cerrarle la puerta.
 | 2 | Tolerancia: **5 %** por línea entre el precio recibido y el facturado. |
 | 3 | Registra la factura **quien tenga el módulo CxP**. |
 | 4 | Las **cantidades no se tocan** en CxP: se validan al recibir. Una diferencia de cantidad se resuelve con devolución o NC de proveedor. |
+| 5 | CxP puede **corregir los precios de cualquier recepción**, haya llegado con factura o sin ella: logística se equivoca aunque tenga la factura en la mano. Misma ventana, misma tolerancia y mismo registro. Solo mientras la recepción **no tenga abonos vigentes** (ver B). |
 
 ## Puntos a validar antes de aprobar
 
 | # | Pregunta | Propuesta |
 |---|---|---|
 | A | ¿Qué pasa si una línea supera el 5 %? | Se puede registrar igual, pero la línea se marca en rojo y se exige un **motivo**, que queda guardado. Alternativa: exigir rol admin/finanzas (en Meraki todos son admin, así que en la práctica sería lo mismo). |
-| B | ¿Una factura ya registrada se puede corregir (error de tipeo)? | Sí, mientras la recepción **no tenga abonos vigentes**. Con abonos, el ajuste va por NC de proveedor o nota de débito. |
+| B | ¿Hasta cuándo se pueden corregir los precios (decisión 5)? | Mientras la recepción **no tenga abonos vigentes** (pago, retención, NC o anticipo aplicado). Con abonos, el ajuste va por NC de proveedor o nota de débito. Un anticipo aplicado al recibir también bloquea: se anula su aplicación, se corrige y se vuelve a aplicar. |
 | C | ¿Devolución al proveedor (ND) de una recepción sin factura? | **Bloquearla** hasta registrar la factura: la ND toma el precio de la línea y con el estimado saldría mal. |
 | D | Vencimiento | Se cuenta desde la **fecha de la factura** + días de crédito de la recepción. Contado sin factura: vence el día que se registra la factura. |
 | E | REC-000054 (Injaca, pendiente, sin N° de factura) | Pasarla a "pendiente de factura" en la migración: así Administración registra la factura real y se resuelve el descuadre de líneas vs. encabezado sin tocar la base a mano. |
@@ -68,12 +69,15 @@ Este plan resuelve el caso diario sin cerrarle la puerta.
 ## Escritura
 
 **RPC `registrar_factura_recepcion(p_compra_id, p_nro, p_fecha, p_items jsonb, p_motivo)`**
-(`p_items = [{id, precio_unitario}]`):
+(`p_items = [{id, precio_unitario}]`). Sirve para registrar la factura de una
+recepción que llegó sin ella **y** para corregir los precios de cualquier
+recepción sin abonos (decisión 5):
 
 1. Valida módulo `cxp`, empresa, que la recepción no esté anulada y que no
    tenga abonos vigentes (punto B).
 2. Exige N° de factura y fecha. Las cantidades no se reciben como parámetro.
-3. Por línea: guarda `precio_recepcion` (si es la primera vez), escribe el precio
+3. Por línea: guarda `precio_recepcion` (solo la primera vez: es el precio que
+   cargó logística, y la tolerancia se mide siempre contra él), escribe el precio
    nuevo, la convención nueva (`precio_incluye_iva = false`) y recalcula
    `base_linea`.
 4. Si alguna línea difiere más del 5 % y `p_motivo` está vacío → error.
@@ -105,7 +109,8 @@ Este plan resuelve el caso diario sin cerrarle la puerta.
 
 - Etiqueta **"Sin factura"** en la fila y filtro por ese estado.
 - Los KPI separan el monto estimado pendiente de factura.
-- **Ver recepción** → botón **"Registrar factura"**:
+- **Ver recepción** → botón **"Registrar factura"** (sin factura) o
+  **"Corregir factura"** (con factura y sin abonos). Es la misma ventana:
   - N° y fecha de factura.
   - Por línea: cantidad (solo lectura), precio recibido, **precio factura**
     (editable, precargado), diferencia %, en rojo si pasa del 5 %.
@@ -128,7 +133,7 @@ cambios, el precio recibido junto al facturado.
 | 2 — Recepción | Pregunta "¿Llegó con factura?", precios estimados, sin anticipos ni pago en el acto. |
 | 3 — CxP | Etiqueta, filtro, KPI, ventana "Registrar factura", bloqueo del pago. |
 | 4 — Lectores y documentación | Detalle de recepción en Compras, exportador (`v_export_compras` + catálogo: `estado_factura`, `fecha_factura`), CLAUDE.md §7 y `docs/claude-schema.md`. |
-| 5 — Recorrido | Recepción sin factura → intento de pago (bloqueado) → registrar factura dentro del 5 % → otra fuera del 5 % → pagar con retención → corregir una factura sin abonos. |
+| 5 — Recorrido | Recepción sin factura → intento de pago (bloqueado) → registrar factura dentro del 5 % → otra fuera del 5 % → pagar con retención → corregir precios de una recepción que llegó con factura → intento de corregir una con abonos (bloqueado). |
 
 ## Fuera de alcance
 
