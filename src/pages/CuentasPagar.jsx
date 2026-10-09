@@ -12,6 +12,7 @@ import ModalPagoRecepcion, { pagoDirectoCompra } from '../components/ModalPagoRe
 import { fmtFechaCorta, ymdCaracas } from '../components/SelectorFechaTasa'
 import PanelRetenciones from '../components/PanelRetenciones'
 import { calcularRetenciones } from '../lib/retenciones'
+import ModalFacturaRecepcion, { precioRecibido } from '../components/ModalFacturaRecepcion'
 import PanelNotasCreditoProveedor, { cargarCreditosProveedor } from '../components/NotasCreditoProveedor'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
@@ -96,6 +97,7 @@ export default function CuentasPagar() {
     const [tasas, setTasas] = useState({})
     const [proveedores, setProveedores] = useState([])
     const [filtroProveedor, setFiltroProveedor] = useState('')
+    const [soloSinFactura, setSoloSinFactura] = useState(false)
     const [pagina, setPagina] = useState(0)
     const [tabSeccion, setTabSeccion] = useState('compras')
     // Orden de cada tabla (clic en el título) y alto de la barra fija de
@@ -109,11 +111,12 @@ export default function CuentasPagar() {
     const [loadingGastos, setLoadingGastos] = useState(false)
     const [gastoPagando, setGastoPagando] = useState(null)
     const [compraVer, setCompraVer] = useState(null)
+    const [abrirFactura, setAbrirFactura] = useState(false)   // abrir el detalle con la ventana de factura
     const [gastoVerCxp, setGastoVerCxp] = useState(null)
     const [saldoAnticipos, setSaldoAnticipos] = useState(0)
     const [saldoCreditos, setSaldoCreditos] = useState(0)   // notas de crédito de proveedores con saldo
 
-    useEffect(() => { setPagina(0) }, [filtro, filtroProveedor, ordenCompras])
+    useEffect(() => { setPagina(0) }, [filtro, filtroProveedor, soloSinFactura, ordenCompras])
     useEffect(() => { cargarDatos() }, [filtro, filtroProveedor])
     useEffect(() => { if (tabSeccion === 'gastos') cargarGastosPendientes() }, [tabSeccion])
     // Anticipos a favor: activo, NO se resta de la deuda (se muestran por separado)
@@ -135,7 +138,7 @@ export default function CuentasPagar() {
 
         let kpiQ = supabase
             .from('compras')
-            .select(`id, total, descuento_pago, estado_cobro, fecha_vencimiento_pago, condicion_pago, pago_usd, pago_bs, tasa_cambio, base_gravada, base_exenta, iva, proveedores(${PROV_RETENCION})`)
+            .select(`id, total, descuento_pago, estado_cobro, estado_factura, fecha_vencimiento_pago, condicion_pago, pago_usd, pago_bs, tasa_cambio, base_gravada, base_exenta, iva, proveedores(${PROV_RETENCION})`)
             .eq('empresa_id', perfil.empresa_id)
             // Contado y crédito: una recepción de contado también pasa por CxP
             // (vence el día que se recibe) — docs/plan-retenciones.md
@@ -218,11 +221,14 @@ export default function CuentasPagar() {
     const calcularRetencion = c => retencionesCompra(agente, c, pagos[c.id] || [])
     const calcularSaldo = c => Number(c.total || 0) - Number(c.descuento_pago || 0) - calcularCobrado(c) - calcularRetencion(c)
 
-    const totalPendiente = kpiData.reduce((s, c) => {
+    const saldoKpi = c => {
         const pc = pagosKpi[c.id] || []
-        return s + Math.max(0, Number(c.total || 0) - Number(c.descuento_pago || 0)
+        return Math.max(0, Number(c.total || 0) - Number(c.descuento_pago || 0)
             - pagadoSinRetenciones(c, pc) - retencionesCompra(agente, c, pc))
-    }, 0)
+    }
+    const totalPendiente = kpiData.reduce((s, c) => s + saldoKpi(c), 0)
+    // Recepciones que llegaron sin factura: su total es un estimado
+    const totalSinFactura = kpiData.filter(c => c.estado_factura === 'pendiente').reduce((s, c) => s + saldoKpi(c), 0)
     const vencidas = kpiData.filter(c => c.fecha_vencimiento_pago && new Date(c.fecha_vencimiento_pago) < new Date()).length
     const alDia = kpiData.filter(c => c.fecha_vencimiento_pago && new Date(c.fecha_vencimiento_pago) >= new Date()).length
 
@@ -260,7 +266,7 @@ export default function CuentasPagar() {
     const saldoGasto = g => Math.max(0, totalGasto(g) - (abonosGasto[g.id] || 0))
 
     // Filas ordenadas de cada pestaña (los vacíos van siempre al final)
-    const comprasOrdenadas = ordenarFilas(compras, {
+    const comprasOrdenadas = ordenarFilas(soloSinFactura ? compras.filter(c => c.estado_factura === 'pendiente') : compras, {
         documento: c => c.numero_doc,
         doc_prov: c => c.nro_doc_proveedor,
         proveedor: c => c.proveedores?.nombre,
@@ -289,7 +295,8 @@ export default function CuentasPagar() {
     }
 
     if (compraVer) return (
-        <DetalleRecepcionCxP compra={compraVer} onVolver={() => { setCompraVer(null); cargarDatos() }} />
+        <DetalleRecepcionCxP compra={compraVer} abrirFactura={abrirFactura}
+            onVolver={() => { setCompraVer(null); setAbrirFactura(false); cargarDatos() }} />
     )
     if (gastoVerCxp) return (
         <DetalleGastoCxP gasto={gastoVerCxp} tasas={tasas} onVolver={() => setGastoVerCxp(null)} />
@@ -307,6 +314,7 @@ export default function CuentasPagar() {
                 <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px' }}>
                     <p style={{ fontSize: '12px', color: '#6b7280', margin: '0 0 4px' }}>Total pendiente</p>
                     <p style={{ fontSize: '22px', fontWeight: 700, color: '#16a34a', margin: 0 }}>{fmt(totalPendiente)}</p>
+                    {totalSinFactura > 0.01 && <p style={{ fontSize: '11px', color: '#92400e', margin: '4px 0 0' }}>incluye {fmt(totalSinFactura)} sin factura (estimado)</p>}
                 </div>
                 <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: vencidas > 0 ? '1px solid #fecaca' : '1px solid #e5e7eb', padding: '16px' }}>
                     <p style={{ fontSize: '12px', color: '#6b7280', margin: '0 0 4px' }}>Facturas vencidas</p>
@@ -353,6 +361,11 @@ export default function CuentasPagar() {
                     </button>
                 ))}
                 <FiltroCombo value={filtroProveedor} onChange={setFiltroProveedor} options={proveedores.map(x => ({ value: x.id, label: x.nombre }))} placeholder="Todos los proveedores" width="240px" />
+                <button onClick={() => setSoloSinFactura(v => !v)}
+                    style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid', cursor: 'pointer',
+                        borderColor: soloSinFactura ? '#d97706' : '#e5e7eb', backgroundColor: soloSinFactura ? '#fffbeb' : '#fff', color: soloSinFactura ? '#92400e' : '#374151' }}>
+                    Sin factura
+                </button>
             </div>}
 
             </div>
@@ -395,7 +408,10 @@ export default function CuentasPagar() {
                                                 <span style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '50%', backgroundColor: semaforo(c.fecha_vencimiento_pago) }} />
                                             )}
                                         </td>
-                                        <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>{c.numero_doc}</td>
+                                        <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>
+                                            {c.numero_doc}
+                                            {c.estado_factura === 'pendiente' && <div><BadgeSinFactura /></div>}
+                                        </td>
                                         <td style={{ padding: '12px 16px', fontSize: '12px', fontFamily: 'monospace', color: '#6b7280' }}>{c.nro_doc_proveedor || '—'}</td>
                                         <td style={{ padding: '12px 16px', fontSize: '13px', color: '#374151' }}>{c.proveedores?.nombre || '—'}</td>
                                         <td style={{ padding: '12px 16px', fontSize: '13px' }}>
@@ -409,7 +425,12 @@ export default function CuentasPagar() {
                                         <td style={{ padding: '12px 16px' }}><BadgeEstado estado={c.estado_cobro} /></td>
                                         <td style={{ padding: '12px 16px' }}>
                                             <div style={{ display: 'flex', gap: '6px' }}>
-                                                {c.estado_cobro !== 'pagado' && c.estado_cobro !== 'anulado' && (
+                                                {c.estado_factura === 'pendiente' && c.estado_cobro !== 'anulado' ? (
+                                                    <button onClick={() => { setCompraVer(c); setAbrirFactura(true) }}
+                                                        style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: '#d97706', color: '#fff', border: 'none', borderRadius: '6px', padding: '5px 10px', fontSize: '12px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                                        <FileText size={12} /> Registrar factura
+                                                    </button>
+                                                ) : c.estado_cobro !== 'pagado' && c.estado_cobro !== 'anulado' && (
                                                     <button onClick={() => abrirModal(c)}
                                                         style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', padding: '5px 10px', fontSize: '12px', cursor: 'pointer' }}>
                                                         <DollarSign size={12} /> Pagar
@@ -541,9 +562,14 @@ export default function CuentasPagar() {
     )
 }
 
+// Recepción que llegó sin factura (docs/plan-factura-recepcion.md)
+function BadgeSinFactura() {
+    return <span style={{ display: 'inline-block', marginTop: '3px', padding: '1px 8px', borderRadius: '10px', fontSize: '10px', fontWeight: 600, fontFamily: 'inherit', backgroundColor: '#fef3c7', color: '#92400e' }}>Sin factura</span>
+}
+
 // La ventana de pago de recepciones vive en src/components/ModalPagoRecepcion.jsx
 
-function DetalleRecepcionCxP({ compra: compraInicial, onVolver }) {
+function DetalleRecepcionCxP({ compra: compraInicial, abrirFactura = false, onVolver }) {
     const { perfil } = useAuth()
     // Solo Finanzas/Administración anulan pagos (la RPC lo vuelve a validar)
     const puedeAnular = ['admin', 'finanzas', 'superadmin'].includes(perfil?.rol)
@@ -553,6 +579,10 @@ function DetalleRecepcionCxP({ compra: compraInicial, onVolver }) {
     const [mapaNombres, setMapaNombres] = useState({})
     const [pagosRec, setPagosRec] = useState([])
     const [pagoAnular, setPagoAnular] = useState(null)
+    // Factura (docs/plan-factura-recepcion.md): registrar o corregir precios
+    const [modalFactura, setModalFactura] = useState(false)
+    const [devolucionVigente, setDevolucionVigente] = useState(false)
+    const [aviso, setAviso] = useState('')
 
     // Incluye los anulados: se muestran tachados con su motivo, como rastro.
     async function cargarPagos() {
@@ -572,6 +602,33 @@ function DetalleRecepcionCxP({ compra: compraInicial, onVolver }) {
     const totalPagado = pagosRec.filter(p => !p.anulado).reduce((s, p) => s + pagoEnUsd(p), 0)
     const saldoRec = Math.max(0, Number(compra.total || 0) - Number(compra.descuento_pago || 0) - totalPagado)
 
+    // Se corrige mientras no haya abonos ni devolución (la RPC lo vuelve a validar)
+    const sinFactura = compra.estado_factura === 'pendiente'
+    const conAbonos = pagosRec.some(p => !p.anulado) || pagoDirectoCompra(compra) > 0
+    const anulada = compra.estado === 'anulada' || compra.estado_cobro === 'anulado'
+    const puedeFactura = !anulada && !conAbonos && !devolucionVigente
+
+    useEffect(() => {
+        supabase.from('devoluciones_proveedor').select('id').eq('compra_id', compra.id)
+            .eq('origen', 'devolucion').neq('estado_nd', 'anulada').limit(1)
+            .then(({ data }) => setDevolucionVigente((data || []).length > 0))
+    }, [compra.id])
+    useEffect(() => { if (abrirFactura && !loading) setModalFactura(true) }, [abrirFactura, loading])
+
+    async function cargarItems() {
+        const { data } = await supabase.from('compra_items').select('*')
+            .eq('compra_id', compra.id).eq('empresa_id', perfil.empresa_id)
+        if (data) setItems(data)
+        setLoading(false)
+    }
+    async function trasFactura() {
+        setModalFactura(false)
+        const { data } = await supabase.from('compras').select('*, proveedores(nombre), ordenes_compra(numero_oc)').eq('id', compra.id).single()
+        if (data) setCompra(data)
+        await cargarItems()
+        setAviso(sinFactura ? 'Factura registrada: la recepción ya se puede pagar.' : 'Factura corregida.')
+    }
+
     useEffect(() => {
         if (!perfil?.empresa_id) return
         Promise.all([
@@ -585,9 +642,7 @@ function DetalleRecepcionCxP({ compra: compraInicial, onVolver }) {
                 .forEach(i => { mapa[i.id] = i.nombre })
             setMapaNombres(mapa)
         })
-        supabase.from('compra_items').select('*')
-            .eq('compra_id', compra.id).eq('empresa_id', perfil.empresa_id)
-            .then(({ data }) => { if (data) setItems(data); setLoading(false) })
+        cargarItems()
     }, [compra.id, perfil?.empresa_id])
 
     return (
@@ -596,7 +651,13 @@ function DetalleRecepcionCxP({ compra: compraInicial, onVolver }) {
             <div className="no-print" style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
                 <button onClick={onVolver} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', fontSize: '13px' }}>← Volver</button>
                 <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Detalle de Recepción</h1>
-                <button onClick={() => window.print()} style={{ marginLeft: 'auto', marginRight: '8px', display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '8px 14px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}>🖨️ Imprimir</button>
+                {puedeFactura && !loading && (
+                    <button onClick={() => setModalFactura(true)}
+                        style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: sinFactura ? '#d97706' : '#fff', color: sinFactura ? '#fff' : '#374151', border: sinFactura ? 'none' : '1px solid #d1d5db', borderRadius: '8px', padding: '8px 14px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}>
+                        <FileText size={14} /> {sinFactura ? 'Registrar factura' : 'Corregir factura'}
+                    </button>
+                )}
+                <button onClick={() => window.print()} style={{ marginLeft: puedeFactura && !loading ? 0 : 'auto', marginRight: '8px', display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '8px 14px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}>🖨️ Imprimir</button>
             </div>
             <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '32px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
@@ -609,9 +670,29 @@ function DetalleRecepcionCxP({ compra: compraInicial, onVolver }) {
                         <div style={{ marginTop: '6px' }}><BadgeEstado estado={compra.estado_cobro || 'pendiente'} /></div>
                     </div>
                 </div>
+                {aviso && <div className="no-print" style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '10px 14px', marginBottom: '16px', fontSize: '13px', color: '#166534' }}>{aviso}</div>}
                 {compra.ordenes_compra?.numero_oc && (
                     <div style={{ backgroundColor: '#f0fdf4', borderRadius: '8px', padding: '10px 14px', marginBottom: '16px', fontSize: '13px', color: '#166534' }}>
                         Vinculada a OC: <strong>{compra.ordenes_compra.numero_oc}</strong>
+                    </div>
+                )}
+                {sinFactura ? (
+                    <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: '8px', padding: '10px 14px', marginBottom: '16px', fontSize: '13px', color: '#92400e' }}>
+                        <strong>Sin factura.</strong> Los precios son estimados y no se puede pagar hasta registrar la factura.
+                        {compra.nro_nota_entrega && <> Nota de entrega: <strong>{compra.nro_nota_entrega}</strong>.</>}
+                    </div>
+                ) : (compra.nro_doc_proveedor || compra.factura_registrada_at) && (
+                    <div style={{ backgroundColor: '#f9fafb', borderRadius: '8px', padding: '10px 14px', marginBottom: '16px', fontSize: '13px', color: '#374151' }}>
+                        Factura: <strong style={{ fontFamily: 'monospace' }}>{compra.nro_doc_proveedor || '—'}</strong>
+                        {compra.fecha_factura && <> del {fmtFechaCorta(compra.fecha_factura)}</>}
+                        {compra.factura_registrada_at && <span style={{ color: '#6b7280' }}> · cargada en CxP el {new Date(compra.factura_registrada_at).toLocaleDateString('es-VE')}</span>}
+                        {compra.motivo_diferencia_factura && <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>Motivo de la diferencia: {compra.motivo_diferencia_factura}</div>}
+                    </div>
+                )}
+                {!puedeFactura && !anulada && (conAbonos || devolucionVigente) && (
+                    <div className="no-print" style={{ fontSize: '12px', color: '#9ca3af', margin: '-8px 0 16px' }}>
+                        {conAbonos ? 'Tiene abonos: un ajuste de precio se hace con una nota de crédito del proveedor.'
+                            : 'Tiene una devolución al proveedor: anúlala para poder corregir los precios.'}
                     </div>
                 )}
                 <div style={{ backgroundColor: '#f9fafb', borderRadius: '8px', padding: '12px 16px', marginBottom: '24px' }}>
@@ -641,7 +722,12 @@ function DetalleRecepcionCxP({ compra: compraInicial, onVolver }) {
                                     <td style={{ padding: '10px 0', fontSize: '13px', color: '#1f2937' }}>{mapaNombres[item.insumo_id] || '—'}</td>
                                     <td style={{ padding: '10px 0', fontSize: '11px', color: '#6b7280', textTransform: 'uppercase' }}>{item.tipo_insumo?.replace(/_/g, ' ') || '—'}</td>
                                     <td style={{ padding: '10px 0', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{item.cantidad}</td>
-                                    <td style={{ padding: '10px 0', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{fmtPrecio(precioBaseItem(item))}</td>
+                                    <td style={{ padding: '10px 0', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>
+                                        {fmtPrecio(precioBaseItem(item))}
+                                        {item.precio_recepcion != null && Math.abs(precioRecibido(item) - precioBaseItem(item)) > 0.0000005 && (
+                                            <div style={{ fontSize: '11px', color: '#9ca3af' }}>recibido {fmtPrecio(precioRecibido(item))}</div>
+                                        )}
+                                    </td>
                                     <td style={{ padding: '10px 0', fontSize: '13px', color: desc > 0 ? '#dc2626' : '#6b7280', textAlign: 'right' }}>{desc > 0 ? `${desc}%` : '—'}</td>
                                     <td style={{ padding: '10px 0', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(lineaTotal)}</td>
                                 </tr>
@@ -733,6 +819,10 @@ function DetalleRecepcionCxP({ compra: compraInicial, onVolver }) {
                 </div>
             </div>
 
+            {modalFactura && (
+                <ModalFacturaRecepcion compra={compra} items={items} nombres={mapaNombres}
+                    onCerrar={() => setModalFactura(false)} onListo={trasFactura} />
+            )}
             {pagoAnular && (
                 <ModalAnularPagoProveedor pago={pagoAnular} compra={compra}
                     onCerrar={() => setPagoAnular(null)} onAnulado={trasAnular} />

@@ -158,7 +158,9 @@ export default function ModalPagoRecepcion({ compra, onCerrar, onPagado }) {
             cargandoSaldo={cargando}
             extras={extras}
             proveedorId={compra.proveedor_id}
-            bloqueo={ret.error || null}
+            bloqueo={compra.estado_factura === 'pendiente'
+                ? 'Esta recepción llegó sin factura: regístrala en Cuentas por Pagar → Ver antes de pagar.'
+                : ret.error || null}
             confirmacion={Number(ret.monto) > 0.001 ? { aviso: `Se retienen ${fmt(ret.monto)} (${[ret.aplicarIva && 'IVA', ret.aplicarIslr && 'ISLR'].filter(Boolean).join(' y ')}): no se le pagan al proveedor, se le deben al SENIAT.` } : {}}
             onConfirmar={confirmar}
             onCerrar={onCerrar}
