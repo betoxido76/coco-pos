@@ -422,6 +422,8 @@ Al cerrar un ítem, borrarlo de esta tabla.
 | Documento de origen en movimientos de inventario | Media | Los movimientos `pedido_facturado` no guardan NE/PED: enlazar una salida con su factura solo se puede por hora. Pasar `notas` con NE y PED en `moverStockLote` desde Pedidos y Ventas. |
 | Hora real de despacho | Media | `pedidos.fecha_despacho` es la fecha PROGRAMADA; la hora en que se marca despachado solo queda en los logs de la API (retención corta). Agregar `despachado_at`. |
 | Merma de la receta sin uso | Media | `recetas.merma_pct` se carga pero ninguna orden lo aplica: el factor es `cantidad ÷ rinde_unidades`. Confirmar con Meraki si el rinde que cargan ya es neto (p. ej. 30001: 529,411 L de 1.800 cocos con merma 3 %); si no, los estimados están inflados. |
+| REC-000054: líneas vs. encabezado | Alta | Las líneas guardaron 0,31 y 0,30 con IVA (redondeo a 2 decimales) y suman $4.955,88; el encabezado usa los precios de OC-000045 (0,27 y 0,26103 sin IVA) = $5.005,55. Si la factura de Injaca es $5.005,55, reescribir las 2 líneas con el precio de la OC y `precio_incluye_iva = false`. Pendiente de confirmar con el usuario. |
+| Precios con 2 decimales en ventas | Media | `venta_items`, `pedido_items` y `devolucion_items.precio_unitario` siguen en numeric(12,2) (compras pasó a 6 en `compra_items_precio_6dec.sql`). Revisar si los descuentos generan precios base con más decimales; cambiarlo toca `recalcular_totales_pedido` y las vistas del exportador. |
 | Recepción no transaccional | Baja | La recepción se guarda en varios pasos desde el navegador (compra, aplicación de anticipos, ítems, stock); el pago va aparte por CxP. Si un paso falla, avisa y queda para completarlo a mano. Llevarla a una RPC. |
 
 ---
