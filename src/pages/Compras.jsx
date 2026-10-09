@@ -1153,6 +1153,10 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
     const [mapaNombres, setMapaNombres] = useState({})
 
     const [nroDocProveedor, setNroDocProveedor] = useState('')
+    // ¿Llegó con factura? (docs/plan-factura-recepcion.md). null = sin responder.
+    // Sin factura: precios estimados, no se paga hasta que CxP registra la factura.
+    const [conFactura, setConFactura] = useState(null)
+    const [nroNotaEntrega, setNroNotaEntrega] = useState('')
     const [condicionProveedorInicial, setCondicionProveedorInicial] = useState('contado')
     const [diasCreditoProveedorInicial, setDiasCreditoProveedorInicial] = useState(0)
 
@@ -1186,8 +1190,8 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
 
     useEffect(() => {
         if (items.length === 0 && !proveedorLibreId) return
-        localStorage.setItem(DRAFT_KEY, JSON.stringify({ proveedorLibreId, modo, items, almacenId, nroDocProveedor, descGlobal, ts: Date.now() }))
-    }, [items, proveedorLibreId, modo, almacenId, nroDocProveedor])
+        localStorage.setItem(DRAFT_KEY, JSON.stringify({ proveedorLibreId, modo, items, almacenId, nroDocProveedor, conFactura, nroNotaEntrega, descGlobal, ts: Date.now() }))
+    }, [items, proveedorLibreId, modo, almacenId, nroDocProveedor, conFactura, nroNotaEntrega])
 
     function limpiarBorrador() {
         localStorage.removeItem(DRAFT_KEY)
@@ -1201,6 +1205,8 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
         if (d.proveedorLibreId) setProveedorLibreId(d.proveedorLibreId)
         if (d.almacenId) setAlmacenId(d.almacenId)
         if (d.nroDocProveedor) setNroDocProveedor(d.nroDocProveedor)
+        if (d.conFactura != null) setConFactura(d.conFactura)
+        if (d.nroNotaEntrega) setNroNotaEntrega(d.nroNotaEntrega)
         if (d.items?.length) setItems(d.items)
         if (d.descGlobal) setDescGlobal(d.descGlobal)
     }
@@ -1315,6 +1321,8 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
         if (modo === 'contra_oc' && !ocSeleccionada) { setError('Selecciona una OC'); return }
         if (items.length === 0) { setError('Agrega insumos o selecciona una OC'); return }
         if (!almacenId) { setError('Selecciona el almacén de destino'); return }
+        if (conFactura === null) { setError('Indica si la mercancía llegó con factura'); return }
+        if (conFactura && !nroDocProveedor.trim()) { setError('Indica el N° de la factura del proveedor'); return }
         setError(''); setMostrarModal(true)
     }
 
@@ -1330,7 +1338,12 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
             : proveedorLibreId || null
 
         const payload = {
-            proveedor_id: proveedorId, usuario_id: user.id, numero_doc: numero, nro_doc_proveedor: nroDocProveedor.trim() || null,
+            proveedor_id: proveedorId, usuario_id: user.id, numero_doc: numero,
+            // Sin factura: CxP la registra después (registrar_factura_recepcion)
+            estado_factura: conFactura ? 'registrada' : 'pendiente',
+            nro_doc_proveedor: conFactura ? nroDocProveedor.trim() || null : null,
+            fecha_factura: conFactura ? hoyYMD() : null,
+            nro_nota_entrega: conFactura ? null : nroNotaEntrega.trim() || null,
             ...camposTotalesCompra(totalesRec), descuento_global: descGlobal || 0, estado: 'recibida', fecha_compra: new Date().toISOString(),
             almacen_id: almacenId,
             orden_compra_id: modo === 'contra_oc' ? ocSeleccionada : null,
@@ -1598,7 +1611,7 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
                         <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
                             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                                 <thead><tr style={{ backgroundColor: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                                    {['Insumo', 'Tipo', 'Precio', 'Desc. %', 'Cant.', 'Subtotal', ''].map((h, i) => (<th key={i} style={{ padding: '10px 12px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left' }}>{h}</th>))}
+                                    {['Insumo', 'Tipo', conFactura === false ? 'Precio (estimado)' : 'Precio', 'Desc. %', 'Cant.', 'Subtotal', ''].map((h, i) => (<th key={i} style={{ padding: '10px 12px', fontSize: '12px', fontWeight: 500, color: '#6b7280', textAlign: 'left' }}>{h}</th>))}
                                 </tr></thead>
                                 <tbody>
                                     {items.map((item, idx) => (
@@ -1656,14 +1669,30 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '16px', fontWeight: 700, color: '#1f2937' }}><span>Total</span><span style={{ color: '#16a34a' }}>{fmt(total)}</span></div>
                     </div>
                     <div style={{ marginBottom: '12px' }}>
-                        <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Nro. Doc. Proveedor</label>
-                        <input
-                            type="text"
-                            placeholder="Ej. NE-00123 o FAC-456"
-                            value={nroDocProveedor}
-                            onChange={e => setNroDocProveedor(e.target.value)}
-                            style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', boxSizing: 'border-box' }}
-                        />
+                        <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>¿Llegó con factura?</label>
+                        <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
+                            {[[true, 'Sí, con factura'], [false, 'No, nota de entrega']].map(([v, l]) => (
+                                <button key={l} onClick={() => { setConFactura(v); setError('') }}
+                                    style={{ flex: 1, padding: '8px', borderRadius: '8px', fontSize: '12px', fontWeight: 500, border: '1px solid', cursor: 'pointer',
+                                        borderColor: conFactura === v ? '#16a34a' : '#e5e7eb', backgroundColor: conFactura === v ? '#f0fdf4' : '#fff', color: conFactura === v ? '#16a34a' : '#6b7280' }}>
+                                    {l}
+                                </button>
+                            ))}
+                        </div>
+                        {conFactura === true && (
+                            <input type="text" placeholder="N° de factura del proveedor" value={nroDocProveedor}
+                                onChange={e => setNroDocProveedor(e.target.value)}
+                                style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', boxSizing: 'border-box' }} />
+                        )}
+                        {conFactura === false && <>
+                            <input type="text" placeholder="N° de nota de entrega (opcional)" value={nroNotaEntrega}
+                                onChange={e => setNroNotaEntrega(e.target.value)}
+                                style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', boxSizing: 'border-box' }} />
+                            <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: '8px', padding: '8px 10px', fontSize: '12px', color: '#92400e', marginTop: '8px' }}>
+                                Los precios quedan como <strong>estimados</strong>. La mercancía entra al inventario, pero no se puede pagar
+                                hasta que Cuentas por Pagar registre la factura.
+                            </div>
+                        </>}
                     </div>
                     {error && <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', color: '#dc2626', marginBottom: '12px' }}>{error}</div>}
                     <button onClick={abrirConfirmacion} disabled={guardando || items.length === 0}
@@ -1700,7 +1729,7 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
                     onPagado={() => { const r = recepcionAPagar; setRecepcionAPagar(null); onCreada(r) }} />
             )}
 
-            {mostrarModal && <ModalPagoCompra total={total} condicionInicial={condicionProveedorInicial} diasInicial={diasCreditoProveedorInicial}
+            {mostrarModal && <ModalPagoCompra total={total} sinFactura={conFactura === false} condicionInicial={condicionProveedorInicial} diasInicial={diasCreditoProveedorInicial}
                 proveedorId={modo === 'contra_oc' ? ocsPendientes.find(o => o.id === ocSeleccionada)?.proveedor_id : proveedorLibreId || null}
                 ocId={modo === 'contra_oc' ? ocSeleccionada : null}
                 onCerrar={() => setMostrarModal(false)} onConfirmar={confirmarRecepcion} />}
@@ -2297,7 +2326,9 @@ const sumarDiasYMD = (ymd, dias) => {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
-function ModalPagoCompra({ total, condicionInicial = 'contado', diasInicial = 0, proveedorId = null, ocId = null, onCerrar, onConfirmar }) {
+// sinFactura: no se aplican anticipos ni se paga en el acto; CxP registra la
+// factura antes (docs/plan-factura-recepcion.md)
+function ModalPagoCompra({ total, sinFactura = false, condicionInicial = 'contado', diasInicial = 0, proveedorId = null, ocId = null, onCerrar, onConfirmar }) {
     const [aplicaciones, setAplicaciones] = useState({})
     const [anticiposCargados, setAnticiposCargados] = useState([])
     const anticipoAplicado = totalAplicaciones(aplicaciones)
@@ -2329,7 +2360,7 @@ function ModalPagoCompra({ total, condicionInicial = 'contado', diasInicial = 0,
             estado_cobro: 'pendiente',   // aplicar_anticipo_proveedor lo recalcula
             pago_usd: 0, pago_bs: 0, metodo_usd: null, metodo_bs: null, fecha_pago: null,
             aplicacionesAnticipo: aplicacionesALista(aplicaciones, anticiposCargados),
-            pagarAhora: condicion === 'contado' && !cubiertoPorAnticipo,
+            pagarAhora: !sinFactura && condicion === 'contado' && !cubiertoPorAnticipo,
         })
     }
 
@@ -2355,8 +2386,15 @@ function ModalPagoCompra({ total, condicionInicial = 'contado', diasInicial = 0,
                     )}
                 </div>
 
-                <SelectorAnticipos proveedorId={proveedorId} ocId={ocId} tope={total}
-                    aplicaciones={aplicaciones} onChange={setAplicaciones} onCargados={setAnticiposCargados} />
+                {sinFactura ? (
+                    <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: '8px', padding: '10px 12px', marginBottom: '16px', fontSize: '12px', color: '#92400e' }}>
+                        Llegó <strong>sin factura</strong>: el total es estimado. Los anticipos y el pago se registran en Cuentas por Pagar
+                        después de cargar la factura.
+                    </div>
+                ) : (
+                    <SelectorAnticipos proveedorId={proveedorId} ocId={ocId} tope={total}
+                        aplicaciones={aplicaciones} onChange={setAplicaciones} onCargados={setAnticiposCargados} />
+                )}
 
                 {!cubiertoPorAnticipo && <>
                     <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
@@ -2375,6 +2413,10 @@ function ModalPagoCompra({ total, condicionInicial = 'contado', diasInicial = 0,
                                 Vence: {fechaLarga(vence)} · se paga luego desde Cuentas por Pagar.
                             </div>
                         </div>
+                    ) : sinFactura ? (
+                        <div style={{ backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '8px', padding: '10px 12px', marginBottom: '16px', fontSize: '12px', color: '#1e40af' }}>
+                            Queda en Cuentas por Pagar. Vence el día de la factura y se paga después de registrarla.
+                        </div>
                     ) : (
                         <div style={{ backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '8px', padding: '10px 12px', marginBottom: '16px', fontSize: '12px', color: '#1e40af' }}>
                             Queda en Cuentas por Pagar con vencimiento hoy. Al confirmar se abre la ventana de pago para registrarlo en el acto
@@ -2385,7 +2427,7 @@ function ModalPagoCompra({ total, condicionInicial = 'contado', diasInicial = 0,
 
                 {error && <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px', fontSize: '13px', color: '#dc2626', marginBottom: '12px' }}>{error}</div>}
                 <button onClick={revisar} disabled={guardando} style={{ width: '100%', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '10px', padding: '13px', fontSize: '15px', fontWeight: 700, cursor: 'pointer' }}>
-                    {cubiertoPorAnticipo ? 'Confirmar recepción' : condicion === 'credito' ? 'Confirmar recepción a crédito' : 'Confirmar recepción y pagar'}
+                    {cubiertoPorAnticipo || sinFactura ? 'Confirmar recepción' : condicion === 'credito' ? 'Confirmar recepción a crédito' : 'Confirmar recepción y pagar'}
                 </button>
             </div>
 
@@ -2396,6 +2438,7 @@ function ModalPagoCompra({ total, condicionInicial = 'contado', diasInicial = 0,
                     aviso={[
                         conAnticipo ? `Se aplican ${fmt(anticipoAplicado)} de anticipo.` : null,
                         cubiertoPorAnticipo ? 'No se registra ningún pago nuevo.'
+                            : sinFactura ? 'Queda sin factura: no se puede pagar hasta registrarla en Cuentas por Pagar.'
                             : condicion === 'contado' ? 'Después se abre la ventana de pago.'
                             : `Vence el ${fechaLarga(vence)}.`,
                     ].filter(Boolean).join(' ')}
