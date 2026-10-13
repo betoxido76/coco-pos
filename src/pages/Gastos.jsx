@@ -8,8 +8,7 @@ import { labelMetodo } from '../components/ModalPagoObligacion'
 import FiltroCombo from '../components/FiltroCombo'
 import { useAltoBarra, useOrden, ordenarFilas, ThOrden, BarraFija, estiloTarjetaTabla } from '../components/TablaOrdenable'
 import { traerTodas } from '../lib/traerTodas'
-import { desglosarTotalConIva } from '../lib/iva'
-import { proveedorRetiene, resumenRetencionProveedor } from '../lib/retenciones'
+import { proveedorRetiene, resumenRetencionProveedor, desgloseSugerido, avisoDesglose } from '../lib/retenciones'
 import { cuentaGasto, cargarPagosGastos, PROV_RETENCION } from '../lib/saldoGasto'
 
 const fmt = n => `$${Number(n || 0).toFixed(2)}`
@@ -588,10 +587,11 @@ function NuevoGasto({ tasas, tipos, onGuardado, onCancelar }) {
     // Proveedor sujeto a retención: la factura debe venir desglosada en base e IVA
     const provSel = proveedores.find(p => p.id === proveedorId)
     const pideDesglose = proveedorRetiene(perfil?.empresas?.agente_retencion, provSel)
-    function sugerirDesglose() {
-        const d = desglosarTotalConIva(totalEnUsd)
+    function sugerirDesglose(exento) {
+        const d = desgloseSugerido(totalEnUsd, exento)
         setBaseImponible(d.base.toFixed(2)); setMontoIva(d.iva.toFixed(2))
     }
+    const avisoDesg = pideDesglose ? avisoDesglose(baseImponible, montoIva, totalEnUsd, montoBs) : null
 
     async function guardar() {
         if (sinTasa) { setError(`No hay tasa registrada para el ${fmtFechaCorta(fecha)}`); return }
@@ -606,7 +606,7 @@ function NuevoGasto({ tasas, tipos, onGuardado, onCancelar }) {
         if (pideDesglose) {
             const b = Number(baseImponible), i = Number(montoIva || 0)
             if (!(b > 0) || i < 0) { setError('Indica la base imponible y el IVA de la factura: el proveedor está sujeto a retención'); return }
-            if (b + i > totalEnUsd + 0.01) { setError(`Base imponible + IVA (${fmt(b + i)}) supera el total del gasto (${fmt(totalEnUsd)})`); return }
+            if (avisoDesg) { setError(`Desglose de la factura: ${avisoDesg}`); return }
         }
         setGuardando(true); setError('')
 
@@ -818,11 +818,18 @@ function NuevoGasto({ tasas, tipos, onGuardado, onCancelar }) {
                                     Proveedor sujeto a retención ({resumenRetencionProveedor(provSel)}): se calcula al pagar sobre estos montos.
                                 </p>
                             </div>
-                            <button type="button" onClick={sugerirDesglose} disabled={totalEnUsd <= 0}
-                                style={{ flexShrink: 0, padding: '6px 10px', borderRadius: '8px', fontSize: '12px', border: '1px solid #fcd34d', backgroundColor: '#fff', color: '#92400e', cursor: totalEnUsd > 0 ? 'pointer' : 'default' }}>
-                                Sugerir del total
-                            </button>
+                            <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+                                {[[false, 'Con IVA 16 %', 'Separa el 16 % de IVA del total'], [true, 'Exento', 'Servicio sin IVA: base = total, IVA = 0']].map(([exento, lbl, tip]) => (
+                                    <button key={lbl} type="button" onClick={() => sugerirDesglose(exento)} disabled={totalEnUsd <= 0} title={tip}
+                                        style={{ padding: '6px 10px', borderRadius: '8px', fontSize: '12px', border: '1px solid #fcd34d', backgroundColor: '#fff', color: '#92400e', cursor: totalEnUsd > 0 ? 'pointer' : 'default', whiteSpace: 'nowrap' }}>
+                                        {lbl}
+                                    </button>
+                                ))}
+                            </div>
                         </div>
+                        <p style={{ fontSize: '12px', color: '#92400e', margin: '0 0 8px' }}>
+                            Total del gasto: <strong>{fmt(totalEnUsd)}</strong> — base + IVA deben sumar ese monto, en dólares.
+                        </p>
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                             <div>
                                 <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Base imponible (sin IVA) *</label>
@@ -833,6 +840,11 @@ function NuevoGasto({ tasas, tipos, onGuardado, onCancelar }) {
                                 <input type="number" min="0" step="0.01" value={montoIva} onChange={e => setMontoIva(e.target.value)} placeholder="0.00" style={inputStyle} />
                             </div>
                         </div>
+                        {avisoDesg && (
+                            <p style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#dc2626', fontWeight: 500, margin: '8px 0 0' }}>
+                                <AlertTriangle size={14} /> {avisoDesg}
+                            </p>
+                        )}
                     </div>
                 )}
 

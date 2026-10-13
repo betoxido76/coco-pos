@@ -7,7 +7,7 @@
 //   ISLR = base imponible (sin IVA)  × % del proveedor
 // Se retienen completas en el primer pago del documento; una retención ya
 // registrada (vigente) no se vuelve a proponer.
-import { redondear2 } from './iva'
+import { redondear2, desglosarTotalConIva } from './iva'
 
 export const TIPOS_RETENCION = {
     iva: { label: 'Retención IVA', corto: 'IVA' },
@@ -40,6 +40,25 @@ export function calcularRetenciones({ prov, base, iva, vigentes = {} }) {
         iva: linea('iva', prov?.retiene_iva, prov?.pct_retencion_iva, iva),
         islr: linea('islr', prov?.retiene_islr, prov?.pct_retencion_islr, base),
     }
+}
+
+// Desglose de una factura (base + IVA, en USD) a partir de su total:
+// con IVA 16 % o exenta (servicio sin IVA: base = total, IVA = 0)
+export function desgloseSugerido(total, exento) {
+    return exento ? { base: redondear2(Number(total || 0)), iva: 0 } : desglosarTotalConIva(Number(total || 0))
+}
+
+// Aviso del desglose contra el total del documento (USD). montoBs: lo cargado
+// en bolívares, para detectar la base escrita en Bs. (caso GS1, 2026-10-13)
+export function avisoDesglose(base, iva, total, montoBs = 0) {
+    const b = Number(base || 0), i = Number(iva || 0), t = Number(total || 0)
+    if (!(b > 0) || !(t > 0)) return null
+    const suma = redondear2(b + i)
+    if (suma <= t + 0.01) return null
+    const bs = Number(montoBs || 0)
+    if (bs > 0 && (Math.abs(b - bs) < 1 || Math.abs(suma - bs) < 1 || b > t * 20))
+        return `Parece escrito en bolívares: el desglose va en USD y el total es $${t.toFixed(2)}.`
+    return `Base + IVA ($${suma.toFixed(2)}) supera el total ($${t.toFixed(2)}).`
 }
 
 // Etiqueta de un abono que es retención (pagos_proveedor / pagos .metodo_usd)

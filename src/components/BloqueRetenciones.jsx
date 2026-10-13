@@ -14,8 +14,8 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
-import { calcularRetenciones, TIPOS_RETENCION } from '../lib/retenciones'
-import { desglosarTotalConIva, redondear2 } from '../lib/iva'
+import { calcularRetenciones, TIPOS_RETENCION, desgloseSugerido } from '../lib/retenciones'
+import { redondear2 } from '../lib/iva'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 const inp = { width: '100%', padding: '6px 10px', border: '1px solid #fcd34d', borderRadius: '6px', fontSize: '13px', boxSizing: 'border-box', textAlign: 'right' }
@@ -85,8 +85,8 @@ export default function BloqueRetenciones({ origenTipo, origenId, proveedorId, b
         return null
     }
 
-    function sugerir() {
-        const d = desglosarTotalConIva(totalDocumento)
+    function sugerir(exento) {
+        const d = desgloseSugerido(totalDocumento, exento)
         setBaseEd(d.base.toFixed(2)); setIvaEd(d.iva.toFixed(2))
     }
 
@@ -97,12 +97,18 @@ export default function BloqueRetenciones({ origenTipo, origenId, proveedorId, b
             {sinDesglose && (
                 <div style={{ marginBottom: '10px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                        <span style={{ fontSize: '12px', color: '#92400e' }}>Desglose de la factura (USD)</span>
+                        <span style={{ fontSize: '12px', color: '#92400e' }}>
+                            Desglose de la factura (USD){totalDocumento > 0 ? ` · total ${fmt(totalDocumento)}` : ''}
+                        </span>
                         {totalDocumento > 0 && (
-                            <button type="button" onClick={sugerir}
-                                style={{ fontSize: '11px', color: '#92400e', background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontWeight: 600 }}>
-                                Sugerir del total
-                            </button>
+                            <span style={{ display: 'flex', gap: '10px' }}>
+                                {[[false, 'Con IVA 16 %'], [true, 'Exento']].map(([exento, lbl]) => (
+                                    <button key={lbl} type="button" onClick={() => sugerir(exento)}
+                                        style={{ fontSize: '11px', color: '#92400e', background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontWeight: 600 }}>
+                                        {lbl}
+                                    </button>
+                                ))}
+                            </span>
                         )}
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
