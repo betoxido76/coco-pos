@@ -1,13 +1,45 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
-import { moverStock, moverStockLote, almacenPredeterminado } from '../lib/inventario'
+import { moverStock, moverStockLote, almacenPredeterminado, verificarStock } from '../lib/inventario'
 import { Plus, ChevronRight, X, AlertTriangle, Check, FlaskConical, Package, Search } from 'lucide-react'
 import { useAltoBarra, ThOrden, BarraFija, estiloTarjetaTabla } from '../components/TablaOrdenable'
+import ArmadoRapido from '../components/ArmadoRapido'
 
 const fmt = (n, dec = 2) => Number(n || 0).toLocaleString('es-VE', { minimumFractionDigits: dec, maximumFractionDigits: dec })
 
 const normTipo = t => (t === 'empaque' ? 'material_empaque' : t)
+
+// Tipos de insumo de una orden. Un PT puede ser insumo de otro PT (kits,
+// docs/plan-kits.md); a diferencia de MP y empaque, sin faltante: no se arma
+// un kit con productos que no existen.
+const TIPO_INSUMO = {
+    materia_prima: { corto: 'MP', bg: '#dbeafe', color: '#1e40af' },
+    material_empaque: { corto: 'Empaque', bg: '#fae8ff', color: '#7e22ce' },
+    producto_terminado: { corto: 'PT', bg: '#dcfce7', color: '#166534' },
+}
+const infoTipo = t => TIPO_INSUMO[normTipo(t)] || TIPO_INSUMO.material_empaque
+// Lista de maestros de un tipo: listas = { materia_prima, material_empaque, producto_terminado }
+const listaDeTipo = (listas, t) => listas[normTipo(t)] || listas.material_empaque || []
+const tipoMotor = t => (normTipo(t) === 'materia_prima' || normTipo(t) === 'producto_terminado' ? normTipo(t) : 'material_empaque')
+
+function BadgeTipoInsumo({ tipo }) {
+    const t = infoTipo(tipo)
+    return <span style={{ fontSize: '12px', padding: '2px 8px', borderRadius: '12px', backgroundColor: t.bg, color: t.color }}>{t.corto}</span>
+}
+
+// Componentes PT que no alcanzan en su almacén. [] = alcanza.
+// verificar_stock mide contra un almacén por llamada: se agrupa por almacén.
+async function faltantesPt(items, almacenFallback) {
+    const pts = items.filter(i => normTipo(i.tipo_insumo) === 'producto_terminado' && i.insumo_id && Number(i.cantidad) > 0)
+    const grupos = {}
+    pts.forEach(i => {
+        const alm = i.almacen_id || almacenFallback || ''
+        ;(grupos[alm] = grupos[alm] || []).push({ tipo_item: 'producto_terminado', item_id: i.insumo_id, cantidad: Number(i.cantidad) })
+    })
+    const res = await Promise.all(Object.entries(grupos).map(([alm, its]) => verificarStock(its, alm || null)))
+    return res.flat()
+}
 
 // Ítem de la receta que manda cuando se planifica por insumo (recetas.planificar_por)
 function itemBase(receta, tipo, id) {
@@ -83,6 +115,7 @@ export default function Produccion() {
     const [sortCol, setSortCol] = useState('')
     const [sortDir, setSortDir] = useState('asc')
     const [barraRef, altoBarra] = useAltoBarra([vista])
+    const [armando, setArmando] = useState(false)   // armado rápido (docs/plan-kits.md)
 
     useEffect(() => { cargar() }, [filtroEstado])
     useEffect(() => { setPagina(0) }, [busqueda, fechaDesde, fechaHasta, filtroEstado, pageSize])
@@ -110,6 +143,16 @@ export default function Produccion() {
     function abrirDetalle(orden) {
         setOrdenActual(orden)
         setVista('detalle')
+    }
+
+    // Tras el armado rápido se abre la orden (ya cerrada) que se creó
+    async function trasArmado({ orden_id }) {
+        setArmando(false)
+        cargar()
+        const { data } = await supabase.from('ordenes_produccion')
+            .select('*, productos_terminados(nombre, sku, unidad_medida), materias_primas!mp_salida_id(nombre, codigo, unidad_medida)')
+            .eq('id', orden_id).single()
+        if (data) abrirDetalle(data)
     }
 
     if (vista === 'nueva')
@@ -171,11 +214,18 @@ export default function Produccion() {
                     <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Producción</h1>
                     <p style={{ fontSize: '13px', color: '#6b7280', margin: '4px 0 0' }}>Órdenes de producción</p>
                 </div>
-                <button onClick={() => setVista('nueva')}
-                    style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px 16px', fontSize: '14px', fontWeight: 500, cursor: 'pointer' }}>
-                    <Plus size={16} /> Nueva orden
-                </button>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                    <button onClick={() => setArmando(true)} title="Registrar en un paso lo que ya se armó (kits)"
+                        style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#fff', color: '#166534', border: '1px solid #16a34a', borderRadius: '8px', padding: '10px 16px', fontSize: '14px', fontWeight: 500, cursor: 'pointer' }}>
+                        <Package size={16} /> Armado rápido
+                    </button>
+                    <button onClick={() => setVista('nueva')}
+                        style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px 16px', fontSize: '14px', fontWeight: 500, cursor: 'pointer' }}>
+                        <Plus size={16} /> Nueva orden
+                    </button>
+                </div>
             </div>
+            {armando && <ArmadoRapido onCerrar={() => setArmando(false)} onArmado={trasArmado} />}
 
             {/* KPIs */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '24px' }}>
@@ -355,6 +405,8 @@ function NuevaOrden({ onCreada, onCancelar }) {
     const [consumos, setConsumos] = useState([])  // insumos escalados de la receta
     const [insumosMp, setInsumosMp] = useState([])
     const [insumosMe, setInsumosMe] = useState([])
+    const [insumosPt, setInsumosPt] = useState([])
+    const listas = { materia_prima: insumosMp, material_empaque: insumosMe, producto_terminado: insumosPt }
 
     // Almacenes para selección de origen
     const [almacenes, setAlmacenes] = useState([])
@@ -373,6 +425,8 @@ function NuevaOrden({ onCreada, onCancelar }) {
             .then(({ data }) => setInsumosMp(data || []))
         supabase.from('materiales_empaque').select('id, nombre, codigo, unidad_medida, stock_actual').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
             .then(({ data }) => setInsumosMe(data || []))
+        supabase.from('productos_terminados').select('id, nombre, sku, unidad_medida, stock_actual').eq('activo', true).eq('empresa_id', perfil.empresa_id).neq('tipo_producto', 'servicio').order('nombre')
+            .then(({ data }) => setInsumosPt((data || []).map(p => ({ ...p, codigo: p.sku }))))
 
         // Cargar almacenes
         supabase.from('almacenes').select('id, nombre, es_default')
@@ -384,7 +438,7 @@ function NuevaOrden({ onCreada, onCancelar }) {
         supabase.from('stock_ubicacion')
             .select('item_id, tipo_item, cantidad, almacen_id, almacenes(nombre)')
             .eq('empresa_id', perfil.empresa_id)
-            .in('tipo_item', ['materia_prima', 'material_empaque'])
+            .in('tipo_item', ['materia_prima', 'material_empaque', 'producto_terminado'])
             .gt('cantidad', 0)
             .then(({ data }) => {
                 if (!data) return
@@ -463,14 +517,10 @@ function NuevaOrden({ onCreada, onCancelar }) {
 
         // Resolver nombres de insumos
         const itemsConNombre = await Promise.all(receta.receta_items.map(async item => {
-            let nombre = '', stock = 0, unidadMedida = item.unidad
-            if (item.tipo_insumo === 'materia_prima') {
-                const mp = insumosMp.find(m => m.id === item.insumo_id)
-                nombre = mp?.nombre || ''; stock = mp?.stock_actual || 0; unidadMedida = mp?.unidad_medida || item.unidad
-            } else {
-                const me = insumosMe.find(m => m.id === item.insumo_id)
-                nombre = me?.nombre || ''; stock = me?.stock_actual || 0; unidadMedida = me?.unidad_medida || item.unidad
-            }
+            const ins = listaDeTipo(listas, item.tipo_insumo).find(m => m.id === item.insumo_id)
+            const nombre = ins?.nombre || ''
+            const stock = ins?.stock_actual || 0
+            const unidadMedida = ins?.unidad_medida || item.unidad
             return {
                 _key: item.id,
                 tipo_insumo: item.tipo_insumo,
@@ -530,7 +580,7 @@ function NuevaOrden({ onCreada, onCancelar }) {
     }
 
     function handleInsumoSelect(key, tipo, id) {
-        const lista = tipo === 'materia_prima' ? insumosMp : insumosMe
+        const lista = listaDeTipo(listas, tipo)
         const insumo = lista.find(i => i.id === id)
         const defAlmacen = almacenes.find(a => a.es_default)?.id || almacenes[0]?.id || ''
         const stockEnAlmacen = (stockPorAlmacen[id] || []).find(s => s.almacen_id === defAlmacen)?.cantidad || 0
@@ -835,12 +885,9 @@ function NuevaOrden({ onCreada, onCancelar }) {
                                                 style={{ ...inputStyle, width: '120px', fontSize: '13px', padding: '5px 8px' }}>
                                                 <option value="materia_prima">MP</option>
                                                 <option value="material_empaque">Empaque</option>
+                                                {tipoSalida === 'producto_terminado' && <option value="producto_terminado">PT</option>}
                                             </select>
-                                        ) : (
-                                            <span style={{ fontSize: '12px', padding: '2px 8px', borderRadius: '12px', backgroundColor: c.tipo_insumo === 'materia_prima' ? '#dbeafe' : '#fae8ff', color: c.tipo_insumo === 'materia_prima' ? '#1e40af' : '#7e22ce' }}>
-                                                {c.tipo_insumo === 'materia_prima' ? 'MP' : 'Empaque'}
-                                            </span>
-                                        )}
+                                        ) : <BadgeTipoInsumo tipo={c.tipo_insumo} />}
                                     </td>
                                     <td style={{ padding: '10px 12px' }}>
                                         {c.es_nuevo ? (
@@ -848,7 +895,7 @@ function NuevaOrden({ onCreada, onCancelar }) {
                                                 onChange={e => handleInsumoSelect(c._key, c.tipo_insumo, e.target.value)}
                                                 style={{ ...inputStyle, fontSize: '13px', padding: '5px 8px', minWidth: '180px' }}>
                                                 <option value="">Seleccionar...</option>
-                                                {(c.tipo_insumo === 'materia_prima' ? insumosMp : insumosMe).map(i => (
+                                                {listaDeTipo(listas, c.tipo_insumo).filter(i => i.id !== productoId).map(i => (
                                                     <option key={i.id} value={i.id}>{i.nombre}</option>
                                                 ))}
                                             </select>
@@ -996,22 +1043,22 @@ function DetalleOrden({ orden, onVolver, onActualizada }) {
 
             if (receta?.receta_items?.length) {
                 const factor = factorOrden(orden, receta)
-                const mpIds = receta.receta_items.filter(i => i.tipo_insumo === 'materia_prima').map(i => i.insumo_id)
-                const meIds = receta.receta_items.filter(i => i.tipo_insumo !== 'materia_prima').map(i => i.insumo_id)
+                const idsDe = t => receta.receta_items.filter(i => tipoMotor(i.tipo_insumo) === t).map(i => i.insumo_id)
+                const mpIds = idsDe('materia_prima'), meIds = idsDe('material_empaque'), ptIds = idsDe('producto_terminado')
 
-                const [{ data: mps }, { data: mes }] = await Promise.all([
+                const [{ data: mps }, { data: mes }, { data: pts }] = await Promise.all([
                     mpIds.length ? supabase.from('materias_primas').select('id, nombre').in('id', mpIds) : Promise.resolve({ data: [] }),
                     meIds.length ? supabase.from('materiales_empaque').select('id, nombre').in('id', meIds) : Promise.resolve({ data: [] }),
+                    ptIds.length ? supabase.from('productos_terminados').select('id, nombre').in('id', ptIds) : Promise.resolve({ data: [] }),
                 ])
 
-                const mpMap = Object.fromEntries((mps || []).map(m => [m.id, m.nombre]))
-                const meMap = Object.fromEntries((mes || []).map(m => [m.id, m.nombre]))
+                const nombres = Object.fromEntries([...(mps || []), ...(mes || []), ...(pts || [])].map(m => [m.id, m.nombre]))
 
                 setConsumos(receta.receta_items.map((item, idx) => ({
                     id: `receta-${idx}`,
                     tipo_insumo: item.tipo_insumo === 'empaque' ? 'material_empaque' : item.tipo_insumo,
                     insumo_id: item.insumo_id,
-                    insumo_nombre: item.tipo_insumo === 'materia_prima' ? (mpMap[item.insumo_id] || '—') : (meMap[item.insumo_id] || '—'),
+                    insumo_nombre: nombres[item.insumo_id] || '—',
                     cantidad_sugerida: parseFloat((item.cantidad * factor).toFixed(4)),
                     cantidad_consumida: parseFloat((item.cantidad * factor).toFixed(4)),
                 })))
@@ -1145,9 +1192,7 @@ function DetalleOrden({ orden, onVolver, onActualizada }) {
                                 return (
                                     <tr key={c.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
                                         <td style={{ padding: '10px 14px' }}>
-                                            <span style={{ fontSize: '12px', padding: '2px 8px', borderRadius: '12px', backgroundColor: c.tipo_insumo === 'materia_prima' ? '#dbeafe' : '#fae8ff', color: c.tipo_insumo === 'materia_prima' ? '#1e40af' : '#7e22ce' }}>
-                                                {c.tipo_insumo === 'materia_prima' ? 'MP' : 'Empaque'}
-                                            </span>
+                                            <BadgeTipoInsumo tipo={c.tipo_insumo} />
                                         </td>
                                         <td style={{ padding: '10px 14px', fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>{c.insumo_nombre || c.insumo_id}</td>
                                         <td style={{ padding: '10px 14px', fontSize: '13px', color: '#6b7280' }}>{c.cantidad_sugerida ? fmt(c.cantidad_sugerida) : '—'}</td>
@@ -1241,6 +1286,8 @@ function ModalCierre({ orden, producto, onCerrar, onCerrada }) {
     const [consumoItems, setConsumoItems] = useState([])
     const [insumosMp, setInsumosMp] = useState([])
     const [insumosMe, setInsumosMe] = useState([])
+    const [insumosPt, setInsumosPt] = useState([])
+    const listas = { materia_prima: insumosMp, material_empaque: insumosMe, producto_terminado: insumosPt }
     const [loadingInsumos, setLoadingInsumos] = useState(true)
 
     useEffect(() => { cargarDatos() }, [])
@@ -1250,10 +1297,12 @@ function ModalCierre({ orden, producto, onCerrar, onCerrada }) {
             { data: alms },
             { data: mps },
             { data: mes },
+            { data: pts },
         ] = await Promise.all([
             supabase.from('almacenes').select('id, nombre, es_default').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('es_default', { ascending: false }).order('nombre'),
             supabase.from('materias_primas').select('id, nombre, codigo, unidad_medida, stock_actual').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre'),
             supabase.from('materiales_empaque').select('id, nombre, codigo, unidad_medida, stock_actual').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre'),
+            supabase.from('productos_terminados').select('id, nombre, sku, unidad_medida, stock_actual').eq('activo', true).eq('empresa_id', perfil.empresa_id).neq('tipo_producto', 'servicio').order('nombre'),
         ])
 
         setAlmacenes(alms || [])
@@ -1261,9 +1310,10 @@ function ModalCierre({ orden, producto, onCerrar, onCerrada }) {
         if (def) setAlmacenId(def.id)
         setInsumosMp(mps || [])
         setInsumosMe(mes || [])
+        setInsumosPt(pts || [])
 
         const defAlmId = def?.id || ''
-        const allInsumos = [...(mps || []), ...(mes || [])]
+        const allInsumos = [...(mps || []), ...(mes || []), ...(pts || [])]
 
         // Cargar lote_consumos existentes (planificados) o la receta como fallback
         const { data: existingConsumos } = await supabase.from('lote_consumos').select('*').eq('orden_id', orden.id)
@@ -1312,7 +1362,7 @@ function ModalCierre({ orden, producto, onCerrar, onCerrada }) {
     function seleccionarInsumo(key, tipoYId) {
         if (!tipoYId) return
         const [tipo, id] = tipoYId.split(':')
-        const lista = tipo === 'materia_prima' ? insumosMp : insumosMe
+        const lista = listaDeTipo(listas, tipo)
         const ins = lista.find(i => i.id === id)
         setConsumoItems(prev => prev.map(c => c._key === key ? { ...c, tipo_insumo: tipo, insumo_id: id, insumo_nombre: ins?.nombre || '' } : c))
     }
@@ -1326,6 +1376,17 @@ function ModalCierre({ orden, producto, onCerrar, onCerrada }) {
         if (!cantReal || Number(cantReal) <= 0) { setError('Ingresa la cantidad real producida'); return }
         if (!almacenId) { setError('Selecciona el almacén de ingreso del producto terminado'); return }
         setGuardando(true); setError('')
+
+        // Componentes PT (kits): sin faltante. Se verifica ANTES de escribir nada,
+        // porque el cierre se guarda en varios pasos y no debe quedar a medias.
+        const faltan = await faltantesPt(
+            consumoItems.map(c => ({ ...c, cantidad: c.cantidad_real })),
+            await almacenPredeterminado(perfil.empresa_id))
+        if (faltan.length) {
+            setError('No hay stock suficiente de: ' + faltan.map(f => `${f.nombre} (faltan ${fmt(f.faltante)})`).join(', ')
+                + '. Revisa el almacén de cada componente o la cantidad.')
+            setGuardando(false); return
+        }
 
         const { data: { user } } = await supabase.auth.getUser()
 
@@ -1388,10 +1449,12 @@ function ModalCierre({ orden, producto, onCerrar, onCerrada }) {
             // el inventario; ahora cae al almacén predeterminado de la empresa.
             const almacenFallback = await almacenPredeterminado(perfil.empresa_id)
             const itemsConsumo = consumosValidos.map(c => ({
-                tipo_item: c.tipo_insumo === 'materia_prima' ? 'materia_prima' : 'material_empaque',
+                tipo_item: tipoMotor(c.tipo_insumo),
                 item_id: c.insumo_id,
                 cantidad: Number(c.cantidad_real),
                 almacen_id: c.almacen_id || almacenFallback || null,
+                // MP/ME pueden quedar en faltante marcado; un PT no (kits)
+                ...(normTipo(c.tipo_insumo) === 'producto_terminado' ? { permitir_faltante: false } : {}),
             })).filter(i => i.cantidad > 0)
 
             try {
@@ -1522,6 +1585,9 @@ function ModalCierre({ orden, producto, onCerrar, onCerrada }) {
                                                 </optgroup>}
                                                 {insumosMe.length > 0 && <optgroup label="Materiales de empaque">
                                                     {insumosMe.map(i => <option key={i.id} value={`material_empaque:${i.id}`}>{i.nombre}</option>)}
+                                                </optgroup>}
+                                                {orden.tipo_salida !== 'materia_prima' && insumosPt.length > 0 && <optgroup label="Productos terminados">
+                                                    {insumosPt.filter(i => i.id !== orden.producto_id).map(i => <option key={i.id} value={`producto_terminado:${i.id}`}>{i.nombre}</option>)}
                                                 </optgroup>}
                                             </select>
                                             <select value={c.almacen_id} onChange={e => actualizarConsumo(c._key, 'almacen_id', e.target.value)}

@@ -17,6 +17,7 @@ const TIPO_COLOR = {
     material_empaque: { bg: '#fef9c3', color: '#854d0e' },
     empaque: { bg: '#fef9c3', color: '#854d0e' },
     consumible: { bg: '#f3e8ff', color: '#7c3aed' },
+    producto_terminado: { bg: '#dcfce7', color: '#166534' },
 }
 
 const TABS = [
@@ -91,7 +92,8 @@ export default function Recetas() {
                 <div>
                     <h2 style={{ fontSize: '16px', fontWeight: 600, color: '#1f2937', margin: 0 }}>Recetas de producción</h2>
                     <p style={{ fontSize: '13px', color: '#6b7280', margin: '4px 0 0' }}>
-                        Define los insumos para producir cada producto terminado o materia prima producida
+                        Define los insumos para producir cada producto terminado o materia prima producida.
+                        Un producto terminado también puede llevar otros productos terminados (kits).
                     </p>
                 </div>
                 <button onClick={abrirNueva}
@@ -281,10 +283,14 @@ function ModalReceta({ receta, tabActivo, recetas = [], onGuardada, onCerrar }) 
         }
     }, [])
 
+    // Un PT puede ser insumo de otro PT (kits, docs/plan-kits.md), nunca de sí mismo
+    const insumosPt = productos.filter(p => p.id !== productoId).map(p => ({ ...p, codigo: p.sku }))
+
     function getListaPorTipo(tipo) {
         if (tipo === 'materia_prima') return insumosMp
         if (tipo === 'material_empaque' || tipo === 'empaque') return insumosMe
         if (tipo === 'consumible') return insumosC
+        if (tipo === 'producto_terminado') return insumosPt
         return []
     }
 
@@ -338,6 +344,10 @@ function ModalReceta({ receta, tabActivo, recetas = [], onGuardada, onCerrar }) 
         if (Number(rinde) <= 0) return setError('El rendimiento debe ser mayor a 0')
         const itemsValidos = items.filter(i => i.insumo_id && i.cantidad && Number(i.cantidad) > 0)
         if (itemsValidos.length === 0) return setError('Agrega al menos un insumo con cantidad válida')
+        if (!esPt && itemsValidos.some(i => i.tipo_insumo === 'producto_terminado'))
+            return setError('Una MP producida no puede llevar productos terminados como insumo')
+        if (itemsValidos.some(i => i.tipo_insumo === 'producto_terminado' && i.insumo_id === productoId))
+            return setError('Un producto no puede ser insumo de su propia receta')
         const baseItem = planificarPor === 'insumo'
             ? itemsValidos.find(i => `${normTipo(i.tipo_insumo)}|${i.insumo_id}` === baseKey) : null
         if (planificarPor === 'insumo' && !baseItem)
@@ -560,6 +570,7 @@ function ModalReceta({ receta, tabActivo, recetas = [], onGuardada, onCerrar }) 
                                     insumosMp={insumosMp}
                                     insumosMe={insumosMe}
                                     insumosC={insumosC}
+                                    insumosPt={esPt ? insumosPt : null}
                                     onActualizar={(campo, valor) => actualizarItem(item._key, campo, valor)}
                                     onEliminar={() => eliminarItem(item._key)}
                                 />
@@ -581,7 +592,7 @@ function ModalReceta({ receta, tabActivo, recetas = [], onGuardada, onCerrar }) 
                     planificarPor={planificarPor} onPlanificarPor={setPlanificarPor}
                     baseKey={baseKey} onBaseKey={setBaseKey}
                     items={items} rinde={rinde} productoSel={productoSel}
-                    listas={{ materia_prima: insumosMp, material_empaque: insumosMe, consumible: insumosC }} />
+                    listas={{ materia_prima: insumosMp, material_empaque: insumosMe, consumible: insumosC, producto_terminado: insumosPt }} />
 
                 {error && (
                     <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 14px', fontSize: '13px', color: '#dc2626', marginBottom: '16px' }}>
@@ -609,8 +620,9 @@ function ModalReceta({ receta, tabActivo, recetas = [], onGuardada, onCerrar }) 
 const normTipo = t => (t === 'empaque' ? 'material_empaque' : t)
 
 function SeccionPlanificacion({ planificarPor, onPlanificarPor, baseKey, onBaseKey, items, rinde, productoSel, listas }) {
+    // El insumo base es MP o empaque: Producción no planifica por un PT componente
     const candidatos = items
-        .filter(i => i.insumo_id && Number(i.cantidad) > 0)
+        .filter(i => i.insumo_id && Number(i.cantidad) > 0 && i.tipo_insumo !== 'producto_terminado')
         .map(i => {
             const tipo = normTipo(i.tipo_insumo)
             const ins = (listas[tipo] || []).find(x => x.id === i.insumo_id)
@@ -657,11 +669,13 @@ function SeccionPlanificacion({ planificarPor, onPlanificarPor, baseKey, onBaseK
 // ══════════════════════════════════════════════════════════════
 // FILA DE INSUMO dentro del modal
 // ══════════════════════════════════════════════════════════════
-function FilaInsumo({ item, idx, insumosMp, insumosMe, insumosC, onActualizar, onEliminar }) {
+// insumosPt: null en recetas de MP producida (no llevan PT)
+function FilaInsumo({ item, idx, insumosMp, insumosMe, insumosC, insumosPt, onActualizar, onEliminar }) {
     function getOpciones(tipo) {
         if (tipo === 'materia_prima') return insumosMp
         if (tipo === 'material_empaque' || tipo === 'empaque') return insumosMe
         if (tipo === 'consumible') return insumosC
+        if (tipo === 'producto_terminado') return insumosPt || []
         return []
     }
 
@@ -678,6 +692,7 @@ function FilaInsumo({ item, idx, insumosMp, insumosMe, insumosC, onActualizar, o
                 <option value="materia_prima">Mat. prima</option>
                 <option value="material_empaque">Mat. empaque</option>
                 <option value="consumible">Consumible</option>
+                {(insumosPt || item.tipo_insumo === 'producto_terminado') && <option value="producto_terminado">Prod. terminado</option>}
             </select>
 
             {/* Insumo */}
