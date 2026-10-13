@@ -158,8 +158,6 @@ export default function Gastos() {
         pagado: g => cuenta(g).pagado,
         retenciones: g => cuenta(g).retenciones,
         saldo: g => cuenta(g).saldo,
-        metodo: g => g.metodo_pago,
-        usuario: g => g.usuarios?.nombre,
     }, orden)
     const totalRegistros = gastosOrdenados.length
     const gastosPagina = gastosOrdenados.slice(pagina * PAGE_SIZE, (pagina + 1) * PAGE_SIZE)
@@ -302,7 +300,7 @@ export default function Gastos() {
                                         {[['', null], ['Documento', 'documento'], ['Nro Factura', 'factura'], ['Fecha', 'fecha'], ['Nombre', 'nombre'], ['Tipo', 'tipo'],
                                           ['Vencimiento', 'vencimiento'], ['Total', 'total'], ['Pagado', 'pagado'],
                                           ...(agente ? [['Retenciones', 'retenciones']] : []), ['Saldo', 'saldo'],
-                                          ['Método', 'metodo'], ['Usuario', 'usuario'], ['', null]].map(([h, col], i) => (
+                                          ['Acción', null]].map(([h, col], i) => (
                                             <ThOrden key={i} col={col} orden={orden} onOrdenar={ordenarPor} top={altoBarra}
                                                 align={['total', 'pagado', 'retenciones', 'saldo'].includes(col) ? 'right' : 'left'}>{h}</ThOrden>
                                         ))}
@@ -378,12 +376,6 @@ export default function Gastos() {
                                                 )}
                                                 <td style={{ padding: '12px 14px', fontSize: '13px', fontWeight: 600, color: c.saldo > 0.005 ? '#dc2626' : '#16a34a', textAlign: 'right', whiteSpace: 'nowrap' }}>
                                                     {estado === 'anulado' ? '—' : fmt(c.saldo)}
-                                                </td>
-                                                <td style={{ padding: '12px 14px', fontSize: '12px', color: '#6b7280' }}>
-                                                    {g.metodo_pago || '—'}
-                                                </td>
-                                                <td style={{ padding: '12px 14px', fontSize: '12px', color: '#6b7280' }}>
-                                                    {g.usuarios?.nombre || '—'}
                                                 </td>
                                                 <td style={{ padding: '12px 14px' }}>
                                                     <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
