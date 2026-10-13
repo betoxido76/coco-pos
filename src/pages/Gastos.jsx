@@ -153,7 +153,7 @@ export default function Gastos() {
         fecha: g => g.fecha,
         nombre: g => g.nombre,
         tipo: g => g.tipos_gastos?.nombre || g.categoria,
-        vencimiento: g => ['pendiente', 'parcial'].includes(g.estado) ? g.fecha_vencimiento : null,
+        vencimiento: g => g.fecha_vencimiento,
         total: g => cuenta(g).total,
         pagado: g => cuenta(g).pagado,
         retenciones: g => cuenta(g).retenciones,
@@ -297,7 +297,7 @@ export default function Gastos() {
                             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                                 <thead>
                                     <tr>
-                                        {[['', null], ['Documento', 'documento'], ['N° Fact.', 'factura'], ['Fecha', 'fecha'], ['Nombre', 'nombre'], ['Tipo', 'tipo'],
+                                        {[['', null], ['Documento', 'documento'], ['N° Fact.', 'factura'], ['Nombre', 'nombre'], ['Tipo', 'tipo'],
                                           ['Vencimiento', 'vencimiento'], ['Total', 'total'], ['Pagado', 'pagado'],
                                           ...(agente ? [['Retenciones', 'retenciones']] : []), ['Saldo', 'saldo'],
                                           ['Acción', null]].map(([h, col], i) => (
@@ -327,9 +327,6 @@ export default function Gastos() {
                                                 <td style={{ padding: '12px 8px', fontSize: '12px', fontFamily: 'monospace', color: '#374151', maxWidth: '80px', overflowWrap: 'anywhere' }}>
                                                     {g.numero_factura || '—'}
                                                 </td>
-                                                <td style={{ padding: '12px 14px', fontSize: '13px', color: '#6b7280', whiteSpace: 'nowrap' }}>
-                                                    {new Date(g.fecha + 'T00:00:00').toLocaleDateString('es-VE')}
-                                                </td>
                                                 <td style={{ padding: '12px 14px' }}>
                                                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                         <div>
@@ -357,11 +354,12 @@ export default function Gastos() {
                                                 <td style={{ padding: '12px 14px', fontSize: '13px', color: '#6b7280' }}>
                                                     {g.tipos_gastos?.nombre || g.categoria || '—'}
                                                 </td>
-                                                <td style={{ padding: '12px 14px' }}>
-                                                    {esPorPagar && sem
-                                                        ? <span style={{ fontSize: '12px', fontWeight: 500, color: sem.color }}>{sem.label}</span>
-                                                        : <span style={{ fontSize: '12px', color: '#9ca3af' }}>—</span>
-                                                    }
+                                                {/* Vencimiento: fecha + días que faltan (como CxP); pagados solo la fecha */}
+                                                <td style={{ padding: '12px 14px', whiteSpace: 'nowrap' }}>
+                                                    <div style={{ fontSize: '13px', color: esPorPagar ? '#374151' : '#9ca3af' }}>
+                                                        {g.fecha_vencimiento ? new Date(g.fecha_vencimiento + 'T00:00:00').toLocaleDateString('es-VE') : '—'}
+                                                    </div>
+                                                    {esPorPagar && sem && <div style={{ fontSize: '12px', fontWeight: 500, color: sem.color, marginTop: '2px' }}>{sem.label}</div>}
                                                 </td>
                                                 <td style={{ padding: '12px 14px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right', whiteSpace: 'nowrap' }}>
                                                     {fmt(c.total)}
