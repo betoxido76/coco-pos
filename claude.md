@@ -307,6 +307,10 @@ IVA = IVA del documento × %; ISLR = base imponible (sin IVA) × %.
 - El % se congela en la retención: cambiar el proveedor no reescribe el pasado.
 - Gastos: necesitan `base_imponible` y `monto_iva` (USD); el formulario y la
   ventana de pago los piden si el proveedor retiene.
+- Listas: CxP → Compras, CxP → Gastos y Gastos muestran Total / Pagado /
+  Retenciones (registradas + por retener) / Saldo, todo en USD. Los gastos usan
+  `src/lib/saldoGasto.js` (`cuentaGasto`): el total es `gastos.monto`, el
+  equivalente congelado al registrar, nunca el monto en Bs. a la tasa de hoy.
 - UI: `BloqueRetenciones` en las dos ventanas de pago; CxP → pestaña
   **Retenciones** (`PanelRetenciones`: totales por período, Excel, anulación).
   Vista previa con `src/lib/retenciones.js` (misma fórmula que la RPC).

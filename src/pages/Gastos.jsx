@@ -10,6 +10,7 @@ import { useAltoBarra, useOrden, ordenarFilas, ThOrden, BarraFija, estiloTarjeta
 import { traerTodas } from '../lib/traerTodas'
 import { desglosarTotalConIva } from '../lib/iva'
 import { proveedorRetiene, resumenRetencionProveedor } from '../lib/retenciones'
+import { cuentaGasto, cargarPagosGastos, PROV_RETENCION } from '../lib/saldoGasto'
 
 const fmt = n => `$${Number(n || 0).toFixed(2)}`
 const fmtBs = n => `${Number(n || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`
@@ -57,8 +58,9 @@ export default function Gastos() {
     const [gastoVer, setGastoVer] = useState(null)
     const [pagina, setPagina] = useState(0)
     const [barraRef, altoBarra] = useAltoBarra([vista, tab, gastoVer])
-    const [orden, ordenarPor] = useOrden({ col: 'fecha', dir: 'desc' }, ['documento', 'fecha', 'vencimiento', 'monto_usd', 'monto_bs'])
-    const [pagadoPorGasto, setPagadoPorGasto] = useState({}) // gasto_id -> USD abonado
+    const [orden, ordenarPor] = useOrden({ col: 'fecha', dir: 'desc' }, ['documento', 'fecha', 'vencimiento', 'total', 'pagado', 'retenciones', 'saldo'])
+    const [pagosPorGasto, setPagosPorGasto] = useState({}) // gasto_id -> abonos en `pagos`
+    const agente = !!perfil?.empresas?.agente_retencion
 
     // Filtros
     const [filtroTipo, setFiltroTipo] = useState('')
@@ -105,7 +107,7 @@ export default function Gastos() {
         setLoading(true)
 
         let kpiQ = supabase.from('gastos')
-            .select('id, estado, monto, monto_usd, monto_bs, tipo_tasa, fecha_vencimiento')
+            .select(`id, estado, monto, monto_usd, monto_bs, tipo_tasa, fecha_vencimiento, base_imponible, monto_iva, proveedores(${PROV_RETENCION})`)
             .eq('empresa_id', perfil.empresa_id)
         if (filtroTipo) kpiQ = kpiQ.eq('tipo_gasto_id', filtroTipo)
         if (filtroProveedor) kpiQ = kpiQ.eq('proveedor_id', filtroProveedor)
@@ -117,7 +119,7 @@ export default function Gastos() {
         // Todos los gastos del filtro: se ordenan y paginan en el navegador
         const construir = () => {
             let q = supabase.from('gastos')
-                .select('*, tipos_gastos(nombre), usuarios!usuario_id(nombre), proveedores(nombre)')
+                .select(`*, tipos_gastos(nombre), usuarios!usuario_id(nombre), proveedores(nombre, ${PROV_RETENCION})`)
                 .eq('empresa_id', perfil.empresa_id)
                 .order('fecha', { ascending: false })
                 .order('created_at', { ascending: false })
@@ -135,34 +137,14 @@ export default function Gastos() {
         if (kpi) setKpiData(kpi)
         if (data) setGastos(data)
 
-        // Abonos de los gastos parciales (para calcular saldo en KPIs y lista)
-        const parcialIds = (kpi || []).filter(g => g.estado === 'parcial').map(g => g.id)
-        if (parcialIds.length > 0) {
-            const { data: pagos } = await supabase.from('pagos')
-                .select('origen_id, monto_usd, monto_bs, tasa_cambio')
-                .eq('empresa_id', perfil.empresa_id)
-                .eq('origen_tipo', 'gasto').in('origen_id', parcialIds)
-            const map = {}
-            ;(pagos || []).forEach(p => {
-                map[p.origen_id] = (map[p.origen_id] || 0) + Number(p.monto_usd || 0) + Number(p.monto_bs || 0) / (Number(p.tasa_cambio) || 1)
-            })
-            setPagadoPorGasto(map)
-        } else {
-            setPagadoPorGasto({})
-        }
+        // Abonos de cada gasto (dinero, notas de crédito y retenciones): pagado,
+        // retenciones y saldo se derivan de ellos, como en CxP
+        setPagosPorGasto(await cargarPagosGastos(perfil.empresa_id, (kpi || []).map(g => g.id)).catch(() => ({})))
         setLoading(false)
     }
 
-    // Total de la obligación (USD) y saldo pendiente de un gasto
-    const totalGasto = g => Number(g.monto || 0) > 0
-        ? Number(g.monto)
-        : Number(g.monto_usd || 0) + Number(g.monto_bs || 0) / (tasas[g.tipo_tasa] || tasas.tasa_bcv || 1)
-    const saldoGasto = g => {
-        const est = g.estado || 'pagado'
-        if (est === 'pagado') return 0
-        if (est === 'parcial') return Math.max(0, totalGasto(g) - (pagadoPorGasto[g.id] || 0))
-        return totalGasto(g) // pendiente
-    }
+    // Total, pagado, retenciones y saldo en USD (src/lib/saldoGasto.js, igual que CxP)
+    const cuenta = g => cuentaGasto({ ...g, estado: g.estado || 'pagado' }, pagosPorGasto[g.id] || [], agente, tasas)
 
     const hayFiltros = filtroTipo || filtroProveedor || filtroDesde || filtroHasta || filtroEstado !== 'todos'
 
@@ -173,8 +155,10 @@ export default function Gastos() {
         nombre: g => g.nombre,
         tipo: g => g.tipos_gastos?.nombre || g.categoria,
         vencimiento: g => ['pendiente', 'parcial'].includes(g.estado) ? g.fecha_vencimiento : null,
-        monto_usd: g => Number(g.monto_usd) > 0 ? Number(g.monto_usd) : null,
-        monto_bs: g => Number(g.monto_bs) > 0 ? Number(g.monto_bs) : null,
+        total: g => cuenta(g).total,
+        pagado: g => cuenta(g).pagado,
+        retenciones: g => cuenta(g).retenciones,
+        saldo: g => cuenta(g).saldo,
         metodo: g => g.metodo_pago,
         usuario: g => g.usuarios?.nombre,
     }, orden)
@@ -186,12 +170,10 @@ export default function Gastos() {
     const porPagar = kpiData.filter(g => ['pendiente', 'parcial'].includes(g.estado || 'pagado'))
     const vencidos = porPagar.filter(g => g.fecha_vencimiento && new Date(g.fecha_vencimiento + 'T00:00:00') < new Date())
 
-    const totalPagadoUsd = pagados.reduce((s, g) => {
-        const t = tasas[g.tipo_tasa] || tasas.tasa_bcv || 1
-        return s + Number(g.monto_usd || 0) + Number(g.monto_bs || 0) / t
-    }, 0)
-    // Saldo pendiente (total − abonos), incluye parciales
-    const totalPendienteUsd = porPagar.reduce((s, g) => s + saldoGasto(g), 0)
+    // En USD del día de cada gasto (monto congelado), no a la tasa de hoy
+    const totalPagadoUsd = pagados.reduce((s, g) => s + cuenta(g).total, 0)
+    // Saldo pendiente (total − pagado − retenciones), incluye parciales
+    const totalPendienteUsd = porPagar.reduce((s, g) => s + cuenta(g).saldo, 0)
 
     if (vista === 'nuevo') return (
         <NuevoGasto
@@ -319,8 +301,11 @@ export default function Gastos() {
                                 <thead>
                                     <tr>
                                         {[['', null], ['Documento', 'documento'], ['Nro Factura', 'factura'], ['Fecha', 'fecha'], ['Nombre', 'nombre'], ['Tipo', 'tipo'],
-                                          ['Vencimiento', 'vencimiento'], ['Monto USD', 'monto_usd'], ['Monto Bs.', 'monto_bs'], ['Método', 'metodo'], ['Usuario', 'usuario'], ['', null]].map(([h, col], i) => (
-                                            <ThOrden key={i} col={col} orden={orden} onOrdenar={ordenarPor} top={altoBarra}>{h}</ThOrden>
+                                          ['Vencimiento', 'vencimiento'], ['Total', 'total'], ['Pagado', 'pagado'],
+                                          ...(agente ? [['Retenciones', 'retenciones']] : []), ['Saldo', 'saldo'],
+                                          ['Método', 'metodo'], ['Usuario', 'usuario'], ['', null]].map(([h, col], i) => (
+                                            <ThOrden key={i} col={col} orden={orden} onOrdenar={ordenarPor} top={altoBarra}
+                                                align={['total', 'pagado', 'retenciones', 'saldo'].includes(col) ? 'right' : 'left'}>{h}</ThOrden>
                                         ))}
                                     </tr>
                                 </thead>
@@ -329,6 +314,7 @@ export default function Gastos() {
                                         const estado = g.estado || 'pagado'
                                         const esPorPagar = estado === 'pendiente' || estado === 'parcial'
                                         const sem = esPorPagar ? semaforo(g.fecha_vencimiento) : null
+                                        const c = cuenta(g)
                                         return (
                                             <tr key={g.id}
                                                 style={{ borderBottom: '1px solid #f3f4f6', backgroundColor: sem?.bg || 'transparent' }}
@@ -353,11 +339,6 @@ export default function Gastos() {
                                                             <div style={{ fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>{g.nombre}</div>
                                                             {g.proveedores?.nombre && <div style={{ fontSize: '11px', color: '#6b7280', marginTop: '2px' }}>Proveedor: {g.proveedores.nombre}</div>}
                                                             {g.descripcion && <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '2px' }}>{g.descripcion}</div>}
-                                                            {estado === 'parcial' && (
-                                                                <div style={{ fontSize: '11px', color: '#1e40af', marginTop: '2px', fontWeight: 600 }}>
-                                                                    Saldo: {fmt(saldoGasto(g))} de {fmt(totalGasto(g))}
-                                                                </div>
-                                                            )}
                                                         </div>
                                                         {estado === 'pendiente' && (
                                                             <span style={{ fontSize: '10px', backgroundColor: '#fef3c7', color: '#92400e', padding: '2px 8px', borderRadius: '20px', fontWeight: 600, whiteSpace: 'nowrap' }}>
@@ -385,11 +366,19 @@ export default function Gastos() {
                                                         : <span style={{ fontSize: '12px', color: '#9ca3af' }}>—</span>
                                                     }
                                                 </td>
-                                                <td style={{ padding: '12px 14px', fontSize: '13px', fontWeight: 600, color: '#dc2626' }}>
-                                                    {Number(g.monto_usd) > 0 ? fmt(g.monto_usd) : '—'}
+                                                <td style={{ padding: '12px 14px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                                                    {fmt(c.total)}
                                                 </td>
-                                                <td style={{ padding: '12px 14px', fontSize: '13px', fontWeight: 600, color: '#d97706' }}>
-                                                    {Number(g.monto_bs) > 0 ? fmtBs(g.monto_bs) : '—'}
+                                                <td style={{ padding: '12px 14px', fontSize: '13px', color: '#16a34a', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                                                    {estado === 'anulado' ? '—' : fmt(c.pagado)}
+                                                </td>
+                                                {agente && (
+                                                    <td style={{ padding: '12px 14px', fontSize: '13px', color: c.retenciones > 0 ? '#854d0e' : '#9ca3af', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                                                        {fmt(c.retenciones)}
+                                                    </td>
+                                                )}
+                                                <td style={{ padding: '12px 14px', fontSize: '13px', fontWeight: 600, color: c.saldo > 0.005 ? '#dc2626' : '#16a34a', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                                                    {estado === 'anulado' ? '—' : fmt(c.saldo)}
                                                 </td>
                                                 <td style={{ padding: '12px 14px', fontSize: '12px', color: '#6b7280' }}>
                                                     {g.metodo_pago || '—'}

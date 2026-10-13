@@ -14,6 +14,7 @@ import PanelRetenciones from '../components/PanelRetenciones'
 import { calcularRetenciones } from '../lib/retenciones'
 import ModalFacturaRecepcion, { precioRecibido } from '../components/ModalFacturaRecepcion'
 import PanelNotasCreditoProveedor, { cargarCreditosProveedor } from '../components/NotasCreditoProveedor'
+import { cuentaGasto, cargarPagosGastos } from '../lib/saldoGasto'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 // Precio unitario: los decimales reales (hasta 6), mínimo 2 — 0,09165 no es 0,09
@@ -102,12 +103,12 @@ export default function CuentasPagar() {
     const [tabSeccion, setTabSeccion] = useState('compras')
     // Orden de cada tabla (clic en el título) y alto de la barra fija de
     // pestañas/filtros, para pegar los títulos justo debajo
-    const MONTOS = ['total', 'pagado', 'abonado', 'saldo', 'monto', 'fecha']
+    const MONTOS = ['total', 'pagado', 'retenciones', 'abonado', 'saldo', 'monto', 'fecha']
     const [ordenCompras, ordenarCompras] = useOrden({ col: 'vencimiento', dir: 'asc' }, MONTOS)
     const [ordenGastos, ordenarGastos] = useOrden({ col: 'vencimiento', dir: 'asc' }, MONTOS)
     const [barraRef, altoBarra] = useAltoBarra([tabSeccion])
     const [gastosPend, setGastosPend] = useState([])
-    const [abonosGasto, setAbonosGasto] = useState({})
+    const [abonosGasto, setAbonosGasto] = useState({})   // gasto_id -> abonos en `pagos`
     const [loadingGastos, setLoadingGastos] = useState(false)
     const [gastoPagando, setGastoPagando] = useState(null)
     const [compraVer, setCompraVer] = useState(null)
@@ -236,34 +237,19 @@ export default function CuentasPagar() {
         setLoadingGastos(true)
         const { data } = await supabase
             .from('gastos')
-            .select('*, tipos_gastos(nombre)')
+            .select(`*, tipos_gastos(nombre), proveedores(nombre, ${PROV_RETENCION})`)
             .eq('empresa_id', perfil.empresa_id)
             .in('estado', ['pendiente', 'parcial'])
             .order('fecha_vencimiento', { ascending: true })
         setGastosPend(data || [])
 
-        // Abonos de cada gasto: un gasto 'parcial' ya tiene pagos y su saldo
-        // es total - abonos, no el monto original.
-        const ids = (data || []).map(g => g.id)
-        const mapa = {}
-        if (ids.length > 0) {
-            const { data: abonos } = await supabase.from('pagos')
-                .select('origen_id, monto_usd, monto_bs, tasa_cambio')
-                .eq('empresa_id', perfil.empresa_id)
-                .eq('origen_tipo', 'gasto').in('origen_id', ids)
-            ;(abonos || []).forEach(a => {
-                mapa[a.origen_id] = (mapa[a.origen_id] || 0) + pagoEnUsd(a)
-            })
-        }
-        setAbonosGasto(mapa)
+        // Abonos de cada gasto (dinero, notas de crédito y retenciones)
+        setAbonosGasto(await cargarPagosGastos(perfil.empresa_id, (data || []).map(g => g.id)).catch(() => ({})))
         setLoadingGastos(false)
     }
 
-    // Total de la obligación (USD) y saldo pendiente de un gasto
-    const totalGasto = g => Number(g.monto || 0) > 0
-        ? Number(g.monto)
-        : Number(g.monto_usd || 0) + Number(g.monto_bs || 0) / (tasas[g.tipo_tasa] || tasas.tasa_bcv || 1)
-    const saldoGasto = g => Math.max(0, totalGasto(g) - (abonosGasto[g.id] || 0))
+    // Total, pagado, retenciones y saldo de un gasto: misma cuenta que en Gastos
+    const cuentaG = g => cuentaGasto(g, abonosGasto[g.id] || [], agente, tasas)
 
     // Filas ordenadas de cada pestaña (los vacíos van siempre al final)
     const comprasOrdenadas = ordenarFilas(soloSinFactura ? compras.filter(c => c.estado_factura === 'pendiente') : compras, {
@@ -284,9 +270,10 @@ export default function CuentasPagar() {
         nombre: g => g.nombre,
         tipo: g => g.tipos_gastos?.nombre || g.categoria,
         vencimiento: g => g.fecha_vencimiento,
-        total: g => totalGasto(g),
-        abonado: g => abonosGasto[g.id] || 0,
-        saldo: g => saldoGasto(g),
+        total: g => cuentaG(g).total,
+        pagado: g => cuentaG(g).pagado,
+        retenciones: g => cuentaG(g).retenciones,
+        saldo: g => cuentaG(g).saldo,
         estado: g => g.estado,
     }, ordenGastos)
     function abrirModal(compra) {
@@ -481,11 +468,12 @@ export default function CuentasPagar() {
                                 <tr>
                                     {[
                                         ['', null], ['Documento', 'documento'], ['Nombre', 'nombre'], ['Tipo', 'tipo'],
-                                        ['Vencimiento', 'vencimiento'], ['Total', 'total'], ['Abonado', 'abonado'], ['Saldo', 'saldo'],
+                                        ['Vencimiento', 'vencimiento'], ['Total', 'total'], ['Pagado', 'pagado'],
+                                        ...(agente ? [['Retenciones', 'retenciones']] : []), ['Saldo', 'saldo'],
                                         ['Estado', 'estado'], ['', null],
                                     ].map(([h, col], i) => (
                                         <ThOrden key={i} col={col} orden={ordenGastos} onOrdenar={ordenarGastos} top={altoBarra}
-                                            align={[5, 6, 7].includes(i) ? 'right' : 'left'} style={{ padding: '10px 16px', width: i === 0 ? '28px' : undefined }}>
+                                            align={['total', 'pagado', 'retenciones', 'saldo'].includes(col) ? 'right' : 'left'} style={{ padding: '10px 16px', width: i === 0 ? '28px' : undefined }}>
                                             {h}
                                         </ThOrden>
                                     ))}
@@ -493,9 +481,7 @@ export default function CuentasPagar() {
                             </thead>
                             <tbody>
                                 {gastosOrdenados.map(g => {
-                                    const total = totalGasto(g)
-                                    const abonado = abonosGasto[g.id] || 0
-                                    const saldo = saldoGasto(g)
+                                    const { total, pagado, retenciones, saldo } = cuentaG(g)
                                     return (
                                         <tr key={g.id} style={{ borderBottom: '1px solid #f3f4f6' }}
                                             onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
@@ -506,6 +492,7 @@ export default function CuentasPagar() {
                                             <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>{g.numero_gasto || '—'}</td>
                                             <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1f2937', fontWeight: 500 }}>
                                                 {g.nombre}
+                                                {g.proveedores?.nombre && <div style={{ fontSize: '11px', color: '#6b7280', marginTop: '2px' }}>Proveedor: {g.proveedores.nombre}</div>}
                                                 {g.descripcion && <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '2px' }}>{g.descripcion}</div>}
                                             </td>
                                             <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{g.tipos_gastos?.nombre || g.categoria || '—'}</td>
@@ -514,7 +501,8 @@ export default function CuentasPagar() {
                                                 <BadgeVencimiento fecha={g.fecha_vencimiento ? g.fecha_vencimiento + 'T00:00:00' : null} />
                                             </td>
                                             <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(total)}</td>
-                                            <td style={{ padding: '12px 16px', fontSize: '13px', color: '#16a34a', textAlign: 'right' }}>{fmt(abonado)}</td>
+                                            <td style={{ padding: '12px 16px', fontSize: '13px', color: '#16a34a', textAlign: 'right' }}>{fmt(pagado)}</td>
+                                            {agente && <td style={{ padding: '12px 16px', fontSize: '13px', color: retenciones > 0 ? '#854d0e' : '#9ca3af', textAlign: 'right' }}>{fmt(retenciones)}</td>}
                                             <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: saldo > 0 ? '#dc2626' : '#16a34a', textAlign: 'right' }}>{fmt(saldo)}</td>
                                             <td style={{ padding: '12px 16px' }}><BadgeEstado estado={g.estado} /></td>
                                             <td style={{ padding: '12px 16px' }}>
