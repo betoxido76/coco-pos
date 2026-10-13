@@ -297,7 +297,7 @@ export default function Gastos() {
                             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                                 <thead>
                                     <tr>
-                                        {[['', null], ['Documento', 'documento'], ['Nro Factura', 'factura'], ['Fecha', 'fecha'], ['Nombre', 'nombre'], ['Tipo', 'tipo'],
+                                        {[['', null], ['Documento', 'documento'], ['N° Fact.', 'factura'], ['Fecha', 'fecha'], ['Nombre', 'nombre'], ['Tipo', 'tipo'],
                                           ['Vencimiento', 'vencimiento'], ['Total', 'total'], ['Pagado', 'pagado'],
                                           ...(agente ? [['Retenciones', 'retenciones']] : []), ['Saldo', 'saldo'],
                                           ['Acción', null]].map(([h, col], i) => (
@@ -324,7 +324,7 @@ export default function Gastos() {
                                                 <td style={{ padding: '12px 14px', fontSize: '12px', fontFamily: 'monospace', color: '#374151', whiteSpace: 'nowrap' }}>
                                                     {g.numero_gasto || '—'}
                                                 </td>
-                                                <td style={{ padding: '12px 14px', fontSize: '12px', fontFamily: 'monospace', color: '#374151', whiteSpace: 'nowrap' }}>
+                                                <td style={{ padding: '12px 8px', fontSize: '12px', fontFamily: 'monospace', color: '#374151', maxWidth: '80px', overflowWrap: 'anywhere' }}>
                                                     {g.numero_factura || '—'}
                                                 </td>
                                                 <td style={{ padding: '12px 14px', fontSize: '13px', color: '#6b7280', whiteSpace: 'nowrap' }}>
