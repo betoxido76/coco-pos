@@ -329,6 +329,13 @@ Los módulos que manejan almacenes:
 - **Inventario:** ajustes, transferencias, nuevo stock
 - **Compras:** selector de almacén destino en recepción
 - **Producción:** selector de almacén origen por insumo, almacén destino para PT al cerrar
+  - **Kits** (`docs/plan-kits.md`): una receta de PT puede llevar otros PT como
+    insumo (`tipo_insumo = 'producto_terminado'`). Un trigger impide recetas
+    circulares y PT en recetas de MP. Un componente PT **no admite faltante**
+    (MP/ME sí): `mover_stock_lote` acepta `permitir_faltante` por ítem.
+    **Armado rápido** = RPC `armar_produccion` (módulo `produccion`): crea la
+    orden ya cerrada, su lote, consumos y movimientos en una transacción
+    (`src/components/ArmadoRapido.jsx`). Sirve para cualquier receta de PT.
 - **Mermas:** almacén origen (solo mermas de inventario, no de despacho)
 - **Cambios mano a mano:** almacén origen + almacén destino para reproceso
 
@@ -442,6 +449,7 @@ Al cerrar un ítem, borrarlo de esta tabla.
 | Documento de origen en movimientos de inventario | Media | Los movimientos `pedido_facturado` no guardan NE/PED: enlazar una salida con su factura solo se puede por hora. Pasar `notas` con NE y PED en `moverStockLote` desde Pedidos y Ventas. |
 | Hora real de despacho | Media | `pedidos.fecha_despacho` es la fecha PROGRAMADA; la hora en que se marca despachado solo queda en los logs de la API (retención corta). Agregar `despachado_at`. |
 | Merma de la receta sin uso | Media | `recetas.merma_pct` se carga pero ninguna orden lo aplica: el factor es `cantidad ÷ rinde_unidades`. Confirmar con Meraki si el rinde que cargan ya es neto (p. ej. 30001: 529,411 L de 1.800 cocos con merma 3 %); si no, los estimados están inflados. |
+| Recorrido de kits | Alta | Nada se probó en navegador (la base sí, en BEGIN/ROLLBACK: ciclo, faltante de PT y armado). Crear un kit de prueba (2 PT + 1 empaque), armarlo por orden normal y por armado rápido, intentar armar sin stock de un PT, venderlo. Desarmar y costeo siguen fuera de alcance (`docs/plan-kits.md`). |
 | Recorrido de factura en recepción | Alta | Nada se probó en navegador (la RPC sí, en BEGIN/ROLLBACK). Recepción sin factura → intento de pago (bloqueado) → registrar factura dentro y fuera del 5 % → pagar. Corregir REC-000054 (Injaca: tiene factura, precios unitarios a corregir; hoy sus líneas suman $4.955,88 y el encabezado $5.005,55) con "Corregir factura". Intentar corregir una recepción con abonos (bloqueado). |
 | Precios con 2 decimales en ventas | Media | `venta_items`, `pedido_items` y `devolucion_items.precio_unitario` siguen en numeric(12,2) (compras pasó a 6 en `compra_items_precio_6dec.sql`). Revisar si los descuentos generan precios base con más decimales; cambiarlo toca `recalcular_totales_pedido` y las vistas del exportador. |
 | Recepción no transaccional | Baja | La recepción se guarda en varios pasos desde el navegador (compra, aplicación de anticipos, ítems, stock); el pago va aparte por CxP. Si un paso falla, avisa y queda para completarlo a mano. Llevarla a una RPC. |

@@ -151,12 +151,16 @@ recetas               -- Recetas de productos
                       --   se referencia por (tipo, id): el editor borra y reinserta receta_items.
                       --   SIEMPRE filtrar por empresa_id al buscar la receta.
 receta_items          -- Ingredientes de recetas
+                      --   tipo_insumo admite 'producto_terminado' (kits, solo en recetas de PT);
+                      --   trigger receta_items_valida_pt bloquea ciclos y PT en recetas de MP
 ordenes_produccion    -- Órdenes de producción
                       --   planificada_por, insumo_base_tipo/id, cantidad_insumo_base: foto de cómo se
                       --   planificó. Con 'insumo', cantidad_planificada es el rinde estimado (2 dec.)
                       --   y el factor de la receta sale de cantidad_insumo_base (factorOrden() en
                       --   Produccion.jsx), no de cantidad_planificada.
 lote_consumos         -- Insumos consumidos por orden/lote (lote_id nullable — NULL = planificado al crear, se asigna al cerrar)
+                      --   tipo_insumo admite 'producto_terminado'. RPC armar_produccion = orden ya
+                      --   cerrada + lote + consumos + movimientos en un paso (armado rápido)
 lotes_produccion      -- Lotes de PT producidos
 ```
 

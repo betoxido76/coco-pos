@@ -1,6 +1,10 @@
 # Plan: kits (productos terminados armados con otros productos terminados)
 
-Estado: **borrador para validar** (2026-10-09)
+Estado: **implementado** (fases 1–5, 2026-10-13; aprobado 2026-10-09 como
+alternativa A). Falta la fase 6 (recorrido en navegador). Base probada en
+BEGIN/ROLLBACK: propio insumo y ciclo indirecto bloqueados, armado con faltante
+de PT bloqueado sin escribir nada, armado correcto (stock, ubicación, 3
+movimientos, consumos y orden cerrada).
 
 ## Problema
 
