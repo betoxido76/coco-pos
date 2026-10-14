@@ -9,6 +9,7 @@ import { almacenPredeterminado, verificarStock, moverStockLote } from '../lib/in
 import ModalFaltanteStock from '../components/ModalFaltanteStock'
 import FiltroCombo from '../components/FiltroCombo'
 import AvisoDocumentoEntrega from '../components/AvisoDocumentoEntrega'
+import ModalAnularPedido from '../components/ModalAnularPedido'
 import { useAltoBarra, ThOrden, BarraFija, estiloTarjetaTabla } from '../components/TablaOrdenable'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
@@ -59,6 +60,7 @@ export default function Pedidos() {
     const [pedidos, setPedidos] = useState([])
     const [loading, setLoading] = useState(true)
     const [pedidoActual, setPedidoActual] = useState(null)
+    const [modalAnulacion, setModalAnulacion] = useState(null)
     const [busqueda, setBusqueda] = useState('')
     const [filtroVendedor, setFiltroVendedor] = useState('')
     const [vendedores, setVendedores] = useState([])
@@ -409,10 +411,18 @@ export default function Pedidos() {
                                     </td>
                                     <td style={{ padding: '12px 16px' }}><BadgeEstado estado={p.estado} /></td>
                                     <td style={{ padding: '12px 16px' }}>
-                                        <button onClick={() => setPedidoActual(p)}
-                                            style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
-                                            <FileText size={13} /> Ver
-                                        </button>
+                                        <div style={{ display: 'flex', gap: '6px' }}>
+                                            <button onClick={() => setPedidoActual(p)}
+                                                style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
+                                                <FileText size={13} /> Ver
+                                            </button>
+                                            {(tabActiva === 'aprobados' || tabActiva === 'alistados') && (
+                                                <button onClick={() => setModalAnulacion(p)}
+                                                    style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #fca5a5', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#dc2626', cursor: 'pointer' }}>
+                                                    <Ban size={12} /> Anular
+                                                </button>
+                                            )}
+                                        </div>
                                     </td>
                                 </tr>
                             ))}
@@ -446,6 +456,14 @@ export default function Pedidos() {
                     </div>
                 )}
             </div>
+
+            {modalAnulacion && (
+                <ModalAnularPedido
+                    pedido={modalAnulacion}
+                    onCerrar={() => setModalAnulacion(null)}
+                    onAnulado={() => { setModalAnulacion(null); cargar(); cargarConteos() }}
+                />
+            )}
 
             {/* Toasts de nuevo pedido */}
             <div style={{ position: 'fixed', top: '20px', right: '20px', zIndex: 9999, display: 'flex', flexDirection: 'column', gap: '8px' }}>

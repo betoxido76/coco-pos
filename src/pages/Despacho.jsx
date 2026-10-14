@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { PackageCheck, ChevronRight, Check, AlertTriangle, Truck, FileText, Ban, RotateCcw, Search, Plus, X } from 'lucide-react'
 import { itemAplicaIva, precioIncluyeIva, precioBaseItem, baseLinea, totalesDeItems, totalesGuardados, IVA_PCT } from '../lib/iva'
 import FiltroCombo from '../components/FiltroCombo'
+import ModalAnularPedido from '../components/ModalAnularPedido'
 import { useAltoBarra, useOrden, ordenarFilas, ThOrden, BarraFija, TopTitulos, estiloTarjetaTabla } from '../components/TablaOrdenable'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
@@ -47,9 +48,6 @@ export default function Despacho() {
     const [pedidoVer, setPedidoVer] = useState(null)
     const [conteos, setConteos] = useState({ alistamiento: 0, porregistrar: 0, despacho: 0, devoluciones: 0 })
     const [modalAnulacion, setModalAnulacion] = useState(null)
-    const [motivoAnulacion, setMotivoAnulacion] = useState('')
-    const [anulando, setAnulando] = useState(false)
-    const [errorAnulacion, setErrorAnulacion] = useState('')
     const [clientes, setClientes] = useState([])
     const [filtroCliente, setFiltroCliente] = useState('')
     const [fechaDesde, setFechaDesde] = useState('')
@@ -162,20 +160,6 @@ export default function Despacho() {
     const totalFiltrados = ordenados.length
     const paginados = ordenados.slice(pagina * pageSize, (pagina + 1) * pageSize)
 
-    async function anularPedido() {
-        if (!motivoAnulacion.trim()) { setErrorAnulacion('El motivo de anulación es obligatorio'); return }
-        setAnulando(true); setErrorAnulacion('')
-        const { error } = await supabase.from('pedidos')
-            .update({ estado: 'anulado', motivo_anulacion: motivoAnulacion.trim() })
-            .eq('id', modalAnulacion.id)
-        setAnulando(false)
-        if (error) { setErrorAnulacion('Error: ' + error.message); return }
-        setModalAnulacion(null)
-        setMotivoAnulacion('')
-        cargar()
-        cargarConteos()
-    }
-
     if (pedidoVer)
         return <VerPedido
             pedido={pedidoVer}
@@ -276,9 +260,9 @@ export default function Despacho() {
                         </p>
                     </div>
                 ) : tabActiva === 'alistamiento' ? (
-                    <TablaAlistamiento pedidos={paginados} sortCol={sortCol} sortDir={sortDir} onSort={handleSort} onVer={p => setPedidoVer(p)} onAlistar={p => setPedidoActual(p)} onAnular={p => { setModalAnulacion(p); setMotivoAnulacion(''); setErrorAnulacion('') }} />
+                    <TablaAlistamiento pedidos={paginados} sortCol={sortCol} sortDir={sortDir} onSort={handleSort} onVer={p => setPedidoVer(p)} onAlistar={p => setPedidoActual(p)} onAnular={p => setModalAnulacion(p)} />
                 ) : tabActiva === 'porregistrar' ? (
-                    <TablaPorRegistrar pedidos={paginados} sortCol={sortCol} sortDir={sortDir} onSort={handleSort} onVer={p => setPedidoVer(p)} onAnular={p => { setModalAnulacion(p); setMotivoAnulacion(''); setErrorAnulacion('') }} />
+                    <TablaPorRegistrar pedidos={paginados} sortCol={sortCol} sortDir={sortDir} onSort={handleSort} onVer={p => setPedidoVer(p)} onAnular={p => setModalAnulacion(p)} />
                 ) : tabActiva === 'despacho' ? (
                     <TablaDespacho pedidos={paginados} sortCol={sortCol} sortDir={sortDir} onSort={handleSort} onVer={p => setPedidoVer(p)} onDespachado={() => { cargar(); cargarConteos() }} empresaId={perfil.empresa_id} />
                 ) : tabActiva === 'completados' ? (
@@ -317,45 +301,11 @@ export default function Despacho() {
 
             {/* Modal Anulación */}
             {modalAnulacion && (
-                <>
-                    <div onClick={() => setModalAnulacion(null)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', zIndex: 40 }} />
-                    <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', backgroundColor: '#fff', borderRadius: '16px', padding: '28px', width: '440px', zIndex: 50, boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '48px', height: '48px', backgroundColor: '#fef2f2', borderRadius: '12px', margin: '0 auto 16px' }}>
-                            <Ban size={22} color="#dc2626" />
-                        </div>
-                        <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#1f2937', margin: '0 0 6px', textAlign: 'center' }}>Anular pedido</h3>
-                        <p style={{ fontSize: '13px', color: '#6b7280', margin: '0 0 2px', textAlign: 'center' }}>
-                            Pedido <strong style={{ fontFamily: 'monospace', color: '#374151' }}>{modalAnulacion.numero_pedido}</strong>
-                        </p>
-                        <p style={{ fontSize: '13px', color: '#6b7280', margin: '0 0 20px', textAlign: 'center' }}>{modalAnulacion.clientes?.nombre}</p>
-                        <label style={{ fontSize: '12px', fontWeight: 600, color: '#374151', display: 'block', marginBottom: '6px' }}>
-                            Motivo de anulación <span style={{ color: '#dc2626' }}>*</span>
-                        </label>
-                        <textarea
-                            value={motivoAnulacion}
-                            onChange={e => setMotivoAnulacion(e.target.value)}
-                            placeholder="Describe el motivo por el cual se anula este pedido..."
-                            rows={3}
-                            style={{ width: '100%', padding: '10px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', color: '#374151', resize: 'vertical', boxSizing: 'border-box', fontFamily: 'inherit' }}
-                            autoFocus
-                        />
-                        {errorAnulacion && (
-                            <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '8px 12px', fontSize: '13px', color: '#dc2626', marginTop: '10px' }}>
-                                {errorAnulacion}
-                            </div>
-                        )}
-                        <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
-                            <button onClick={() => setModalAnulacion(null)}
-                                style={{ flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: '#374151', fontSize: '14px', cursor: 'pointer' }}>
-                                Cancelar
-                            </button>
-                            <button onClick={anularPedido} disabled={anulando}
-                                style={{ flex: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '10px', borderRadius: '8px', border: 'none', backgroundColor: '#dc2626', color: '#fff', fontSize: '14px', fontWeight: 600, cursor: 'pointer', opacity: anulando ? 0.6 : 1 }}>
-                                <Ban size={15} /> {anulando ? 'Anulando...' : 'Confirmar anulación'}
-                            </button>
-                        </div>
-                    </div>
-                </>
+                <ModalAnularPedido
+                    pedido={modalAnulacion}
+                    onCerrar={() => setModalAnulacion(null)}
+                    onAnulado={() => { setModalAnulacion(null); cargar(); cargarConteos() }}
+                />
             )}
         </div>
     )
