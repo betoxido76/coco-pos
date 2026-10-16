@@ -36,12 +36,15 @@ function semaforo(fechaVenc) {
     const hoy = new Date(); hoy.setHours(0, 0, 0, 0)
     const venc = new Date(fechaVenc + 'T00:00:00')
     const dias = Math.ceil((venc - hoy) / 86400000)
-    if (dias < 0) return { color: '#ef4444', bg: '#fef2f2', label: `Vencida hace ${Math.abs(dias)}d`, dot: '🔴' }
-    if (dias <= 3) return { color: '#d97706', bg: '#fffbeb', label: `Vence en ${dias}d`, dot: '🟡' }
-    return { color: '#16a34a', bg: '#f0fdf4', label: `Vence en ${dias}d`, dot: '🟢' }
+    if (dias < 0) return { color: '#ef4444', bg: '#fef2f2', label: `Vencida ${Math.abs(dias)}d`, dot: '🔴' }
+    if (dias <= 3) return { color: '#d97706', bg: '#fffbeb', label: `En ${dias}d`, dot: '🟡' }
+    return { color: '#16a34a', bg: '#f0fdf4', label: `En ${dias}d`, dot: '🟢' }
 }
 
 const PAGE_SIZE = 50
+
+// Fecha corta para las columnas de la tabla (dd/mm/aa): ahorra ancho
+const fmtFechaTabla = (d) => d.toLocaleDateString('es-VE', { day: '2-digit', month: '2-digit', year: '2-digit' })
 
 // `cobros.fecha_cobro` puede venir como 'YYYY-MM-DD' (columna date) o como
 // timestamp completo. La forma corta se parsea a medianoche LOCAL para que no
@@ -415,18 +418,18 @@ export default function CuentasCobrar() {
     const columnasCxc = [
         { key: 'chk', label: mostrarCheckboxes ? '☑' : '' },
         { key: 'dot', label: '' },
-        { key: 'nota', label: 'Nota de Entrega', orden: true },
+        { key: 'nota', label: 'NE', orden: true, angosta: true },
         { key: 'factura', label: 'Factura', orden: true },
         { key: 'cliente', label: 'Cliente', orden: true },
-        { key: 'emision', label: 'Emisión', orden: true },
+        { key: 'emision', label: 'Emisión', orden: true, angosta: true },
         ...(mostrarColsPago ? [
-            { key: 'ultimo_pago', label: 'Últ. pago', orden: true },
-            { key: 'dias_pago', label: 'Días Pago', orden: true },
+            { key: 'ultimo_pago', label: 'Últ. pago', orden: true, angosta: true },
+            { key: 'dias_pago', label: 'Días', orden: true, angosta: true },
         ] : []),
-        { key: 'vencimiento', label: 'Vencimiento', orden: true },
+        { key: 'vencimiento', label: 'Vence', orden: true, angosta: true },
         { key: 'total', label: 'Total', orden: true },
         // Solo en empresas cuyos clientes retienen (Administración → Configuración)
-        ...(hayRetClientes ? [{ key: 'retenciones', label: 'Retenciones', orden: true }] : []),
+        ...(hayRetClientes ? [{ key: 'retenciones', label: 'Ret.', orden: true, angosta: true }] : []),
         { key: 'cobrado', label: 'Cobrado', orden: true },
         { key: 'saldo', label: 'Saldo', orden: true },
         { key: 'estado', label: 'Estado', orden: true },
@@ -543,7 +546,8 @@ export default function CuentasCobrar() {
                                     <thead>
                                         <tr>
                                             {columnasCxc.map(c => (
-                                                <ThOrden key={c.key} col={c.orden ? c.key : null} orden={orden} onOrdenar={ordenarPor} top={altoBarra}>
+                                                <ThOrden key={c.key} col={c.orden ? c.key : null} orden={orden} onOrdenar={ordenarPor} top={altoBarra}
+                                                    style={c.angosta ? { padding: '10px 8px' } : undefined}>
                                                     {c.label}
                                                 </ThOrden>
                                             ))}
@@ -566,36 +570,38 @@ export default function CuentasCobrar() {
                                                         )}
                                                     </td>
                                                     <td style={{ padding: '12px 8px 12px 0', fontSize: '18px' }}>{sem?.dot || '⚪'}</td>
-                                                    <td style={{ padding: '12px 14px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>{v.numero_factura}</td>
+                                                    <td style={{ padding: '12px 8px', fontSize: '12px', fontFamily: 'monospace', color: '#374151', whiteSpace: 'nowrap' }}>{v.numero_factura}</td>
                                                     {/* "Factura" = ventas.nro_referencia, la Ref que se carga en Ventas → ver nota */}
                                                     <td style={{ padding: '12px 14px', fontSize: '13px', fontFamily: 'monospace', color: v.nro_referencia ? '#374151' : '#d1d5db' }}>{v.nro_referencia || '—'}</td>
                                                     <td style={{ padding: '12px 14px', fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>{v.clientes?.nombre || '—'}</td>
-                                                    <td style={{ padding: '12px 14px', fontSize: '13px', color: '#6b7280' }}>{new Date(v.created_at).toLocaleDateString('es-VE')}</td>
+                                                    <td style={{ padding: '12px 8px', fontSize: '12px', color: '#6b7280', whiteSpace: 'nowrap' }}>{fmtFechaTabla(new Date(v.created_at))}</td>
                                                     {mostrarColsPago && (
                                                         <>
-                                                            <td style={{ padding: '12px 14px', fontSize: '13px', whiteSpace: 'nowrap', color: cob?.ultimaFecha ? '#374151' : '#d1d5db' }}>
-                                                                {cob?.ultimaFecha ? parseFecha(cob.ultimaFecha).toLocaleDateString('es-VE') : '—'}
+                                                            <td style={{ padding: '12px 8px', fontSize: '12px', whiteSpace: 'nowrap', color: cob?.ultimaFecha ? '#374151' : '#d1d5db' }}>
+                                                                {cob?.ultimaFecha ? fmtFechaTabla(parseFecha(cob.ultimaFecha)) : '—'}
                                                             </td>
-                                                            <td style={{ padding: '12px 14px', fontSize: '13px', whiteSpace: 'nowrap', color: diasPago != null ? '#374151' : '#d1d5db' }}>
+                                                            <td style={{ padding: '12px 8px', fontSize: '12px', whiteSpace: 'nowrap', color: diasPago != null ? '#374151' : '#d1d5db' }}>
                                                                 {diasPago != null ? `${diasPago} d` : '—'}
                                                             </td>
                                                         </>
                                                     )}
-                                                    <td style={{ padding: '12px 14px' }}>
+                                                    <td style={{ padding: '12px 8px', whiteSpace: 'nowrap' }}
+                                                        title={v.fecha_vencimiento_pago ? `Vence el ${fmtFechaTabla(new Date(v.fecha_vencimiento_pago + 'T00:00:00'))}` : undefined}>
                                                         {sem ? <span style={{ fontSize: '12px', fontWeight: 500, color: sem.color }}>{sem.label}</span>
                                                             : <span style={{ fontSize: '12px', color: '#9ca3af' }}>—</span>}
                                                     </td>
                                                     <td style={{ padding: '12px 14px', fontSize: '13px', fontWeight: 600, color: '#1f2937' }}>{fmt(v.total)}</td>
                                                     {hayRetClientes && (
-                                                        <td style={{ padding: '12px 14px', fontSize: '13px', whiteSpace: 'nowrap' }}
-                                                            title={retPendiente > 0 ? `Por registrar ${fmt(retPendiente)} (estimada con el % de la empresa)` : undefined}>
+                                                        <td style={{ padding: '12px 8px', fontSize: '12px', whiteSpace: 'nowrap' }}
+                                                            title={retPendiente > 0
+                                                                ? `${retRegistrada > 0 ? `Registrada ${fmt(retRegistrada)} · ` : ''}Por registrar ${fmt(retPendiente)} (estimada con el % de la empresa)`
+                                                                : retRegistrada > 0 ? 'Registrada' : undefined}>
                                                             {!cobrosListos ? '—'
                                                                 : retRegistrada + retPendiente < 0.005 ? <span style={{ color: '#d1d5db' }}>—</span>
-                                                                : <>
-                                                                    {retRegistrada > 0 && <span style={{ color: '#4338ca' }}>{fmt(retRegistrada)}</span>}
-                                                                    {retRegistrada > 0 && retPendiente > 0 && ' + '}
-                                                                    {retPendiente > 0 && <span style={{ color: '#a5b4fc', fontStyle: 'italic' }}>{fmt(retPendiente)}</span>}
-                                                                </>}
+                                                                // Gris itálica = todavía por registrar (estimada)
+                                                                : <span style={retPendiente > 0 ? { color: '#818cf8', fontStyle: 'italic' } : { color: '#4338ca' }}>
+                                                                    {fmt(retRegistrada + retPendiente)}
+                                                                </span>}
                                                         </td>
                                                     )}
                                                     <td style={{ padding: '12px 14px', fontSize: '13px', color: '#16a34a' }}>
@@ -611,7 +617,7 @@ export default function CuentasCobrar() {
                                                     <td style={{ padding: '12px 14px' }}>
                                                         {v.estado_cobro !== 'pagado' && (
                                                             <button onClick={() => setModalVenta(v)}
-                                                                style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', padding: '5px 12px', fontSize: '12px', fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                                                style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', padding: '5px 10px', fontSize: '12px', fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap' }}>
                                                                 <DollarSign size={12} /> Cobrar
                                                             </button>
                                                         )}
