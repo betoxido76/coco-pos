@@ -2867,6 +2867,14 @@ export function Factura({ venta, onVolver, onDevolucionCreada }) {
             </div>
 
             <AvisoDocumentoEntrega clienteId={venta.cliente_id} />
+            {/* Nota amparada por una exoneración de IVA (docs/plan-exoneracion-iva.md). Solo en
+                pantalla: la leyenda impresa queda pendiente de definir con Meraki. */}
+            {venta.exoneracion_id && (
+                <div className="no-print" style={{ backgroundColor: '#eef2ff', border: '1px solid #c7d2fe', borderRadius: '10px', padding: '10px 14px', fontSize: '13px', color: '#312e81', marginBottom: '16px' }}>
+                    <strong>Nota exonerada de IVA</strong>
+                    {Number(venta.base_exonerada) > 0 && <> · base exonerada ${Number(venta.base_exonerada).toFixed(2)}</>}
+                </div>
+            )}
 
             <div className="print-target" style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '32px', marginBottom: '16px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '32px' }}>

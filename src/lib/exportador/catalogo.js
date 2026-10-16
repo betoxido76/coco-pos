@@ -25,6 +25,8 @@ const CAMPOS_VENTAS = [
     { col: 'estado_cobro', label: 'Estado de cobro', tipo: 'texto', grupo: 'Documento' },
     { col: 'estatus', label: 'Estatus (pagado / al día / vencido)', tipo: 'texto', grupo: 'Documento', def: true },
     { col: 'anulada', label: 'Anulada', tipo: 'bool', grupo: 'Documento' },
+    { col: 'exonerada_iva', label: 'Exonerada de IVA', tipo: 'bool', grupo: 'Documento' },
+    { col: 'exoneracion_referencia', label: 'Referencia de la exoneración', tipo: 'texto', grupo: 'Documento' },
     // Cliente
     { col: 'cliente_codigo', label: 'Código cliente', tipo: 'texto', grupo: 'Cliente' },
     { col: 'cliente', label: 'Cliente', tipo: 'texto', grupo: 'Cliente', def: true },
@@ -64,6 +66,7 @@ const CAMPOS_VENTAS = [
     // Montos del documento
     { col: 'base_gravada', label: 'Base gravada', tipo: 'moneda', grupo: 'Montos del documento' },
     { col: 'base_exenta', label: 'Base exenta', tipo: 'moneda', grupo: 'Montos del documento' },
+    { col: 'base_exonerada', label: 'Base exonerada (parte de la exenta)', tipo: 'moneda', grupo: 'Montos del documento' },
     { col: 'iva', label: 'IVA', tipo: 'moneda', grupo: 'Montos del documento' },
     { col: 'total', label: 'Total', tipo: 'moneda', grupo: 'Montos del documento', def: true },
     { col: 'cobrado', label: 'Cobrado', tipo: 'moneda', grupo: 'Montos del documento' },
@@ -310,7 +313,7 @@ const CAMPOS_MOVIMIENTOS = [
 ]
 
 // Montos del documento repetidos en el detalle por producto
-const COLS_DEL_DOC = new Set(['pagado', 'aplicado_anticipos', 'aplicado_notas_debito', 'retenido', 'descuento_pronto_pago', 'base_gravada', 'base_exenta', 'iva', 'total', 'cobrado', 'nc_aplicadas', 'saldo',
+const COLS_DEL_DOC = new Set(['pagado', 'aplicado_anticipos', 'aplicado_notas_debito', 'retenido', 'descuento_pronto_pago', 'base_gravada', 'base_exenta', 'base_exonerada', 'iva', 'total', 'cobrado', 'nc_aplicadas', 'saldo',
     'unidades_primarias', 'descuento_global', 'unidades_pedidas', 'unidades_alistadas'])
 
 const AVISO_COSTO = 'Costo estimado = Sí: venta anterior a 2026-10-03, sin foto del costo al facturar; se usa el costo promedio actual del producto'

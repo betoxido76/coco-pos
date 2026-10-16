@@ -1,0 +1,8 @@
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Clientes exonerados de IVA — Fase 4: exportador (docs/plan-exoneracion-iva.md)
+-- v_export_ventas agrega al final: base_exonerada (parte de base_exenta),
+-- exonerada_iva y exoneracion_referencia. Aplicado el 2026-10-16 con
+-- CREATE OR REPLACE VIEW (columnas nuevas al final, el resto igual) y el
+-- LEFT JOIN exoneraciones_iva ex ON ex.id = v.exoneracion_id.
+-- Definición completa: SELECT pg_get_viewdef('v_export_ventas'::regclass);
+-- ═══════════════════════════════════════════════════════════════════════════
