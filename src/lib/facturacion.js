@@ -7,6 +7,9 @@
 //   - Cantidad facturada en la UNIDAD DE VENTA de la línea: lo alistado (en
 //     unidades primarias) ÷ factor si la línea es UM2.
 //   - El IVA se evalúa con el catálogo VIGENTE al facturar; desde aquí queda fijo.
+//   - Cliente exonerado (exoneración vigente al facturar, docs/plan-exoneracion-iva.md):
+//     todas las líneas van sin IVA; la base marca las gravadas como iva_exonerado
+//     y exige que la nota lleve exoneracion_id.
 //   - El precio de la línea pasa a la nota en base, con los descuentos aplicados.
 
 import { precioBaseItem, itemAplicaIva, totalesDocumento, IVA_PCT } from './iva'
@@ -45,10 +48,11 @@ export const lineasFacturables = (items) =>
 // → { lineas, totales }
 //   lineas: payload de venta_items sin venta_id/empresa_id, más `_cantPrim`
 //   totales: { base_gravada, base_exenta, subtotal, iva, total }
-export function prepararFacturaPedido(items, descGlobalPct = 0) {
+//   opciones.exonerado: el cliente tiene exoneración de IVA vigente
+export function prepararFacturaPedido(items, descGlobalPct = 0, { exonerado = false } = {}) {
     const fGlobal = 1 - Number(descGlobalPct || 0) / 100
     const lineas = lineasFacturables(items).map(i => {
-        const aplica = aplicaIvaAlFacturar(i)
+        const aplica = exonerado ? false : aplicaIvaAlFacturar(i)
         const cantidad = cantidadVenta(i)
         // precioBaseItem respeta la convención con la que se guardó la línea
         const precio = precioBaseItem(i) * (1 - Number(i.descuento_item || 0) / 100) * fGlobal

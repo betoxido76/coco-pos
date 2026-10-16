@@ -9,6 +9,8 @@ import { almacenPredeterminado, verificarStock, moverStockLote } from '../lib/in
 import ModalFaltanteStock from '../components/ModalFaltanteStock'
 import FiltroCombo from '../components/FiltroCombo'
 import AvisoDocumentoEntrega from '../components/AvisoDocumentoEntrega'
+import AvisoExoneracion from '../components/AvisoExoneracion'
+import { exoneracionVigente, aplicaIvaCliente } from '../lib/exoneracion'
 import ModalAnularPedido from '../components/ModalAnularPedido'
 import { useAltoBarra, ThOrden, BarraFija, estiloTarjetaTabla } from '../components/TablaOrdenable'
 
@@ -530,6 +532,13 @@ function DetallePedido({ pedido, onVolver }) {
             .then(({ data }) => { if (data) setItems(data); setLoading(false) })
     }, [pedido.id])
 
+    // Exoneración de IVA vigente hoy: decide el IVA de la nota al facturar
+    const [exoneracion, setExoneracion] = useState(null)
+    useEffect(() => {
+        if (!['pendiente', 'aprobado', 'alistado'].includes(pedido.estado)) return
+        exoneracionVigente(pedido.cliente_id).then(setExoneracion)
+    }, [pedido.id, pedido.estado])
+
     // Condición del cliente, para el aviso del paso de facturación
     useEffect(() => {
         if (pedido.estado !== 'alistado' || !perfil?.empresa_id) return
@@ -741,8 +750,9 @@ function DetallePedido({ pedido, onVolver }) {
                     subtotal: cantidad * precio * (1 - desc / 100),
                     unidad_venta: item.unidad_venta,
                     cantidad_primaria: (esUM2(item) && factor > 1) ? cantidad * factor : cantidad,
-                    // Snapshot de la condición de IVA al crear la línea; precio en base (src/lib/iva.js)
-                    ...camposIvaLinea(item.aplica_iva ?? true),
+                    // Snapshot de la condición de IVA al crear la línea; precio en base (src/lib/iva.js).
+                    // Cliente exonerado: sin IVA (la nota lo vuelve a evaluar al facturar)
+                    ...camposIvaLinea(aplicaIvaCliente(item.aplica_iva ?? true, !!exoneracion)),
                 }
             }))
             if (errIns) { setError('Error al agregar productos: ' + errIns.message); setGuardandoEdit(false); return }
@@ -848,7 +858,9 @@ function DetallePedido({ pedido, onVolver }) {
         }
 
         // Líneas y totales de la nota: src/lib/facturacion.js (IVA del catálogo vigente)
-        const { lineas: lineasNota, totales: totalesNota } = prepararFacturaPedido(items, descGlobal)
+        // Exoneración: se vuelve a consultar al facturar (pudo vencer o revocarse)
+        const exo = await exoneracionVigente(pedido.cliente_id)
+        const { lineas: lineasNota, totales: totalesNota } = prepararFacturaPedido(items, descGlobal, { exonerado: !!exo })
 
         const { data: venta, error: errVenta } = await supabase
             .from('ventas')
@@ -868,13 +880,20 @@ function DetallePedido({ pedido, onVolver }) {
                 direccion_entrega_texto: pedido.direccion_entrega_texto || null,
                 direccion_entrega_nombre: pedido.direccion_entrega_nombre || null,
                 pedido_id: pedido.id,
+                exoneracion_id: exo?.id || null,
             })
             .select()
             .single()
 
         if (errVenta) { setError('Error al crear factura: ' + errVenta.message); setProcesando(false); return }
 
-        await supabase.from('venta_items').insert(lineasParaInsert(lineasNota, venta.id, perfil.empresa_id))
+        // Si las líneas no entran (p. ej. el candado de exoneración), no puede
+        // quedar una nota vacía: se borra la recién creada y se avisa.
+        const { error: errItems } = await supabase.from('venta_items').insert(lineasParaInsert(lineasNota, venta.id, perfil.empresa_id))
+        if (errItems) {
+            await supabase.from('ventas').delete().eq('id', venta.id)
+            setError('No se pudo registrar la nota: ' + errItems.message); setProcesando(false); return
+        }
 
         // Descontar stock — una sola transacción en la base (mover_stock_lote).
         // Antes esto eran 4 llamadas HTTP por ítem desde el navegador: si se
@@ -933,6 +952,7 @@ function DetallePedido({ pedido, onVolver }) {
 
             {/* Pestaña Por Registrar: recordar con qué documento se entrega al cliente */}
             {pedido.estado === 'alistado' && <AvisoDocumentoEntrega clienteId={pedido.cliente_id} />}
+            <AvisoExoneracion exoneracion={exoneracion} facturando={pedido.estado === 'alistado'} />
 
             {/* Info cabecera */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '20px' }}>

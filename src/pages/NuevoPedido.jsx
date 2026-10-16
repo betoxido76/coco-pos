@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import { precioBaseItem, baseLinea, totalesDeItems, camposIvaLinea, IVA_PCT } from '../lib/iva'
+import { exoneracionVigente, aplicaIvaCliente } from '../lib/exoneracion'
 import {
     Search, Plus, Minus, Trash2, Check, ChevronRight, ChevronLeft,
     X, Clock, Package, ShoppingCart, DollarSign, Users, AlertCircle,
@@ -1666,6 +1667,10 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
     const [cxcVencido, setCxcVencido] = useState(0)
     const [saldoFavor, setSaldoFavor] = useState(0)
     const [ultimaCompra, setUltimaCompra] = useState({})
+    // Cliente exonerado de IVA (docs/plan-exoneracion-iva.md): el pedido va sin
+    // IVA. Sin conexión no se puede consultar: el pedido sale con IVA y la nota
+    // lo corrige al facturar, que vuelve a evaluar la exoneración.
+    const [exoneracion, setExoneracion] = useState(null)
 
     // Paso 2 — Productos
     const [listas, setListas] = useState([])
@@ -1686,6 +1691,8 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
     const [pedidoCreado, setPedidoCreado] = useState(null)
 
     async function cargarDatosCliente(clienteId) {
+        setExoneracion(null)
+        exoneracionVigente(clienteId).then(setExoneracion).catch(() => {})
         const [{ data: dirs }, { data: ventas }, { data: ultimosPedidos }, { data: listasCli }] = await Promise.all([
             supabase.from('direcciones_entrega')
                 .select('*').eq('cliente_id', clienteId).eq('empresa_id', perfil.empresa_id)
@@ -1932,12 +1939,12 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
             // Snapshot de IVA y precio en base. Los pedidos que quedaron en la cola
             // offline antes del cambio no traen precio_incluye_iva y la base de
             // datos los marca con la convención vieja (default true).
-            ...camposIvaLinea(i.aplica_iva ?? true),
+            ...camposIvaLinea(aplicaIvaCliente(i.aplica_iva ?? true, !!exoneracion)),
         }
     }
 
     // Precios de lista en base; el IVA se suma (src/lib/iva.js), igual que en el resto del sistema
-    const lineasCalc = items.map(i => ({ ...i, precio_unitario: i.precio }))
+    const lineasCalc = items.map(i => ({ ...i, precio_unitario: i.precio, ...(exoneracion ? { aplica_iva: false } : {}) }))
     const totales = totalesDeItems(lineasCalc, { descGlobal: descuentoGlobal })
     const { subtotal, iva, total } = totales
     const descGlobalMonto = Math.max(0, totalesDeItems(lineasCalc).subtotal - subtotal)
@@ -2382,6 +2389,12 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
                     )}
                 </div>
 
+                {exoneracion && (
+                    <div style={{ backgroundColor: '#eef2ff', border: '1px solid #c7d2fe', borderRadius: '12px', padding: '12px 16px', marginBottom: '12px' }}>
+                        <p style={{ fontSize: '13px', fontWeight: 700, color: '#4338ca', margin: '0 0 2px' }}>Cliente exonerado de IVA</p>
+                        <p style={{ fontSize: '12px', color: '#6366f1', margin: 0 }}>El pedido se calcula sin IVA · Ref. {exoneracion.referencia}</p>
+                    </div>
+                )}
                 {cxcVencido > 0 && (
                     <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '12px', padding: '12px 16px', display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '12px' }}>
                         <AlertCircle size={20} color="#dc2626" style={{ flexShrink: 0 }} />

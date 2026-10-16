@@ -11,6 +11,8 @@ import { almacenPredeterminado, verificarStock, moverStockLote } from '../lib/in
 import ModalFaltanteStock from '../components/ModalFaltanteStock'
 import FiltroCombo from '../components/FiltroCombo'
 import AvisoDocumentoEntrega from '../components/AvisoDocumentoEntrega'
+import AvisoExoneracion from '../components/AvisoExoneracion'
+import { exoneracionVigente, aplicaIvaCliente } from '../lib/exoneracion'
 import { ymdCaracas } from '../components/SelectorFechaTasa'
 import { useAltoBarra, useOrden, ordenarFilas, ThOrden, estiloTarjetaTabla } from '../components/TablaOrdenable'
 
@@ -443,8 +445,11 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
     const [ocCliente, setOcCliente] = useState(pedido.oc_cliente || '')
     const [condicion, setCondicion] = useState('credito')
     const [diasCredito, setDiasCredito] = useState(0)
+    // Exoneración de IVA vigente HOY (al facturar), no al tomar el pedido
+    const [exoneracion, setExoneracion] = useState(null)
 
     useEffect(() => {
+        exoneracionVigente(pedido.cliente_id).then(setExoneracion)
         supabase.from('pedido_items')
             .select('*, productos_terminados(nombre, sku, stock_actual, aplica_iva, tipo_producto, unidad_venta_2, factor_conversion_2, costo_promedio)')
             .eq('pedido_id', pedido.id)
@@ -463,9 +468,9 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
     }, [pedido.id])
 
     const descGlobal = Number(pedido.descuento_global || 0)
-    const { lineas: lineasNota, totales } = prepararFacturaPedido(items, descGlobal)
+    const { lineas: lineasNota, totales } = prepararFacturaPedido(items, descGlobal, { exonerado: !!exoneracion })
     const { iva, total } = totales
-    const descGlobalMonto = prepararFacturaPedido(items, 0).totales.subtotal - totales.subtotal
+    const descGlobalMonto = prepararFacturaPedido(items, 0, { exonerado: !!exoneracion }).totales.subtotal - totales.subtotal
 
     async function facturar(permitirFaltante = false) {
         if (condicion === 'credito' && Number(diasCredito) <= 0) {
@@ -528,12 +533,19 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
                 direccion_entrega_texto: pedido.direccion_entrega_texto || null,
                 direccion_entrega_nombre: pedido.direccion_entrega_nombre || null,
                 pedido_id: pedido.id,
+                exoneracion_id: exoneracion?.id || null,
             })
             .select().single()
 
         if (errVenta) { setError('Error: ' + errVenta.message); setProcesando(false); return }
 
-        await supabase.from('venta_items').insert(lineasParaInsert(lineasNota, venta.id, perfil.empresa_id))
+        // Si las líneas no entran (p. ej. el candado de exoneración), no puede
+        // quedar una nota vacía: se borra la recién creada y se avisa.
+        const { error: errItems } = await supabase.from('venta_items').insert(lineasParaInsert(lineasNota, venta.id, perfil.empresa_id))
+        if (errItems) {
+            await supabase.from('ventas').delete().eq('id', venta.id)
+            setError('No se pudo registrar la nota: ' + errItems.message); setProcesando(false); return
+        }
 
         // Descontar stock — una sola transacción en la base (mover_stock_lote).
         // El motor salta servicios, reparte entre ubicaciones del almacén y
@@ -584,6 +596,8 @@ function FacturarPedido({ pedido, onFacturado, onCancelar }) {
                     </div>
                 ))}
             </div>
+
+            <AvisoExoneracion exoneracion={exoneracion} facturando />
 
             {/* Dirección de entrega */}
             <div style={{ backgroundColor: '#f9fafb', borderRadius: '10px', border: '1px solid #e5e7eb', padding: '12px 16px', marginBottom: '20px' }}>
@@ -885,6 +899,15 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
             .then(({ data }) => { setModelosV([...new Set((data || []).map(v => v.modelo))].sort()); setModeloV('') })
     }, [marcaV, perfil.empresa_id])
 
+    // Cliente exonerado de IVA (docs/plan-exoneracion-iva.md): sus líneas van sin IVA
+    const [exoneracion, setExoneracion] = useState(null)
+    useEffect(() => {
+        if (!clienteId) { setExoneracion(null); return }
+        let cancel = false
+        exoneracionVigente(clienteId).then(e => { if (!cancel) setExoneracion(e) })
+        return () => { cancel = true }
+    }, [clienteId])
+
     // Leer borrador al montar (máx 24h de antigüedad)
     useEffect(() => {
         const raw = localStorage.getItem(DRAFT_KEY)
@@ -1106,9 +1129,11 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
         setItems(prev => prev.map(i => i.producto_id === id ? { ...i, descuento_item: val } : i))
     }
 
-    // Precios en base imponible; el IVA se suma (src/lib/iva.js)
-    const totales = totalesDeItems(items, { descGlobal: descuentoGlobal })
-    const totalBruto = totalesDeItems(items).total
+    // Precios en base imponible; el IVA se suma (src/lib/iva.js). Cliente
+    // exonerado: todas las líneas sin IVA.
+    const itemsIva = exoneracion ? items.map(i => ({ ...i, aplica_iva: false })) : items
+    const totales = totalesDeItems(itemsIva, { descGlobal: descuentoGlobal })
+    const totalBruto = totalesDeItems(itemsIva).total
     const { subtotal, total, iva: impuesto } = totales
 
     // ── HANDLER UNIFICADO: bifurca internamente según flujo ──
@@ -1172,6 +1197,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                     direccion_entrega_id: direccionId || null,
                     direccion_entrega_texto: direccionId ? direcciones.find(d => d.id === direccionId)?.direccion || null : null,
                     direccion_entrega_nombre: direccionId ? direcciones.find(d => d.id === direccionId)?.nombre || null : null,
+                    exoneracion_id: exoneracion?.id || null,
                 })
                 .select()
                 .single()
@@ -1179,11 +1205,13 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
             if (errVenta) { setError('Error al crear la venta: ' + errVenta.message); setGuardando(false); return }
 
             const descGlobal = Number(descuentoGlobal) || 0
-            await supabase.from('venta_items').insert(
+            // Si las líneas no entran (p. ej. el candado de exoneración) no puede
+            // quedar una nota vacía: se borra y se avisa, antes de mover stock.
+            const { error: errItems } = await supabase.from('venta_items').insert(
                 items.map(i => ({
                     venta_id: venta.id, producto_id: i.producto_id, cantidad: i.cantidad,
                     precio_unitario: i.precio_unitario * (1 - Number(i.descuento_item || 0) / 100) * (1 - descGlobal / 100),
-                    ...camposIvaLinea(i.aplica_iva ?? true),
+                    ...camposIvaLinea(aplicaIvaCliente(i.aplica_iva ?? true, !!exoneracion)),
                     base_linea: i.cantidad * i.precio_unitario * (1 - Number(i.descuento_item || 0) / 100) * (1 - descGlobal / 100),
                     // Foto del costo al vender, por unidad de venta (exportador: margen)
                     costo_unitario: i.costo_promedio != null
@@ -1194,6 +1222,10 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                     cantidad_primaria: i.unidadVenta === '2' ? i.cantidad * (i.factor_conversion_2 || 1) : i.cantidad,
                 }))
             )
+            if (errItems) {
+                await supabase.from('ventas').delete().eq('id', venta.id)
+                setError('No se pudo registrar la venta: ' + errItems.message); setGuardando(false); return
+            }
 
             if (condicion === 'contado') {
                 const tasa = tasas[tipoTasa] || 1
@@ -1278,7 +1310,7 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                     unidad_venta: i.unidadVenta === '2' ? i.unidad_venta_2 : i.unidad_medida,
                     cantidad_primaria: i.unidadVenta === '2' ? i.cantidad * (i.factor_conversion_2 || 1) : i.cantidad,
                     // Snapshot de la condición de IVA al crear el pedido; precio en base
-                    ...camposIvaLinea(i.aplica_iva ?? true),
+                    ...camposIvaLinea(aplicaIvaCliente(i.aplica_iva ?? true, !!exoneracion)),
                 }))
             )
 
@@ -1402,6 +1434,8 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                                 </>
                             )}
                         </div>
+
+                        <AvisoExoneracion exoneracion={exoneracion} facturando={esRetail} style={{ marginTop: '10px', marginBottom: 0 }} />
 
                         {/* Selector de dirección */}
                         {direcciones.length > 1 && (
