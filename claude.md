@@ -177,7 +177,8 @@ guardado se bloquea (hay que cargarlas primero en Administración).
 real (`cobros.fecha_cobro`, `pagos_proveedor.fecha_pago`), nunca por
 `created_at`; convertir con `ymdCaracas()` y filtrar con
 `inicioDiaCaracas()`/`finDiaCaracas()`. No son dinero y se excluyen de caja: los
-cobros con `devolucion_id` (NC aplicada), los `pagos_proveedor` con
+cobros con `devolucion_id` (NC aplicada) o con `retencion_id` (retención que nos
+hizo el cliente), los `pagos_proveedor` con
 `devolucion_proveedor_id` (nota de crédito de proveedor aplicada, también en
 `pagos` para gastos) o con `anticipo_id` (aplicación de un
 anticipo: el dinero salió con el anticipo, `anticipos_proveedor`, en su `fecha`),
@@ -318,6 +319,38 @@ IVA = IVA del documento × %; ISLR = base imponible (sin IVA) × %.
   trae `numero_comprobante`, `periodo`, `concepto_islr` y enteramiento vacíos.
 - Diseño y decisiones: `docs/plan-retenciones.md`.
 
+### Retenciones que nos hacen los clientes (CxC)
+
+Espejo de lo anterior: el cliente **contribuyente especial**
+(`clientes.contribuyente_especial`) le retiene IVA/ISLR a la empresa al pagar.
+Los % son **de la empresa**, no del cliente: `empresas.ret_clientes_pct_iva` /
+`ret_clientes_pct_islr` (Administración → Configuración; NULL/0 = no aplica;
+Meraki: IVA 100, ISLR 0). IVA = IVA de la nota × %; ISLR = base imponible × %,
+con los montos guardados de la nota (`totalesGuardados`).
+
+- La retención (`retenciones`, `origen_tipo = 'venta'` + `cliente_id`) es un
+  **abono sin caja**: fila en `cobros` con `retencion_id`, `metodo_usd`
+  `retencion_iva`/`retencion_islr` y sin cuenta bancaria. Todo lector de saldo
+  ya la cuenta; Finanzas la excluye (Bancos va por cuenta bancaria).
+- **Toda escritura por RPC**: `registrar_retenciones_venta` (calcula en el
+  servidor y recalcula `estado_cobro` con `_recalcular_estado_cobro_venta`),
+  `actualizar_comprobante_retencion` (N° del comprobante del cliente, opcional
+  al cobrar) y `anular_retencion` (rama venta: borra su fila de `cobros`, que no
+  tiene anulación lógica). El trigger `cobros_guarda_retencion` impide escribir
+  `retencion_id` fuera de la RPC. Anular la nota (`estado_cobro = 'anulado'`)
+  anula sus retenciones (trigger `ventas_anula_retenciones`).
+- Cobro (individual y múltiple): `BloqueRetencionesCobro`; A cobrar = saldo −
+  retención. Desmarcar = registrarla después (el cliente pagó el neto y la nota
+  queda parcial, "Falta comprobante"). Vista previa con
+  `src/lib/retencionesCliente.js` (misma fórmula que la RPC).
+- Tabla CxC: Total · Retenciones (registradas + por registrar, estimada con el
+  % vigente) · Cobrado · Saldo = Total − Retenciones − Cobrado. KPIs netos. La
+  columna y la pestaña **CxC → Retenciones** (`PanelRetenciones lado="clientes"`)
+  solo aparecen si la empresa configuró %.
+- Venta directa retail de contado (Ventas → nueva venta) sigue cobrando en el
+  acto y no propone retención: hoy solo la usa Super Frenos, sin %.
+- Diseño y decisiones: `docs/plan-retenciones-clientes.md`.
+
 Los cobros y gastos manejan `monto_usd` + `monto_bs` + `tasa_cambio` + `tipo_tasa`.
 El equivalente en USD = `monto_usd + (monto_bs / tasa)`.
 
@@ -443,6 +476,7 @@ Al cerrar un ítem, borrarlo de esta tabla.
 | Item | Prioridad | Descripción |
 |---|---|---|
 | Recorrido de retenciones en producción | Alta | Nada del circuito de retenciones (`docs/plan-retenciones.md`) se probó en navegador (las RPC sí, en BEGIN/ROLLBACK). Activar Meraki como agente, marcar 1 proveedor y probar: recepción a crédito pagada desde CxP, recepción de contado (pagar en el acto), gasto "Pagado" con y sin desglose, pago parcial, anular el abono de una retención, pestaña Retenciones + Excel. Revisar Finanzas y Bancos después. |
+| Recorrido de retenciones de clientes (CxC) | Alta | Nada se probó en navegador (las RPC sí, en BEGIN/ROLLBACK). Meraki quedó configurada (IVA 100 %, ISLR 0). Cobrar una nota de un contribuyente especial con retención y N° de comprobante, otra solo con el dinero neto (queda "Falta comprobante") y luego registrar su retención, un cobro múltiple, completar un N° desde CxC → Retenciones, anular una retención y una NE con retención. Revisar Finanzas y el exportador. |
 | Recorrido de NC de proveedores en producción | Alta | Nada se probó en navegador (las RPC sí, en BEGIN/ROLLBACK). Registrar una NCP con y sin recepción, aplicarla en parte a una recepción y el resto a un gasto del mismo proveedor, anular una aplicación desde CxP → Ver recepción, anular la nota, liquidar otra por reembolso. Revisar que las ND de Super Frenos se sigan viendo y aplicando. |
 | Validar retenciones con el contador | Media | (1) ¿IVA e ISLR completos en el primer abono o el ISLR proporcional a cada abono? (2) ¿La base del ISLR incluye la parte exenta? (3) ¿Las NDs y el descuento por pronto pago reducen la base retenida? Hoy: completas en el primer pago, base gravada + exenta, sin ajuste por ND/descuento. |
 | Recorrido de anticipos en producción | Alta | Nada del circuito de anticipos (`docs/plan-anticipos-proveedor.md`) se probó en navegador. Correr los 7 casos de la Fase 7 con una OC real pequeña antes de anunciarlo a los usuarios. |

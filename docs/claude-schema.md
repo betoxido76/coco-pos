@@ -2,6 +2,8 @@
 ```
 empresas              -- Clientes del sistema
                       --   agente_retencion boolean: retiene IVA/ISLR a proveedores (CLAUDE.md §7)
+                      --   ret_clientes_pct_iva / ret_clientes_pct_islr numeric: % que le retienen
+                      --   los clientes contribuyentes especiales (NULL/0 = no aplica)
 usuarios              -- Roles: admin, vendedor, produccion, almacen, finanzas, superadmin
 modulos               -- Catálogo de módulos disponibles
 empresa_modulos       -- Módulos contratados por empresa
@@ -62,6 +64,9 @@ cobros                -- Cobros parciales/totales en multimoneda
                       --   cliente al momento del pago. NULL = no registrado (cobros
                       --   viejos). NO hacer JOIN a clientes para reportes: el estatus
                       --   cambia en el tiempo y reescribiría el pasado.
+                      --   retencion_id → retenciones: abono de una RETENCIÓN del cliente
+                      --   (metodo_usd 'retencion_iva'/'retencion_islr'). Sin cuenta (CHECK),
+                      --   solo vía RPC registrar_retenciones_venta (trigger). No es caja.
 devoluciones          -- Notas de crédito (monto_devuelto con IVA; subtotal, base_gravada, base_exenta, iva)
                       --   numero_nc, cliente_id, nota_liquidacion, fecha_liquidacion
                       --   estado_nc CHECK IN ('pendiente','aplicada','reembolsada','anulada')
@@ -105,7 +110,10 @@ pagos_proveedor       -- Pagos a proveedores
                       --   registrar_retenciones (trigger). Lectores de caja la excluyen.
                       --   fecha_pago timestamptz: escribir con fechaAtimestamp() (mediodía)
 retenciones           -- Retenciones de IVA/ISLR al pagar a un proveedor (docs/plan-retenciones.md)
-                      --   tipo ('iva'|'islr'), origen_tipo ('compra'|'gasto'), origen_id (sin FK),
+                      --   y las que nos hacen los clientes: origen_tipo 'venta' + cliente_id
+                      --   (proveedor_id NULL, CHECK), numero_comprobante = N° del cliente
+                      --   (docs/plan-retenciones-clientes.md)
+                      --   tipo ('iva'|'islr'), origen_tipo ('compra'|'gasto'|'venta'), origen_id (sin FK),
                       --   proveedor_id, fecha, base_calculo, porcentaje (foto), monto_usd,
                       --   tasa_cambio, tipo_tasa, monto_bs, estado ('vigente'|'anulada') + anulación
                       --   Única vigente por (origen_tipo, origen_id, tipo).

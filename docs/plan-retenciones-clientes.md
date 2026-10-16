@@ -1,6 +1,7 @@
 # Plan — Retenciones de IVA e ISLR que nos hacen los clientes (CxC)
 
-Borrador 2026-10-16. Es el espejo en CxC de
+Aprobado e implementado 2026-10-16 (fases 1-7). Meraki configurada: IVA 100 %,
+ISLR 0. Falta el recorrido en navegador (backlog de CLAUDE.md). Es el espejo en CxC de
 `docs/plan-retenciones.md` (CxP): allá la empresa retiene al proveedor; aquí el
 **cliente contribuyente especial** le retiene a la empresa. Primer cliente: Meraki.
 
