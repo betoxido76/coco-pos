@@ -649,7 +649,7 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
                 .order('fecha_vencimiento_pago', { ascending: true }),
 
             supabase.from('cobros')
-                .select('id, fecha_cobro, monto_usd, monto_bs, tasa_cambio, tipo_tasa, ventas!inner(cliente_id)')
+                .select('id, fecha_cobro, monto_usd, monto_bs, tasa_cambio, tipo_tasa, metodo_usd, devolucion_id, retencion_id, ventas!inner(cliente_id)')
                 .eq('ventas.cliente_id', cliente.id)
                 .eq('empresa_id', perfil.empresa_id)
                 .order('fecha_cobro', { ascending: false })
@@ -1142,7 +1142,10 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
                                             return (
                                                 <div key={c.id} style={{ padding: '12px 16px', borderBottom: '1px solid #f3f4f6', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                                     <div>
-                                                        <p style={{ fontSize: '13px', fontWeight: 500, color: '#1f2937', margin: '0 0 2px' }}>Cobro recibido</p>
+                                                        <p style={{ fontSize: '13px', fontWeight: 500, color: '#1f2937', margin: '0 0 2px' }}>
+                                                            {c.retencion_id ? `Retención ${c.metodo_usd === 'retencion_islr' ? 'ISLR' : 'IVA'}`
+                                                                : c.devolucion_id ? 'Nota de crédito aplicada' : 'Cobro recibido'}
+                                                        </p>
                                                         <p style={{ fontSize: '12px', color: '#9ca3af', margin: 0 }}>{fmtFecha(c.fecha_cobro)}</p>
                                                     </div>
                                                     <p style={{ fontSize: '15px', fontWeight: 700, color: '#16a34a', margin: 0 }}>{fmt(montoTotal)}</p>

@@ -99,11 +99,13 @@ export default function Finanzas() {
             { data: dPagos }, { data: dAnt }, { data: dReemb },
         ] = await Promise.all([
             // Caja realizada: cada movimiento en su fecha REAL, no la de carga.
-            // Una NC aplicada como cobro no es dinero que entra.
+            // Una NC aplicada como cobro no es dinero que entra, ni la retención
+            // que nos hace un cliente (docs/plan-retenciones-clientes.md).
             supabase.from('cobros')
                 .select('*, ventas(numero_factura, clientes(nombre))')
                 .eq('empresa_id', perfil.empresa_id)
                 .is('devolucion_id', null)
+                .is('retencion_id', null)
                 .gte('fecha_cobro', inicioDiaCaracas(desde))
                 .lte('fecha_cobro', finDiaCaracas(hasta)),
 
