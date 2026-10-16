@@ -476,6 +476,7 @@ Al cerrar un ítem, borrarlo de esta tabla.
 | Item | Prioridad | Descripción |
 |---|---|---|
 | Recorrido de retenciones en producción | Alta | Nada del circuito de retenciones (`docs/plan-retenciones.md`) se probó en navegador (las RPC sí, en BEGIN/ROLLBACK). Activar Meraki como agente, marcar 1 proveedor y probar: recepción a crédito pagada desde CxP, recepción de contado (pagar en el acto), gasto "Pagado" con y sin desglose, pago parcial, anular el abono de una retención, pestaña Retenciones + Excel. Revisar Finanzas y Bancos después. |
+| Recorrido de exoneración de IVA | Alta | Nada se probó en navegador (la base sí, en BEGIN/ROLLBACK). Cargar el RIF de ANA ISABEL ACEDO (Meraki), registrarle la exoneración, tomar un pedido (NuevoPedido y Ventas), facturarlo y ver la nota sin IVA con "Nota exonerada"; revocarla y facturar otro (con IVA). Revisar el exportador. Pendiente: texto de la leyenda impresa (Meraki con su contador). |
 | Recorrido de retenciones de clientes (CxC) | Alta | Nada se probó en navegador (las RPC sí, en BEGIN/ROLLBACK). Meraki quedó configurada (IVA 100 %, ISLR 0). Cobrar una nota de un contribuyente especial con retención y N° de comprobante, otra solo con el dinero neto (queda "Falta comprobante") y luego registrar su retención, un cobro múltiple, completar un N° desde CxC → Retenciones, anular una retención y una NE con retención. Revisar Finanzas y el exportador. |
 | Recorrido de NC de proveedores en producción | Alta | Nada se probó en navegador (las RPC sí, en BEGIN/ROLLBACK). Registrar una NCP con y sin recepción, aplicarla en parte a una recepción y el resto a un gasto del mismo proveedor, anular una aplicación desde CxP → Ver recepción, anular la nota, liquidar otra por reembolso. Revisar que las ND de Super Frenos se sigan viendo y aplicando. |
 | Validar retenciones con el contador | Media | (1) ¿IVA e ISLR completos en el primer abono o el ISLR proporcional a cada abono? (2) ¿La base del ISLR incluye la parte exenta? (3) ¿Las NDs y el descuento por pronto pago reducen la base retenida? Hoy: completas en el primer pago, base gravada + exenta, sin ajuste por ND/descuento. |
@@ -511,6 +512,15 @@ Al cerrar un ítem, borrarlo de esta tabla.
   - Pedidos: `pedidos.total`/`base_*`/`iva` los mantiene el trigger `recalcular_totales_pedido` (cualquier cambio de líneas, estado o descuento global); facturado = montos de su nota. Las listas leen ese total. `pedido_items.subtotal` es la base de la línea.
   - Facturar un pedido: SOLO `src/lib/facturacion.js` (`prepararFacturaPedido`): cantidad en unidad de venta, IVA del catálogo vigente al facturar, totales de la nota.
   - Una NC o SDR contra una factura hereda `aplica_iva` y `precio_incluye_iva` de la línea original (`camposIvaHeredados`).
+  - **Clientes exonerados de IVA** (`docs/plan-exoneracion-iva.md`): con una exoneración vigente
+    (`exoneraciones_iva`, una por cliente, referencia obligatoria, RIF requerido, solo admin/finanzas
+    vía `registrar_exoneracion_iva` / `revocar_exoneracion_iva`) todas las líneas van sin IVA
+    (`aplicaIvaCliente` y `exoneracionVigente` de `src/lib/exoneracion.js`; `prepararFacturaPedido(…, { exonerado })`).
+    Se vuelve a consultar **al facturar** y la nota guarda `ventas.exoneracion_id`. Candado: el trigger
+    `venta_items_exoneracion` rechaza una línea de producto gravado sin IVA si la nota no está amparada
+    por una exoneración vigente del mismo cliente a su fecha, y marca `iva_exonerado`; `base_exonerada`
+    (parte de `base_exenta`) la mantiene la base. El campo "Se entrega con" (`documento_entrega`) NO decide
+    el IVA. Leyenda impresa: pendiente de que Meraki la defina (hoy solo marca en pantalla).
 - **Invariante stock — patrón obligatorio en TODO movimiento de inventario** (alta, baja o reverso):
   1. Leer `stock_actual` actual antes de modificar (para `stock_anterior` en movimiento)
   2. Actualizar `stock_actual` en la tabla del producto

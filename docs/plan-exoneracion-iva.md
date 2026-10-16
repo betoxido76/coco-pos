@@ -1,6 +1,7 @@
 # Plan — Clientes exonerados de IVA
 
-Aprobado 2026-10-16 con dos cambios (ver Decisiones). Primer cliente: Meraki.
+Aprobado 2026-10-16 con dos cambios (ver Decisiones). Implementado el mismo día
+(fases 1-5); falta el recorrido en navegador y el texto de la leyenda. Primer cliente: Meraki.
 
 ## Objetivo
 

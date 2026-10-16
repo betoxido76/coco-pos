@@ -32,6 +32,8 @@ Después de cada ajuste, transferencia o recepción se llama `sincronizarStockAc
 ### Ventas y cobros
 ```
 ventas                -- Facturas
+                      --   exoneracion_id → exoneraciones_iva: nota amparada por una exoneración de IVA
+                      --   base_exonerada: parte de base_exenta gravada sin IVA por exoneración (trigger)
                       --   subtotal (= base_gravada + base_exenta), base_gravada, base_exenta, iva, total
                       --   MONTOS OFICIALES del documento: leer con totalesGuardados() (src/lib/iva.js)
                       --   oc_cliente text (opcional, O/C del cliente)
@@ -39,6 +41,8 @@ ventas                -- Facturas
 venta_items           -- Detalle de facturas
                       --   precio_unitario en base (con descuentos aplicados); aplica_iva, iva_pct,
                       --   precio_incluye_iva (true = línea anterior a 2026-10, precio con IVA), base_linea
+                      --   iva_exonerado: producto gravado sin IVA por la exoneración de la nota. Lo fija el
+                      --   trigger venta_items_exoneracion, que rechaza la línea si la nota no está amparada
 pedidos               -- Pedidos de venta (Realtime habilitado: supabase_realtime publication)
                       --   base_gravada, base_exenta, iva, total: los mantiene el trigger
                       --   recalcular_totales_pedido; facturado = montos de su nota (venta_id)
@@ -180,6 +184,13 @@ clientes              -- cat1_id..cat4_id, limite_credito numeric, vehiculo text
                       --   documento_entrega ('factura'|'nota_entrega', NULL = sin indicar): aviso
                       --   en Ventas → Ver y Pedidos → Por Registrar → Ver (AvisoDocumentoEntrega)
 categorias_clientes   -- 4 niveles de categorías por empresa
+exoneraciones_iva     -- Clientes exonerados de IVA (docs/plan-exoneracion-iva.md)
+                      --   cliente_id, referencia! (N° del documento o del control de finanzas),
+                      --   vigente_desde!, vigente_hasta (NULL = sin vencimiento), observaciones,
+                      --   estado ('vigente'|'revocada') + revocación. Una vigente por cliente.
+                      --   Escritura SOLO por RPC (admin/finanzas): registrar_exoneracion_iva
+                      --   (reemplaza la vigente; exige RIF del cliente) / revocar_exoneracion_iva
+                      --   exoneracion_vigente(cliente, fecha) → id o NULL
 perfilamiento_clientes -- Perfiles de segmentación de clientes
 proveedores           -- condicion_pago, dias_credito
                       --   retiene_iva + pct_retencion_iva, retiene_islr + pct_retencion_islr
