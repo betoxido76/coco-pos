@@ -9,11 +9,21 @@
 //   lineas:      { iva: { pct, base, monto } | null, islr: … }  (suma de las notas)
 //   aplicar:     { iva: bool, islr: bool }
 //   registradas: monto ya registrado en la(s) nota(s), solo informativo
+//   clienteRetiene: el cliente es contribuyente especial y la empresa tiene %.
+//                   Sin nada que retener (nota exenta) se avisa en una línea,
+//                   para que no parezca que el sistema no lo reconoció.
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 
-export default function BloqueRetencionesCobro({ lineas, aplicar, onAplicar, comprobante, onComprobante, registradas = 0, varias = false }) {
+export default function BloqueRetencionesCobro({ lineas, aplicar, onAplicar, comprobante, onComprobante, registradas = 0, varias = false, clienteRetiene = false }) {
     const tipos = ['iva', 'islr'].filter(t => lineas?.[t])
-    if (tipos.length === 0 && !(registradas > 0)) return null
+    if (tipos.length === 0 && !(registradas > 0)) {
+        if (!clienteRetiene) return null
+        return (
+            <div style={{ backgroundColor: '#f5f5ff', border: '1px solid #e0e7ff', borderRadius: '10px', padding: '10px 14px', marginBottom: '16px', fontSize: '12px', color: '#4338ca' }}>
+                Cliente contribuyente especial — {varias ? 'estas notas no tienen' : 'esta nota no tiene'} IVA: no hay retención que registrar.
+            </div>
+        )
+    }
     const monto = tipos.reduce((s, t) => s + (aplicar[t] ? lineas[t].monto : 0), 0)
 
     return (

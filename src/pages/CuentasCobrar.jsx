@@ -13,7 +13,7 @@ import { useOrden, ordenarFilas, useAltoBarra, ThOrden, BarraFija, estiloTarjeta
 import { totalesGuardados, precioBaseItem, redondear2 } from '../lib/iva'
 import BloqueRetencionesCobro from '../components/BloqueRetencionesCobro'
 import PanelRetenciones from '../components/PanelRetenciones'
-import { retencionesPorRegistrar, retencionesRegistradas, pctRetencionClientes } from '../lib/retencionesCliente'
+import { retencionesPorRegistrar, retencionesRegistradas, pctRetencionClientes, clienteRetiene } from '../lib/retencionesCliente'
 
 const fmt = n => `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const fmtBs = n => `${Number(n).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`
@@ -1124,7 +1124,8 @@ function ModalCobro({ venta, onCerrar, onCobrado }) {
 
                 {/* Retenciones del cliente contribuyente especial */}
                 <BloqueRetencionesCobro lineas={ret} aplicar={aplicarRet} onAplicar={cambiarAplicarRet}
-                    comprobante={comprobante} onComprobante={setComprobante} registradas={regs.total} />
+                    comprobante={comprobante} onComprobante={setComprobante} registradas={regs.total}
+                    clienteRetiene={!!cobrosPrev && clienteRetiene(perfil?.empresas, venta.clientes)} />
 
                 {/* Notas de crédito disponibles */}
                 {ncsDisponibles.length > 0 && (
@@ -1476,7 +1477,8 @@ function ModalCobroMultiple({ ventas, onCerrar, onCobrado }) {
 
                 {/* Retenciones del cliente contribuyente especial */}
                 <BloqueRetencionesCobro lineas={lineasRet} aplicar={aplicarRet} onAplicar={setAplicarRet}
-                    comprobante={comprobante} onComprobante={setComprobante} varias={ventas.length > 1} />
+                    comprobante={comprobante} onComprobante={setComprobante} varias={ventas.length > 1}
+                    clienteRetiene={!!cobrosPorVenta && clienteRetiene(perfil?.empresas, ventas[0]?.clientes)} />
 
                 {/* Montos */}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
