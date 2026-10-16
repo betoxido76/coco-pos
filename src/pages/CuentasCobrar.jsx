@@ -12,7 +12,7 @@ import FiltroCombo from '../components/FiltroCombo'
 import { useOrden, ordenarFilas, useAltoBarra, ThOrden, BarraFija, estiloTarjetaTabla } from '../components/TablaOrdenable'
 import { totalesGuardados, precioBaseItem, redondear2 } from '../lib/iva'
 import BloqueRetencionesCobro from '../components/BloqueRetencionesCobro'
-import { retencionesPorRegistrar, retencionesRegistradas } from '../lib/retencionesCliente'
+import { retencionesPorRegistrar, retencionesRegistradas, pctRetencionClientes } from '../lib/retencionesCliente'
 
 const fmt = n => `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const fmtBs = n => `${Number(n).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`
@@ -65,6 +65,8 @@ export default function CuentasCobrar() {
     const [ventas, setVentas] = useState([])
     const [kpiData, setKpiData] = useState([])
     const [cobradoKpi, setCobradoKpi] = useState({})
+    // { venta_id: { iva: true, islr: true } } retenciones ya registradas de las parciales
+    const [vigentesKpi, setVigentesKpi] = useState({})
     const [saldoFavor, setSaldoFavor] = useState(0)
     const [loading, setLoading] = useState(true)
     const [filtro, setFiltro] = useState('por_cobrar')
@@ -84,7 +86,7 @@ export default function CuentasCobrar() {
     const [pagina, setPagina] = useState(0)
     // Orden de la tabla: por defecto la que vence primero
     const [orden, ordenarPor] = useOrden({ col: 'vencimiento', dir: 'asc' },
-        ['total', 'cobrado', 'saldo', 'dias_pago', 'emision', 'ultimo_pago'])
+        ['total', 'retenciones', 'cobrado', 'saldo', 'dias_pago', 'emision', 'ultimo_pago'])
     const [vista, setVista] = useState('cxc')
     const [ncs, setNcs] = useState([])
     const [loadingNcs, setLoadingNcs] = useState(false)
@@ -189,13 +191,19 @@ export default function CuentasCobrar() {
         const bloques = []
         for (let i = 0; i < ids.length; i += 100) bloques.push(ids.slice(i, i + 100))
         const resp = await Promise.all(bloques.map(b => supabase.from('cobros')
-            .select('venta_id, monto_usd, monto_bs, tasa_cambio, fecha_cobro, created_at')
+            .select('venta_id, monto_usd, monto_bs, tasa_cambio, fecha_cobro, created_at, retencion_id, metodo_usd')
             .in('venta_id', b)))
         if (req !== cobrosReq.current) return
         const data = resp.flatMap(r => r.data || [])
         const m = {}
         ;(data || []).forEach(c => {
-            const acc = m[c.venta_id] || (m[c.venta_id] = { cobrado: 0, ultimaFecha: null })
+            const acc = m[c.venta_id] || (m[c.venta_id] = { cobrado: 0, ultimaFecha: null, retenido: 0, vigentes: {} })
+            // La retención del cliente es abono, pero va en su propia columna
+            if (c.retencion_id) {
+                acc.retenido += Number(c.monto_usd || 0)
+                acc.vigentes[c.metodo_usd === 'retencion_islr' ? 'islr' : 'iva'] = true
+                return
+            }
             acc.cobrado += cobroEnUsd(c)
             // fecha_cobro es la fecha real del pago; created_at cubre los cobros
             // viejos registrados antes de que se guardara la fecha.
@@ -211,8 +219,9 @@ export default function CuentasCobrar() {
     // bloquear la tabla.
     async function cargarKpis() {
         try {
-            const kpiSelect = 'id, total, estado_cobro, fecha_vencimiento_pago, cliente_id, created_at'
-                + (filtroCat1 ? ', clientes!inner(cat1_id)' : '')
+            // Montos de la nota y estatus del cliente: para descontar la retención por registrar
+            const kpiSelect = 'id, total, subtotal, base_gravada, base_exenta, iva, estado_cobro, fecha_vencimiento_pago, cliente_id, created_at'
+                + (filtroCat1 ? ', clientes!inner(cat1_id, contribuyente_especial)' : ', clientes(contribuyente_especial)')
             let kpiQ = supabase
                 .from('ventas')
                 .select(kpiSelect)
@@ -229,12 +238,16 @@ export default function CuentasCobrar() {
             // saldo completo. Limitar el .in() a las parciales evita un IN de miles
             // de IDs que satura PostgREST y cuelga la carga.
             const parcialIds = kpi.filter(v => v.estado_cobro === 'parcial').map(v => v.id)
-            if (parcialIds.length === 0) { setCobradoKpi({}); return }
+            if (parcialIds.length === 0) { setCobradoKpi({}); setVigentesKpi({}); return }
             const { data: kpiCobros } = await supabase
-                .from('cobros').select('venta_id, monto_usd, monto_bs, tasa_cambio').in('venta_id', parcialIds)
-            const m = {}
-            kpiCobros?.forEach(c => { m[c.venta_id] = (m[c.venta_id] || 0) + cobroEnUsd(c) })
+                .from('cobros').select('venta_id, monto_usd, monto_bs, tasa_cambio, retencion_id, metodo_usd').in('venta_id', parcialIds)
+            const m = {}, vig = {}
+            kpiCobros?.forEach(c => {
+                m[c.venta_id] = (m[c.venta_id] || 0) + cobroEnUsd(c)
+                if (c.retencion_id) (vig[c.venta_id] = vig[c.venta_id] || {})[c.metodo_usd === 'retencion_islr' ? 'islr' : 'iva'] = true
+            })
             setCobradoKpi(m)
+            setVigentesKpi(vig)
         } catch (e) {
             console.error('Error cargando KPIs de cartera CxC:', e)
         }
@@ -315,7 +328,8 @@ export default function CuentasCobrar() {
         ? ventas.find(v => v.id === seleccionadas[0])?.cliente_id
         : null
     const ventasSeleccionadasObj = ventas.filter(v => seleccionadas.includes(v.id))
-    const totalSeleccionado = ventasSeleccionadasObj.reduce((s, v) => s + (v.total || 0), 0)
+    // Lo que se va a cobrar: saldo de cada nota neto de su retención (filasCxc, más abajo)
+    const totalSeleccionadoDe = (filas) => filas.filter(f => seleccionadas.includes(f.v.id)).reduce((s, f) => s + f.saldo, 0)
 
     function toggleSeleccion(venta) {
         if (venta.estado_cobro === 'pagado') return
@@ -329,7 +343,9 @@ export default function CuentasCobrar() {
 
     // ─── Métricas de cartera (sobre kpiData = pendiente + parcial) ───
     const hoyKpi = new Date()
-    const saldoKpi = (v) => Math.max(0, Number(v.total || 0) - (cobradoKpi[v.id] || 0))
+    // Neto de la retención por registrar: es lo que de verdad se le cobrará al cliente
+    const saldoKpi = (v) => Math.max(0, Number(v.total || 0) - (cobradoKpi[v.id] || 0)
+        - retencionesPorRegistrar(v, perfil?.empresas, vigentesKpi[v.id]).total)
     const esVencidaKpi = (v) => v.fecha_vencimiento_pago && new Date(v.fecha_vencimiento_pago) < hoyKpi
 
     const totalPendiente = kpiData.reduce((s, v) => s + saldoKpi(v), 0)
@@ -348,6 +364,8 @@ export default function CuentasCobrar() {
     }, 0)
     const diasCalle = totalPendiente > 0 ? (diasCalleNum / totalPendiente).toFixed(1) : '0.0'
 
+    const pctRet = pctRetencionClientes(perfil?.empresas)
+    const hayRetClientes = pctRet.iva > 0 || pctRet.islr > 0
     const mostrarCheckboxes = ['por_cobrar', 'pendiente', 'parcial'].includes(filtro)
     // En Pendientes no hay pagos todavía: las columnas de pago irían siempre vacías
     const mostrarColsPago = filtro !== 'pendiente'
@@ -361,10 +379,18 @@ export default function CuentasCobrar() {
         // de contado), se muestra el total: el estado dice que se cobró completa
         // y su saldo es 0.
         const cobradoReg = (cob?.cobrado || 0) + pagoDirectoEnUsd(v)
-        const cobrado = esPagada ? Math.max(cobradoReg, v.total) : cobradoReg
+        // Retenciones del cliente: registradas + por registrar (estimada con el %
+        // vigente de la empresa) — docs/plan-retenciones-clientes.md
+        const retRegistrada = cob?.retenido || 0
+        const retPendiente = esPagada ? 0 : retencionesPorRegistrar(v, perfil?.empresas, cob?.vigentes).total
+        const cobrado = esPagada ? Math.max(cobradoReg, v.total - retRegistrada) : cobradoReg
+        const saldo = esPagada ? 0 : Math.max(0, v.total - retRegistrada - retPendiente - cobrado)
         return {
-            v, cob, cobrado,
-            saldo: esPagada ? 0 : v.total - cobrado,
+            v, cob, cobrado, retRegistrada, retPendiente,
+            retenciones: retRegistrada + retPendiente,
+            saldo,
+            // El dinero ya cubrió su parte y solo falta registrar la retención
+            faltaComprobante: !esPagada && retPendiente > 0 && saldo <= 0.01,
             // Días que tardó en pagarse: emisión → último cobro
             diasPago: diasEntre(v.created_at, cob?.ultimaFecha),
         }
@@ -378,6 +404,7 @@ export default function CuentasCobrar() {
         dias_pago: f => f.diasPago,
         vencimiento: f => f.v.fecha_vencimiento_pago,
         total: f => Number(f.v.total || 0),
+        retenciones: f => f.retenciones,
         cobrado: f => f.cobrado,
         saldo: f => f.saldo,
         estado: f => f.v.estado_cobro,
@@ -397,6 +424,8 @@ export default function CuentasCobrar() {
         ] : []),
         { key: 'vencimiento', label: 'Vencimiento', orden: true },
         { key: 'total', label: 'Total', orden: true },
+        // Solo en empresas cuyos clientes retienen (Administración → Configuración)
+        ...(hayRetClientes ? [{ key: 'retenciones', label: 'Retenciones', orden: true }] : []),
         { key: 'cobrado', label: 'Cobrado', orden: true },
         { key: 'saldo', label: 'Saldo', orden: true },
         { key: 'estado', label: 'Estado', orden: true },
@@ -482,7 +511,7 @@ export default function CuentasCobrar() {
                         <div style={{ color: '#fff' }}>
                             <span style={{ fontWeight: 700, fontSize: '15px' }}>{seleccionadas.length} facturas seleccionadas</span>
                             <span style={{ fontSize: '13px', marginLeft: '12px', opacity: 0.85 }}>
-                                {ventasSeleccionadasObj[0]?.clientes?.nombre} · Total: {fmt(totalSeleccionado)}
+                                {ventasSeleccionadasObj[0]?.clientes?.nombre} · A cobrar: {fmt(totalSeleccionadoDe(filasCxc))}
                             </span>
                         </div>
                         <div style={{ display: 'flex', gap: '8px' }}>
@@ -492,7 +521,7 @@ export default function CuentasCobrar() {
                             </button>
                             <button onClick={() => setModalMultiple(true)}
                                 style={{ padding: '7px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 600, border: 'none', backgroundColor: '#fff', color: '#1d4ed8', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                <DollarSign size={14} /> Cobrar {fmt(totalSeleccionado)}
+                                <DollarSign size={14} /> Cobrar {fmt(totalSeleccionadoDe(filasCxc))}
                             </button>
                         </div>
                     </div>
@@ -516,7 +545,7 @@ export default function CuentasCobrar() {
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {filasPagina.map(({ v, cob, cobrado, saldo: saldoFila, diasPago }) => {
+                                        {filasPagina.map(({ v, cob, cobrado, saldo: saldoFila, diasPago, retRegistrada, retPendiente, faltaComprobante }) => {
                                             const sem = semaforo(v.fecha_vencimiento_pago)
                                             const seleccionada = seleccionadas.includes(v.id)
                                             const deshabilitada = v.estado_cobro === 'pagado' ||
@@ -552,11 +581,24 @@ export default function CuentasCobrar() {
                                                             : <span style={{ fontSize: '12px', color: '#9ca3af' }}>—</span>}
                                                     </td>
                                                     <td style={{ padding: '12px 14px', fontSize: '13px', fontWeight: 600, color: '#1f2937' }}>{fmt(v.total)}</td>
+                                                    {hayRetClientes && (
+                                                        <td style={{ padding: '12px 14px', fontSize: '13px', whiteSpace: 'nowrap' }}
+                                                            title={retPendiente > 0 ? `Por registrar ${fmt(retPendiente)} (estimada con el % de la empresa)` : undefined}>
+                                                            {!cobrosListos ? '—'
+                                                                : retRegistrada + retPendiente < 0.005 ? <span style={{ color: '#d1d5db' }}>—</span>
+                                                                : <>
+                                                                    {retRegistrada > 0 && <span style={{ color: '#4338ca' }}>{fmt(retRegistrada)}</span>}
+                                                                    {retRegistrada > 0 && retPendiente > 0 && ' + '}
+                                                                    {retPendiente > 0 && <span style={{ color: '#a5b4fc', fontStyle: 'italic' }}>{fmt(retPendiente)}</span>}
+                                                                </>}
+                                                        </td>
+                                                    )}
                                                     <td style={{ padding: '12px 14px', fontSize: '13px', color: '#16a34a' }}>
                                                         {cobrosListos ? fmt(cobrado) : '—'}
                                                     </td>
                                                     <td style={{ padding: '12px 14px', fontSize: '13px', fontWeight: 600, color: '#ef4444' }}>
                                                         {!cobrosListos ? '—'
+                                                            : faltaComprobante ? <span style={{ color: '#4338ca', fontSize: '12px', fontWeight: 500, whiteSpace: 'nowrap' }}>Falta comprobante</span>
                                                             : saldoFila > 0.01 ? fmt(saldoFila)
                                                             : <span style={{ color: '#16a34a' }}>✓ Pagado</span>}
                                                     </td>
