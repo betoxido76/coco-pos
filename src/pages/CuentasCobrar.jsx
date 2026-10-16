@@ -12,6 +12,7 @@ import FiltroCombo from '../components/FiltroCombo'
 import { useOrden, ordenarFilas, useAltoBarra, ThOrden, BarraFija, estiloTarjetaTabla } from '../components/TablaOrdenable'
 import { totalesGuardados, precioBaseItem, redondear2 } from '../lib/iva'
 import BloqueRetencionesCobro from '../components/BloqueRetencionesCobro'
+import PanelRetenciones from '../components/PanelRetenciones'
 import { retencionesPorRegistrar, retencionesRegistradas, pctRetencionClientes } from '../lib/retencionesCliente'
 
 const fmt = n => `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -441,11 +442,15 @@ export default function CuentasCobrar() {
                     <p style={{ fontSize: '13px', color: '#6b7280', margin: '4px 0 0' }}>
                         {vista === 'cxc' ? 'Seguimiento de facturas a crédito'
                             : vista === 'nc' ? 'Historial de notas de crédito emitidas'
+                            : vista === 'retenciones' ? 'Retenciones de IVA e ISLR que nos hicieron los clientes'
                             : 'Anular notas de entrega facturadas que no serán despachadas'}
                     </p>
                 </div>
                 <div style={{ display: 'flex', gap: '4px', backgroundColor: '#f3f4f6', borderRadius: '10px', padding: '4px' }}>
-                    {[['cxc', 'Facturas CxC'], ['nc', 'Notas de Crédito'], ...(puedeAnular ? [['anular', 'Anular NE']] : [])].map(([v, lbl]) => (
+                    {[['cxc', 'Facturas CxC'], ['nc', 'Notas de Crédito'],
+                      // Retenciones de clientes: solo si la empresa configuró el %
+                      ...(hayRetClientes ? [['retenciones', 'Retenciones']] : []),
+                      ...(puedeAnular ? [['anular', 'Anular NE']] : [])].map(([v, lbl]) => (
                         <button key={v} onClick={() => setVista(v)}
                             style={{ padding: '7px 18px', borderRadius: '8px', fontSize: '13px', fontWeight: 500, border: 'none', cursor: 'pointer', transition: 'all 0.15s', backgroundColor: vista === v ? '#fff' : 'transparent', color: vista === v ? '#1f2937' : '#6b7280', boxShadow: vista === v ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}>
                             {lbl}
@@ -731,6 +736,9 @@ export default function CuentasCobrar() {
                             )}
                 </div>
             </>)}
+
+            {/* ─── Vista Retenciones de clientes ─── */}
+            {vista === 'retenciones' && <PanelRetenciones lado="clientes" />}
 
             {/* ─── Vista Anular NE (solo finanzas/admin) ─── */}
             {vista === 'anular' && puedeAnular && <TabAnularNE />}
