@@ -50,8 +50,24 @@ export default defineConfig({
         maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
         // Cachea todos los assets de la app
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
+        // Sin fallback de navegación al index.html precacheado: si esa entrada
+        // faltaba en la caché (tras un despliegue), workbox la pedía a la red como
+        // /index.html, Cloudflare Pages responde 308 → / y el navegador rechaza
+        // una navegación redirigida: refrescar /ventas daba "no se puede acceder
+        // al sitio" mientras / sí cargaba. Las navegaciones van a la red (Pages
+        // sirve el index.html en cualquier ruta) y solo sin conexión usan la caché.
+        navigateFallback: null,
         // Cachea las llamadas a Supabase para offline
         runtimeCaching: [
+          {
+            urlPattern: ({ request }) => request.mode === 'navigate',
+            handler: 'NetworkFirst',
+            options: {
+              cacheName: 'paginas',
+              networkTimeoutSeconds: 5,
+              expiration: { maxEntries: 30 },
+            },
+          },
           {
             urlPattern: /^https:\/\/.*\.supabase\.co\/.*/i,
             handler: 'NetworkFirst',
