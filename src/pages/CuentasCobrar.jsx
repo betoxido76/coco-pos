@@ -10,12 +10,19 @@ import ModalAnularNC from '../components/ModalAnularNC'
 import { sinSaldoQueCobrar } from '../lib/cobro'
 import FiltroCombo from '../components/FiltroCombo'
 import { useOrden, ordenarFilas, useAltoBarra, ThOrden, BarraFija, estiloTarjetaTabla } from '../components/TablaOrdenable'
-import { totalesGuardados, precioBaseItem } from '../lib/iva'
+import { totalesGuardados, precioBaseItem, redondear2 } from '../lib/iva'
+import BloqueRetencionesCobro from '../components/BloqueRetencionesCobro'
+import { retencionesPorRegistrar, retencionesRegistradas } from '../lib/retencionesCliente'
 
 const fmt = n => `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const fmtBs = n => `${Number(n).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`
 // Equivalente en USD de un cobro: parte en USD + parte en Bs convertida por su tasa.
 const cobroEnUsd = (c) => Number(c.monto_usd || 0) + Number(c.monto_bs || 0) / Number(c.tasa_cambio || 1)
+// { iva: true, islr: true } las retenciones ya registradas en estas filas de `cobros`
+const vigentesDe = (cobros) => {
+    const r = retencionesRegistradas(cobros)
+    return { iva: r.iva > 0, islr: r.islr > 0 }
+}
 
 // Pago registrado en la propia fila de `ventas` (pago_usd/pago_bs), sin fila en
 // `cobros`. Lo usan las ventas migradas desde el POS anterior. Las ventas de
@@ -746,6 +753,10 @@ function ModalCobro({ venta, onCerrar, onCobrado }) {
     // haberse aplicado parcialmente a otra factura y conservar un remanente.
     const [ncsDisponibles, setNcsDisponibles] = useState([])
     const [ncsAplicadas, setNcsAplicadas] = useState({})   // { ncId: monto a aplicar ahora }
+    // Retenciones del cliente contribuyente especial (docs/plan-retenciones-clientes.md)
+    const [cobrosPrev, setCobrosPrev] = useState(null)      // filas de cobros de la nota (null = cargando)
+    const [aplicarRet, setAplicarRet] = useState({ iva: true, islr: true })
+    const [comprobante, setComprobante] = useState('')
 
     useEffect(() => {
         if (perfil?.empresa_id) {
@@ -756,12 +767,15 @@ function ModalCobro({ venta, onCerrar, onCobrado }) {
     }, [perfil?.empresa_id])
 
     useEffect(() => {
-        supabase.from('cobros').select('monto_usd, monto_bs, tasa_cambio').eq('venta_id', venta.id)
+        supabase.from('cobros').select('monto_usd, monto_bs, tasa_cambio, retencion_id, metodo_usd').eq('venta_id', venta.id)
             .then(({ data }) => {
                 if (data) {
                     const prev = data.reduce((s, c) => s + cobroEnUsd(c), 0)
                     setCobradoPrev(prev)
-                    setPagoUsd(Math.max(0, venta.total - prev))
+                    setCobrosPrev(data)
+                    // El efectivo propuesto ya descuenta la retención por registrar
+                    const r = retencionesPorRegistrar(venta, perfil?.empresas, vigentesDe(data))
+                    setPagoUsd(Math.max(0, redondear2(venta.total - prev - r.total)))
                 }
             })
     }, [venta.id])
@@ -811,7 +825,14 @@ function ModalCobro({ venta, onCerrar, onCobrado }) {
     const tasa = tasaDia > 0 ? tasaDia : 1   // evita dividir entre 0 mientras no hay tasa
     const sinTasa = !cargandoTasas && tasaDia <= 0
 
-    const saldo = venta.total - cobradoPrev
+    // Retenciones: registradas (ya están en cobradoPrev) y por registrar ahora
+    const regs = retencionesRegistradas(cobrosPrev)
+    const ret = cobrosPrev ? retencionesPorRegistrar(venta, perfil?.empresas, vigentesDe(cobrosPrev)) : { iva: null, islr: null, total: 0 }
+    const montoRetDe = (ap) => redondear2((ap.iva && ret.iva ? ret.iva.monto : 0) + (ap.islr && ret.islr ? ret.islr.monto : 0))
+    const montoRet = montoRetDe(aplicarRet)
+    const saldoBruto = venta.total - cobradoPrev
+    // `saldo` es lo que queda por cubrir con dinero y NCs: el saldo menos la retención
+    const saldo = Math.max(0, saldoBruto - montoRet)
     const montoNCs = Object.values(ncsAplicadas).reduce((s, m) => s + Number(m || 0), 0)
     const saldoEfectivo = Math.max(0, saldo - montoNCs)
     const abonoEnUsd = pagoUsd + (pagoBs / tasa) + montoNCs
@@ -820,9 +841,18 @@ function ModalCobro({ venta, onCerrar, onCobrado }) {
     // cierra sin dinero. Sin esta excepción quedaba atrapada entre `sinAbono`
     // (rechaza el 0) y `excede` (rechaza todo lo demás).
     const saldoCero = sinSaldoQueCobrar(saldo)
-    const sinAbono = !saldoCero && abonoEnUsd < 0.01
-    // Sin saldo no se mueve dinero: ni la tasa del día ni el monto lo bloquean.
-    const bloqueado = sinAbono || excede || (!saldoCero && (sinTasa || cargandoTasas))
+    // Registrar solo la retención (el comprobante llegó antes que el pago) es válido
+    const sinAbono = !saldoCero && abonoEnUsd < 0.01 && montoRet <= 0
+    // Sin saldo no se mueve dinero: ni la tasa del día ni el monto lo bloquean,
+    // salvo que haya retención que registrar (se guarda con la tasa del día).
+    const necesitaTasa = !saldoCero || montoRet > 0
+    const bloqueado = sinAbono || excede || (necesitaTasa && (sinTasa || cargandoTasas))
+
+    // Desmarcar una retención = registrarla después (el comprobante no llegó):
+    // el cliente igual pagó el neto, así que el efectivo propuesto no cambia y
+    // la nota queda parcial con la retención como saldo. Si en cambio pagó el
+    // total sin retener, se sube el monto a mano (el tope es el saldo sin ella).
+    const cambiarAplicarRet = setAplicarRet
 
     // Al cambiar de fecha cambia la tasa: se recalcula el Bs. para que siga
     // equivaliendo al resto del saldo, igual que al cambiar de tipo de tasa.
@@ -834,7 +864,7 @@ function ModalCobro({ venta, onCerrar, onCobrado }) {
     function aplicarNcs(next) {
         const nuevoMontoNCs = Object.values(next).reduce((s, m) => s + Number(m || 0), 0)
         setNcsAplicadas(next)
-        setPagoUsd(parseFloat(Math.max(0, saldo - nuevoMontoNCs).toFixed(2)))
+        setPagoUsd(parseFloat(Math.max(0, Math.min(saldo, saldoBruto - ret.total) - nuevoMontoNCs).toFixed(2)))
         setPagoBs(0)
     }
 
@@ -891,7 +921,7 @@ function ModalCobro({ venta, onCerrar, onCobrado }) {
 
     async function confirmar() {
         // Cerrar una factura sin saldo no mueve dinero: no necesita tasa del día.
-        if (sinTasa && !saldoCero) { setError('No hay tasa registrada para la fecha del pago'); return }
+        if (sinTasa && necesitaTasa) { setError('No hay tasa registrada para la fecha del pago'); return }
         if (sinAbono) { setError('Ingresa un monto a cobrar'); return }
         if (excede) { setError('El abono supera el saldo pendiente'); return }
         setGuardando(true); setError('')
@@ -901,6 +931,17 @@ function ModalCobro({ venta, onCerrar, onCobrado }) {
         const fechaCobro = fechaAtimestamp(fechaPago)
         // Estatus del cliente al momento del pago (puede cambiar con el tiempo)
         const contribEspecial = venta.clientes?.contribuyente_especial ?? null
+
+        // Primero la retención: la calcula y valida la base (registrar_retenciones_venta).
+        // Si falla, no se registra nada más.
+        if (montoRet > 0) {
+            const { error: errRet } = await supabase.rpc('registrar_retenciones_venta', {
+                p_venta_id: venta.id, p_fecha: fechaPago, p_tasa: tasaDia, p_tipo_tasa: tipoTasa,
+                p_aplicar_iva: !!(aplicarRet.iva && ret.iva), p_aplicar_islr: !!(aplicarRet.islr && ret.islr),
+                p_numero_comprobante: comprobante.trim() || null,
+            })
+            if (errRet) { setError('No se pudo registrar la retención: ' + errRet.message); setGuardando(false); return }
+        }
 
         // Aplicar NCs como cobros, por el monto elegido en cada una.
         for (const [ncId, montoStr] of Object.entries(ncsAplicadas)) {
@@ -952,7 +993,7 @@ function ModalCobro({ venta, onCerrar, onCobrado }) {
             })
         }
 
-        const nuevoCobrado = cobradoPrev + abonoEnUsd
+        const nuevoCobrado = cobradoPrev + abonoEnUsd + montoRet
         const nuevoEstado = nuevoCobrado >= venta.total - 0.01 ? 'pagado' : 'parcial'
         await supabase.from('ventas').update({ estado_cobro: nuevoEstado }).eq('id', venta.id)
 
@@ -988,20 +1029,38 @@ function ModalCobro({ venta, onCerrar, onCobrado }) {
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '4px' }}>
                         <span style={{ color: '#6b7280' }}>Ya cobrado</span>
-                        <span style={{ color: '#16a34a' }}>{fmt(cobradoPrev)}</span>
+                        <span style={{ color: '#16a34a' }}>{fmt(cobradoPrev - regs.total)}</span>
                     </div>
+                    {regs.total > 0 && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '4px' }}>
+                            <span style={{ color: '#6b7280' }}>Retenciones registradas</span>
+                            <span style={{ color: '#4338ca' }}>{fmt(regs.total)}</span>
+                        </div>
+                    )}
                     <div style={{ height: '1px', backgroundColor: '#e5e7eb', margin: '8px 0' }} />
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '15px', fontWeight: 700 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: montoRet > 0 ? '13px' : '15px', fontWeight: montoRet > 0 ? 500 : 700 }}>
                         <span style={{ color: '#6b7280' }}>Saldo pendiente</span>
-                        <span style={{ color: saldoCero ? '#16a34a' : '#ef4444' }}>{fmt(saldo)}</span>
+                        <span style={{ color: montoRet > 0 ? '#374151' : saldoCero ? '#16a34a' : '#ef4444' }}>{fmt(saldoBruto)}</span>
                     </div>
+                    {montoRet > 0 && (<>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', margin: '4px 0' }}>
+                            <span style={{ color: '#6b7280' }}>Retención a registrar</span>
+                            <span style={{ color: '#4338ca' }}>−{fmt(montoRet)}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '15px', fontWeight: 700 }}>
+                            <span style={{ color: '#6b7280' }}>A cobrar al cliente</span>
+                            <span style={{ color: saldoCero ? '#16a34a' : '#ef4444' }}>{fmt(saldo)}</span>
+                        </div>
+                    </>)}
                 </div>
 
                 {/* Sin saldo: no hay dinero que registrar, solo cerrar la factura */}
                 {saldoCero && (
                     <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '10px', padding: '12px 16px', marginBottom: '20px', fontSize: '13px', color: '#166534', lineHeight: 1.5 }}>
-                        Esta factura no tiene saldo por cobrar{venta.total <= 0.01 ? ' (nota en $0: muestra, reposición o cortesía)' : ''}.
-                        Al confirmar se marca como <strong>pagada</strong> y sale de Cuentas por Cobrar, sin registrar ningún cobro.
+                        {montoRet > 0
+                            ? <>Solo falta la retención. Al confirmar se registra y la nota queda <strong>pagada</strong>.</>
+                            : <>Esta factura no tiene saldo por cobrar{venta.total <= 0.01 ? ' (nota en $0: muestra, reposición o cortesía)' : ''}.
+                                Al confirmar se marca como <strong>pagada</strong> y sale de Cuentas por Cobrar, sin registrar ningún cobro.</>}
                     </div>
                 )}
 
@@ -1012,6 +1071,10 @@ function ModalCobro({ venta, onCerrar, onCobrado }) {
                     tipoTasa={tipoTasa} onTipoTasa={handleTasaChange}
                     opciones={OPCIONES_TASA}
                 />
+
+                {/* Retenciones del cliente contribuyente especial */}
+                <BloqueRetencionesCobro lineas={ret} aplicar={aplicarRet} onAplicar={cambiarAplicarRet}
+                    comprobante={comprobante} onComprobante={setComprobante} registradas={regs.total} />
 
                 {/* Notas de crédito disponibles */}
                 {ncsDisponibles.length > 0 && (
@@ -1136,21 +1199,24 @@ function ModalCobro({ venta, onCerrar, onCobrado }) {
                     </div>
                 )}
 
-                <div style={{ borderRadius: '8px', padding: '10px 14px', marginBottom: '16px', fontSize: '13px', textAlign: 'center', fontWeight: 500, backgroundColor: !saldoCero && (sinTasa || excede) ? '#fef2f2' : sinAbono ? '#f9fafb' : '#f0fdf4', color: !saldoCero && (sinTasa || excede) ? '#dc2626' : sinAbono ? '#9ca3af' : '#166534', border: `1px solid ${!saldoCero && (sinTasa || excede) ? '#fecaca' : sinAbono ? '#e5e7eb' : '#bbf7d0'}` }}>
-                    {saldoCero ? '✓ Sin saldo — se marcará como pagada'
+                <div style={{ borderRadius: '8px', padding: '10px 14px', marginBottom: '16px', fontSize: '13px', textAlign: 'center', fontWeight: 500, backgroundColor: necesitaTasa && (sinTasa || excede) ? '#fef2f2' : sinAbono ? '#f9fafb' : '#f0fdf4', color: necesitaTasa && (sinTasa || excede) ? '#dc2626' : sinAbono ? '#9ca3af' : '#166534', border: `1px solid ${necesitaTasa && (sinTasa || excede) ? '#fecaca' : sinAbono ? '#e5e7eb' : '#bbf7d0'}` }}>
+                    {necesitaTasa && sinTasa ? `⛔ Sin tasa registrada para el ${fmtFechaCorta(fechaPago)}`
+                        : saldoCero ? (montoRet > 0 ? `✓ Retención ${fmt(montoRet)} — la nota quedará pagada` : '✓ Sin saldo — se marcará como pagada')
                         : sinTasa ? `⛔ Sin tasa registrada para el ${fmtFechaCorta(fechaPago)}`
                         : excede ? '⚠️ El abono supera el saldo pendiente'
                         : sinAbono ? 'Ingresa el monto a cobrar'
                         : montoNCs > 0 && saldoEfectivo <= 0.001
                         ? `NC: ${fmt(montoNCs)} · Saldo cubierto completamente`
-                        : `Abono: ${fmt(abonoEnUsd)} · Quedará pendiente: ${fmt(Math.max(0, saldo - abonoEnUsd))}`}
+                        : abonoEnUsd < 0.01 && montoRet > 0
+                        ? `Solo retención: ${fmt(montoRet)} · Quedará pendiente: ${fmt(saldo)}`
+                        : `Abono: ${fmt(abonoEnUsd)}${montoRet > 0 ? ` + retención ${fmt(montoRet)}` : ''} · Quedará pendiente: ${fmt(Math.max(0, saldo - abonoEnUsd))}`}
                 </div>
 
                 {error && <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px', fontSize: '13px', color: '#dc2626', marginBottom: '12px' }}>{error}</div>}
 
                 <button onClick={confirmar} disabled={guardando || bloqueado}
                     style={{ width: '100%', backgroundColor: bloqueado ? '#d1d5db' : '#16a34a', color: '#fff', border: 'none', borderRadius: '10px', padding: '13px', fontSize: '15px', fontWeight: 700, cursor: bloqueado ? 'default' : 'pointer' }}>
-                    {guardando ? 'Registrando...' : saldoCero ? 'Marcar como pagada' : 'Confirmar cobro'}
+                    {guardando ? 'Registrando...' : saldoCero ? (montoRet > 0 ? 'Registrar retención' : 'Marcar como pagada') : 'Confirmar cobro'}
                 </button>
             </div>
         </>
@@ -1163,11 +1229,32 @@ function ModalCobroMultiple({ ventas, onCerrar, onCobrado }) {
     const METODOS_USD = ['Efectivo', 'Zelle', 'Transferencia USD', 'Otros']
     const METODOS_BS = ['Pago Móvil', 'Transferencia', 'Punto de Venta', 'Efectivo Bs.']
 
-    const totalGeneral = ventas.reduce((s, v) => s + (v.total || 0), 0)
+    // Saldo real de cada nota (una parcial ya tiene abonos) y su retención
+    // estimada si el cliente es contribuyente especial (docs/plan-retenciones-clientes.md).
+    // El cliente paga el neto: lo que se exige cubrir excluye la retención
+    // estimada, se registre ahora o cuando llegue el comprobante.
+    const [cobrosPorVenta, setCobrosPorVenta] = useState(null)
+    const [aplicarRet, setAplicarRet] = useState({ iva: true, islr: true })
+    const [comprobante, setComprobante] = useState('')
+    const filasNotas = ventas.map(v => {
+        const cs = cobrosPorVenta?.[v.id] || []
+        const saldoBruto = Math.max(0, redondear2(Number(v.total || 0) - cs.reduce((s, c) => s + cobroEnUsd(c), 0) - pagoDirectoEnUsd(v)))
+        const r = cobrosPorVenta ? retencionesPorRegistrar(v, perfil?.empresas, vigentesDe(cs)) : { iva: null, islr: null, total: 0 }
+        const retAhora = redondear2((aplicarRet.iva && r.iva ? r.iva.monto : 0) + (aplicarRet.islr && r.islr ? r.islr.monto : 0))
+        return { v, saldoBruto, r, retAhora, neto: Math.max(0, redondear2(saldoBruto - r.total)) }
+    })
+    const totalGeneral = redondear2(filasNotas.reduce((s, f) => s + f.neto, 0))
+    const totalRetAhora = redondear2(filasNotas.reduce((s, f) => s + f.retAhora, 0))
+    // Líneas del bloque: suma de las retenciones de todas las notas, por tipo
+    const lineasRet = ['iva', 'islr'].reduce((acc, t) => {
+        const ls = filasNotas.map(f => f.r[t]).filter(Boolean)
+        acc[t] = ls.length ? { pct: ls[0].pct, base: redondear2(ls.reduce((s, l) => s + l.base, 0)), monto: redondear2(ls.reduce((s, l) => s + l.monto, 0)) } : null
+        return acc
+    }, {})
 
     const [fechaPago, setFechaPago] = useState(hoyYMD())
     const [tipoTasa, setTipoTasa] = useState('tasa_bcv')
-    const [pagoUsd, setPagoUsd] = useState(totalGeneral)
+    const [pagoUsd, setPagoUsd] = useState(0)
     const [pagoBs, setPagoBs] = useState(0)
     const [metodoUsd, setMetodoUsd] = useState('Efectivo')
     const [metodoBs, setMetodoBs] = useState('Pago Móvil')
@@ -1184,6 +1271,18 @@ function ModalCobroMultiple({ ventas, onCerrar, onCobrado }) {
         }
     }, [perfil?.empresa_id])
 
+    useEffect(() => {
+        supabase.from('cobros').select('venta_id, monto_usd, monto_bs, tasa_cambio, retencion_id, metodo_usd')
+            .in('venta_id', ventas.map(v => v.id))
+            .then(({ data }) => {
+                const m = {}
+                ;(data || []).forEach(c => { (m[c.venta_id] = m[c.venta_id] || []).push(c) })
+                setCobrosPorVenta(m)
+            })
+    }, [])
+    // Al conocer los saldos se propone el neto completo en USD
+    useEffect(() => { if (cobrosPorVenta) { setPagoUsd(totalGeneral); setPagoBs(0) } }, [cobrosPorVenta])
+
     const { tasasFecha, cargandoTasas } = useTasasFecha(perfil?.empresa_id, fechaPago)
     const tasaDia = Number(tasasFecha?.[tipoTasa]) || 0
     const tasa = tasaDia > 0 ? tasaDia : 1
@@ -1196,7 +1295,8 @@ function ModalCobroMultiple({ ventas, onCerrar, onCobrado }) {
     // no hay monto que exigir, solo cerrar las facturas.
     const saldoCero = sinSaldoQueCobrar(totalGeneral)
     const sinAbono = !saldoCero && abonoEnUsd < 0.01
-    const bloqueado = !cubre || excede || (!saldoCero && (sinTasa || cargandoTasas))
+    const necesitaTasa = !saldoCero || totalRetAhora > 0
+    const bloqueado = !cobrosPorVenta || !cubre || excede || (necesitaTasa && (sinTasa || cargandoTasas))
 
     // La tasa del día elegido cambia el equivalente en Bs. del resto
     useEffect(() => {
@@ -1216,7 +1316,7 @@ function ModalCobroMultiple({ ventas, onCerrar, onCobrado }) {
     }
 
     async function confirmar() {
-        if (sinTasa && !saldoCero) { setError('No hay tasa registrada para la fecha del pago'); return }
+        if (sinTasa && necesitaTasa) { setError('No hay tasa registrada para la fecha del pago'); return }
         if (sinAbono) { setError('Ingresa un monto a cobrar'); return }
         if (excede) { setError('El monto supera el total de las facturas'); return }
         if (!cubre) { setError('El monto debe cubrir exactamente el total — no se aceptan pagos parciales en cobro múltiple'); return }
@@ -1224,11 +1324,27 @@ function ModalCobroMultiple({ ventas, onCerrar, onCobrado }) {
 
         const { data: { user } } = await supabase.auth.getUser()
 
-        // Insertar un cobro por cada factura con su proporción del total
-        for (const venta of ventas) {
+        // Retenciones primero: si alguna falla no se registra ningún cobro
+        for (const f of filasNotas) {
+            if (f.retAhora <= 0) continue
+            const { error: errRet } = await supabase.rpc('registrar_retenciones_venta', {
+                p_venta_id: f.v.id, p_fecha: fechaPago, p_tasa: tasaDia, p_tipo_tasa: tipoTasa,
+                p_aplicar_iva: !!(aplicarRet.iva && f.r.iva), p_aplicar_islr: !!(aplicarRet.islr && f.r.islr),
+                p_numero_comprobante: comprobante.trim() || null,
+            })
+            if (errRet) {
+                setError(`No se pudo registrar la retención de ${f.v.numero_factura}: ${errRet.message}` +
+                    (filasNotas.indexOf(f) > 0 ? ' (las de las notas anteriores sí quedaron registradas)' : ''))
+                setGuardando(false); return
+            }
+        }
+
+        // Insertar un cobro por cada factura con su proporción del neto
+        for (const f of filasNotas) {
+            const venta = f.v
             // Guarda: todas las seleccionadas en $0 daría 0/0 = NaN y se
             // intentaría insertar NaN en el cobro.
-            const proporcion = totalGeneral > 0.001 ? venta.total / totalGeneral : 0
+            const proporcion = totalGeneral > 0.001 ? f.neto / totalGeneral : 0
             const montoUsdVenta = parseFloat((pagoUsd * proporcion).toFixed(2))
             const montoBsVenta = parseFloat((pagoBs * proporcion).toFixed(2))
 
@@ -1252,7 +1368,12 @@ function ModalCobroMultiple({ ventas, onCerrar, onCobrado }) {
                     empresa_id: perfil.empresa_id,
                 })
             }
-            await supabase.from('ventas').update({ estado_cobro: 'pagado' }).eq('id', venta.id)
+            // Pagada si el dinero + la retención cubren su saldo; si la retención
+            // quedó por registrar, la nota sigue parcial con ella como saldo
+            const cubierta = f.neto + f.retAhora >= f.saldoBruto - 0.01
+            const huboAbono = montoUsdVenta > 0.001 || montoBsVenta > 0.001 || f.retAhora > 0
+            if (cubierta || huboAbono)
+                await supabase.from('ventas').update({ estado_cobro: cubierta ? 'pagado' : 'parcial' }).eq('id', venta.id)
         }
 
         setGuardando(false)
@@ -1274,10 +1395,13 @@ function ModalCobroMultiple({ ventas, onCerrar, onCobrado }) {
 
                 {/* Lista de facturas incluidas */}
                 <div style={{ backgroundColor: '#f9fafb', borderRadius: '10px', padding: '12px 16px', marginBottom: '20px' }}>
-                    {ventas.map((v, i) => (
-                        <div key={v.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: i < ventas.length - 1 ? '6px' : 0 }}>
-                            <span style={{ fontFamily: 'monospace', color: '#374151' }}>{v.numero_factura}</span>
-                            <span style={{ fontWeight: 600, color: '#1f2937' }}>{fmt(v.total)}</span>
+                    {filasNotas.map((f, i) => (
+                        <div key={f.v.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: i < filasNotas.length - 1 ? '6px' : 0 }}>
+                            <span style={{ fontFamily: 'monospace', color: '#374151' }}>{f.v.numero_factura}</span>
+                            <span style={{ fontWeight: 600, color: '#1f2937' }}>
+                                {f.r.total > 0 && <span style={{ fontWeight: 400, fontSize: '11px', color: '#4338ca', marginRight: '6px' }}>ret. −{fmt(f.r.total)}</span>}
+                                {cobrosPorVenta ? fmt(f.neto) : '…'}
+                            </span>
                         </div>
                     ))}
                     <div style={{ height: '1px', backgroundColor: '#e5e7eb', margin: '10px 0' }} />
@@ -1299,6 +1423,10 @@ function ModalCobroMultiple({ ventas, onCerrar, onCobrado }) {
                     tipoTasa={tipoTasa} onTipoTasa={handleTasaChange}
                     opciones={OPCIONES_TASA}
                 />
+
+                {/* Retenciones del cliente contribuyente especial */}
+                <BloqueRetencionesCobro lineas={lineasRet} aplicar={aplicarRet} onAplicar={setAplicarRet}
+                    comprobante={comprobante} onComprobante={setComprobante} varias={ventas.length > 1} />
 
                 {/* Montos */}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
@@ -1358,7 +1486,9 @@ function ModalCobroMultiple({ ventas, onCerrar, onCobrado }) {
                     {sinTasa ? `⛔ Sin tasa registrada para el ${fmtFechaCorta(fechaPago)}`
                         : excede ? '⚠️ El monto supera el total de las facturas'
                         : sinAbono ? 'Ingresa el monto a cobrar'
-                        : cubre ? `✓ Monto exacto — ${ventas.length} facturas quedarán pagadas`
+                        : cubre ? (lineasRet.iva || lineasRet.islr) && totalRetAhora < redondear2(filasNotas.reduce((s, f) => s + f.r.total, 0)) - 0.001
+                            ? `✓ Monto exacto — las retenciones sin marcar quedan por registrar`
+                            : `✓ Monto exacto — ${ventas.length} facturas quedarán pagadas`
                         : `Faltan ${fmt(totalGeneral - abonoEnUsd)} para cubrir el total`}
                 </div>
 
