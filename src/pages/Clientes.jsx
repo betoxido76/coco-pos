@@ -3,6 +3,8 @@ import { supabase } from '../lib/supabaseClient'
 import { Plus, Pencil, Check, Search, MapPin, X, Star, Trash2, AlertTriangle } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { useAltoBarra, useOrden, ordenarFilas, ThOrden, BarraFija, estiloTarjetaTabla } from '../components/TablaOrdenable'
+import ExoneracionIvaCliente from '../components/ExoneracionIvaCliente'
+import { exoneracionesPorCliente, estadoExoneracion } from '../lib/exoneracion'
 
 const VACIO = {
     nombre: '', rif: '', telefono: '', email: '',
@@ -30,6 +32,8 @@ const inputStyle = {
 export default function Clientes() {
     const { perfil } = useAuth()
     const [clientes, setClientes] = useState([])
+    // { cliente_id: exoneración vigente } — badge en la lista (docs/plan-exoneracion-iva.md)
+    const [exoneraciones, setExoneraciones] = useState({})
     const [loading, setLoading] = useState(true)
     const [busqueda, setBusqueda] = useState('')
     const [vista, setVista] = useState('lista') // 'lista' | 'form' | 'categorias'
@@ -94,6 +98,7 @@ export default function Clientes() {
             .eq('empresa_id', perfil.empresa_id).order('nombre')
         if (data) setClientes(data)
         setLoading(false)
+        exoneracionesPorCliente(perfil.empresa_id).then(setExoneraciones)
     }
 
     async function cargarDirecciones(clienteId) {
@@ -426,6 +431,9 @@ export default function Clientes() {
                 </div>
             </div>
 
+            {/* Exoneración de IVA: necesita el cliente guardado (y con RIF) */}
+            <ExoneracionIvaCliente clienteId={editando} rif={clientes.find(c => c.id === editando)?.rif} />
+
             {/* Contactos */}
             <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '20px', marginBottom: '20px' }}>
                 <p style={{ fontSize: '13px', fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 16px' }}>Contactos</p>
@@ -750,7 +758,19 @@ export default function Clientes() {
                                     onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
                                     <td style={{ padding: '12px 16px', fontSize: '12px', fontFamily: 'monospace', color: '#6b7280' }}>{c.codigo || '—'}</td>
                                     <td style={{ padding: '12px 16px' }}>
-                                        <div style={{ fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>{c.nombre}</div>
+                                        <div style={{ fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>
+                                            {c.nombre}
+                                            {exoneraciones[c.id] && (() => {
+                                                const est = estadoExoneracion(exoneraciones[c.id])
+                                                return (
+                                                    <span title={`Ref. ${exoneraciones[c.id].referencia}`}
+                                                        style={{ marginLeft: '6px', padding: '1px 8px', borderRadius: '20px', fontSize: '11px', fontWeight: 500,
+                                                            backgroundColor: est.aplica ? '#eef2ff' : '#fef2f2', color: est.aplica ? '#4338ca' : '#dc2626' }}>
+                                                        {est.vencida ? 'Exoneración vencida' : est.futura ? 'Exonerado (desde ' + exoneraciones[c.id].vigente_desde.split('-').reverse().join('/') + ')' : 'Exonerado IVA'}
+                                                    </span>
+                                                )
+                                            })()}
+                                        </div>
                                         {c.descripcion && <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '2px' }}>{c.descripcion}</div>}
                                     </td>
                                     <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280', fontFamily: 'monospace' }}>{c.rif || '—'}</td>
