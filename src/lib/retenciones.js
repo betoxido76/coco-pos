@@ -52,7 +52,8 @@ export function desgloseSugerido(total, exento) {
 // en bolívares, para detectar la base escrita en Bs. (caso GS1, 2026-10-13)
 export function avisoDesglose(base, iva, total, montoBs = 0) {
     const b = Number(base || 0), i = Number(iva || 0), t = Number(total || 0)
-    if (!(b > 0) || !(t > 0)) return null
+    if (!(b > 0)) return null
+    if (!(t > 0)) return 'Falta el monto del gasto: base e IVA no lo reemplazan.'
     const suma = redondear2(b + i)
     if (suma <= t + 0.01) return null
     const bs = Number(montoBs || 0)

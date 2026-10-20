@@ -587,8 +587,10 @@ function NuevoGasto({ tasas, tipos, onGuardado, onCancelar }) {
         if (sinTasa) { setError(`No hay tasa registrada para el ${fmtFechaCorta(fecha)}`); return }
         if (!nombre.trim()) { setError('El nombre del gasto es obligatorio'); return }
         if (!tipoGastoId) { setError('Selecciona el tipo de gasto'); return }
-        if (estadoGasto === 'pagado' && Number(montoUsd) <= 0 && Number(montoBs) <= 0) {
-            setError('Ingresa al menos un monto'); return
+        // También el programado: un gasto en $0 no aparece como deuda en ningún
+        // lado (GTO-00064 se guardó con base e IVA pero sin monto)
+        if (Number(montoUsd || 0) <= 0 && Number(montoBs || 0) <= 0) {
+            setError('Ingresa el monto del gasto (USD o Bs.)'); return
         }
         if (estadoGasto === 'pendiente' && !fechaVencimiento) {
             setError('Ingresa la fecha de vencimiento para el gasto programado'); return
