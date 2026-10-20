@@ -553,6 +553,9 @@ function NuevoGasto({ tasas, tipos, onGuardado, onCancelar }) {
     // Desglose de la factura (USD): lo necesita la retención de IVA/ISLR
     const [baseImponible, setBaseImponible] = useState('')
     const [montoIva, setMontoIva] = useState('')
+    // Monto en USD rellenado desde el desglose (base + IVA): sigue al desglose
+    // hasta que el usuario escribe un monto propio
+    const [montoAuto, setMontoAuto] = useState(false)
     // Gasto "pagado" recién registrado: se paga con la ventana única de pago
     const [gastoAPagar, setGastoAPagar] = useState(null)
 
@@ -580,6 +583,16 @@ function NuevoGasto({ tasas, tipos, onGuardado, onCancelar }) {
     function sugerirDesglose(exento) {
         const d = desgloseSugerido(totalEnUsd, exento)
         setBaseImponible(d.base.toFixed(2)); setMontoIva(d.iva.toFixed(2))
+    }
+    function cambiarDesglose(campo, valor) {
+        const base = campo === 'base' ? valor : baseImponible
+        const iva = campo === 'iva' ? valor : montoIva
+        if (campo === 'base') setBaseImponible(valor); else setMontoIva(valor)
+        const sinMonto = !(Number(montoUsd) > 0) && !(Number(montoBs) > 0)
+        if (!montoAuto && !sinMonto) return
+        const suma = Math.round((Number(base || 0) + Number(iva || 0)) * 100) / 100
+        setMontoUsd(suma > 0 ? suma.toFixed(2) : '')
+        setMontoAuto(suma > 0)
     }
     const avisoDesg = pideDesglose ? avisoDesglose(baseImponible, montoIva, totalEnUsd, montoBs) : null
 
@@ -774,15 +787,22 @@ function NuevoGasto({ tasas, tipos, onGuardado, onCancelar }) {
                             Monto en USD {estadoGasto === 'pendiente' && <span style={{ color: '#9ca3af', fontWeight: 400 }}>(estimado)</span>}
                         </label>
                         <input type="number" min="0" step="0.01" value={montoUsd}
-                            onChange={e => setMontoUsd(e.target.value)}
+                            onChange={e => { setMontoUsd(e.target.value); setMontoAuto(false) }}
                             placeholder="0.00" style={inputStyle} />
+                        {montoAuto && (
+                            <p style={{ fontSize: '11px', color: '#a16207', margin: '4px 0 0' }}>Calculado del desglose (base + IVA)</p>
+                        )}
                     </div>
                     <div>
                         <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>
                             Monto en Bs. {estadoGasto === 'pendiente' && <span style={{ color: '#9ca3af', fontWeight: 400 }}>(estimado)</span>}
                         </label>
                         <input type="number" min="0" step="1" value={montoBs}
-                            onChange={e => setMontoBs(e.target.value)}
+                            onChange={e => {
+                                // Factura en bolívares: el USD calculado del desglose sobraría
+                                if (montoAuto) { setMontoUsd(''); setMontoAuto(false) }
+                                setMontoBs(e.target.value)
+                            }}
                             placeholder="0.00" style={inputStyle} />
                     </div>
                 </div>
@@ -821,15 +841,16 @@ function NuevoGasto({ tasas, tipos, onGuardado, onCancelar }) {
                         </div>
                         <p style={{ fontSize: '12px', color: '#92400e', margin: '0 0 8px' }}>
                             Total del gasto: <strong>{fmt(totalEnUsd)}</strong> — base + IVA deben sumar ese monto, en dólares.
+                            {totalEnUsd <= 0 && ' Si dejas el monto vacío, se llena con base + IVA.'}
                         </p>
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                             <div>
                                 <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>Base imponible (sin IVA) *</label>
-                                <input type="number" min="0" step="0.01" value={baseImponible} onChange={e => setBaseImponible(e.target.value)} placeholder="0.00" style={inputStyle} />
+                                <input type="number" min="0" step="0.01" value={baseImponible} onChange={e => cambiarDesglose('base', e.target.value)} placeholder="0.00" style={inputStyle} />
                             </div>
                             <div>
                                 <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '4px' }}>IVA</label>
-                                <input type="number" min="0" step="0.01" value={montoIva} onChange={e => setMontoIva(e.target.value)} placeholder="0.00" style={inputStyle} />
+                                <input type="number" min="0" step="0.01" value={montoIva} onChange={e => cambiarDesglose('iva', e.target.value)} placeholder="0.00" style={inputStyle} />
                             </div>
                         </div>
                         {avisoDesg && (
