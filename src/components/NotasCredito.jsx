@@ -240,6 +240,7 @@ export function ModalEmitirNC({ onCerrar, onEmitida }) {
         if (afectaInventario && !almacenId) { setError('Selecciona el almacén destino'); return }
         if (afectaInventario && !hayProductos) { setError('No hay líneas de producto que reingresar al almacén'); return }
         if (sinTasa) { setError('No hay tasa registrada para la fecha de emisión'); return }
+        if (!generaCredito && !window.confirm(`Esta nota NO rebajará la deuda del cliente (${fmt(totales.total)}).\n\n¿Confirmas que al cliente se le repuso la mercancía?`)) return
 
         setGuardando(true); setError('')
         const { data: { user } } = await supabase.auth.getUser()
@@ -314,6 +315,13 @@ export function ModalEmitirNC({ onCerrar, onEmitida }) {
                                 </span>
                             </span>
                         </label>
+                        {!generaCredito && (
+                            <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '8px', padding: '9px 12px', fontSize: '12px', color: '#92400e', margin: '-2px 0 12px 26px' }}>
+                                <strong>Esta nota NO rebajará la deuda del cliente.</strong> No lleva N° de NC ni se puede aplicar a facturas.
+                                Úsalo solo si al cliente se le repuso la mercancía. Un descuento, una liquidación de acuerdos o un error de precio
+                                SÍ generan crédito.
+                            </div>
+                        )}
                         <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer' }}>
                             <input type="checkbox" checked={afectaInventario} onChange={e => setAfectaInventario(e.target.checked)} style={{ marginTop: '3px' }} />
                             <span style={{ fontSize: '13px', color: '#374151' }}>
@@ -492,8 +500,9 @@ export function ModalEmitirNC({ onCerrar, onEmitida }) {
                         </div>
                     )}
                     {!generaCredito && lineas.length > 0 && (
-                        <div style={{ backgroundColor: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '9px 12px', fontSize: '12px', color: '#6b7280', marginBottom: '12px' }}>
-                            Este documento no lleva N° de NC ni podrá aplicarse a facturas: queda solo como registro de la devolución.
+                        <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '8px', padding: '9px 12px', fontSize: '12px', color: '#92400e', marginBottom: '12px' }}>
+                            <strong>Sin crédito:</strong> el saldo del cliente en CxC no cambia. Queda solo como registro de la reposición
+                            (CxC → Notas de crédito → Sin crédito).
                         </div>
                     )}
                     {error && (
@@ -504,7 +513,7 @@ export function ModalEmitirNC({ onCerrar, onEmitida }) {
                         <button onClick={onCerrar} style={{ flex: 1, padding: '10px', border: '1px solid #e5e7eb', borderRadius: '8px', backgroundColor: '#fff', color: '#374151', fontSize: '14px', cursor: 'pointer' }}>Cancelar</button>
                         <button onClick={emitir} disabled={guardando}
                             style={{ flex: 2, padding: '10px', border: 'none', borderRadius: '8px', backgroundColor: '#d97706', color: '#fff', fontSize: '14px', fontWeight: 600, cursor: guardando ? 'default' : 'pointer', opacity: guardando ? 0.6 : 1 }}>
-                            {guardando ? 'Emitiendo…' : requiereAprobacion ? 'Enviar a aprobación' : 'Emitir nota de crédito'}
+                            {guardando ? 'Emitiendo…' : !generaCredito ? 'Registrar sin crédito' : requiereAprobacion ? 'Enviar a aprobación' : 'Emitir nota de crédito'}
                         </button>
                     </div>
                 </div>

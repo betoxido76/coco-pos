@@ -311,14 +311,16 @@ export default function CuentasCobrar() {
     async function cargarNcs() {
         setLoadingNcs(true)
         let q = supabase.from('devoluciones')
-            .select('id, numero_nc, monto_devuelto, subtotal, iva, estado_nc, tipo_devolucion, origen, es_total, motivo, referencia_fiscal, fecha_emision, created_at, cliente_id, venta_id, afecta_inventario, almacen_id, motivo_anulacion, nota_liquidacion, fecha_liquidacion, clientes(nombre), ventas(numero_factura, nro_referencia)')
+            .select('id, numero_nc, monto_devuelto, subtotal, iva, estado_nc, genera_credito, tipo_devolucion, origen, es_total, motivo, referencia_fiscal, fecha_emision, created_at, cliente_id, venta_id, afecta_inventario, almacen_id, motivo_anulacion, nota_liquidacion, fecha_liquidacion, clientes(nombre), ventas(numero_factura, nro_referencia)')
             .eq('empresa_id', perfil.empresa_id)
-            .not('numero_nc', 'is', null)
             .order('created_at', { ascending: false })
+        // Las notas sin crédito (reposición de mercancía) no llevan N° de NC ni
+        // rebajan deuda, pero se listan igual: ocultas, nadie podía encontrarlas.
         if (filtroNcEstado === 'liquidada') q = q.in('estado_nc', ['reembolsada', 'anulada'])
         // "Disponibles" son las que aún tienen saldo: nunca aplicadas o aplicadas
         // en parte a otra factura.
-        else if (filtroNcEstado === 'disponible') q = q.in('estado_nc', ['pendiente', 'parcial'])
+        else if (filtroNcEstado === 'disponible') q = q.eq('genera_credito', true).in('estado_nc', ['pendiente', 'parcial'])
+        else if (filtroNcEstado === 'sin_credito') q = q.eq('genera_credito', false).neq('estado_nc', 'anulada')
         else if (filtroNcEstado !== 'todas') q = q.eq('estado_nc', filtroNcEstado)
         const { data } = await q
         setNcs(data || [])
@@ -654,7 +656,7 @@ export default function CuentasCobrar() {
                 {/* Filtro estado + emisión: fijos al hacer scroll (la barra de NC usa el mismo ref que la de CxC) */}
                 <BarraFija ref={barraRef}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-                    {[['todas', 'Todas'], ['en_revision', 'Por aprobar'], ['disponible', 'Disponibles'], ['aplicada', 'Aplicadas'], ['liquidada', 'Liquidadas']].map(([val, lbl]) => (
+                    {[['todas', 'Todas'], ['en_revision', 'Por aprobar'], ['disponible', 'Disponibles'], ['aplicada', 'Aplicadas'], ['liquidada', 'Liquidadas'], ['sin_credito', 'Sin crédito']].map(([val, lbl]) => (
                         <button key={val} onClick={() => setFiltroNcEstado(val)}
                             style={{ padding: '7px 16px', borderRadius: '8px', fontSize: '13px', border: '1px solid', cursor: 'pointer', borderColor: filtroNcEstado === val ? '#d97706' : '#e5e7eb', backgroundColor: filtroNcEstado === val ? '#d97706' : '#fff', color: filtroNcEstado === val ? '#fff' : '#6b7280' }}>
                             {lbl}
@@ -694,7 +696,7 @@ export default function CuentasCobrar() {
                                             origen: nc => nc.origen === 'manual' ? 'Manual' : 'Devolución',
                                             fecha: nc => nc.fecha_emision || nc.created_at,
                                             monto: nc => Number(nc.monto_devuelto || 0),
-                                            estado: nc => nc.estado_nc,
+                                            estado: nc => nc.genera_credito === false && nc.estado_nc !== 'anulada' ? 'sin_credito' : nc.estado_nc,
                                         }, ordenNc).map(nc => (
                                             <tr key={nc.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
                                                 <td style={{ padding: '12px 14px', fontSize: '13px', fontFamily: 'monospace', fontWeight: 600, color: '#374151' }}>{nc.numero_nc || '—'}</td>
@@ -704,7 +706,7 @@ export default function CuentasCobrar() {
                                                 <td style={{ padding: '12px 14px', fontSize: '12px', color: '#6b7280' }}>{nc.origen === 'manual' ? 'Manual' : 'Devolución'}</td>
                                                 <td style={{ padding: '12px 14px', fontSize: '13px', color: '#6b7280' }}>{new Date(nc.fecha_emision || nc.created_at).toLocaleDateString('es-VE')}</td>
                                                 <td style={{ padding: '12px 14px', fontSize: '13px', fontWeight: 700, color: '#1f2937', textAlign: 'right' }}>{fmt(nc.monto_devuelto)}</td>
-                                                <td style={{ padding: '12px 14px' }}><BadgeNC estado={nc.estado_nc} /></td>
+                                                <td style={{ padding: '12px 14px' }}><BadgeNC estado={nc.estado_nc} sinCredito={nc.genera_credito === false} /></td>
                                                 <td style={{ padding: '12px 14px' }}>
                                                     <div style={{ display: 'flex', gap: '6px' }}>
                                                         <button onClick={() => setModalNc(nc)}
@@ -721,7 +723,7 @@ export default function CuentasCobrar() {
                                                                 Rechazar
                                                             </button>
                                                         </>)}
-                                                        {['pendiente', 'parcial'].includes(nc.estado_nc) && (
+                                                        {nc.genera_credito !== false && ['pendiente', 'parcial'].includes(nc.estado_nc) && (
                                                             <button onClick={() => setModalLiquidar(nc)}
                                                                 style={{ padding: '5px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 500, border: '1px solid #bfdbfe', backgroundColor: '#eff6ff', color: '#1d4ed8', cursor: 'pointer', whiteSpace: 'nowrap' }}>
                                                                 Liquidar
@@ -1862,8 +1864,9 @@ function BadgeCobro({ estado }) {
     return <span style={{ backgroundColor: bg, color, padding: '2px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 500 }}>{estado}</span>
 }
 
-function BadgeNC({ estado }) {
+function BadgeNC({ estado, sinCredito }) {
     const cfg = {
+        sin_credito: { bg: '#f3f4f6', color: '#374151', label: 'Sin crédito' },
         en_revision: { bg: '#eff6ff', color: '#1e40af', label: 'Por aprobar' },
         pendiente:   { bg: '#fffbeb', color: '#854d0e', label: 'Pendiente' },
         parcial:     { bg: '#fef3c7', color: '#92400e', label: 'Parcial' },
@@ -1871,7 +1874,7 @@ function BadgeNC({ estado }) {
         reembolsada: { bg: '#dbeafe', color: '#1e40af', label: 'Reembolsada' },
         anulada:     { bg: '#f3f4f6', color: '#6b7280', label: 'Anulada' },
     }
-    const { bg, color, label } = cfg[estado] || cfg.pendiente
+    const { bg, color, label } = (sinCredito && estado !== 'anulada' ? cfg.sin_credito : cfg[estado]) || cfg.pendiente
     return <span style={{ backgroundColor: bg, color, padding: '2px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 500 }}>{label}</span>
 }
 
@@ -1926,7 +1929,7 @@ function DetalleNC({ nc, onCerrar }) {
                 {/* Header */}
                 <div className="no-print" style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
                     <h2 style={{ fontSize: '17px', fontWeight: 700, color: '#1f2937', margin: 0 }}>{nc.numero_nc || 'Nota de Crédito'}</h2>
-                    <BadgeNC estado={nc.estado_nc} />
+                    <BadgeNC estado={nc.estado_nc} sinCredito={nc.genera_credito === false} />
                     <button onClick={() => window.print()}
                         style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: '#374151', cursor: 'pointer' }}>
                         🖨️ Imprimir
@@ -1956,6 +1959,7 @@ function DetalleNC({ nc, onCerrar }) {
                     <Row label="Fecha emisión" value={new Date(nc.fecha_emision || nc.created_at).toLocaleDateString('es-VE')} />
                     <Row label="Origen" value={nc.origen === 'manual' ? 'Emisión manual' : 'Devolución de mercancía'} />
                     <Row label="Alcance" value={nc.es_total ? 'Total' : 'Parcial'} />
+                    {nc.genera_credito === false && <Row label="Crédito" value="No rebaja la deuda del cliente (reposición de mercancía)" />}
                     {nc.motivo && <Row label="Motivo" value={nc.motivo} />}
                     <div style={{ height: '1px', backgroundColor: '#e5e7eb', margin: '2px 0' }} />
                     <Row label="Base imponible" value={fmt(subtotal)} />
