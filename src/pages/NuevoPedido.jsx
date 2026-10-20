@@ -202,7 +202,12 @@ export default function NuevoPedido({ onCancelar }) {
                     }).select().single()
                     if (!error && pedido) {
                         await supabase.from('pedido_items').insert(
-                            p.items.map(i => ({ ...i, pedido_id: pedido.id, empresa_id: p.empresa_id }))
+                            // Un pedido encolado por una versión vieja no trae la marca de
+                            // IVA: desde 2026-10-02 las listas están en base, sin IVA.
+                            p.items.map(i => ({
+                                ...(i.precio_incluye_iva === undefined ? camposIvaLinea(i.aplica_iva ?? true) : {}),
+                                ...i, pedido_id: pedido.id, empresa_id: p.empresa_id,
+                            }))
                         )
                         updated = updated.filter(x => x.tempId !== p.tempId)
                     }

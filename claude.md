@@ -31,12 +31,20 @@ VITE_SUPABASE_ANON_KEY=eyJ...
 ```
 
 **PWA y versiones viejas:** la app guarda su código en el navegador. Con
-`registerType: 'prompt'` una pestaña abierta NO toma la versión nueva sola:
-`src/components/AvisoNuevaVersion.jsx` revisa cada 15 min y pide recargar. Un
+`registerType: 'prompt'` la versión nueva espera: `src/components/AvisoNuevaVersion.jsx`
+revisa cada 15 min y **recarga sola** al volver a la pestaña o tras 3 min sin
+uso, salvo que se haya escrito algo en la pantalla actual (entonces avisa). Un
 arreglo publicado no protege a quien tiene la pestaña abierta desde antes
-(NE-001226 se facturó con un bug corregido una hora antes): las reglas que no
-deben violarse van además como candado en la base (p. ej. el trigger
+(NE-001226; PED-001426 desde una PC con código de antes del 02/10): las reglas
+que no deben violarse van además como candado en la base (p. ej. el trigger
 `venta_items_cuadra_unidades`: cantidad × factor = cantidad_primaria).
+
+**Versión mínima** (`version_app_minima.sql`): cada llamada lleva
+`x-app-version` (fecha UTC del build, `APP_VERSION` en `src/lib/supabaseClient.js`)
+y el trigger `exigir_version_app` rechaza escrituras del navegador con versión
+menor que `sistema_parametros.app_version_minima` (NULL = apagado). Tras publicar
+un cambio delicado, subir la mínima a la versión publicada (`pedidos.app_version`
+o `ventas.app_version` de un registro nuevo la muestra).
 
 **Nota de build:** El proyecto usa `vite-plugin-pwa` instalado con `--legacy-peer-deps`. El `.npmrc` tiene `legacy-peer-deps=true` y el build command en Cloudflare es `npm install --legacy-peer-deps && npm run build`.
 

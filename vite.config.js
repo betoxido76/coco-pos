@@ -2,7 +2,15 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
+// Versión de la app = fecha y hora UTC del build (AAAAMMDDHHmm). Viaja en cada
+// llamada a Supabase (x-app-version) y la base rechaza escrituras de versiones
+// anteriores a sistema_parametros.app_version_minima (version_app_minima.sql).
+const APP_VERSION = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 12)
+
 export default defineConfig({
+  define: {
+    __APP_VERSION__: JSON.stringify(APP_VERSION),
+  },
   build: {
     rollupOptions: {
       output: {
