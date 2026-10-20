@@ -34,3 +34,7 @@ tokens*.txt
 # Archivos de migración generados (contienen datos de clientes)
 migration*.sql
 *.db
+
+# Respaldos de la base (datos de clientes): viven fuera del repo
+*.dump
+*.7z

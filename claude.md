@@ -447,6 +447,9 @@ ON CONFLICT DO NOTHING;
 
 ## 13. Seguridad
 
+- **Respaldos**: plan Free, sin backups de Supabase. Respaldo manual con `pg_dump`
+  por el pooler en el puerto **6543** (la red bloquea el 5432) y procedimiento de
+  restauración en `docs/restauracion.md`
 - RLS habilitado en todas las tablas
 - Función `is_superadmin()` con `SECURITY DEFINER` para evitar recursión en políticas
 - Anon key expuesta en frontend (normal en React) — RLS es la barrera de seguridad real
