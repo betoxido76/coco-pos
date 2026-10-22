@@ -508,6 +508,10 @@ Al cerrar un ítem, borrarlo de esta tabla.
 
 ## 15. Convenciones de código
 
+- **Tabla nueva en `public` = GRANT explícito** (desde 2026-10-30 Supabase ya no lo da solo; sin él la app
+  recibe "permission denied"). En el mismo SQL que la crea, además de RLS y políticas:
+  `GRANT SELECT, INSERT, UPDATE, DELETE ON public.x TO authenticated, service_role;` (`anon` solo si la
+  pantalla de login la lee). Las vistas nuevas ya llevaban `GRANT SELECT ... TO authenticated`.
 - `useAuth()` en cada componente que necesite `perfil`
 - `perfil?.empresa_id` — siempre validar antes de usar
 - Todas las queries: `.eq('empresa_id', perfil.empresa_id)`
