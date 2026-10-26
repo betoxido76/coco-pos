@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS public.lab_vin_escaneos (
     usuario_id    uuid NOT NULL DEFAULT auth.uid() REFERENCES public.usuarios(id),
     vin           text NOT NULL,                 -- el que confirmó el usuario
     vin_leido     text,                          -- el que devolvió la lectura (antes de corregir)
-    fuente        text NOT NULL CHECK (fuente IN ('ia', 'codigo_barras', 'manual')),
+    fuente        text NOT NULL CHECK (fuente IN ('ia', 'ocr', 'codigo_barras', 'manual')),
     corregido     boolean NOT NULL DEFAULT false, -- el usuario cambió la lectura
     valido        boolean,                       -- 17 caracteres, sin I/O/Q
     digito_ok     boolean,                       -- dígito verificador (NULL = no aplica)
@@ -32,3 +32,8 @@ CREATE POLICY lab_vin_superadmin ON public.lab_vin_escaneos
 
 -- Desde 2026-10-30 Supabase no da estos permisos solo (CLAUDE.md §15)
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.lab_vin_escaneos TO authenticated, service_role;
+
+-- 2026-10-26: lectura del texto con OCR gratis en el teléfono (Tesseract.js)
+ALTER TABLE public.lab_vin_escaneos DROP CONSTRAINT IF EXISTS lab_vin_escaneos_fuente_check;
+ALTER TABLE public.lab_vin_escaneos ADD CONSTRAINT lab_vin_escaneos_fuente_check
+    CHECK (fuente IN ('ia', 'ocr', 'codigo_barras', 'manual'));

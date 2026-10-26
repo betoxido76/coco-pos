@@ -1,12 +1,14 @@
 // Laboratorio VIN (prueba, solo superadmin): el VIN se toma de un código de barras
 // (escaneo en vivo con la cámara, o dentro de una foto) gratis y sin IA; si la foto
-// no trae código, la Edge Function leer-vin la lee con IA. El usuario confirma o
-// corrige y se guarda en lab_vin_escaneos. Ver laboratorio_vin.sql.
+// no trae código, se lee el texto con OCR gratis en el teléfono (src/lib/ocrVin.js)
+// y, opcionalmente, con IA (Edge Function leer-vin, requiere ANTHROPIC_API_KEY).
+// El usuario confirma o corrige y se guarda en lab_vin_escaneos (laboratorio_vin.sql).
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Camera, ImageIcon, ArrowLeft, Check, AlertTriangle, RefreshCw, ScanLine, X } from 'lucide-react'
 import { supabase, APP_VERSION } from '../lib/supabaseClient'
 import { validarVin, normalizarVin, vinEnTexto } from '../lib/vin'
+import { leerVinConOcr } from '../lib/ocrVin'
 
 const LADO_MAX = 1600 // px: suficiente para leer el serial y liviano para el envío
 
@@ -22,7 +24,7 @@ const UBICACION = {
     parabrisas: 'Parabrisas', puerta: 'Etiqueta de la puerta', chasis_motor: 'Chasis / motor',
     documento: 'Documento', otro: 'Otro', desconocido: 'No identificado',
 }
-const FUENTE = { ia: 'IA', codigo_barras: 'Código de barras', manual: 'Manual' }
+const FUENTE = { ia: 'IA', ocr: 'OCR gratis', codigo_barras: 'Código de barras', manual: 'Manual' }
 const CAMPOS_DECOD = [
     ['marca', 'Marca'], ['modelo', 'Modelo'], ['anio', 'Año'], ['version', 'Versión'],
     ['carroceria', 'Carrocería'], ['tipo', 'Tipo'], ['motor_cilindros', 'Cilindros'],
@@ -136,6 +138,7 @@ export default function LaboratorioVin() {
     const [diag, setDiag] = useState('')         // resolución de la cámara o error del lector
     const videoRef = useRef(null)
     const streamRef = useRef(null)
+    const fotoBase64Ref = useRef(null)            // última foto, para la segunda opinión con IA
     const escaneoRef = useRef(0)                 // id del escaneo vigente; cambiarlo lo detiene
 
     useEffect(() => () => detenerEscaneo(), [])
@@ -267,16 +270,37 @@ export default function LaboratorioVin() {
             }
 
             // La foto es de un código que no trae VIN (p. ej. de producto): no tiene
-            // sentido pedirle el serial a la IA
+            // sentido buscarle el serial como texto
             if (textos.length) { setLeidoNoVin(textos.join(' · ')); return }
-            setPaso('No hay código de barras en la foto. Leyendo el serial con IA...')
-            const r = await llamarFuncion({ imagen: base64, media_type: 'image/jpeg' }).catch(err => {
-                throw new Error('No se encontró un código de barras con un VIN en la foto, y la lectura con IA falló: ' + err.message)
-            })
-            setResultado({ fuente: 'ia', ...r })
-            setVin(r.vin || '')
+
+            fotoBase64Ref.current = base64
+            setPaso('Leyendo el texto (gratis, en el teléfono)...')
+            const ocr = await leerVinConOcr(bitmap, p => setPaso(`Leyendo el texto (gratis, en el teléfono)... ${Math.round(p * 100)} %`))
+            const leido = ocr.candidatos[0] || ''
+            setVin(leido)
+            let decodificado = null
+            if (leido) {
+                setPaso('Decodificando...')
+                decodificado = (await llamarFuncion({ vin: leido }).catch(() => null))?.decodificado ?? null
+            }
+            setResultado({ fuente: 'ocr', vin_leido: leido || null, ocr, decodificado })
         } catch (err) {
             setError(err.message)
+        } finally {
+            setPaso('')
+        }
+    }
+
+    // Segunda opinión con IA sobre la misma foto (requiere la clave de Anthropic)
+    async function probarConIa() {
+        setError(''); setPaso('Leyendo el serial con IA...')
+        try {
+            const r = await llamarFuncion({ imagen: fotoBase64Ref.current, media_type: 'image/jpeg' })
+            setResultado({ fuente: 'ia', ...r })
+            setVin(r.vin || '')
+            setGuardado(false)
+        } catch (err) {
+            setError('Lectura con IA: ' + err.message)
         } finally {
             setPaso('')
         }
@@ -307,7 +331,10 @@ export default function LaboratorioVin() {
             digito_ok: v.digito_ok,
             ubicacion: r.lectura?.ubicacion ?? null,
             legibilidad: r.lectura?.legibilidad ?? null,
-            notas_lectura: [r.lectura?.notas, r.lectura?.caracteres_dudosos].filter(Boolean).join(' · ') || null,
+            notas_lectura: [
+                r.lectura?.notas, r.lectura?.caracteres_dudosos,
+                r.ocr && `OCR confianza ${r.ocr.confianza} %; texto: ${r.ocr.texto.slice(0, 300)}`,
+            ].filter(Boolean).join(' · ') || null,
             decodificado: r.decodificado ?? null,
             observaciones: observaciones.trim() || null,
         })
@@ -329,7 +356,7 @@ export default function LaboratorioVin() {
             </Link>
             <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>🧪 Lectura de VIN</h1>
             <p style={{ fontSize: '13px', color: '#6b7280', margin: '4px 0 16px' }}>
-                Prueba de laboratorio: foto del serial de carrocería → código de barras o IA → base de datos.
+                Prueba de laboratorio: código de barras en vivo, o foto del serial leída como texto (gratis) o con IA.
                 <span style={{ display: 'block', fontSize: '11px', color: '#9ca3af' }}>
                     Versión {APP_VERSION} · lector nativo {'BarcodeDetector' in window ? 'disponible' : 'no disponible'}
                 </span>
@@ -398,6 +425,33 @@ export default function LaboratorioVin() {
                             {resultado.lectura && <> · {UBICACION[resultado.lectura.ubicacion] || resultado.lectura.ubicacion} · legibilidad {resultado.lectura.legibilidad}</>}
                             {resultado.ms && <> · {(resultado.ms / 1000).toFixed(1)} s</>}
                         </p>
+                    )}
+                    {resultado?.ocr && (
+                        <div style={{ fontSize: '13px', color: '#374151', margin: '0 0 10px' }}>
+                            {resultado.ocr.candidatos.length === 0 ? (
+                                <p style={{ color: '#92400e', margin: '0 0 6px' }}>
+                                    El OCR no encontró 17 caracteres que formen un VIN. Prueba otra foto (más cerca, de frente, sin reflejos) o escríbelo a mano.
+                                </p>
+                            ) : resultado.ocr.candidatos.length > 1 && (
+                                <div style={{ margin: '0 0 6px' }}>
+                                    <span style={{ color: '#6b7280' }}>Otras lecturas posibles: </span>
+                                    {resultado.ocr.candidatos.slice(1, 5).map(c => (
+                                        <button key={c} onClick={() => { setVin(c); setGuardado(false) }}
+                                            style={{ fontFamily: 'ui-monospace, Consolas, monospace', fontSize: '12px', margin: '2px', padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: '6px', background: '#f9fafb', cursor: 'pointer' }}>
+                                            {c}
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+                            <details>
+                                <summary style={{ color: '#6b7280', cursor: 'pointer' }}>Texto leído (confianza {resultado.ocr.confianza} %)</summary>
+                                <pre style={{ whiteSpace: 'pre-wrap', fontSize: '12px', background: '#f9fafb', padding: '8px', borderRadius: '6px', margin: '6px 0 0' }}>{resultado.ocr.texto || '(nada)'}</pre>
+                            </details>
+                            <button onClick={probarConIa} disabled={!!paso}
+                                style={{ background: 'none', border: 'none', color: '#1d4ed8', fontSize: '12px', textDecoration: 'underline', cursor: 'pointer', padding: '6px 0 0' }}>
+                                Probar con IA (requiere la clave de Anthropic)
+                            </button>
+                        </div>
                     )}
                     {resultado?.lectura && !resultado.lectura.encontrado && (
                         <p style={{ fontSize: '14px', color: '#92400e', margin: '0 0 8px' }}>
