@@ -122,13 +122,83 @@ fija el precio del módulo.
 
 Commit + push al cerrar cada fase.
 
-## Fuera de la fase 1
+## Hoja de ruta después de la fase 1
 
-- Acceso de clientes, precio por plan, bolsa prepagada y margen (fase 2).
-- Documentos: subir PDF/Excel y consultarlos (fase 3).
-- Acciones con confirmación, p. ej. crear un pedido (fase 4).
-- Respuesta en streaming (texto que aparece mientras se escribe), gráficos y
-  análisis con ejecución de código (requieren la API directa de Anthropic).
+| Fase | Contenido |
+|---|---|
+| 2 | Acceso de clientes, precio por plan, bolsa prepagada, margen en el panel de consumo |
+| 3 | **Análisis profundo** (ver abajo) |
+| 4 | Documentos: subir PDF/Excel y consultarlos |
+| 5 | Acciones con confirmación, p. ej. crear un pedido |
+
+Respuesta en streaming, gráficos y análisis con ejecución de código requieren la
+API directa de Anthropic; se evalúan al llegar a la fase 3.
+
+### Caso de referencia: rentabilidad por cliente (2026-10-26)
+
+Prueba hecha a mano, simulando al agente: "¿qué clientes son más rentables
+considerando lo que cuesta servirlos?", tres meses de un cliente real. Necesitó
+~20 consultas sobre ventas, líneas, costo de mercancía, NC (devoluciones y
+acuerdos comerciales), cambios mano a mano (`cambio_items`), gastos de logística
+de un cliente, lista de precios principal y cobros, más el costeo por receta para
+validar los costos. Mostró que el cliente de mayor volumen tiene un costo de
+servir muchas veces mayor que el resto. Las cifras quedaron en la conversación,
+no en el repositorio (son datos del cliente).
+
+Lo que la fase 1 **no** puede hacer de ese análisis, y define la fase 3:
+
+| Hizo falta | Por qué la fase 1 no alcanza |
+|---|---|
+| Cruzar ventas, costo, NC, cambios, gastos y listas | Cada herramienta mira un solo tema |
+| Atribuir gastos de logística a un cliente | Se dedujo leyendo descripciones de texto libre |
+| Saber qué NC estaban por revisar y qué gastos tenían monto incompleto | Contexto de sesiones anteriores, no está en los datos |
+| Recalcular el costo desde las recetas y detectar costos mal cargados | No hay herramienta de costeo |
+| Consultas a la medida | La fase 1 prohíbe consultas libres a propósito |
+| Señalar supuestos y pedir que se validen | Replicable con buenas instrucciones |
+
+Costo estimado de un análisis así con un modelo de alto nivel: USD 0,50–2, no
+los centavos de una pregunta simple.
+
+### Fase 3 — Análisis profundo
+
+Un segundo modo del asistente, vendible como plan superior:
+
+- **Herramientas compuestas**: `rentabilidad_clientes` (venta, costo, descuento
+  vs. lista, NC por tipo, cambios, gastos atribuidos, días de cobro),
+  `costo_servir` (detalle por cliente) y `costeo_receta` (costo de materiales por
+  unidad desde la receta, con los insumos fabricados resueltos por su propia receta).
+- **Consulta libre de solo lectura**: SQL limitado a las vistas `v_export_*` y
+  las de análisis, ejecutado con un rol de solo lectura, filtrado a una empresa,
+  con tiempo máximo y tope de filas. La respuesta muestra las consultas usadas.
+- **Modelo más capaz** que el de las preguntas rápidas.
+- **Costo visible antes de ejecutar** ("este análisis costará ~USD 1, ¿continuar?")
+  y descontado del cupo de la empresa.
+- **Supuestos explícitos**: toda respuesta de análisis cierra con los supuestos
+  usados y qué dato los resolvería.
+
+### Ajustes de datos (vía paralela, sirven aunque no exista el agente)
+
+El análisis no debe depender de adivinar. Tres cambios al sistema:
+
+1. **Gasto atribuido a un cliente** — `gastos.cliente_id` opcional (Gastos y CxP):
+   la logística de un cliente queda atribuida al registrarla, no deducida de la
+   descripción. Los gastos viejos se pueden migrar.
+2. **Costeo por receta** — función del sistema que calcula el costo de materiales
+   de cada PT y de cada MP fabricada desde sus recetas (resolviendo intermedios).
+   Sirve para proponer `costo_promedio` y para corregir la valoración de
+   inventario: en la prueba aparecieron MP fabricadas con el costo del lote
+   cargado como costo unitario (o casi en cero). El costo completo requiere además
+   nómina de planta y gastos de planta por mes.
+3. **Notas de contexto por empresa** — texto que el agente lee antes de responder
+   (p. ej. "el operador logístico X factura la centralización del cliente Y",
+   "el cliente Y cobra acuerdos comerciales por NC"), editable por el admin de la
+   empresa y por el superadmin.
+
+### Lo que el agente nunca hace
+
+Corregir datos en producción, publicar código, cambiar configuraciones ni tocar
+permisos. Eso sigue siendo trabajo del superadmin con herramientas de desarrollo,
+no de los usuarios de las empresas.
 
 ## Por decidir antes de construir
 
