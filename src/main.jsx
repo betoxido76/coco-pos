@@ -19,6 +19,7 @@ import CambiosManoMano from './pages/CambiosManoMano'
 import Cotizador from './pages/Cotizador'
 import Finanzas from './pages/Finanzas'
 import SuperAdmin from './pages/SuperAdmin'
+import LaboratorioVin from './pages/LaboratorioVin'
 import Gastos from './pages/Gastos'
 import Bancos from './pages/Bancos'
 import Despacho from './pages/Despacho'
@@ -44,6 +45,12 @@ function ModuloProtegido({ modulo, children }) {
   if (perfil?.rol === 'superadmin') return children
   if (modulosActivos.includes(modulo)) return children
   return <Navigate to="/" replace />
+}
+
+function SoloSuperadmin({ children }) {
+  const { perfil } = useAuth()
+  if (!perfil) return null
+  return perfil.rol === 'superadmin' ? children : <Navigate to="/" replace />
 }
 
 function App() {
@@ -88,6 +95,7 @@ function App() {
         <Route path="despacho" element={<ModuloProtegido modulo="despacho"><Despacho /></ModuloProtegido>} />
         <Route path="requisiciones" element={<ModuloProtegido modulo="requisiciones"><Requisiciones /></ModuloProtegido>} />
         <Route path="superadmin" element={<SuperAdmin />} />
+        <Route path="laboratorio-vin" element={<SoloSuperadmin><LaboratorioVin /></SoloSuperadmin>} />
         <Route path="reset-password" element={<ResetPassword />} />
       </Route>
     </Routes>

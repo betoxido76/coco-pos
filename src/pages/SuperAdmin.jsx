@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabaseClient'
 import { Check, X, Building2, Plus, User, Shield, Eye, EyeOff } from 'lucide-react'
 import SaludInventarioOperador from '../components/SaludInventarioOperador'
@@ -290,10 +291,16 @@ export default function SuperAdmin() {
                     <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>🛠️ Super Admin</h1>
                     <p style={{ fontSize: '13px', color: '#6b7280', margin: '4px 0 0' }}>Gestiona empresas, módulos y usuarios</p>
                 </div>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                <Link to="/laboratorio-vin"
+                    style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#fff', color: '#374151', border: '1px solid #d1d5db', borderRadius: '8px', padding: '10px 16px', fontSize: '14px', fontWeight: 500, textDecoration: 'none' }}>
+                    🧪 Lectura de VIN
+                </Link>
                 <button onClick={() => { setModalEmpresa(true); setFormEmpresa({ nombre: '', rif: '', perfil_negocio: 'manufactura' }); setErrorEmpresa('') }}
                     style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#1d4ed8', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px 16px', fontSize: '14px', fontWeight: 500, cursor: 'pointer' }}>
                     <Plus size={16} /> Nueva empresa
                 </button>
+                </div>
             </div>
 
             <SaludInventarioOperador />

@@ -396,6 +396,13 @@ Requiere rol `superadmin`. Incluye headers CORS.
 Resetea la contraseña de un usuario. Solo accesible por superadmin.
 Incluye headers CORS.
 
+### `leer-vin` (laboratorio, solo superadmin)
+Prueba de lectura del VIN con el teléfono (`/laboratorio-vin`, botón en SuperAdmin):
+código de barras con `BarcodeDetector` en el navegador o, si no hay, foto leída por
+Claude con salida JSON; decodifica con NHTSA vPIC. Guarda en `lab_vin_escaneos`
+(sin empresa_id, RLS `is_superadmin()`, `laboratorio_vin.sql`). Secreto
+`ANTHROPIC_API_KEY`. No es un módulo de clientes: la app definitiva irá aparte.
+
 **Nota importante:** Ambas Edge Functions requieren el header `apikey` además del `Authorization` para funcionar desde el frontend. El CORS está configurado con `Access-Control-Allow-Origin: *`.
 
 ---
