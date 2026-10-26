@@ -5,7 +5,7 @@ import {
     LayoutDashboard, Package, ShoppingCart,
     TrendingDown, CreditCard, LogOut, Menu, X, Truck, FolderTree,
     ClipboardList, DollarSign, FlaskConical, AlertTriangle, ArrowLeftRight,
-    User, Tag, BarChart2, Landmark, RefreshCw, PackageCheck, Building2, ClipboardCheck
+    User, Tag, BarChart2, Landmark, RefreshCw, PackageCheck, Building2, ClipboardCheck, Shield, ScanLine
 } from 'lucide-react'
 import { useState, useEffect } from 'react'
 
@@ -28,6 +28,13 @@ const NAV_ITEMS = [
     { key: 'finanzas', to: '/finanzas', icon: BarChart2, label: 'Finanzas' },
     { key: 'bancos', to: '/bancos', icon: Landmark, label: 'Bancos' },
     { key: 'administracion', to: '/administracion', icon: FolderTree, label: 'Administración' },
+]
+
+// Solo superadmin: no son módulos de la tabla `modulos` (la app instalada no tiene
+// barra de direcciones para escribir la URL)
+const NAV_SUPERADMIN = [
+    { key: 'superadmin', to: '/superadmin', icon: Shield, label: 'Super Admin' },
+    { key: 'laboratorio_vin', to: '/laboratorio-vin', icon: ScanLine, label: 'Lectura de VIN' },
 ]
 
 export default function Layout() {
@@ -53,7 +60,10 @@ export default function Layout() {
 
     const navFiltrado = modulosActivos === null
         ? []
-        : NAV_ITEMS.filter(item => modulosActivos.includes(item.key))
+        : [
+            ...NAV_ITEMS.filter(item => modulosActivos.includes(item.key)),
+            ...(perfil?.rol === 'superadmin' ? NAV_SUPERADMIN : []),
+        ]
 
     const [modalPass, setModalPass] = useState(false)
     const [passNueva, setPassNueva] = useState('')
