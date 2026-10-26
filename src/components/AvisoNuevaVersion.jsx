@@ -84,9 +84,19 @@ export default function AvisoNuevaVersion() {
 
     // Recién abierta (la app instalada en el teléfono): la versión nueva aparece
     // en los primeros segundos y no hay cambio de pestaña que dispare la recarga.
+    // En el teléfono la descarga de la versión nueva puede tardar más de 30 s.
     useEffect(() => {
-        if (hayNueva && performance.now() < 30 * 1000 && !escritoRef.current) updateServiceWorker(true)
+        if (hayNueva && performance.now() < 2 * 60 * 1000 && !escritoRef.current) updateServiceWorker(true)
     }, [hayNueva, updateServiceWorker])
+
+    // Al cambiar de pantalla no hay nada escrito que perder: buen momento para
+    // pasar a la versión nueva.
+    const rutaRef = useRef(pathname)
+    useEffect(() => {
+        if (rutaRef.current === pathname) return
+        rutaRef.current = pathname
+        if (hayNuevaRef.current) updateServiceWorker(true)
+    }, [pathname, updateServiceWorker])
 
     // Si queda abierto mucho rato sin recargar, que se note
     useEffect(() => {
