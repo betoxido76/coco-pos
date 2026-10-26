@@ -42,6 +42,10 @@ async function prepararImagen(file) {
     return { bitmap, dataUrl, base64: dataUrl.split(',')[1] }
 }
 
+// Formatos del VIN (Code 39 en etiquetas, Data Matrix/QR/PDF417 en documentos) más
+// los de productos (EAN/UPC), que nunca traen un VIN pero confirman que el escáner lee
+const FORMATOS_NATIVOS = ['code_39', 'code_128', 'data_matrix', 'qr_code', 'pdf417', 'ean_13', 'ean_8', 'upc_a', 'upc_e']
+
 // Lector ZXing (funciona en Android y iPhone); se carga solo en esta pantalla
 async function crearLectorZxing() {
     const [{ BrowserMultiFormatReader }, { DecodeHintType, BarcodeFormat }] = await Promise.all([
@@ -49,7 +53,9 @@ async function crearLectorZxing() {
     ])
     const hints = new Map([
         [DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.CODE_39, BarcodeFormat.CODE_128, BarcodeFormat.DATA_MATRIX,
-            BarcodeFormat.QR_CODE, BarcodeFormat.PDF_417]],
+            BarcodeFormat.QR_CODE, BarcodeFormat.PDF_417,
+            // De productos: nunca traen un VIN, pero leerlos confirma que el escáner funciona
+            BarcodeFormat.EAN_13, BarcodeFormat.EAN_8, BarcodeFormat.UPC_A, BarcodeFormat.UPC_E]],
         [DecodeHintType.TRY_HARDER, true],
     ])
     return new BrowserMultiFormatReader(hints)
@@ -75,7 +81,7 @@ async function buscarCodigo(bitmap) {
     if ('BarcodeDetector' in window) {
         try {
             const soportados = await window.BarcodeDetector.getSupportedFormats()
-            const formatos = ['code_39', 'code_128', 'data_matrix', 'qr_code', 'pdf417'].filter(f => soportados.includes(f))
+            const formatos = FORMATOS_NATIVOS.filter(f => soportados.includes(f))
             if (formatos.length) {
                 const codigos = await new window.BarcodeDetector({ formats: formatos }).detect(bitmap)
                 textos.push(...codigos.map(c => c.rawValue))
@@ -189,7 +195,7 @@ export default function LaboratorioVin() {
             let nativo = null
             if ('BarcodeDetector' in window) {
                 const soportados = await window.BarcodeDetector.getSupportedFormats().catch(() => [])
-                const formatos = ['code_39', 'code_128', 'data_matrix', 'qr_code', 'pdf417'].filter(f => soportados.includes(f))
+                const formatos = FORMATOS_NATIVOS.filter(f => soportados.includes(f))
                 if (formatos.length) nativo = new window.BarcodeDetector({ formats: formatos })
             }
             const zx = nativo ? null : await crearLectorZxing()
