@@ -133,6 +133,7 @@ export default function LaboratorioVin() {
     const [leidoNoVin, setLeidoNoVin] = useState('')
     const [motor, setMotor] = useState('')       // qué lector analiza el video
     const [cuadros, setCuadros] = useState(0)    // cuadros analizados (para ver que trabaja)
+    const [diag, setDiag] = useState('')         // resolución de la cámara o error del lector
     const videoRef = useRef(null)
     const streamRef = useRef(null)
     const escaneoRef = useRef(0)                 // id del escaneo vigente; cambiarlo lo detiene
@@ -180,7 +181,7 @@ export default function LaboratorioVin() {
     // (iPhone), ZXing sobre una copia del cuadro.
     async function escanearEnVivo() {
         reiniciar()
-        setEscaneando(true); setCuadros(0); setMotor('')
+        setEscaneando(true); setCuadros(0); setMotor(''); setDiag('')
         const id = ++escaneoRef.current
         try {
             const stream = await navigator.mediaDevices.getUserMedia({
@@ -198,31 +199,45 @@ export default function LaboratorioVin() {
                 const formatos = FORMATOS_NATIVOS.filter(f => soportados.includes(f))
                 if (formatos.length) nativo = new window.BarcodeDetector({ formats: formatos })
             }
-            const zx = nativo ? null : await crearLectorZxing()
-            setMotor(nativo ? 'lector nativo' : 'ZXing')
+            // ZXing siempre, en cuadros alternos: respaldo si el nativo no lee
+            const zx = await crearLectorZxing()
+            setMotor(nativo ? 'lector nativo + ZXing' : 'ZXing')
             const canvas = document.createElement('canvas')
+            const ctx = canvas.getContext('2d', { willReadFrequently: true })
+            let n = 0
 
             while (id === escaneoRef.current) {
                 let textos = []
-                if (video.readyState >= 2) {
+                if (video.readyState >= 2 && video.videoWidth) {
+                    // Copia del cuadro (máx. 1280 px): el detector lee mejor un canvas que el video
+                    const escala = Math.min(1, 1280 / Math.max(video.videoWidth, video.videoHeight))
+                    canvas.width = Math.round(video.videoWidth * escala)
+                    canvas.height = Math.round(video.videoHeight * escala)
+                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
                     if (nativo) {
-                        textos = (await nativo.detect(video).catch(() => [])).map(c => c.rawValue)
-                    } else {
-                        canvas.width = video.videoWidth; canvas.height = video.videoHeight
-                        canvas.getContext('2d').drawImage(video, 0, 0)
+                        try { textos = (await nativo.detect(canvas)).map(c => c.rawValue) }
+                        catch (e) { setDiag('Lector nativo: ' + e.message) }
+                    }
+                    if (!textos.length && (!nativo || n % 2 === 1)) {
                         try { textos = [zx.decodeFromCanvas(canvas).getText()] } catch { /* nada en este cuadro */ }
                     }
-                    setCuadros(n => n + 1)
+                    n++
+                    setCuadros(n)
+                    setDiag(d => d || `Cámara ${video.videoWidth}×${video.videoHeight}`)
                 }
                 if (id !== escaneoRef.current) return
                 const vinCodigo = textos.map(vinEnTexto).find(Boolean)
                 if (vinCodigo) {
+                    navigator.vibrate?.(150)
                     detenerEscaneo()
                     await usarVinDeCodigo(vinCodigo)
                     return
                 }
-                if (textos.length) setLeidoNoVin(textos.join(' · '))
-                await new Promise(r => setTimeout(r, 150))
+                if (textos.length) {
+                    navigator.vibrate?.(60)
+                    setLeidoNoVin(textos.join(' · '))
+                }
+                await new Promise(r => setTimeout(r, 120))
             }
         } catch (err) {
             if (id !== escaneoRef.current) return
@@ -328,21 +343,24 @@ export default function LaboratorioVin() {
                 {escaneando ? <><X size={18} /> Cancelar escaneo</> : <><ScanLine size={18} /> Escanear código de barras</>}
             </button>
 
-            <div style={{ ...card, padding: '8px', display: escaneando ? 'block' : 'none' }}>
-                <video ref={videoRef} muted playsInline style={{ width: '100%', borderRadius: '8px', display: 'block', backgroundColor: '#000' }} />
-                <p style={{ fontSize: '13px', color: '#6b7280', margin: '8px 4px 0' }}>
-                    Apunta al código de barras y acércate hasta que ocupe buena parte de la pantalla. Si está vertical, gira el teléfono.
-                </p>
-                <p style={{ fontSize: '11px', color: '#9ca3af', margin: '4px 4px 0' }}>
-                    {motor ? `Analizando con ${motor} · ${cuadros} cuadros` : 'Abriendo la cámara...'}
-                </p>
-            </div>
-
+            {/* Lo leído va ARRIBA del video: debajo quedaba fuera de la pantalla del teléfono */}
             {leidoNoVin && (
                 <div style={{ ...card, backgroundColor: '#fffbeb', borderColor: '#fde68a', color: '#92400e', fontSize: '13px' }}>
                     Se leyó un código, pero no contiene un VIN: <span style={{ fontFamily: 'ui-monospace, Consolas, monospace' }}>{leidoNoVin}</span>
                 </div>
             )}
+
+            <div style={{ ...card, padding: '8px', display: escaneando ? 'block' : 'none' }}>
+                <p style={{ fontSize: '12px', color: '#1d4ed8', margin: '0 4px 6px' }}>
+                    {motor ? `Analizando con ${motor} · ${cuadros} cuadros` : 'Abriendo la cámara...'}
+                    {diag && <span style={{ color: '#9ca3af' }}> · {diag}</span>}
+                </p>
+                <video ref={videoRef} muted playsInline
+                    style={{ width: '100%', maxHeight: '45vh', objectFit: 'cover', borderRadius: '8px', display: 'block', backgroundColor: '#000' }} />
+                <p style={{ fontSize: '13px', color: '#6b7280', margin: '8px 4px 0' }}>
+                    Apunta al código de barras y acércate hasta que ocupe buena parte de la pantalla. Si está vertical, gira el teléfono.
+                </p>
+            </div>
 
             <div style={{ display: 'flex', gap: '10px', marginBottom: '16px' }}>
                 <button onClick={() => { detenerEscaneo(); camaraRef.current?.click() }} disabled={!!paso} style={btn('#1d4ed8')}>
