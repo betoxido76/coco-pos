@@ -25,6 +25,13 @@ const UBICACION = {
     documento: 'Documento', otro: 'Otro', desconocido: 'No identificado',
 }
 const FUENTE = { ia: 'IA', ocr: 'OCR gratis', codigo_barras: 'Código de barras', manual: 'Manual' }
+// Cómo se lee una foto sin código de barras (los de IA van por la Edge Function)
+const METODOS = {
+    haiku: 'IA · Claude Haiku (el más barato)',
+    sonnet: 'IA · Claude Sonnet',
+    opus: 'IA · Claude Opus (el más preciso)',
+    ocr: 'OCR gratis en el teléfono',
+}
 const CAMPOS_DECOD = [
     ['marca', 'Marca'], ['modelo', 'Modelo'], ['anio', 'Año'], ['version', 'Versión'],
     ['carroceria', 'Carrocería'], ['tipo', 'Tipo'], ['motor_cilindros', 'Cilindros'],
@@ -139,6 +146,13 @@ export default function LaboratorioVin() {
     const videoRef = useRef(null)
     const streamRef = useRef(null)
     const fotoBase64Ref = useRef(null)            // última foto, para la segunda opinión con IA
+    const [metodo, setMetodo] = useState(() => {
+        try { return localStorage.getItem('mipos_lab_vin_metodo') || 'haiku' } catch { return 'haiku' }
+    })
+    function elegirMetodo(m) {
+        setMetodo(m)
+        try { localStorage.setItem('mipos_lab_vin_metodo', m) } catch { /* sin almacenamiento */ }
+    }
     const escaneoRef = useRef(0)                 // id del escaneo vigente; cambiarlo lo detiene
 
     useEffect(() => () => detenerEscaneo(), [])
@@ -274,6 +288,7 @@ export default function LaboratorioVin() {
             if (textos.length) { setLeidoNoVin(textos.join(' · ')); return }
 
             fotoBase64Ref.current = base64
+            if (metodo !== 'ocr') { await probarConIa(metodo); return }
             setPaso('Leyendo el texto (gratis, en el teléfono)...')
             const ocr = await leerVinConOcr(bitmap, p => setPaso(`Leyendo el texto (gratis, en el teléfono)... ${Math.round(p * 100)} %`))
             const leido = ocr.candidatos[0] || ''
@@ -293,10 +308,10 @@ export default function LaboratorioVin() {
     }
 
     // Segunda opinión con IA sobre la misma foto (requiere la clave de Anthropic)
-    async function probarConIa() {
-        setError(''); setPaso('Leyendo el serial con IA...')
+    async function probarConIa(modelo) {
+        setError(''); setPaso(`Leyendo el serial con IA (${METODOS[modelo]})...`)
         try {
-            const r = await llamarFuncion({ imagen: fotoBase64Ref.current, media_type: 'image/jpeg' })
+            const r = await llamarFuncion({ imagen: fotoBase64Ref.current, media_type: 'image/jpeg', modelo })
             setResultado({ fuente: 'ia', ...r })
             setVin(r.vin || '')
             setGuardado(false)
@@ -390,6 +405,14 @@ export default function LaboratorioVin() {
                 </p>
             </div>
 
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', fontSize: '13px', color: '#374151' }}>
+                <span>Leer la foto con:</span>
+                <select value={metodo} onChange={e => elegirMetodo(e.target.value)}
+                    style={{ flex: 1, padding: '8px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '13px', backgroundColor: '#fff' }}>
+                    {Object.entries(METODOS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                </select>
+            </div>
+
             <div style={{ display: 'flex', gap: '10px', marginBottom: '16px' }}>
                 <button onClick={() => { detenerEscaneo(); camaraRef.current?.click() }} disabled={!!paso} style={btn('#1d4ed8')}>
                     <Camera size={18} /> Tomar foto
@@ -425,6 +448,8 @@ export default function LaboratorioVin() {
                             Leído por <b>{FUENTE[resultado.fuente]}</b>
                             {resultado.lectura && <> · {UBICACION[resultado.lectura.ubicacion] || resultado.lectura.ubicacion} · legibilidad {resultado.lectura.legibilidad}</>}
                             {resultado.ms && <> · {(resultado.ms / 1000).toFixed(1)} s</>}
+                            {resultado.modelo && <> · {resultado.modelo}</>}
+                            {resultado.costo_usd != null && <> · costo ${resultado.costo_usd.toFixed(5)}</>}
                         </p>
                     )}
                     {resultado?.ocr && (
@@ -450,9 +475,9 @@ export default function LaboratorioVin() {
                                 <summary style={{ color: '#6b7280', cursor: 'pointer' }}>Texto leído (confianza {resultado.ocr.confianza} %)</summary>
                                 <pre style={{ whiteSpace: 'pre-wrap', fontSize: '12px', background: '#f9fafb', padding: '8px', borderRadius: '6px', margin: '6px 0 0' }}>{resultado.ocr.texto || '(nada)'}</pre>
                             </details>
-                            <button onClick={probarConIa} disabled={!!paso}
+                            <button onClick={() => probarConIa('haiku')} disabled={!!paso}
                                 style={{ background: 'none', border: 'none', color: '#1d4ed8', fontSize: '12px', textDecoration: 'underline', cursor: 'pointer', padding: '6px 0 0' }}>
-                                Probar con IA (requiere la clave de Anthropic)
+                                Probar esta foto con IA (Haiku)
                             </button>
                         </div>
                     )}

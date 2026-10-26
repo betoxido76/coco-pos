@@ -1,8 +1,10 @@
 // Laboratorio VIN (solo superadmin): lee el serial de carrocería de una foto con
 // Claude (visión) y lo decodifica con NHTSA vPIC. Body:
-//   { imagen: <base64 JPEG/PNG sin prefijo>, media_type?: 'image/jpeg' }  → lee + decodifica
-//   { vin: '...' }                                                       → solo decodifica
-// Secreto requerido: ANTHROPIC_API_KEY (Supabase → Edge Functions → Secrets).
+//   { imagen: <base64 JPEG/PNG sin prefijo>, media_type?: 'image/jpeg', modelo?: 'haiku'|'sonnet'|'opus' }
+//       → lee + decodifica
+//   { vin: '...' } → solo decodifica
+// Secretos (Supabase → Edge Functions → Secrets): OPENROUTER_API_KEY (se usa si
+// existe) o ANTHROPIC_API_KEY (API directa de Anthropic).
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import Anthropic from 'npm:@anthropic-ai/sdk@0.137.0'
@@ -13,6 +15,12 @@ const corsHeaders = {
 }
 
 const MODELO = 'claude-opus-5-5'
+// Vía OpenRouter: el laboratorio elige el modelo para comparar costo y acierto
+const MODELOS_OPENROUTER: Record<string, string> = {
+  haiku: 'anthropic/claude-haiku-5.5',
+  sonnet: 'anthropic/claude-sonnet-5.5',
+  opus: 'anthropic/claude-opus-5.5',
+}
 const MAX_BASE64 = 6_500_000 // ~4,8 MB de imagen; la API acepta hasta 5 MB
 
 const INSTRUCCIONES = `Eres un lector de seriales de vehículos. En la imagen debe haber un VIN (serial de carrocería, 17 caracteres) en una placa del parabrisas, una etiqueta de la puerta, el chasis, o un documento como el carnet de circulación o un título.
@@ -118,6 +126,46 @@ async function leerImagen(imagen: string, mediaType: string) {
   }
 }
 
+async function leerImagenOpenRouter(imagen: string, mediaType: string, clave: string) {
+  const modelo = MODELOS_OPENROUTER[clave] || MODELOS_OPENROUTER.haiku
+  const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${Deno.env.get('OPENROUTER_API_KEY')}`,
+      'Content-Type': 'application/json',
+      'X-Title': 'MiPOS laboratorio VIN',
+    },
+    body: JSON.stringify({
+      model: modelo,
+      max_tokens: 4000,
+      usage: { include: true }, // devuelve el costo en USD de la llamada
+      response_format: { type: 'json_schema', json_schema: { name: 'lectura_vin', strict: true, schema: ESQUEMA } },
+      messages: [
+        { role: 'system', content: INSTRUCCIONES },
+        {
+          role: 'user',
+          content: [
+            { type: 'image_url', image_url: { url: `data:${mediaType};base64,${imagen}` } },
+            { type: 'text', text: 'Lee el VIN de esta imagen.' },
+          ],
+        },
+      ],
+    }),
+  })
+  const data = await r.json().catch(() => ({}))
+  if (!r.ok || data.error) throw new Error(`OpenRouter: ${data.error?.message || r.status}`)
+  const texto = data.choices?.[0]?.message?.content
+  if (!texto) throw new Error(`Respuesta vacía de la IA (${data.choices?.[0]?.finish_reason || 'sin motivo'})`)
+  // Algunos modelos envuelven el JSON en ```json ... ```
+  const json = texto.replace(/^```(?:json)?\s*|\s*```$/g, '')
+  return {
+    lectura: JSON.parse(json),
+    modelo: data.model || modelo,
+    tokens: { entrada: data.usage?.prompt_tokens, salida: data.usage?.completion_tokens },
+    costo_usd: data.usage?.cost ?? null,
+  }
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
 
@@ -152,19 +200,22 @@ serve(async (req) => {
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(mediaType)) {
       return json({ error: 'Formato de imagen no soportado' }, 400)
     }
-    if (!Deno.env.get('ANTHROPIC_API_KEY')) {
-      return json({ error: 'Falta configurar ANTHROPIC_API_KEY en los secretos de la función' }, 500)
+    const viaOpenRouter = !!Deno.env.get('OPENROUTER_API_KEY')
+    if (!viaOpenRouter && !Deno.env.get('ANTHROPIC_API_KEY')) {
+      return json({ error: 'Falta configurar OPENROUTER_API_KEY o ANTHROPIC_API_KEY en los secretos de la función' }, 500)
     }
 
     const t0 = Date.now()
-    const { lectura, modelo, tokens } = await leerImagen(imagen, mediaType)
+    const { lectura, modelo, tokens, costo_usd } = viaOpenRouter
+      ? await leerImagenOpenRouter(imagen, mediaType, body.modelo)
+      : { ...(await leerImagen(imagen, mediaType)), costo_usd: null }
     const v = validarVin(lectura.vin)
     return json({
       ...v,
       vin_leido: lectura.vin,
       lectura,
       decodificado: v.valido ? await decodificar(v.vin) : null,
-      modelo, tokens, ms: Date.now() - t0,
+      modelo, tokens, costo_usd, ms: Date.now() - t0,
     }, 200)
   } catch (err) {
     const e = err as any
