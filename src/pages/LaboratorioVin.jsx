@@ -277,7 +277,8 @@ export default function LaboratorioVin() {
             setPaso('Leyendo el texto (gratis, en el teléfono)...')
             const ocr = await leerVinConOcr(bitmap, p => setPaso(`Leyendo el texto (gratis, en el teléfono)... ${Math.round(p * 100)} %`))
             const leido = ocr.candidatos[0] || ''
-            setVin(leido)
+            // Sin VIN completo, deja en la casilla lo más parecido para corregirlo a mano
+            setVin(leido || ocr.parcial.slice(0, 17))
             let decodificado = null
             if (leido) {
                 setPaso('Decodificando...')
@@ -430,7 +431,9 @@ export default function LaboratorioVin() {
                         <div style={{ fontSize: '13px', color: '#374151', margin: '0 0 10px' }}>
                             {resultado.ocr.candidatos.length === 0 ? (
                                 <p style={{ color: '#92400e', margin: '0 0 6px' }}>
-                                    El OCR no encontró 17 caracteres que formen un VIN. Prueba otra foto (más cerca, de frente, sin reflejos) o escríbelo a mano.
+                                    {resultado.ocr.parcial
+                                        ? <>No se leyó un VIN completo. Lo más parecido es <b style={{ fontFamily: 'ui-monospace, Consolas, monospace' }}>{resultado.ocr.parcial}</b> ({resultado.ocr.parcial.length} caracteres): quedó en la casilla para corregirlo.</>
+                                        : 'El OCR no encontró nada parecido a un VIN. Revisa abajo qué leyó, prueba otra foto (más cerca, de frente, sin reflejos) o escríbelo a mano.'}
                                 </p>
                             ) : resultado.ocr.candidatos.length > 1 && (
                                 <div style={{ margin: '0 0 6px' }}>
@@ -443,7 +446,7 @@ export default function LaboratorioVin() {
                                     ))}
                                 </div>
                             )}
-                            <details>
+                            <details open={resultado.ocr.candidatos.length === 0}>
                                 <summary style={{ color: '#6b7280', cursor: 'pointer' }}>Texto leído (confianza {resultado.ocr.confianza} %)</summary>
                                 <pre style={{ whiteSpace: 'pre-wrap', fontSize: '12px', background: '#f9fafb', padding: '8px', borderRadius: '6px', margin: '6px 0 0' }}>{resultado.ocr.texto || '(nada)'}</pre>
                             </details>

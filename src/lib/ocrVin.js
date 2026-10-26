@@ -4,19 +4,23 @@
 // La primera vez descarga el motor y el idioma (~5 MB) desde el CDN de jsdelivr.
 import { validarVin } from './vin'
 
-// Un VIN no usa I, O ni Q: se le prohíben al OCR para que no las confunda con 1 y 0
-const PERMITIDOS = '0123456789ABCDEFGHJKLMNPRSTUVWXYZ'
+// Pasadas, de la más confiable a la de último recurso. Leer libre y corregir
+// después rinde mucho más que prohibirle letras al OCR: con la lista de
+// permitidos la confianza caía de ~87 % a ~12 % en una etiqueta de prueba.
+const PASADAS = [
+    { invertir: false, params: { tessedit_pageseg_mode: '3', tessedit_char_whitelist: '' } },  // página normal
+    { invertir: false, params: { tessedit_pageseg_mode: '11', tessedit_char_whitelist: '' } }, // texto disperso
+    { invertir: true, params: { tessedit_pageseg_mode: '3', tessedit_char_whitelist: '' } },   // texto claro sobre oscuro
+    { invertir: false, params: { tessedit_pageseg_mode: '11', tessedit_char_whitelist: '0123456789ABCDEFGHJKLMNPRSTUVWXYZ' } },
+]
 
 let trabajador = null
-async function obtenerTrabajador(alProgreso) {
+let alProgresoActual = null
+async function obtenerTrabajador() {
     if (!trabajador) {
         const { createWorker } = await import('tesseract.js')
         trabajador = await createWorker('eng', 1, {
-            logger: m => { if (m.status === 'recognizing text') alProgreso?.(m.progress) },
-        })
-        await trabajador.setParameters({
-            tessedit_char_whitelist: PERMITIDOS,
-            tessedit_pageseg_mode: '11', // texto disperso: el VIN suele estar entre otros datos
+            logger: m => { if (m.status === 'recognizing text') alProgresoActual?.(m.progress) },
         })
     }
     return trabajador
@@ -49,8 +53,11 @@ function prepararCanvas(bitmap, invertir) {
     return c
 }
 
+// Un VIN no usa I, O ni Q: el OCR las confunde con 1 y 0
+const corregir = s => s.toUpperCase().replace(/[OQ]/g, '0').replace(/I/g, '1')
+
 // Candidatos a VIN en el texto leído, del más probable al menos:
-// una línea o palabra de exactamente 17 caracteres pesa más que un trozo de 17
+// una palabra o línea de exactamente 17 caracteres pesa más que un trozo de 17
 // dentro de algo más largo, y el dígito verificador correcto suma.
 export function candidatosVin(texto) {
     const puntaje = new Map()
@@ -60,24 +67,51 @@ export function candidatosVin(texto) {
         const total = p + (v.digito_ok === true ? 3 : v.digito_ok === false ? -1 : 0)
         puntaje.set(vin, Math.max(puntaje.get(vin) ?? -Infinity, total))
     }
-    for (const linea of (texto || '').toUpperCase().split('\n')) {
-        for (const palabra of linea.split(/\s+/)) if (palabra.length === 17) sumar(palabra, 3)
+    for (const linea of corregir(texto || '').split('\n')) {
+        for (const palabra of linea.split(/\s+/)) {
+            const p = palabra.replace(/[^A-Z0-9]/g, '')
+            if (p.length === 17) sumar(p, 3)
+            else if (p.length === 20 && p.startsWith('V1N')) sumar(p.slice(3), 3) // "VIN" pegado al número
+        }
         const junta = linea.replace(/[^A-Z0-9]/g, '')
         if (junta.length === 17) sumar(junta, 2)
         for (let i = 0; i + 17 <= junta.length; i++) sumar(junta.slice(i, i + 17), 0)
     }
-    return [...puntaje.entries()].sort((a, b) => b[1] - a[1]).map(([vin]) => vin)
+    // Un trozo de 17 dentro de algo más largo solo vale si su dígito verificador cuadra
+    // (puntaje 3); sin eso suele ser basura ("1N1HGCMB82633A004")
+    return [...puntaje.entries()].filter(([, p]) => p >= 1).sort((a, b) => b[1] - a[1]).map(([vin]) => vin)
 }
 
-// Devuelve { candidatos, texto, confianza } (confianza 0-100 de Tesseract)
-export async function leerVinConOcr(bitmap, alProgreso) {
-    const w = await obtenerTrabajador(alProgreso)
-    let ultimo = null
-    for (const invertir of [false, true]) {
-        const { data } = await w.recognize(prepararCanvas(bitmap, invertir))
-        const candidatos = candidatosVin(data.text)
-        ultimo = { candidatos, texto: data.text.trim(), confianza: Math.round(data.confidence) }
-        if (candidatos.length) return ultimo
+// Sin VIN completo: la palabra que más se le parece (10+ caracteres, cerca de 17,
+// con letras y números), para dejarla en la casilla y corregirla a mano
+export function mejorParcial(texto) {
+    let mejor = ''
+    for (const palabra of corregir(texto || '').split(/\s+/)) {
+        const p = palabra.replace(/[^A-Z0-9]/g, '')
+        if (p.length < 10 || !/\d/.test(p) || !/[A-Z]/.test(p)) continue
+        if (!mejor || Math.abs(p.length - 17) < Math.abs(mejor.length - 17)) mejor = p
     }
-    return ultimo
+    return mejor
+}
+
+// Devuelve { candidatos, parcial, texto, confianza } (confianza 0-100 de Tesseract)
+export async function leerVinConOcr(bitmap, alProgreso) {
+    const w = await obtenerTrabajador()
+    const textos = []
+    let confianza = 0
+    try {
+        for (const [i, pasada] of PASADAS.entries()) {
+            alProgresoActual = p => alProgreso?.((i + p) / PASADAS.length)
+            await w.setParameters(pasada.params)
+            const { data } = await w.recognize(prepararCanvas(bitmap, pasada.invertir))
+            textos.push(data.text.trim())
+            confianza = Math.max(confianza, Math.round(data.confidence))
+            const candidatos = candidatosVin(data.text)
+            if (candidatos.length) return { candidatos, parcial: '', texto: data.text.trim(), confianza: Math.round(data.confidence) }
+        }
+    } finally {
+        alProgresoActual = null
+    }
+    const todo = textos.join('\n')
+    return { candidatos: [], parcial: mejorParcial(todo), texto: textos[0] || '', confianza }
 }
