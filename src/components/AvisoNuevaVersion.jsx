@@ -82,6 +82,12 @@ export default function AvisoNuevaVersion() {
         return () => { clearInterval(reloj); document.removeEventListener('visibilitychange', alVolver) }
     }, [updateServiceWorker])
 
+    // Recién abierta (la app instalada en el teléfono): la versión nueva aparece
+    // en los primeros segundos y no hay cambio de pestaña que dispare la recarga.
+    useEffect(() => {
+        if (hayNueva && performance.now() < 30 * 1000 && !escritoRef.current) updateServiceWorker(true)
+    }, [hayNueva, updateServiceWorker])
+
     // Si queda abierto mucho rato sin recargar, que se note
     useEffect(() => {
         if (hayNueva || desactualizada) document.title = '↻ Nueva versión · ' + document.title.replace(/^↻ Nueva versión · /, '')
