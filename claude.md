@@ -432,21 +432,12 @@ const esAutopartes = perfil?.empresas?.perfil_negocio === 'autopartes'
 
 ## 11. Flujo de onboarding de un cliente nuevo
 
-1. Entrar a `/superadmin`
-2. Crear empresa con nombre y RIF
-3. Activar módulos contratados en pestaña "Módulos"
-4. Ir a Authentication en Supabase → Add user (email + password)
-5. Ejecutar SQL:
-```sql
-INSERT INTO public.usuarios (id, nombre, email, rol, empresa_id, activo)
-VALUES ('UUID_AUTH', 'Nombre', 'email@empresa.com', 'admin', 'UUID_EMPRESA', true);
-
-INSERT INTO public.usuario_modulos (usuario_id, empresa_id, modulo_id, activo)
-SELECT 'UUID_AUTH', 'UUID_EMPRESA', modulo_id, true
-FROM public.empresa_modulos WHERE empresa_id = 'UUID_EMPRESA'
-ON CONFLICT DO NOTHING;
-```
-6. Comunicar credenciales al cliente
+Todo desde `/superadmin`, sin SQL:
+1. "Nueva empresa": nombre, RIF y perfil de negocio
+2. Activar módulos contratados en pestaña "Módulos"
+3. Pestaña "Usuarios" → nuevo usuario (Edge Function `crear-usuario`: Auth +
+   `usuarios` + módulos de la empresa)
+4. Comunicar credenciales al cliente
 
 ---
 
