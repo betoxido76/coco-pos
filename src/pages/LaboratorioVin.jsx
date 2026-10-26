@@ -1,10 +1,10 @@
-// Laboratorio VIN (prueba, solo superadmin): el teléfono toma una foto del serial
-// de carrocería; primero se busca un código de barras en la imagen (gratis, sin IA)
-// y si no hay, la Edge Function leer-vin la lee con IA. El usuario confirma o
+// Laboratorio VIN (prueba, solo superadmin): el VIN se toma de un código de barras
+// (escaneo en vivo con la cámara, o dentro de una foto) gratis y sin IA; si la foto
+// no trae código, la Edge Function leer-vin la lee con IA. El usuario confirma o
 // corrige y se guarda en lab_vin_escaneos. Ver laboratorio_vin.sql.
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Camera, ImageIcon, ArrowLeft, Check, AlertTriangle, RefreshCw } from 'lucide-react'
+import { Camera, ImageIcon, ArrowLeft, Check, AlertTriangle, RefreshCw, ScanLine, X } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
 import { validarVin, normalizarVin, vinEnTexto } from '../lib/vin'
 
@@ -42,20 +42,56 @@ async function prepararImagen(file) {
     return { bitmap, dataUrl, base64: dataUrl.split(',')[1] }
 }
 
-// Lector nativo de códigos (Chrome en Android). En iPhone no existe: se salta.
+// Lector ZXing (funciona en Android y iPhone); se carga solo en esta pantalla
+async function crearLectorZxing() {
+    const [{ BrowserMultiFormatReader }, { DecodeHintType, BarcodeFormat }] = await Promise.all([
+        import('@zxing/browser'), import('@zxing/library'),
+    ])
+    const hints = new Map([
+        [DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.CODE_39, BarcodeFormat.CODE_128, BarcodeFormat.DATA_MATRIX,
+            BarcodeFormat.QR_CODE, BarcodeFormat.PDF_417]],
+        [DecodeHintType.TRY_HARDER, true],
+    ])
+    return new BrowserMultiFormatReader(hints)
+}
+
+function canvasDe(bitmap, girar) {
+    const escala = Math.min(1, 2400 / Math.max(bitmap.width, bitmap.height))
+    const w = Math.round(bitmap.width * escala), h = Math.round(bitmap.height * escala)
+    const c = document.createElement('canvas')
+    c.width = girar ? h : w
+    c.height = girar ? w : h
+    const ctx = c.getContext('2d')
+    if (girar) { ctx.translate(h, 0); ctx.rotate(Math.PI / 2) }
+    ctx.drawImage(bitmap, 0, 0, w, h)
+    return c
+}
+
+// Busca códigos en la foto: lector nativo (Chrome Android) y luego ZXing, derecho
+// y girado (la etiqueta de la puerta suele ir vertical). Devuelve el VIN si alguno
+// lo trae y los textos leídos, para mostrar qué se encontró si no es un VIN.
 async function buscarCodigo(bitmap) {
-    if (!('BarcodeDetector' in window)) return null
-    try {
-        const soportados = await window.BarcodeDetector.getSupportedFormats()
-        const formatos = ['code_39', 'code_128', 'data_matrix', 'qr_code', 'pdf417'].filter(f => soportados.includes(f))
-        if (!formatos.length) return null
-        const codigos = await new window.BarcodeDetector({ formats: formatos }).detect(bitmap)
-        for (const c of codigos) {
-            const vin = vinEnTexto(c.rawValue)
-            if (vin) return vin
+    const textos = []
+    if ('BarcodeDetector' in window) {
+        try {
+            const soportados = await window.BarcodeDetector.getSupportedFormats()
+            const formatos = ['code_39', 'code_128', 'data_matrix', 'qr_code', 'pdf417'].filter(f => soportados.includes(f))
+            if (formatos.length) {
+                const codigos = await new window.BarcodeDetector({ formats: formatos }).detect(bitmap)
+                textos.push(...codigos.map(c => c.rawValue))
+            }
+        } catch { /* sigue con ZXing */ }
+    }
+    if (!textos.some(vinEnTexto)) {
+        const lector = await crearLectorZxing()
+        for (const girar of [false, true]) {
+            try {
+                textos.push(lector.decodeFromCanvas(canvasDe(bitmap, girar)).getText())
+                break
+            } catch { /* no encontró */ }
         }
-    } catch { /* sin lector: sigue con IA */ }
-    return null
+    }
+    return { vin: textos.map(vinEnTexto).find(Boolean) || null, textos }
 }
 
 async function llamarFuncion(body) {
@@ -87,6 +123,12 @@ export default function LaboratorioVin() {
     const [guardando, setGuardando] = useState(false)
     const [guardado, setGuardado] = useState(false)
     const [historial, setHistorial] = useState([])
+    const [escaneando, setEscaneando] = useState(false)
+    const [leidoNoVin, setLeidoNoVin] = useState('')
+    const videoRef = useRef(null)
+    const controlesRef = useRef(null)
+
+    useEffect(() => () => controlesRef.current?.stop(), [])
 
     useEffect(() => { cargarHistorial() }, [])
 
@@ -99,7 +141,45 @@ export default function LaboratorioVin() {
 
     function reiniciar() {
         setFoto(null); setResultado(null); setVin(''); setError(''); setPaso('')
-        setObservaciones(''); setGuardado(false)
+        setObservaciones(''); setGuardado(false); setLeidoNoVin('')
+    }
+
+    function detenerEscaneo() {
+        controlesRef.current?.stop()
+        controlesRef.current = null
+        setEscaneando(false)
+    }
+
+    // Escaneo en vivo: la cámara queda abierta hasta leer un código con un VIN
+    async function escanearEnVivo() {
+        reiniciar()
+        setEscaneando(true)
+        try {
+            const lector = await crearLectorZxing()
+            controlesRef.current = await lector.decodeFromConstraints(
+                { video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } } },
+                videoRef.current,
+                async (res) => {
+                    if (!res || !controlesRef.current) return
+                    const vinCodigo = vinEnTexto(res.getText())
+                    if (!vinCodigo) { setLeidoNoVin(res.getText()); return }
+                    detenerEscaneo()
+                    setVin(vinCodigo)
+                    setPaso('Código leído. Decodificando...')
+                    try {
+                        const r = await llamarFuncion({ vin: vinCodigo })
+                        setResultado({ fuente: 'codigo_barras', vin_leido: vinCodigo, decodificado: r.decodificado })
+                    } catch (err) {
+                        setResultado({ fuente: 'codigo_barras', vin_leido: vinCodigo })
+                        setError(err.message)
+                    } finally {
+                        setPaso('')
+                    }
+                })
+        } catch (err) {
+            detenerEscaneo()
+            setError('No se pudo abrir la cámara: ' + err.message)
+        }
     }
 
     async function alElegirFoto(e) {
@@ -113,7 +193,7 @@ export default function LaboratorioVin() {
             setFoto(dataUrl)
 
             setPaso('Buscando código de barras...')
-            const vinCodigo = await buscarCodigo(bitmap)
+            const { vin: vinCodigo, textos } = await buscarCodigo(bitmap)
             if (vinCodigo) {
                 setPaso('Código encontrado. Decodificando...')
                 const r = await llamarFuncion({ vin: vinCodigo })
@@ -122,8 +202,11 @@ export default function LaboratorioVin() {
                 return
             }
 
-            setPaso('Leyendo el serial con IA...')
-            const r = await llamarFuncion({ imagen: base64, media_type: 'image/jpeg' })
+            if (textos.length) setLeidoNoVin(textos.join(' · '))
+            setPaso('No hay código de barras con un VIN. Leyendo el serial con IA...')
+            const r = await llamarFuncion({ imagen: base64, media_type: 'image/jpeg' }).catch(err => {
+                throw new Error('No se encontró un código de barras con un VIN en la foto, y la lectura con IA falló: ' + err.message)
+            })
             setResultado({ fuente: 'ia', ...r })
             setVin(r.vin || '')
         } catch (err) {
@@ -186,11 +269,29 @@ export default function LaboratorioVin() {
             <input ref={camaraRef} type="file" accept="image/*" capture="environment" onChange={alElegirFoto} style={{ display: 'none' }} />
             <input ref={galeriaRef} type="file" accept="image/*" onChange={alElegirFoto} style={{ display: 'none' }} />
 
+            <button onClick={escaneando ? detenerEscaneo : escanearEnVivo} disabled={!!paso}
+                style={{ ...btn(escaneando ? '#b91c1c' : '#16a34a'), width: '100%', marginBottom: '10px' }}>
+                {escaneando ? <><X size={18} /> Cancelar escaneo</> : <><ScanLine size={18} /> Escanear código de barras</>}
+            </button>
+
+            <div style={{ ...card, padding: '8px', display: escaneando ? 'block' : 'none' }}>
+                <video ref={videoRef} muted playsInline style={{ width: '100%', borderRadius: '8px', display: 'block', backgroundColor: '#000' }} />
+                <p style={{ fontSize: '13px', color: '#6b7280', margin: '8px 4px 0' }}>
+                    Apunta al código de barras y acércate hasta que ocupe buena parte de la pantalla. Si está vertical, gira el teléfono.
+                </p>
+            </div>
+
+            {leidoNoVin && (
+                <div style={{ ...card, backgroundColor: '#fffbeb', borderColor: '#fde68a', color: '#92400e', fontSize: '13px' }}>
+                    Se leyó un código, pero no contiene un VIN: <span style={{ fontFamily: 'ui-monospace, Consolas, monospace' }}>{leidoNoVin}</span>
+                </div>
+            )}
+
             <div style={{ display: 'flex', gap: '10px', marginBottom: '16px' }}>
-                <button onClick={() => camaraRef.current?.click()} disabled={!!paso} style={btn('#1d4ed8')}>
+                <button onClick={() => camaraRef.current?.click()} disabled={!!paso || escaneando} style={btn('#1d4ed8')}>
                     <Camera size={18} /> Tomar foto
                 </button>
-                <button onClick={() => galeriaRef.current?.click()} disabled={!!paso} style={btn('#fff', '#374151')}>
+                <button onClick={() => galeriaRef.current?.click()} disabled={!!paso || escaneando} style={btn('#fff', '#374151')}>
                     <ImageIcon size={18} /> Galería
                 </button>
             </div>
@@ -303,7 +404,7 @@ export default function LaboratorioVin() {
                 </div>
             )}
 
-            {!foto && !resultado && (
+            {!foto && !resultado && !escaneando && (
                 <button onClick={() => setResultado({ fuente: 'manual', vin_leido: null })}
                     style={{ background: 'none', border: 'none', color: '#6b7280', fontSize: '13px', textDecoration: 'underline', cursor: 'pointer', marginBottom: '16px' }}>
                     Escribir un VIN a mano
