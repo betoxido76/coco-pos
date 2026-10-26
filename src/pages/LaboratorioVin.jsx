@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Camera, ImageIcon, ArrowLeft, Check, AlertTriangle, RefreshCw, ScanLine, X } from 'lucide-react'
-import { supabase } from '../lib/supabaseClient'
+import { supabase, APP_VERSION } from '../lib/supabaseClient'
 import { validarVin, normalizarVin, vinEnTexto } from '../lib/vin'
 
 const LADO_MAX = 1600 // px: suficiente para leer el serial y liviano para el envío
@@ -251,8 +251,10 @@ export default function LaboratorioVin() {
                 return
             }
 
-            if (textos.length) setLeidoNoVin(textos.join(' · '))
-            setPaso('No hay código de barras con un VIN. Leyendo el serial con IA...')
+            // La foto es de un código que no trae VIN (p. ej. de producto): no tiene
+            // sentido pedirle el serial a la IA
+            if (textos.length) { setLeidoNoVin(textos.join(' · ')); return }
+            setPaso('No hay código de barras en la foto. Leyendo el serial con IA...')
             const r = await llamarFuncion({ imagen: base64, media_type: 'image/jpeg' }).catch(err => {
                 throw new Error('No se encontró un código de barras con un VIN en la foto, y la lectura con IA falló: ' + err.message)
             })
@@ -313,6 +315,9 @@ export default function LaboratorioVin() {
             <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#1f2937', margin: 0 }}>🧪 Lectura de VIN</h1>
             <p style={{ fontSize: '13px', color: '#6b7280', margin: '4px 0 16px' }}>
                 Prueba de laboratorio: foto del serial de carrocería → código de barras o IA → base de datos.
+                <span style={{ display: 'block', fontSize: '11px', color: '#9ca3af' }}>
+                    Versión {APP_VERSION} · lector nativo {'BarcodeDetector' in window ? 'disponible' : 'no disponible'}
+                </span>
             </p>
 
             <input ref={camaraRef} type="file" accept="image/*" capture="environment" onChange={alElegirFoto} style={{ display: 'none' }} />
