@@ -125,10 +125,13 @@ export default function LaboratorioVin() {
     const [historial, setHistorial] = useState([])
     const [escaneando, setEscaneando] = useState(false)
     const [leidoNoVin, setLeidoNoVin] = useState('')
+    const [motor, setMotor] = useState('')       // qué lector analiza el video
+    const [cuadros, setCuadros] = useState(0)    // cuadros analizados (para ver que trabaja)
     const videoRef = useRef(null)
-    const controlesRef = useRef(null)
+    const streamRef = useRef(null)
+    const escaneoRef = useRef(0)                 // id del escaneo vigente; cambiarlo lo detiene
 
-    useEffect(() => () => controlesRef.current?.stop(), [])
+    useEffect(() => () => detenerEscaneo(), [])
 
     useEffect(() => { cargarHistorial() }, [])
 
@@ -145,38 +148,78 @@ export default function LaboratorioVin() {
     }
 
     function detenerEscaneo() {
-        controlesRef.current?.stop()
-        controlesRef.current = null
+        escaneoRef.current++
+        streamRef.current?.getTracks().forEach(t => t.stop())
+        streamRef.current = null
+        if (videoRef.current) videoRef.current.srcObject = null
         setEscaneando(false)
     }
 
-    // Escaneo en vivo: la cámara queda abierta hasta leer un código con un VIN
+    async function usarVinDeCodigo(vinCodigo) {
+        setVin(vinCodigo)
+        setPaso('Código leído. Decodificando...')
+        try {
+            const r = await llamarFuncion({ vin: vinCodigo })
+            setResultado({ fuente: 'codigo_barras', vin_leido: vinCodigo, decodificado: r.decodificado })
+        } catch (err) {
+            setResultado({ fuente: 'codigo_barras', vin_leido: vinCodigo })
+            setError(err.message)
+        } finally {
+            setPaso('')
+        }
+    }
+
+    // Escaneo en vivo: analiza cuadros del video hasta leer un código con un VIN.
+    // En Android usa el lector nativo (más rápido y sensible); si no existe
+    // (iPhone), ZXing sobre una copia del cuadro.
     async function escanearEnVivo() {
         reiniciar()
-        setEscaneando(true)
+        setEscaneando(true); setCuadros(0); setMotor('')
+        const id = ++escaneoRef.current
         try {
-            const lector = await crearLectorZxing()
-            controlesRef.current = await lector.decodeFromConstraints(
-                { video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } } },
-                videoRef.current,
-                async (res) => {
-                    if (!res || !controlesRef.current) return
-                    const vinCodigo = vinEnTexto(res.getText())
-                    if (!vinCodigo) { setLeidoNoVin(res.getText()); return }
-                    detenerEscaneo()
-                    setVin(vinCodigo)
-                    setPaso('Código leído. Decodificando...')
-                    try {
-                        const r = await llamarFuncion({ vin: vinCodigo })
-                        setResultado({ fuente: 'codigo_barras', vin_leido: vinCodigo, decodificado: r.decodificado })
-                    } catch (err) {
-                        setResultado({ fuente: 'codigo_barras', vin_leido: vinCodigo })
-                        setError(err.message)
-                    } finally {
-                        setPaso('')
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 }, advanced: [{ focusMode: 'continuous' }] },
+            })
+            if (id !== escaneoRef.current) { stream.getTracks().forEach(t => t.stop()); return }
+            streamRef.current = stream
+            const video = videoRef.current
+            video.srcObject = stream
+            await video.play()
+
+            let nativo = null
+            if ('BarcodeDetector' in window) {
+                const soportados = await window.BarcodeDetector.getSupportedFormats().catch(() => [])
+                const formatos = ['code_39', 'code_128', 'data_matrix', 'qr_code', 'pdf417'].filter(f => soportados.includes(f))
+                if (formatos.length) nativo = new window.BarcodeDetector({ formats: formatos })
+            }
+            const zx = nativo ? null : await crearLectorZxing()
+            setMotor(nativo ? 'lector nativo' : 'ZXing')
+            const canvas = document.createElement('canvas')
+
+            while (id === escaneoRef.current) {
+                let textos = []
+                if (video.readyState >= 2) {
+                    if (nativo) {
+                        textos = (await nativo.detect(video).catch(() => [])).map(c => c.rawValue)
+                    } else {
+                        canvas.width = video.videoWidth; canvas.height = video.videoHeight
+                        canvas.getContext('2d').drawImage(video, 0, 0)
+                        try { textos = [zx.decodeFromCanvas(canvas).getText()] } catch { /* nada en este cuadro */ }
                     }
-                })
+                    setCuadros(n => n + 1)
+                }
+                if (id !== escaneoRef.current) return
+                const vinCodigo = textos.map(vinEnTexto).find(Boolean)
+                if (vinCodigo) {
+                    detenerEscaneo()
+                    await usarVinDeCodigo(vinCodigo)
+                    return
+                }
+                if (textos.length) setLeidoNoVin(textos.join(' · '))
+                await new Promise(r => setTimeout(r, 150))
+            }
         } catch (err) {
+            if (id !== escaneoRef.current) return
             detenerEscaneo()
             setError('No se pudo abrir la cámara: ' + err.message)
         }
@@ -279,6 +322,9 @@ export default function LaboratorioVin() {
                 <p style={{ fontSize: '13px', color: '#6b7280', margin: '8px 4px 0' }}>
                     Apunta al código de barras y acércate hasta que ocupe buena parte de la pantalla. Si está vertical, gira el teléfono.
                 </p>
+                <p style={{ fontSize: '11px', color: '#9ca3af', margin: '4px 4px 0' }}>
+                    {motor ? `Analizando con ${motor} · ${cuadros} cuadros` : 'Abriendo la cámara...'}
+                </p>
             </div>
 
             {leidoNoVin && (
@@ -288,10 +334,10 @@ export default function LaboratorioVin() {
             )}
 
             <div style={{ display: 'flex', gap: '10px', marginBottom: '16px' }}>
-                <button onClick={() => camaraRef.current?.click()} disabled={!!paso || escaneando} style={btn('#1d4ed8')}>
+                <button onClick={() => { detenerEscaneo(); camaraRef.current?.click() }} disabled={!!paso} style={btn('#1d4ed8')}>
                     <Camera size={18} /> Tomar foto
                 </button>
-                <button onClick={() => galeriaRef.current?.click()} disabled={!!paso || escaneando} style={btn('#fff', '#374151')}>
+                <button onClick={() => { detenerEscaneo(); galeriaRef.current?.click() }} disabled={!!paso} style={btn('#fff', '#374151')}>
                     <ImageIcon size={18} /> Galería
                 </button>
             </div>
