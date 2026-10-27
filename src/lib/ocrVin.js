@@ -18,7 +18,10 @@ let trabajador = null
 let alProgresoActual = null
 async function obtenerTrabajador() {
     if (!trabajador) {
-        const { createWorker } = await import('tesseract.js')
+        const { createWorker } = await import('tesseract.js').catch(async () => {
+            await new Promise(r => setTimeout(r, 1500)) // un reintento: datos móviles
+            return import('tesseract.js')
+        })
         trabajador = await createWorker('eng', 1, {
             logger: m => { if (m.status === 'recognizing text') alProgresoActual?.(m.progress) },
         })

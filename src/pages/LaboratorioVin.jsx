@@ -56,10 +56,21 @@ async function prepararImagen(file) {
 const FORMATOS_NATIVOS = ['code_39', 'code_128', 'data_matrix', 'qr_code', 'pdf417', 'ean_13', 'ean_8', 'upc_a', 'upc_e']
 
 // Lector ZXing (funciona en Android y iPhone); se carga solo en esta pantalla
+// Reintenta una vez: con datos móviles la descarga de la librería a veces falla
+// ("Failed to fetch dynamically imported module")
+async function importarConReintento(cargar) {
+    try {
+        return await cargar()
+    } catch {
+        await new Promise(r => setTimeout(r, 1500))
+        return cargar()
+    }
+}
+
 async function crearLectorZxing() {
-    const [{ BrowserMultiFormatReader }, { DecodeHintType, BarcodeFormat }] = await Promise.all([
+    const [{ BrowserMultiFormatReader }, { DecodeHintType, BarcodeFormat }] = await importarConReintento(() => Promise.all([
         import('@zxing/browser'), import('@zxing/library'),
-    ])
+    ]))
     const hints = new Map([
         [DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.CODE_39, BarcodeFormat.CODE_128, BarcodeFormat.DATA_MATRIX,
             BarcodeFormat.QR_CODE, BarcodeFormat.PDF_417,
@@ -98,8 +109,9 @@ async function buscarCodigo(bitmap) {
         } catch { /* sigue con ZXing */ }
     }
     if (!textos.some(vinEnTexto)) {
-        const lector = await crearLectorZxing()
-        for (const girar of [false, true]) {
+        // Si la librería no carga, se sigue sin buscar código: la foto igual va a la IA
+        const lector = await crearLectorZxing().catch(() => null)
+        for (const girar of lector ? [false, true] : []) {
             try {
                 textos.push(lector.decodeFromCanvas(canvasDe(bitmap, girar)).getText())
                 break
@@ -217,8 +229,11 @@ export default function LaboratorioVin() {
                 if (formatos.length) nativo = new window.BarcodeDetector({ formats: formatos })
             }
             // ZXing siempre, en cuadros alternos: respaldo si el nativo no lee
-            const zx = await crearLectorZxing()
-            setMotor(nativo ? 'lector nativo + ZXing' : 'ZXing')
+            const zx = await crearLectorZxing().catch(err => {
+                if (!nativo) throw new Error('no se pudo cargar el lector de códigos (' + err.message + '). Revisa la conexión y reintenta')
+                return null
+            })
+            setMotor(nativo && zx ? 'lector nativo + ZXing' : nativo ? 'lector nativo' : 'ZXing')
             const canvas = document.createElement('canvas')
             const ctx = canvas.getContext('2d', { willReadFrequently: true })
             let n = 0
@@ -235,7 +250,7 @@ export default function LaboratorioVin() {
                         try { textos = (await nativo.detect(canvas)).map(c => c.rawValue) }
                         catch (e) { setDiag('Lector nativo: ' + e.message) }
                     }
-                    if (!textos.length && (!nativo || n % 2 === 1)) {
+                    if (zx && !textos.length && (!nativo || n % 2 === 1)) {
                         try { textos = [zx.decodeFromCanvas(canvas).getText()] } catch { /* nada en este cuadro */ }
                     }
                     n++
@@ -259,7 +274,7 @@ export default function LaboratorioVin() {
         } catch (err) {
             if (id !== escaneoRef.current) return
             detenerEscaneo()
-            setError('No se pudo abrir la cámara: ' + err.message)
+            setError('Escaneo en vivo: ' + err.message)
         }
     }
 
