@@ -88,7 +88,7 @@ const FORMATO_NUM = { moneda: '#,##0.00', pct: '0.00', numero: '#,##0.####' }
 function hojaInfo(meta, campos) {
     const avisos = [...new Set([...(meta.avisos || []), ...campos.filter(c => c.aviso).map(c => `${c.label}: ${c.aviso}`)])]
     return [
-        ['Exportado de MiPOS'],
+        ['Exportado de soma ops'],
         [],
         ['Fuente', meta.fuente],
         ['Detalle', meta.detalle],

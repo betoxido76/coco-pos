@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useNavigate } from 'react-router-dom'
+import { PantallaAcceso } from '../components/MarcaSoma'
 
 export default function ResetPassword() {
     const navigate = useNavigate()
@@ -36,77 +37,51 @@ export default function ResetPassword() {
         }
     }
 
+    const input = 'w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm text-[#0F1F3D] focus:outline-none focus:ring-2 focus:ring-[#00BFA5] focus:border-transparent'
+    const label = 'block text-sm font-semibold text-slate-600 mb-1'
+
     return (
-        <div className="min-h-screen bg-gradient-to-br from-green-50 to-emerald-100 flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 w-full max-w-sm p-8">
-
-                <div className="text-center mb-8">
-                    <div className="text-4xl mb-3">🥥</div>
-                    <h1 className="text-xl font-semibold text-gray-800">Nueva contraseña</h1>
-                    <p className="text-sm text-gray-500 mt-1">Elige una contraseña segura para tu cuenta</p>
+        <PantallaAcceso titulo="Nueva contraseña" subtitulo="Elige una contraseña segura para tu cuenta">
+            {listo ? (
+                <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm px-4 py-3 rounded-lg">
+                    Contraseña actualizada correctamente. Redirigiendo...
                 </div>
-
-                {listo ? (
-                    <div className="text-center">
-                        <div className="bg-green-50 border border-green-200 text-green-700 text-sm px-4 py-3 rounded-lg mb-4">
-                            ✅ Contraseña actualizada correctamente. Redirigiendo...
-                        </div>
+            ) : !sesionValida ? (
+                <div>
+                    <div className="bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3 rounded-lg mb-6">
+                        {error}
                     </div>
-                ) : !sesionValida ? (
+                    <button onClick={() => navigate('/login')}
+                        className="w-full text-sm text-slate-500 hover:text-[#0F1F3D] py-2">
+                        ← Volver al login
+                    </button>
+                </div>
+            ) : (
+                <form onSubmit={handleSubmit} className="space-y-4">
                     <div>
-                        <div className="bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3 rounded-lg mb-6">
+                        <label htmlFor="nueva" className={label}>Nueva contraseña</label>
+                        <input id="nueva" type="password" value={password} onChange={e => setPassword(e.target.value)}
+                            required minLength={6} className={input} placeholder="Mínimo 6 caracteres" autoFocus autoComplete="new-password" />
+                    </div>
+
+                    <div>
+                        <label htmlFor="confirmar" className={label}>Confirmar contraseña</label>
+                        <input id="confirmar" type="password" value={confirmar} onChange={e => setConfirmar(e.target.value)}
+                            required className={input} placeholder="Repite la contraseña" autoComplete="new-password" />
+                    </div>
+
+                    {error && (
+                        <div className="bg-red-50 border border-red-200 text-red-700 text-sm px-3 py-2 rounded-lg">
                             {error}
                         </div>
-                        <button onClick={() => navigate('/login')}
-                            className="w-full text-sm text-gray-500 hover:text-gray-700 py-2">
-                            ← Volver al login
-                        </button>
-                    </div>
-                ) : (
-                    <form onSubmit={handleSubmit} className="space-y-4">
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                                Nueva contraseña
-                            </label>
-                            <input
-                                type="password"
-                                value={password}
-                                onChange={e => setPassword(e.target.value)}
-                                required
-                                minLength={6}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                                placeholder="Mínimo 6 caracteres"
-                                autoFocus
-                            />
-                        </div>
+                    )}
 
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                                Confirmar contraseña
-                            </label>
-                            <input
-                                type="password"
-                                value={confirmar}
-                                onChange={e => setConfirmar(e.target.value)}
-                                required
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                                placeholder="Repite la contraseña"
-                            />
-                        </div>
-
-                        {error && (
-                            <div className="bg-red-50 border border-red-200 text-red-700 text-sm px-3 py-2 rounded-lg">
-                                {error}
-                            </div>
-                        )}
-
-                        <button type="submit" disabled={loading}
-                            className="w-full bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white font-medium py-2.5 rounded-lg text-sm transition-colors">
-                            {loading ? 'Guardando...' : 'Guardar nueva contraseña'}
-                        </button>
-                    </form>
-                )}
-            </div>
-        </div>
+                    <button type="submit" disabled={loading}
+                        className="w-full bg-[#00BFA5] hover:bg-[#00A892] disabled:opacity-50 text-[#0F1F3D] font-bold py-2.5 rounded-lg text-sm transition-colors">
+                        {loading ? 'Guardando...' : 'Guardar nueva contraseña'}
+                    </button>
+                </form>
+            )}
+        </PantallaAcceso>
     )
 }

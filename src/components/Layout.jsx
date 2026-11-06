@@ -8,6 +8,7 @@ import {
     User, Tag, BarChart2, Landmark, RefreshCw, PackageCheck, Building2, ClipboardCheck, Shield, ScanLine
 } from 'lucide-react'
 import { useState, useEffect } from 'react'
+import { LogoSomaOps } from './MarcaSoma'
 
 const NAV_ITEMS = [
     { key: 'dashboard', to: '/', icon: LayoutDashboard, label: 'Dashboard' },
@@ -109,7 +110,7 @@ export default function Layout() {
                     justifyContent: 'space-between', padding: '0 16px',
                     borderBottom: '1px solid #f3f4f6'
                 }}>
-                    {open && <span style={{ fontWeight: 600, fontSize: '14px', color: '#1f2937' }}>MiPOS</span>}
+                    {open && <LogoSomaOps size={17} />}
                     <button onClick={() => setOpen(!open)}
                         style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', marginLeft: 'auto', padding: '4px' }}>
                         {open ? <X size={18} /> : <Menu size={18} />}

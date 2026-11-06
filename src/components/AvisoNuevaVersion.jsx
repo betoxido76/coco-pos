@@ -114,8 +114,8 @@ export default function AvisoNuevaVersion() {
         }}>
             <span>
                 {desactualizada
-                    ? 'Esta versión de MiPOS ya no puede guardar cambios. Recarga para seguir trabajando.'
-                    : 'Hay una versión nueva de MiPOS. Guarda lo que estés haciendo y recarga para usarla.'}
+                    ? 'Esta versión de soma ops ya no puede guardar cambios. Recarga para seguir trabajando.'
+                    : 'Hay una versión nueva de soma ops. Guarda lo que estés haciendo y recarga para usarla.'}
                 <span style={{ display: 'block', fontSize: '11px', opacity: 0.7 }}>Versión {APP_VERSION}</span>
             </span>
             <button onClick={recargar}

@@ -29,13 +29,14 @@ export default defineConfig({
       // (AvisoNuevaVersion). Con 'autoUpdate' una pestaña abierta seguía con el
       // código viejo sin enterarse (NE-001226).
       registerType: 'prompt',
-      includeAssets: ['icon-192.png', 'icon-512.png'],
+      includeAssets: ['icon-192.png', 'icon-512.png', 'icon-maskable-512.png', 'apple-touch-icon.png'],
       manifest: {
-        name: 'Coco POS',
-        short_name: 'Coco POS',
-        description: 'Sistema de gestión y ventas',
-        theme_color: '#16a34a',
-        background_color: '#ffffff',
+        // Marca soma ops (familia SOMA): src/components/MarcaSoma.jsx
+        name: 'soma ops',
+        short_name: 'soma ops',
+        description: 'Del pedido al cobro, en un solo lugar.',
+        theme_color: '#0F1F3D',
+        background_color: '#0F1F3D',
         display: 'standalone',
         orientation: 'portrait',
         start_url: '/',
@@ -49,7 +50,14 @@ export default defineConfig({
             src: 'icon-512.png',
             sizes: '512x512',
             type: 'image/png',
-            purpose: 'any maskable',
+            purpose: 'any',
+          },
+          {
+            // Sin esquinas redondeadas: Android aplica su propia máscara
+            src: 'icon-maskable-512.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'maskable',
           },
         ],
       },
@@ -67,6 +75,16 @@ export default defineConfig({
         navigateFallback: null,
         // Cachea las llamadas a Supabase para offline
         runtimeCaching: [
+          {
+            // Tipografía Inter de Google Fonts: que la marca se vea igual sin conexión
+            urlPattern: /^https:\/\/fonts\.(googleapis|gstatic)\.com\/.*/i,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'fuentes',
+              expiration: { maxEntries: 20, maxAgeSeconds: 60 * 60 * 24 * 365 },
+              cacheableResponse: { statuses: [0, 200] },
+            },
+          },
           {
             urlPattern: ({ request }) => request.mode === 'navigate',
             handler: 'NetworkFirst',
