@@ -5,7 +5,13 @@
 
 ## 1. Descripción general
 
-**MiPOS** (antes Coco POS) es un sistema de gestión empresarial multi-cliente (SaaS) construido para empresas de manufactura. Está diseñado para venderse por módulos a distintos clientes, con soporte para múltiples perfiles de negocio (manufactura, autopartes, retail, etc.).
+**soma ops** (antes MiPOS / Coco POS; renombrado 2026-11-06) es un sistema de gestión empresarial multi-cliente (SaaS) construido para empresas de manufactura. Está diseñado para venderse por módulos a distintos clientes, con soporte para múltiples perfiles de negocio (manufactura, autopartes, retail, etc.).
+
+**Marca:** forma parte de la familia SOMA (la herramienta de planificación). Nombre en minúsculas "soma ops",
+ícono "Núcleo" (anillo teal con centro ámbar sobre azul noche), Inter, frase "Del pedido al cobro, en un solo
+lugar.". Todo vive en `src/components/MarcaSoma.jsx` (logo, wordmark, pantalla de acceso); las PNG de `public/`
+salen de la misma geometría. En venta se presenta como "ERP liviano", pero no lleva contabilidad general (Galac).
+Las claves de caché `mipos_*` y el repositorio/URL `coco-pos` se mantienen a propósito.
 
 **URL de producción:** `https://coco-pos.pages.dev`  
 **Repositorio:** `https://github.com/betoxido76/coco-pos`  
