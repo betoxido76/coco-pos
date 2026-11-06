@@ -10,6 +10,25 @@ import {
 import { useState, useEffect } from 'react'
 import { LogoSomaOps } from './MarcaSoma'
 
+// Barra lateral en azul noche (marca soma ops, src/components/MarcaSoma.jsx)
+const BL = {
+    fondo: '#0F1F3D',
+    borde: 'rgba(255,255,255,0.08)',
+    texto: '#CBD5E1',
+    suave: '#94A3B8',
+    fuerte: '#F1F5F9',
+    activo: '#00BFA5',
+    activoFondo: 'rgba(0,191,165,0.14)',
+    ambar: '#E8A838',
+}
+// :hover no existe en estilos inline: va en una regla con clase
+const CSS_BARRA = `
+    .nav-lateral:hover:not(.active) { background-color: rgba(255,255,255,0.06) !important; color: ${BL.fuerte} !important; }
+    .nav-lateral:focus-visible, .btn-lateral:focus-visible { outline: 2px solid ${BL.activo}; outline-offset: -2px; }
+    .scroll-lateral { scrollbar-color: #2A3B5C transparent; scrollbar-width: thin; }
+    .btn-lateral:hover { color: ${BL.fuerte} !important; }
+`
+
 const NAV_ITEMS = [
     { key: 'dashboard', to: '/', icon: LayoutDashboard, label: 'Dashboard' },
     { key: 'inventario', to: '/inventario', icon: Package, label: 'Inventario' },
@@ -98,21 +117,22 @@ export default function Layout() {
 
     return (
         <div style={{ display: 'flex', minHeight: '100vh', backgroundColor: '#f9fafb' }}>
+            <style>{CSS_BARRA}</style>
             <aside style={{
                 width: open ? '220px' : '60px', minWidth: open ? '220px' : '60px',
-                transition: 'width 0.2s', backgroundColor: '#ffffff',
-                borderRight: '1px solid #e5e7eb', display: 'flex',
+                transition: 'width 0.2s', backgroundColor: BL.fondo,
+                display: 'flex',
                 flexDirection: 'column', height: '100vh', position: 'sticky', top: 0,
             }}>
                 {/* Logo */}
                 <div style={{
                     height: '56px', display: 'flex', alignItems: 'center',
                     justifyContent: 'space-between', padding: '0 16px',
-                    borderBottom: '1px solid #f3f4f6'
+                    borderBottom: `1px solid ${BL.borde}`
                 }}>
-                    {open && <LogoSomaOps size={17} />}
-                    <button onClick={() => setOpen(!open)}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', marginLeft: 'auto', padding: '4px' }}>
+                    {open && <LogoSomaOps size={17} sobreOscuro />}
+                    <button className="btn-lateral" onClick={() => setOpen(!open)} title={open ? 'Contraer menú' : 'Expandir menú'}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: BL.suave, marginLeft: 'auto', padding: '4px', borderRadius: '6px' }}>
                         {open ? <X size={18} /> : <Menu size={18} />}
                     </button>
                 </div>
@@ -121,14 +141,14 @@ export default function Layout() {
                 {perfil?.rol === 'superadmin' && (
                     <div style={{
                         padding: open ? '10px 12px' : '10px 8px',
-                        borderBottom: '1px solid #fde68a',
-                        backgroundColor: empresaActiva ? '#fffbeb' : '#fefce8',
+                        borderBottom: '1px solid rgba(232,168,56,0.25)',
+                        backgroundColor: empresaActiva ? 'rgba(232,168,56,0.16)' : 'rgba(232,168,56,0.08)',
                     }}>
                         {open ? (
                             <>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginBottom: '5px' }}>
-                                    <Building2 size={11} style={{ color: '#b45309' }} />
-                                    <span style={{ fontSize: '10px', fontWeight: 600, color: '#b45309', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                    <Building2 size={11} style={{ color: BL.ambar }} />
+                                    <span style={{ fontSize: '10px', fontWeight: 600, color: BL.ambar, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                                         Empresa activa
                                     </span>
                                 </div>
@@ -141,8 +161,9 @@ export default function Layout() {
                                     }}
                                     style={{
                                         width: '100%', padding: '5px 8px',
-                                        border: '1px solid #fcd34d', borderRadius: '6px',
-                                        fontSize: '12px', color: '#374151', backgroundColor: '#fff', cursor: 'pointer',
+                                        border: '1px solid rgba(232,168,56,0.45)', borderRadius: '6px',
+                                        fontSize: '12px', color: BL.fuerte, backgroundColor: '#1B2B4B', cursor: 'pointer',
+                                        colorScheme: 'dark',
                                     }}
                                 >
                                     <option value="">Mi empresa (demo)</option>
@@ -151,7 +172,7 @@ export default function Layout() {
                                     ))}
                                 </select>
                                 {empresaActiva && (
-                                    <div style={{ fontSize: '10px', color: '#92400e', marginTop: '4px' }}>
+                                    <div style={{ fontSize: '10px', color: '#F3D19A', marginTop: '4px' }}>
                                         Viendo datos de este cliente
                                     </div>
                                 )}
@@ -159,25 +180,25 @@ export default function Layout() {
                         ) : (
                             <div title={empresaActiva ? `Empresa: ${empresaActiva.nombre}` : 'Mi empresa (demo)'}
                                 style={{ display: 'flex', justifyContent: 'center' }}>
-                                <Building2 size={16} style={{ color: empresaActiva ? '#d97706' : '#b45309' }} />
+                                <Building2 size={16} style={{ color: BL.ambar }} />
                             </div>
                         )}
                     </div>
                 )}
 
                 {/* Nav */}
-                <nav style={{ flex: 1, padding: '12px 8px', overflowY: 'auto' }}>
+                <nav className="scroll-lateral" style={{ flex: 1, padding: '12px 8px', overflowY: 'auto' }}>
                     {modulosActivos === null ? (
-                        <div style={{ padding: '20px 12px', fontSize: '12px', color: '#9ca3af' }}>Cargando...</div>
+                        <div style={{ padding: '20px 12px', fontSize: '12px', color: BL.suave }}>Cargando...</div>
                     ) : navFiltrado.map(({ to, icon: Icon, label }) => (
-                        <NavLink key={to} to={to} end={to === '/'}
+                        <NavLink key={to} to={to} end={to === '/'} className="nav-lateral" title={open ? undefined : label}
                             style={({ isActive }) => ({
                                 display: 'flex', alignItems: 'center', gap: '10px',
                                 padding: '10px 12px', borderRadius: '8px', textDecoration: 'none',
-                                fontSize: '14px', fontWeight: isActive ? 500 : 400,
-                                color: isActive ? '#15803d' : '#4b5563',
-                                backgroundColor: isActive ? '#f0fdf4' : 'transparent',
-                                marginBottom: '2px', transition: 'background 0.15s',
+                                fontSize: '14px', fontWeight: isActive ? 600 : 400,
+                                color: isActive ? BL.activo : BL.texto,
+                                backgroundColor: isActive ? BL.activoFondo : 'transparent',
+                                marginBottom: '2px', transition: 'background 0.15s, color 0.15s',
                             })}>
                             <Icon size={18} style={{ flexShrink: 0 }} />
                             {open && <span>{label}</span>}
@@ -186,33 +207,33 @@ export default function Layout() {
                 </nav>
 
                 {/* Usuario + logout */}
-                <div style={{ padding: '12px 8px', borderTop: '1px solid #f3f4f6' }}>
+                <div style={{ padding: '12px 8px', borderTop: `1px solid ${BL.borde}` }}>
                     {open && perfil && (
                         <div style={{ padding: '0 12px', marginBottom: '8px' }}>
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                                 <div>
-                                    <p style={{ fontSize: '13px', fontWeight: 500, color: '#374151', margin: 0 }}>{perfil.nombre}</p>
-                                    <p style={{ fontSize: '11px', color: '#9ca3af', margin: '2px 0 0' }}>{perfil.rol} · v{APP_VERSION}</p>
+                                    <p style={{ fontSize: '13px', fontWeight: 500, color: BL.fuerte, margin: 0 }}>{perfil.nombre}</p>
+                                    <p style={{ fontSize: '11px', color: BL.suave, margin: '2px 0 0' }}>{perfil.rol} · v{APP_VERSION}</p>
                                 </div>
-                                <button onClick={handleRecargar} disabled={recargando} title="Recargar permisos"
-                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', padding: '4px', borderRadius: '6px', display: 'flex', alignItems: 'center' }}>
+                                <button className="btn-lateral" onClick={handleRecargar} disabled={recargando} title="Recargar permisos"
+                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: BL.suave, padding: '4px', borderRadius: '6px', display: 'flex', alignItems: 'center' }}>
                                     <RefreshCw size={13} style={{ animation: recargando ? 'spin 0.8s linear infinite' : 'none' }} />
                                 </button>
                             </div>
-                            <button onClick={abrirModalPass}
-                                style={{ marginTop: '4px', background: 'none', border: 'none', cursor: 'pointer', fontSize: '11px', color: '#9ca3af', padding: 0, textDecoration: 'underline' }}>
+                            <button className="btn-lateral" onClick={abrirModalPass}
+                                style={{ marginTop: '4px', background: 'none', border: 'none', cursor: 'pointer', fontSize: '11px', color: BL.suave, padding: 0, textDecoration: 'underline' }}>
                                 Cambiar contraseña
                             </button>
                         </div>
                     )}
-                    <button onClick={handleLogout}
+                    <button onClick={handleLogout} title={open ? undefined : 'Cerrar sesión'}
                         style={{
                             display: 'flex', alignItems: 'center', gap: '8px', width: '100%',
                             padding: '10px 12px', borderRadius: '8px', background: 'none',
-                            border: 'none', cursor: 'pointer', fontSize: '14px', color: '#6b7280',
+                            border: 'none', cursor: 'pointer', fontSize: '14px', color: BL.texto,
                         }}
-                        onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#fef2f2'; e.currentTarget.style.color = '#dc2626' }}
-                        onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = '#6b7280' }}>
+                        onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'rgba(239,68,68,0.15)'; e.currentTarget.style.color = '#FCA5A5' }}
+                        onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = BL.texto }}>
                         <LogOut size={16} style={{ flexShrink: 0 }} />
                         {open && <span>Cerrar sesión</span>}
                     </button>
