@@ -905,18 +905,14 @@ function ModalCobro({ venta, onCerrar, onCobrado }) {
     // salvo que haya retención que registrar (se guarda con la tasa del día).
     const necesitaTasa = !saldoCero || montoRet > 0
     const bloqueado = sinAbono || excede || (necesitaTasa && (sinTasa || cargandoTasas))
+    // Abono parcial: el aviso se pinta en ámbar para que no pase por pago total
+    const quedaPendiente = !saldoCero && !sinAbono && saldo - abonoEnUsd > 0.01
 
     // Desmarcar una retención = registrarla después (el comprobante no llegó):
     // el cliente igual pagó el neto, así que el efectivo propuesto no cambia y
     // la nota queda parcial con la retención como saldo. Si en cambio pagó el
     // total sin retener, se sube el monto a mano (el tope es el saldo sin ella).
     const cambiarAplicarRet = setAplicarRet
-
-    // Al cambiar de fecha cambia la tasa: se recalcula el Bs. para que siga
-    // equivaliendo al resto del saldo, igual que al cambiar de tipo de tasa.
-    useEffect(() => {
-        if (tasaDia > 0) setPagoBs(parseFloat((Math.max(0, saldoEfectivo - pagoUsd) * tasaDia).toFixed(2)))
-    }, [tasasFecha])
 
     // Tras cambiar lo aplicado en NCs, el efectivo se reajusta al resto del saldo.
     function aplicarNcs(next) {
@@ -958,18 +954,15 @@ function ModalCobro({ venta, onCerrar, onCobrado }) {
         aplicarNcs({ ...ncsAplicadas, [ncId]: parseFloat(n.toFixed(2)) })
     }
 
-    // Editar USD completa el Bs. con el equivalente del resto del saldo: dejar
-    // USD en 0 llena el Bs. con el saldo completo a la tasa del día elegido.
+    // El Bs. NUNCA se completa solo: un cobro de $821,73 en USD se guardó como
+    // pago total porque el Bs. se llenó con el resto sin que el usuario lo viera
+    // (NE-000122, 2026-11-06). Completar el resto es una decisión: "Saldar resto".
     function handleUsdChange(val) {
-        const n = Math.max(0, Number(val))
-        setPagoUsd(n)
-        setPagoBs(parseFloat((Math.max(0, saldoEfectivo - n) * tasa).toFixed(2)))
+        setPagoUsd(Math.max(0, Number(val)))
     }
 
     function handleTasaChange(nuevaTasa) {
         setTipoTasa(nuevaTasa)
-        const t = Number(tasasFecha?.[nuevaTasa]) || 0
-        if (t > 0) setPagoBs(parseFloat((Math.max(0, saldoEfectivo - pagoUsd) * t).toFixed(2)))
     }
 
     // Rellena Bs con lo que falte para cubrir el saldo efectivo, dado el USD ingresado.
@@ -1258,7 +1251,7 @@ function ModalCobro({ venta, onCerrar, onCobrado }) {
                     </div>
                 )}
 
-                <div style={{ borderRadius: '8px', padding: '10px 14px', marginBottom: '16px', fontSize: '13px', textAlign: 'center', fontWeight: 500, backgroundColor: necesitaTasa && (sinTasa || excede) ? '#fef2f2' : sinAbono ? '#f9fafb' : '#f0fdf4', color: necesitaTasa && (sinTasa || excede) ? '#dc2626' : sinAbono ? '#9ca3af' : '#166534', border: `1px solid ${necesitaTasa && (sinTasa || excede) ? '#fecaca' : sinAbono ? '#e5e7eb' : '#bbf7d0'}` }}>
+                <div style={{ borderRadius: '8px', padding: '10px 14px', marginBottom: '16px', fontSize: '13px', textAlign: 'center', fontWeight: 500, backgroundColor: necesitaTasa && (sinTasa || excede) ? '#fef2f2' : sinAbono ? '#f9fafb' : quedaPendiente ? '#fffbeb' : '#f0fdf4', color: necesitaTasa && (sinTasa || excede) ? '#dc2626' : sinAbono ? '#9ca3af' : quedaPendiente ? '#92400e' : '#166534', border: `1px solid ${necesitaTasa && (sinTasa || excede) ? '#fecaca' : sinAbono ? '#e5e7eb' : quedaPendiente ? '#fde68a' : '#bbf7d0'}` }}>
                     {necesitaTasa && sinTasa ? `⛔ Sin tasa registrada para el ${fmtFechaCorta(fechaPago)}`
                         : saldoCero ? (montoRet > 0 ? `✓ Retención ${fmt(montoRet)} — la nota quedará pagada` : '✓ Sin saldo — se marcará como pagada')
                         : sinTasa ? `⛔ Sin tasa registrada para el ${fmtFechaCorta(fechaPago)}`
@@ -1357,21 +1350,17 @@ function ModalCobroMultiple({ ventas, onCerrar, onCobrado }) {
     const necesitaTasa = !saldoCero || totalRetAhora > 0
     const bloqueado = !cobrosPorVenta || !cubre || excede || (necesitaTasa && (sinTasa || cargandoTasas))
 
-    // La tasa del día elegido cambia el equivalente en Bs. del resto
-    useEffect(() => {
-        if (tasaDia > 0) setPagoBs(parseFloat((Math.max(0, totalGeneral - pagoUsd) * tasaDia).toFixed(2)))
-    }, [tasasFecha])
-
+    // Igual que en el cobro individual: el Bs. no se completa solo (NE-000122).
     function handleUsdChange(val) {
-        const n = Math.max(0, Number(val))
-        setPagoUsd(n)
-        setPagoBs(parseFloat((Math.max(0, totalGeneral - n) * tasa).toFixed(2)))
+        setPagoUsd(Math.max(0, Number(val)))
     }
 
     function handleTasaChange(nuevaTasa) {
         setTipoTasa(nuevaTasa)
-        const t = Number(tasasFecha?.[nuevaTasa]) || 0
-        if (t > 0) setPagoBs(parseFloat((Math.max(0, totalGeneral - pagoUsd) * t).toFixed(2)))
+    }
+
+    function saldarRestoEnBs() {
+        setPagoBs(parseFloat((Math.max(0, totalGeneral - pagoUsd) * tasa).toFixed(2)))
     }
 
     async function confirmar() {
@@ -1503,7 +1492,13 @@ function ModalCobroMultiple({ ventas, onCerrar, onCobrado }) {
                         </select>
                     </div>
                     <div>
-                        <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '6px' }}>Pago en Bs.</label>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                            <label style={{ fontSize: '12px', fontWeight: 500, color: '#374151' }}>Pago en Bs.</label>
+                            <button type="button" onClick={saldarRestoEnBs}
+                                style={{ fontSize: '11px', color: '#16a34a', background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontWeight: 500 }}>
+                                Saldar resto
+                            </button>
+                        </div>
                         <input type="number" min="0" step="1" value={pagoBs} onChange={e => setPagoBs(Math.max(0, Number(e.target.value)))}
                             style={{ width: '100%', padding: '9px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '15px', fontWeight: 600, boxSizing: 'border-box' }} />
                     </div>
