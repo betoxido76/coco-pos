@@ -163,6 +163,8 @@ const CAMPOS_COBROS = [
     { col: 'es_retencion', label: 'Es retención del cliente', tipo: 'bool', grupo: 'Cobro',
       aviso: 'La retención de IVA/ISLR del cliente es abono, no dinero: fíltrala para cuadrar con Bancos' },
     { col: 'comprobante_retencion', label: 'N° comprobante de retención', tipo: 'texto', grupo: 'Cobro' },
+    { col: 'es_diferencial_cambiario', label: 'Es diferencial cambiario', tipo: 'bool', grupo: 'Cobro',
+      aviso: 'Saldo llevado a pérdida porque el cliente pagó los Bs. sin indexar: es abono, no dinero. Fíltralo para cuadrar con Bancos' },
     { col: 'contribuyente_especial', label: 'Contribuyente especial (al pagar)', tipo: 'bool', grupo: 'Cobro' },
     { col: 'numero_factura', label: 'N° nota', tipo: 'texto', grupo: 'Nota cobrada', def: true },
     { col: 'fecha_nota', label: 'Fecha de la nota', tipo: 'fecha', grupo: 'Nota cobrada' },

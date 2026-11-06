@@ -106,6 +106,8 @@ export default function Finanzas() {
                 .eq('empresa_id', perfil.empresa_id)
                 .is('devolucion_id', null)
                 .is('retencion_id', null)
+                // Ni el saldo llevado a diferencial cambiario (docs/plan-diferencial-cambiario.md)
+                .is('diferencial_id', null)
                 .gte('fecha_cobro', inicioDiaCaracas(desde))
                 .lte('fecha_cobro', finDiaCaracas(hasta)),
 

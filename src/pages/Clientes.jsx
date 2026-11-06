@@ -11,6 +11,7 @@ const VACIO = {
     descripcion: '',
     condicion_pago: 'contado', dias_credito: 0, limite_credito: 0, activo: true,
     contribuyente_especial: false, tipo_cliente_id: '',
+    paga_indexado: true, // false = paga los Bs. de la factura sin indexar (docs/plan-diferencial-cambiario.md)
     documento_entrega: '', // 'factura' | 'nota_entrega' | '' (sin indicar)
     direccion_fiscal: '',
     cat1_id: '', cat2_id: '', cat3_id: '', cat4_id: '',
@@ -131,6 +132,7 @@ export default function Clientes() {
             limite_credito: c.limite_credito ?? 0,
             activo: c.activo ?? true,
             contribuyente_especial: c.contribuyente_especial ?? false,
+            paga_indexado: c.paga_indexado ?? true,
             tipo_cliente_id: c.tipo_cliente_id || '',
             documento_entrega: c.documento_entrega || '',
             direccion_fiscal: c.direccion_fiscal || '',
@@ -180,6 +182,7 @@ export default function Clientes() {
             limite_credito: Number(form.limite_credito) || 0,
             activo: form.activo,
             contribuyente_especial: form.contribuyente_especial,
+            paga_indexado: form.paga_indexado,
             tipo_cliente_id: form.tipo_cliente_id || null,
             documento_entrega: form.documento_entrega || null,
             direccion_fiscal: form.direccion_fiscal.trim() || null,
@@ -427,7 +430,17 @@ export default function Clientes() {
                             <input type="checkbox" id="contribuyente_especial" checked={form.contribuyente_especial} onChange={e => campo('contribuyente_especial', e.target.checked)} style={{ width: '16px', height: '16px', accentColor: '#16a34a' }} />
                             <label htmlFor="contribuyente_especial" style={{ fontSize: '14px', color: '#374151', cursor: 'pointer' }}>Contribuyente Especial</label>
                         </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
+                            title="Desmarcar si el cliente paga los bolívares de la factura sin ajustarlos a la tasa del día de pago. En CxC se podrá llevar el saldo que quede en USD a pérdida por diferencial cambiario.">
+                            <input type="checkbox" id="paga_indexado" checked={form.paga_indexado} onChange={e => campo('paga_indexado', e.target.checked)} style={{ width: '16px', height: '16px', accentColor: '#16a34a' }} />
+                            <label htmlFor="paga_indexado" style={{ fontSize: '14px', color: '#374151', cursor: 'pointer' }}>Paga indexado a la tasa del día</label>
+                        </div>
                     </div>
+                    {!form.paga_indexado && (
+                        <p style={{ gridColumn: 'span 2', fontSize: '12px', color: '#92400e', backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: '8px', padding: '8px 12px', margin: 0 }}>
+                            Este cliente paga los bolívares de la factura sin indexar. En CxC, Finanzas o Administración podrán llevar el saldo que quede en USD a pérdida por diferencial cambiario.
+                        </p>
+                    )}
                 </div>
             </div>
 

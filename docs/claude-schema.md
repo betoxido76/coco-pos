@@ -71,6 +71,13 @@ cobros                -- Cobros parciales/totales en multimoneda
                       --   retencion_id → retenciones: abono de una RETENCIÓN del cliente
                       --   (metodo_usd 'retencion_iva'/'retencion_islr'). Sin cuenta (CHECK),
                       --   solo vía RPC registrar_retenciones_venta (trigger). No es caja.
+                      --   diferencial_id → diferenciales_cambiarios: saldo llevado a pérdida porque
+                      --   el cliente pagó los Bs. sin indexar (metodo_usd 'diferencial_cambiario').
+                      --   Sin cuenta (CHECK), solo vía RPC registrar_diferencial_cambiario. No es caja.
+diferenciales_cambiarios -- DC-000001: venta_id, cliente_id, fecha (último pago Bs.), monto_usd,
+                      --   total_nota, cobrado_usd, bs_pagados, tasa_nota, tasa_ultimo_pago,
+                      --   referencia_usd (parte explicada por la tasa), motivo, estado vigente/anulado.
+                      --   Un vigente por nota. Escritura SOLO por RPC (docs/plan-diferencial-cambiario.md)
 devoluciones          -- Notas de crédito (monto_devuelto con IVA; subtotal, base_gravada, base_exenta, iva)
                       --   numero_nc, cliente_id, nota_liquidacion, fecha_liquidacion
                       --   estado_nc CHECK IN ('pendiente','aplicada','reembolsada','anulada')
@@ -179,6 +186,8 @@ lotes_produccion      -- Lotes de PT producidos
 ### Clientes y proveedores
 ```
 clientes              -- cat1_id..cat4_id, limite_credito numeric, vehiculo text
+                      --   paga_indexado boolean (default true): false = paga los Bs. de la factura
+                      --   sin indexar → CxC permite llevar el saldo a diferencial cambiario
                       --   contacto_comercial, email_comercial, telefono_comercial
                       --   contacto_administrativo, email_administrativo, telefono_administrativo
                       --   documento_entrega ('factura'|'nota_entrega', NULL = sin indicar): aviso

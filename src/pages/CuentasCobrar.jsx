@@ -13,6 +13,7 @@ import { useOrden, ordenarFilas, useAltoBarra, ThOrden, BarraFija, estiloTarjeta
 import { totalesGuardados, precioBaseItem, redondear2 } from '../lib/iva'
 import BloqueRetencionesCobro from '../components/BloqueRetencionesCobro'
 import PanelRetenciones from '../components/PanelRetenciones'
+import { ModalDiferencialCambiario, PanelDiferencialCambiario } from '../components/DiferencialCambiario'
 import { retencionesPorRegistrar, retencionesRegistradas, pctRetencionClientes, clienteRetiene } from '../lib/retencionesCliente'
 
 const fmt = n => `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -101,6 +102,7 @@ export default function CuentasCobrar() {
     const [modalMotivosNc, setModalMotivosNc] = useState(false)
     const [modalAnularNc, setModalAnularNc] = useState(null)   // { nc, esRechazo }
     const [aprobando, setAprobando] = useState(null)
+    const [modalDiferencial, setModalDiferencial] = useState(null)   // nota a llevar a diferencial cambiario
 
     useEffect(() => { setPagina(0) }, [filtro, filtroCliente, filtroCat1, orden])
     // Alto de la barra fija de filtros: los títulos de la tabla se pegan justo debajo
@@ -111,7 +113,7 @@ export default function CuentasCobrar() {
     useEffect(() => { setSeleccionadas([]) }, [filtro, filtroCliente, filtroCat1])
 
     useEffect(() => {
-        supabase.from('clientes').select('id, nombre, cat1_id')
+        supabase.from('clientes').select('id, nombre, cat1_id, paga_indexado')
             .eq('empresa_id', perfil.empresa_id).eq('activo', true).order('nombre')
             .then(({ data }) => setClientes(data || []))
         supabase.from('categorias_clientes').select('id, nombre')
@@ -132,8 +134,8 @@ export default function CuentasCobrar() {
         // !inner solo cuando se filtra por categoría: con el embed normal una venta
         // sin cliente seguiría apareciendo, que es el comportamiento sin filtro.
         const embedCli = filtroCat1
-            ? 'clientes!inner(nombre, condicion_pago, dias_credito, contribuyente_especial)'
-            : 'clientes(nombre, condicion_pago, dias_credito, contribuyente_especial)'
+            ? 'clientes!inner(nombre, condicion_pago, dias_credito, contribuyente_especial, paga_indexado)'
+            : 'clientes(nombre, condicion_pago, dias_credito, contribuyente_especial, paga_indexado)'
 
         // Se traen TODAS las notas del filtro (no solo la página) para poder
         // ordenar por cualquier columna, incluidas las calculadas (cobrado,
@@ -195,13 +197,18 @@ export default function CuentasCobrar() {
         const bloques = []
         for (let i = 0; i < ids.length; i += 100) bloques.push(ids.slice(i, i + 100))
         const resp = await Promise.all(bloques.map(b => supabase.from('cobros')
-            .select('venta_id, monto_usd, monto_bs, tasa_cambio, fecha_cobro, created_at, retencion_id, metodo_usd')
+            .select('venta_id, monto_usd, monto_bs, tasa_cambio, fecha_cobro, created_at, retencion_id, diferencial_id, devolucion_id, metodo_usd')
             .in('venta_id', b)))
         if (req !== cobrosReq.current) return
         const data = resp.flatMap(r => r.data || [])
         const m = {}
         ;(data || []).forEach(c => {
-            const acc = m[c.venta_id] || (m[c.venta_id] = { cobrado: 0, ultimaFecha: null, retenido: 0, vigentes: {} })
+            const acc = m[c.venta_id] || (m[c.venta_id] = { cobrado: 0, ultimaFecha: null, retenido: 0, vigentes: {}, diferencial: 0, bs: 0 })
+            // El diferencial cambiario llevado a pérdida no es dinero cobrado: va aparte
+            // (docs/plan-diferencial-cambiario.md)
+            if (c.diferencial_id) { acc.diferencial += Number(c.monto_usd || 0); return }
+            // Bs. de dinero recibidos: habilitan el botón de diferencial cambiario
+            if (!c.devolucion_id && !c.retencion_id) acc.bs += Number(c.monto_bs || 0)
             // La retención del cliente es abono, pero va en su propia columna
             if (c.retencion_id) {
                 acc.retenido += Number(c.monto_usd || 0)
@@ -372,6 +379,8 @@ export default function CuentasCobrar() {
 
     const pctRet = pctRetencionClientes(perfil?.empresas)
     const hayRetClientes = pctRet.iva > 0 || pctRet.islr > 0
+    // Pestaña de diferencial cambiario: solo si algún cliente no paga indexado
+    const hayNoIndexados = puedeAnular && clientes.some(c => c.paga_indexado === false)
     const mostrarCheckboxes = ['por_cobrar', 'pendiente', 'parcial'].includes(filtro)
     // En Pendientes no hay pagos todavía: las columnas de pago irían siempre vacías
     const mostrarColsPago = filtro !== 'pendiente'
@@ -389,10 +398,16 @@ export default function CuentasCobrar() {
         // vigente de la empresa) — docs/plan-retenciones-clientes.md
         const retRegistrada = cob?.retenido || 0
         const retPendiente = esPagada ? 0 : retencionesPorRegistrar(v, perfil?.empresas, cob?.vigentes).total
-        const cobrado = esPagada ? Math.max(cobradoReg, v.total - retRegistrada) : cobradoReg
-        const saldo = esPagada ? 0 : Math.max(0, v.total - retRegistrada - retPendiente - cobrado)
+        // Saldo llevado a pérdida por diferencial cambiario: ni cobrado ni deuda
+        const diferencial = cob?.diferencial || 0
+        const cobrado = esPagada ? Math.max(cobradoReg, v.total - retRegistrada - diferencial) : cobradoReg
+        const saldo = esPagada ? 0 : Math.max(0, v.total - retRegistrada - retPendiente - diferencial - cobrado)
         return {
-            v, cob, cobrado, retRegistrada, retPendiente,
+            v, cob, cobrado, retRegistrada, retPendiente, diferencial,
+            // Botón "Diferencial cambiario": cliente que no paga indexado, con pagos
+            // en Bs. y saldo. La base revisa lo mismo (registrar_diferencial_cambiario).
+            puedeDiferencial: puedeAnular && !esPagada && v.clientes?.paga_indexado === false
+                && (cob?.bs || 0) > 0 && v.total - retRegistrada - diferencial - cobradoReg > 0.01,
             retenciones: retRegistrada + retPendiente,
             saldo,
             // El dinero ya cubrió su parte y solo falta registrar la retención
@@ -448,6 +463,7 @@ export default function CuentasCobrar() {
                         {vista === 'cxc' ? 'Seguimiento de facturas a crédito'
                             : vista === 'nc' ? 'Historial de notas de crédito emitidas'
                             : vista === 'retenciones' ? 'Retenciones de IVA e ISLR que nos hicieron los clientes'
+                            : vista === 'diferencial' ? 'Saldos llevados a pérdida porque el cliente pagó los bolívares sin indexar'
                             : 'Anular notas de entrega facturadas que no serán despachadas'}
                     </p>
                 </div>
@@ -455,6 +471,7 @@ export default function CuentasCobrar() {
                     {[['cxc', 'Facturas CxC'], ['nc', 'Notas de Crédito'],
                       // Retenciones de clientes: solo si la empresa configuró el %
                       ...(hayRetClientes ? [['retenciones', 'Retenciones']] : []),
+                      ...(hayNoIndexados ? [['diferencial', 'Dif. cambiario']] : []),
                       ...(puedeAnular ? [['anular', 'Anular NE']] : [])].map(([v, lbl]) => (
                         <button key={v} onClick={() => setVista(v)}
                             style={{ padding: '7px 18px', borderRadius: '8px', fontSize: '13px', fontWeight: 500, border: 'none', cursor: 'pointer', transition: 'all 0.15s', backgroundColor: vista === v ? '#fff' : 'transparent', color: vista === v ? '#1f2937' : '#6b7280', boxShadow: vista === v ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}>
@@ -556,7 +573,7 @@ export default function CuentasCobrar() {
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {filasPagina.map(({ v, cob, cobrado, saldo: saldoFila, diasPago, retRegistrada, retPendiente, faltaComprobante }) => {
+                                        {filasPagina.map(({ v, cob, cobrado, saldo: saldoFila, diasPago, retRegistrada, retPendiente, faltaComprobante, diferencial, puedeDiferencial }) => {
                                             const sem = semaforo(v.fecha_vencimiento_pago)
                                             const seleccionada = seleccionadas.includes(v.id)
                                             const deshabilitada = v.estado_cobro === 'pagado' ||
@@ -614,15 +631,29 @@ export default function CuentasCobrar() {
                                                             : faltaComprobante ? <span style={{ color: '#4338ca', fontSize: '12px', fontWeight: 500, whiteSpace: 'nowrap' }}>Falta comprobante</span>
                                                             : saldoFila > 0.01 ? fmt(saldoFila)
                                                             : <span style={{ color: '#16a34a' }}>✓ Pagado</span>}
+                                                        {cobrosListos && diferencial > 0.005 && (
+                                                            <div title="Saldo llevado a pérdida por diferencial cambiario" style={{ fontSize: '11px', fontWeight: 500, color: '#b45309', whiteSpace: 'nowrap' }}>
+                                                                Dif. camb. {fmt(diferencial)}
+                                                            </div>
+                                                        )}
                                                     </td>
                                                     <td style={{ padding: '12px 14px' }}><BadgeCobro estado={v.estado_cobro} /></td>
                                                     <td style={{ padding: '12px 14px' }}>
-                                                        {v.estado_cobro !== 'pagado' && (
-                                                            <button onClick={() => setModalVenta(v)}
-                                                                style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', padding: '5px 10px', fontSize: '12px', fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                                                                <DollarSign size={12} /> Cobrar
-                                                            </button>
-                                                        )}
+                                                        <div style={{ display: 'flex', gap: '6px' }}>
+                                                            {v.estado_cobro !== 'pagado' && (
+                                                                <button onClick={() => setModalVenta(v)}
+                                                                    style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', padding: '5px 10px', fontSize: '12px', fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                                                    <DollarSign size={12} /> Cobrar
+                                                                </button>
+                                                            )}
+                                                            {cobrosListos && puedeDiferencial && (
+                                                                <button onClick={() => setModalDiferencial(v)}
+                                                                    title="Llevar el saldo a pérdida por diferencial cambiario"
+                                                                    style={{ backgroundColor: '#fff', color: '#b45309', border: '1px solid #fcd34d', borderRadius: '6px', padding: '5px 10px', fontSize: '12px', fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                                                    Dif. cambiario
+                                                                </button>
+                                                            )}
+                                                        </div>
                                                     </td>
                                                 </tr>
                                             )
@@ -748,6 +779,9 @@ export default function CuentasCobrar() {
             {/* ─── Vista Retenciones de clientes ─── */}
             {vista === 'retenciones' && <PanelRetenciones lado="clientes" />}
 
+            {/* ─── Vista Diferencial cambiario (solo finanzas/admin) ─── */}
+            {vista === 'diferencial' && hayNoIndexados && <PanelDiferencialCambiario onCambio={cargar} />}
+
             {/* ─── Vista Anular NE (solo finanzas/admin) ─── */}
             {vista === 'anular' && puedeAnular && <TabAnularNE />}
 
@@ -766,6 +800,11 @@ export default function CuentasCobrar() {
             {modalEstadoCuenta && filtroCliente && (
                 <ModalEstadoCuenta clienteId={filtroCliente} tasaBcv={tasas.tasa_bcv}
                     onCerrar={() => setModalEstadoCuenta(false)} />
+            )}
+            {modalDiferencial && (
+                <ModalDiferencialCambiario venta={modalDiferencial}
+                    onCerrar={() => setModalDiferencial(null)}
+                    onRegistrado={() => { setModalDiferencial(null); cargar() }} />
             )}
             {modalNc && <DetalleNC nc={modalNc} onCerrar={() => setModalNc(null)} />}
             {modalLiquidar && (

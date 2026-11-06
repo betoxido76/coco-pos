@@ -359,6 +359,19 @@ con los montos guardados de la nota (`totalesGuardados`).
   acto y no propone retención: hoy solo la usa Super Frenos, sin %.
 - Diseño y decisiones: `docs/plan-retenciones-clientes.md`.
 
+### Diferencial cambiario (clientes que no pagan indexado)
+
+Clientes con `clientes.paga_indexado = false` (p. ej. Farmatodo en Meraki)
+pagan los Bs. de la factura sin ajustarlos a la tasa del día: en USD queda un
+saldo que nunca entra. CxC → botón **"Dif. cambiario"** (admin/finanzas, nota
+con pagos en Bs.) lo lleva a pérdida: fila en `diferenciales_cambiarios`
+(DC-000001) + **abono sin caja** en `cobros` con `diferencial_id`, sin cuenta
+bancaria. Todo lector de saldo ya lo cuenta; los de caja lo excluyen
+(Finanzas: `.is('diferencial_id', null)`). Escritura solo por RPC:
+`registrar_diferencial_cambiario` / `anular_diferencial_cambiario` (trigger
+sobre `diferencial_id`). Pestaña CxC → Dif. cambiario con totales y Excel. UI en
+`src/components/DiferencialCambiario.jsx`. Ver `docs/plan-diferencial-cambiario.md`.
+
 Los cobros y gastos manejan `monto_usd` + `monto_bs` + `tasa_cambio` + `tipo_tasa`.
 El equivalente en USD = `monto_usd + (monto_bs / tasa)`.
 
@@ -486,6 +499,7 @@ Al cerrar un ítem, borrarlo de esta tabla.
 | Item | Prioridad | Descripción |
 |---|---|---|
 | Recorrido de retenciones en producción | Alta | Nada del circuito de retenciones (`docs/plan-retenciones.md`) se probó en navegador (las RPC sí, en BEGIN/ROLLBACK). Activar Meraki como agente, marcar 1 proveedor y probar: recepción a crédito pagada desde CxP, recepción de contado (pagar en el acto), gasto "Pagado" con y sin desglose, pago parcial, anular el abono de una retención, pestaña Retenciones + Excel. Revisar Finanzas y Bancos después. |
+| Recorrido de diferencial cambiario | Alta | Nada se probó en navegador (las RPC sí, en BEGIN/ROLLBACK). Desmarcar "Paga indexado" en las 2 cuentas de Farmatodo (Meraki), llevar NE-001263 y NE-001312 a diferencial, ver la pestaña y el Excel, anular uno y volver a registrarlo. Revisar Finanzas (no debe sumarlo) y la columna en el Exportador. |
 | Recorrido de exoneración de IVA | Alta | Nada se probó en navegador (la base sí, en BEGIN/ROLLBACK). Cargar el RIF de ANA ISABEL ACEDO (Meraki), registrarle la exoneración, tomar un pedido (NuevoPedido y Ventas), facturarlo y ver la nota sin IVA con "Nota exonerada"; revocarla y facturar otro (con IVA). Revisar el exportador. Pendiente: texto de la leyenda impresa (Meraki con su contador). |
 | Recorrido de retenciones de clientes (CxC) | Alta | Nada se probó en navegador (las RPC sí, en BEGIN/ROLLBACK). Meraki quedó configurada (IVA 100 %, ISLR 0). Cobrar una nota de un contribuyente especial con retención y N° de comprobante, otra solo con el dinero neto (queda "Falta comprobante") y luego registrar su retención, un cobro múltiple, completar un N° desde CxC → Retenciones, anular una retención y una NE con retención. Revisar Finanzas y el exportador. |
 | Recorrido de NC de proveedores en producción | Alta | Nada se probó en navegador (las RPC sí, en BEGIN/ROLLBACK). Registrar una NCP con y sin recepción, aplicarla en parte a una recepción y el resto a un gasto del mismo proveedor, anular una aplicación desde CxP → Ver recepción, anular la nota, liquidar otra por reembolso. Revisar que las ND de Super Frenos se sigan viendo y aplicando. |
