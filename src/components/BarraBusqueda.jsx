@@ -37,6 +37,7 @@ const CSS = `
 .bb-sugg button { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 8px 10px; border-radius: 6px; font-size: 13px; color: #374151; cursor: pointer; }
 .bb-sugg button.hl { background: ${C.fondo}; }
 .bb-panel { width: min(900px, calc(100vw - 48px)); display: grid; grid-template-columns: 1.3fr 1fr 1fr; max-height: min(70vh, 620px); }
+.bb-panel.sin-grupo { width: min(640px, calc(100vw - 48px)); grid-template-columns: 1.3fr 1fr; }
 .bb-col { padding: 14px 14px 16px; overflow-y: auto; min-width: 0; }
 .bb-col + .bb-col { border-left: 1px solid #f1f5f9; }
 .bb-col h5 { margin: 0 0 8px; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: ${C.gris}; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
@@ -80,6 +81,8 @@ const CSS = `
 
 export default function BarraBusqueda({
     campos, filas, busqueda, onCambio, unidad = 'registros', placeholder,
+    // false: sin la columna "Agrupar por" (p. ej. el Dashboard, donde agrupan las gráficas)
+    agrupar = true,
     favoritos = [], favoritoAplicado, onAplicarFavorito, onGuardarFavorito, onBorrarFavorito, onQuitarFavorito,
 }) {
     const [texto, setTexto] = useState('')
@@ -160,7 +163,7 @@ export default function BarraBusqueda({
                     }} />
                 <button type="button" className="bb-drop" aria-expanded={panel} onClick={() => setPanel(v => !v)}>
                     <SlidersHorizontal size={14} />
-                    <span className="txt">Filtros · Agrupar · Favoritos</span>
+                    <span className="txt">{agrupar ? 'Filtros · Agrupar · Favoritos' : 'Filtros · Favoritos'}</span>
                     <ChevronDown size={13} />
                 </button>
             </div>
@@ -176,7 +179,7 @@ export default function BarraBusqueda({
             )}
 
             {panel && (
-                <Panel campos={campos} filas={filas} busqueda={busqueda} onCambio={onCambio} unidad={unidad}
+                <Panel campos={campos} filas={filas} busqueda={busqueda} onCambio={onCambio} unidad={unidad} conAgrupar={agrupar}
                     favoritos={favoritos} favoritoAplicado={favoritoAplicado}
                     onAplicarFavorito={f => { onAplicarFavorito?.(f); setPanel(false) }}
                     onGuardarFavorito={onGuardarFavorito} onBorrarFavorito={onBorrarFavorito}
@@ -204,7 +207,7 @@ function separar(lista) {
     return { comunes, mas }
 }
 
-function Panel({ campos, filas, busqueda, onCambio, unidad, favoritos, favoritoAplicado, onAplicarFavorito, onGuardarFavorito, onBorrarFavorito, cerrar }) {
+function Panel({ campos, filas, busqueda, onCambio, unidad, conAgrupar = true, favoritos, favoritoAplicado, onAplicarFavorito, onGuardarFavorito, onBorrarFavorito, cerrar }) {
     const [abiertas, setAbiertas] = useState({})
     const [verMasF, setVerMasF] = useState(false)
     const [verMasG, setVerMasG] = useState(false)
@@ -264,7 +267,7 @@ function Panel({ campos, filas, busqueda, onCambio, unidad, favoritos, favoritoA
     }
 
     return (
-        <div className="bb-pop bb-panel" role="dialog" aria-label="Filtros, agrupar y favoritos" ref={panelRef}
+        <div className={`bb-pop bb-panel${conAgrupar ? '' : ' sin-grupo'}`} role="dialog" aria-label={conAgrupar ? 'Filtros, agrupar y favoritos' : 'Filtros y favoritos'} ref={panelRef}
             style={desplazar ? { left: desplazar } : undefined}>
             <button type="button" className="bb-cerrar" aria-label="Cerrar" onClick={cerrar}><X size={18} /></button>
             <div className="bb-col">
@@ -279,7 +282,7 @@ function Panel({ campos, filas, busqueda, onCambio, unidad, favoritos, favoritoA
                     </div>
                 )}
             </div>
-            <div className="bb-col">
+            {conAgrupar && <div className="bb-col">
                 <h5>Agrupar por <span title="El orden en que los eliges es el orden de los niveles. Las filas de grupo muestran los totales.">hasta {MAX_NIVELES} niveles</span></h5>
                 {grp.comunes.map(nivel)}
                 {grp.mas.length > 0 && (
@@ -290,9 +293,9 @@ function Panel({ campos, filas, busqueda, onCambio, unidad, favoritos, favoritoA
                         {(verMasG || masGActivos) && grp.mas.map(nivel)}
                     </div>
                 )}
-            </div>
+            </div>}
             <div className="bb-col">
-                <h5>Favoritos <span title="Guarda la pestaña, los filtros, los textos y la agrupación. Se guardan en este navegador.">en este navegador</span></h5>
+                <h5>Favoritos <span title={conAgrupar ? 'Guarda la pestaña, los filtros, los textos y la agrupación. Se guardan en este navegador.' : 'Guarda los filtros y los textos. Se guardan en este navegador.'}>en este navegador</span></h5>
                 {favoritos.map(f => (
                     <div key={f.id} className="bb-favrow">
                         <Opcion on={favoritoAplicado === f.nombre} onClick={() => onAplicarFavorito(f)}>{f.porDefecto ? '★ ' : ''}{f.nombre}</Opcion>

@@ -9,20 +9,25 @@ import { inicioDiaCaracas, finDiaCaracas } from '../../components/SelectorFechaT
 const PAGE = 1000
 
 // filtros: { empresaId, desde, hasta, cliente, canal, vendedor, producto, incluirAnulados }
+// cliente/canal/vendedor/producto: un valor o una lista (la barra de búsqueda del
+// Dashboard permite varios; dentro de un campo se suman).
 // Días en hora de Venezuela, igual que el Dashboard, para que el archivo cuadre
 // con sus indicadores. Las columnas de fecha "de negocio" (date) se comparan tal cual.
+const igualA = (q, col, v) => Array.isArray(v) ? (v.length === 1 ? q.eq(col, v[0]) : q.in(col, v)) : q.eq(col, v)
 function aplicarFiltros(q, fuente, modo, f) {
     const m = fuente.filtros
     q = q.eq('empresa_id', f.empresaId)
     const esDate = m.fechaTipo === 'date'
     if (f.desde && m.fechaCol) q = q.gte(m.fechaCol, esDate ? f.desde : inicioDiaCaracas(f.desde))
     if (f.hasta && m.fechaCol) q = q.lte(m.fechaCol, esDate ? f.hasta : finDiaCaracas(f.hasta))
-    if (f.cliente && m.cliente) q = q.eq(m.cliente, f.cliente)
-    if (f.canal && m.canal) q = q.eq(m.canal, f.canal)
-    if (f.vendedor && m.vendedor) q = q.eq(m.vendedor, f.vendedor)
+    if (f.cliente && m.cliente) q = igualA(q, m.cliente, f.cliente)
+    if (f.canal && m.canal) q = igualA(q, m.canal, f.canal)
+    if (f.vendedor && m.vendedor) q = igualA(q, m.vendedor, f.vendedor)
     if (f.producto && m.producto?.[modo]) {
         const { col, op } = m.producto[modo]
-        q = op === 'contains' ? q.contains(col, [f.producto]) : q.eq(col, f.producto)
+        const lista = Array.isArray(f.producto) ? f.producto : [f.producto]
+        // columna de arreglo (producto_ids de la nota): alguno de los productos elegidos
+        q = op === 'contains' ? q.overlaps(col, lista) : igualA(q, col, lista)
     }
     if (!f.incluirAnulados && m.anulados) q = q.eq(m.anulados, false)
     return q

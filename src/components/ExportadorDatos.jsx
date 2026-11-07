@@ -190,7 +190,7 @@ export default function ExportadorDatos({ filtros, filtrosTexto, onCerrar }) {
                 filtrosTexto: [filtrosTexto, def.filtros.anulados && (incluirAnulados ? 'Incluye anulados' : 'Sin anulados'),
                     ignorados.length && `No aplicados en esta fuente: ${ignorados.join(', ')}`].filter(Boolean).join(' · '),
                 filas: filas.length, usuario: perfil?.nombre, avisos: def.avisos,
-            }, `MiPOS_${(plantilla?.nombre || def.etiqueta).replace(/[^\w\-áéíóúñÁÉÍÓÚÑ]+/g, '_')}_${modo === 'documento' ? 'documentos' : 'productos'}${def.filtros.fechaCol ? `_${filtros.desde || ''}_${filtros.hasta || ''}` : ''}`)
+            }, `soma_ops_${(plantilla?.nombre || def.etiqueta).replace(/[^\w\-áéíóúñÁÉÍÓÚÑ]+/g, '_')}_${modo === 'documento' ? 'documentos' : 'productos'}${def.filtros.fechaCol ? `_${filtros.desde || ''}_${filtros.hasta || ''}` : ''}`)
         } catch (e) {
             setError('No se pudo generar el archivo: ' + e.message)
         } finally {

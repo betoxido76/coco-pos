@@ -565,7 +565,7 @@ Al cerrar un ítem, borrarlo de esta tabla.
   - Para conversión de tipo de insumo entre formulario y `stock_ubicacion`: `{ materias_primas→materia_prima, materiales_empaque→material_empaque, consumibles→consumible, productos_terminados→producto_terminado }`
   - Para conversión desde `compra_items.tipo_insumo` (singular) a nombre de tabla (plural): `{ materia_prima→materias_primas, empaque→materiales_empaque, material_empaque→materiales_empaque, consumible→consumibles, producto_terminado→productos_terminados }`
 - Estilos: inline styles con objetos JS (no clases Tailwind, excepto en Login/ResetPassword)
-- **Filtros de lista: barra de búsqueda estilo Odoo** (`docs/plan-barra-busqueda.md`). La usan CxC,
+- **Filtros de lista: barra de búsqueda estilo Odoo** (`docs/plan-barra-busqueda.md`). La usan el Dashboard Comercial (solo filtros y favoritos, `agrupar={false}`; cada campo declara con `en` a qué conjunto aplica: líneas, pedidos o cartera), CxC,
   CxP (Compras y Gastos programados), Ventas (notas), Pedidos, Gastos y Compras (OC, recepciones,
   devoluciones). Para una lista nueva: declarar sus campos (`{ campo, etiqueta, valor, etiquetaValor,
   texto, filtrable, agrupable, buscable, comun }`, con `campoVencimiento` / `campoMes` / `campoDia` de

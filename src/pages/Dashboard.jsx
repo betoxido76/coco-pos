@@ -12,7 +12,9 @@ import {
     PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer,
     LineChart, Line, XAxis, YAxis, CartesianGrid,
 } from 'recharts'
-import FiltroCombo from '../components/FiltroCombo'
+import BarraBusqueda from '../components/BarraBusqueda'
+import { useBusquedaLista } from '../components/BusquedaLista'
+import { filtrar, campoMes } from '../lib/busqueda'
 import ExportadorDatos from '../components/ExportadorDatos'
 import { inicioDiaCaracas, finDiaCaracas, ymdCaracas } from '../components/SelectorFechaTasa'
 
@@ -94,11 +96,12 @@ function TabComercial() {
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState('')
 
-    // Filtros client-side
-    const [fProducto, setFProducto] = useState('')
-    const [fCliente, setFCliente] = useState('')
-    const [fCanal, setFCanal] = useState('')
-    const [fVendedor, setFVendedor] = useState('')
+    // Filtros client-side: barra de búsqueda sin "Agrupar por" (docs/plan-barra-busqueda.md).
+    // Los favoritos guardan los filtros, no las fechas: el rango por defecto es el mes en curso.
+    const blD = useBusquedaLista('dashboard_comercial')
+    const busq = blD.busq
+    // Un solo cliente filtrado: activa la desagregación por punto de entrega
+    const clienteUnico = busq.filtros.cliente?.length === 1 ? busq.filtros.cliente[0] : ''
 
     // Puntos de entrega del cliente seleccionado (para desagregación por sucursal)
     const [direccionMap, setDireccionMap] = useState({}) // { direccion_id: nombre }
@@ -150,8 +153,8 @@ function TabComercial() {
 
                 // Líneas de venta con su factura y cliente (paginado por 1000)
                 const SELECT = 'cantidad, cantidad_primaria, precio_unitario, aplica_iva, precio_incluye_iva, producto_id, venta_id, ' +
-                    'productos_terminados(sku, nombre, tipo_producto), ' +
-                    'ventas!inner(id, numero_factura, created_at, fecha_vencimiento_pago, total, estado_cobro, cliente_id, usuario_id, direccion_entrega_id, direccion_entrega_texto, pedidos!pedido_id(vendedor_id), clientes(nombre, codigo, cat1_id))'
+                    'productos_terminados(sku, nombre, tipo_producto, categoria_1, categoria_2), ' +
+                    'ventas!inner(id, numero_factura, created_at, fecha_vencimiento_pago, total, estado_cobro, cliente_id, usuario_id, direccion_entrega_id, direccion_entrega_texto, pedidos!pedido_id(vendedor_id), clientes(nombre, codigo, cat1_id, cat2_id, cat3_id, cat4_id))'
                 const PAGE = 1000
                 let from = 0, all = []
                 while (true) {
@@ -201,7 +204,7 @@ function TabComercial() {
                 // que los tags cuadren exactamente; cliente/canal/vendedor son atributos
                 // a nivel factura y se filtran client-side.
                 const CSELECT = 'id, created_at, fecha_vencimiento_pago, total, estado_cobro, cliente_id, usuario_id, ' +
-                    'pedidos!pedido_id(vendedor_id), clientes(cat1_id)'
+                    'pedidos!pedido_id(vendedor_id), clientes(nombre, codigo, cat1_id, cat2_id, cat3_id, cat4_id)'
                 let cfrom = 0, call = []
                 while (true) {
                     const { data, error: e } = await supabase.from('ventas')
@@ -229,8 +232,8 @@ function TabComercial() {
 
                 // Pedidos abiertos (por aprobación/alistar/registrar/despachar), sin filtro de fecha
                 const PSELECT = 'cantidad, cantidad_alistada, precio_unitario, descuento_item, unidad_venta, aplica_iva, precio_incluye_iva, producto_id, pedido_id, ' +
-                    'productos_terminados(sku, nombre, unidad_venta_2, factor_conversion_2), ' +
-                    'pedidos!inner(id, estado, descuento_global, cliente_id, vendedor_id, clientes(cat1_id))'
+                    'productos_terminados(sku, nombre, unidad_venta_2, factor_conversion_2, categoria_1, categoria_2), ' +
+                    'pedidos!inner(id, estado, descuento_global, cliente_id, vendedor_id, clientes(nombre, codigo, cat1_id, cat2_id, cat3_id, cat4_id))'
                 let pfrom = 0, pall = []
                 while (true) {
                     const { data, error: e } = await supabase.from('pedido_items')
@@ -257,17 +260,17 @@ function TabComercial() {
     }, [perfil?.empresa_id])
 
     // Reset de página al cambiar filtros/orden/tamaño
-    useEffect(() => { setPage(0) }, [fProducto, fCliente, fCanal, fVendedor, sort, pageSize, desde, hasta])
-    useEffect(() => { setPageSuc(0) }, [fProducto, fCliente, fCanal, fVendedor, sortSuc, pageSizeSuc, desde, hasta])
+    useEffect(() => { setPage(0) }, [busq, sort, pageSize, desde, hasta])
+    useEffect(() => { setPageSuc(0) }, [busq, sortSuc, pageSizeSuc, desde, hasta])
 
     // Puntos de entrega del cliente seleccionado (activa la desagregación por sucursal)
     useEffect(() => {
-        if (!perfil?.empresa_id || !fCliente) { setDireccionMap({}); setNumPuntosCliente(0); return }
+        if (!perfil?.empresa_id || !clienteUnico) { setDireccionMap({}); setNumPuntosCliente(0); return }
         let cancel = false
         supabase.from('direcciones_entrega')
             .select('id, nombre')
             .eq('empresa_id', perfil.empresa_id)
-            .eq('cliente_id', fCliente)
+            .eq('cliente_id', clienteUnico)
             .eq('activo', true)
             .then(({ data }) => {
                 if (cancel) return
@@ -276,7 +279,7 @@ function TabComercial() {
                 setNumPuntosCliente((data || []).length)
             })
         return () => { cancel = true }
-    }, [perfil?.empresa_id, fCliente])
+    }, [perfil?.empresa_id, clienteUnico])
 
     // ─── Aplanado de líneas (independiente de filtros client-side) ───
     const lineas = useMemo(() => rawLineas.map(r => {
@@ -308,6 +311,8 @@ function TabComercial() {
             clienteId: v.cliente_id,
             clienteNombre: cli.nombre || '—',
             clienteCodigo: cli.codigo || '',
+            cat2: cli.cat2_id || null, cat3: cli.cat3_id || null, cat4: cli.cat4_id || null,
+            productoCat1: prod.categoria_1 || null, productoCat2: prod.categoria_2 || null,
             direccionId: v.direccion_entrega_id || null,
             direccionTexto: v.direccion_entrega_texto || '',
             vendedorId: v.pedidos?.vendedor_id || v.usuario_id,
@@ -338,13 +343,44 @@ function TabComercial() {
         [...new Set(lineas.map(l => l.canal))].sort((a, b) => a.localeCompare(b))
     , [lineas])
 
+    // ─── Campos de la barra de búsqueda ───
+    // Se aplican a tres conjuntos con la misma forma de atributos: líneas de venta del
+    // rango ('lineas'), pedidos abiertos ('pedidos') y cartera pendiente ('cartera').
+    // `en` dice a cuáles aplica cada campo: la cartera NO se filtra por producto (el
+    // saldo no se descompone por producto, igual que en CxC) ni por mes (es todo lo pendiente).
+    const ESTATUS = { pagado: 'Pagado', sin_vencer: 'Pendiente sin vencer', vencido: 'Pendiente vencido' }
+    const nombreCat = k => catMap[k] || 'Categoría'
+    const camposDash = [
+        { campo: 'cliente', etiqueta: 'Cliente', valor: r => r.clienteId,
+            etiquetaValor: (k, r) => r ? `${r.clienteCodigo ? r.clienteCodigo + ' · ' : ''}${r.clienteNombre}` : (opcClientes.find(([id]) => id === k)?.[1] || 'Cliente'),
+            texto: r => `${r.clienteCodigo || ''} ${r.clienteNombre || ''}`, filtrable: true, buscable: true, comun: true },
+        { campo: 'canal', etiqueta: 'Canal (categoría 1)', valor: r => r.canal, filtrable: true, comun: true },
+        { campo: 'vendedor', etiqueta: 'Vendedor', valor: r => r.vendedorId, etiquetaValor: k => userMap[k] || 'Vendedor', filtrable: true, comun: true },
+        { campo: 'producto', etiqueta: 'Producto', valor: r => r.productoId, en: ['lineas', 'pedidos'],
+            etiquetaValor: (k, r) => r ? `${r.productoSku ? r.productoSku + ' · ' : ''}${r.productoNombre}` : (opcProductos.find(([id]) => id === k)?.[1] || 'Producto'),
+            texto: r => `${r.productoSku || ''} ${r.productoNombre || ''}`, filtrable: true, buscable: true, comun: true },
+        ...[2, 3, 4].map(n => ({ campo: `cat${n}`, etiqueta: `Categoría ${n} del cliente`, valor: r => r[`cat${n}`], etiquetaValor: nombreCat, filtrable: true })),
+        { campo: 'prod_cat1', etiqueta: 'Categoría del producto', valor: r => r.productoCat1, en: ['lineas', 'pedidos'], filtrable: true },
+        { campo: 'prod_cat2', etiqueta: 'Subcategoría del producto', valor: r => r.productoCat2, en: ['lineas', 'pedidos'], filtrable: true },
+        { campo: 'estatus', etiqueta: 'Estatus de cobro', valor: r => r.estatus, etiquetaValor: k => ESTATUS[k] || k, orden: Object.keys(ESTATUS),
+            en: ['lineas', 'cartera'], filtrable: true },
+        { ...campoMes(r => r.fecha, 'Mes'), en: ['lineas'], agrupable: false },
+        { campo: 'nota', etiqueta: 'Nota de entrega', valor: r => r.numeroFactura, texto: r => r.numeroFactura, en: ['lineas'], buscable: true },
+    ]
+    // La búsqueda y los campos que aplican a un conjunto (los demás filtros no lo tocan)
+    const paraConjunto = (conjunto) => {
+        const campos = camposDash.filter(c => !c.en || c.en.includes(conjunto))
+        const nombres = new Set(campos.map(c => c.campo))
+        const filtros = Object.fromEntries(Object.entries(busq.filtros).filter(([k]) => nombres.has(k)))
+        const textos = busq.textos.filter(t => t.campo === 'todo' || nombres.has(t.campo))
+        return [{ ...busq, filtros, textos }, campos]
+    }
+
     // ─── Filtrado client-side ───
-    const lineasFiltradas = useMemo(() => lineas.filter(l =>
-        (!fProducto || l.productoId === fProducto) &&
-        (!fCliente || l.clienteId === fCliente) &&
-        (!fCanal || l.canal === fCanal) &&
-        (!fVendedor || l.vendedorId === fVendedor)
-    ), [lineas, fProducto, fCliente, fCanal, fVendedor])
+    const lineasFiltradas = useMemo(() => {
+        const [b, campos] = paraConjunto('lineas')
+        return filtrar(lineas, b, campos)
+    }, [lineas, busq, catMap, userMap])
 
     // ─── Líneas de pedidos abiertos (aplanado + filtrado) ───
     const pedidoLineas = useMemo(() => rawPedidoLineas.map(r => {
@@ -368,19 +404,23 @@ function TabComercial() {
             pedidoId: r.pedido_id,
             estado: p.estado,
             clienteId: p.cliente_id,
+            clienteNombre: cli.nombre || '—',
+            clienteCodigo: cli.codigo || '',
             canal: cli.cat1_id ? (catMap[cli.cat1_id] || 'Sin categoría') : 'Sin categoría',
+            cat2: cli.cat2_id || null, cat3: cli.cat3_id || null, cat4: cli.cat4_id || null,
             productoId: r.producto_id,
+            productoSku: prod.sku || '',
+            productoNombre: prod.nombre || '—',
+            productoCat1: prod.categoria_1 || null, productoCat2: prod.categoria_2 || null,
             vendedorId: p.vendedor_id,
             lineaTotal,
         }
     }), [rawPedidoLineas, catMap])
 
-    const pedidoLineasFiltradas = useMemo(() => pedidoLineas.filter(l =>
-        (!fProducto || l.productoId === fProducto) &&
-        (!fCliente || l.clienteId === fCliente) &&
-        (!fCanal || l.canal === fCanal) &&
-        (!fVendedor || l.vendedorId === fVendedor)
-    ), [pedidoLineas, fProducto, fCliente, fCanal, fVendedor])
+    const pedidoLineasFiltradas = useMemo(() => {
+        const [b, campos] = paraConjunto('pedidos')
+        return filtrar(pedidoLineas, b, campos)
+    }, [pedidoLineas, busq, catMap, userMap])
 
     // ─── Cartera (facturas pendiente/parcial, sin filtro de fecha) ───
     // Replica EXACTAMENTE la lógica de CuentasCobrar.jsx para que los tags cuadren:
@@ -390,7 +430,7 @@ function TabComercial() {
     // igual que en CxC.
     const carteraFacturas = useMemo(() => {
         const ahora = new Date()
-        return rawCartera.map(v => {
+        const filas = rawCartera.map(v => {
             const cli = v.clientes || {}
             const cobrado = cobradoMap[v.id] || 0
             const saldo = v.estado_cobro === 'pagado' ? 0 : Math.max(0, Number(v.total || 0) - cobrado)
@@ -403,14 +443,14 @@ function TabComercial() {
                 id: v.id, total: Number(v.total || 0), estadoCobro: v.estado_cobro,
                 saldo, fecha, fechaVenc, estatus,
                 clienteId: v.cliente_id, vendedorId: v.pedidos?.vendedor_id || v.usuario_id,
+                clienteNombre: cli.nombre || '—', clienteCodigo: cli.codigo || '',
                 canal: cli.cat1_id ? (catMap[cli.cat1_id] || 'Sin categoría') : 'Sin categoría',
+                cat2: cli.cat2_id || null, cat3: cli.cat3_id || null, cat4: cli.cat4_id || null,
             }
-        }).filter(f =>
-            (!fCliente || f.clienteId === fCliente) &&
-            (!fCanal || f.canal === fCanal) &&
-            (!fVendedor || f.vendedorId === fVendedor)
-        )
-    }, [rawCartera, cobradoMap, catMap, fCliente, fCanal, fVendedor])
+        })
+        const [b, campos] = paraConjunto('cartera')
+        return filtrar(filas, b, campos)
+    }, [rawCartera, cobradoMap, catMap, busq, userMap])
 
     // Opciones de vendedor (derivadas de ventas + pedidos)
     const opcVendedores = useMemo(() => {
@@ -439,7 +479,7 @@ function TabComercial() {
         : (l.direccionTexto || 'Sin punto')
 
     // ¿Mostrar desagregación por sucursal? Solo con un cliente elegido y >1 punto de entrega
-    const mostrarPorPunto = !!fCliente && numPuntosCliente >= 1
+    const mostrarPorPunto = !!clienteUnico && numPuntosCliente >= 1
 
     // Facturas del cliente consolidadas por documento, con su punto de entrega
     const facturasPorPunto = useMemo(() => {
@@ -646,8 +686,23 @@ function TabComercial() {
 
     function limpiar() {
         setDesde(toYMD(primerDiaMes)); setHasta(toYMD(hoy))
-        setFProducto(''); setFCliente(''); setFCanal(''); setFVendedor('')
+        blD.propsBarra.onQuitarFavorito()   // vacía la búsqueda
     }
+
+    // ─── Filtros que entiende el Exportador (cliente, canal, vendedor, producto) ───
+    // Los demás campos de la barra no existen en sus vistas: se avisan como no aplicados.
+    const EXPORTABLES = { cliente: 'cliente', canal: 'canal', vendedor: 'vendedor', producto: 'producto' }
+    const filtrosExportables = Object.fromEntries(Object.entries(EXPORTABLES)
+        .filter(([campo]) => busq.filtros[campo]?.length).map(([campo, clave]) => [clave, busq.filtros[campo]]))
+    const textoFiltrosExportables = Object.keys(EXPORTABLES).filter(c => busq.filtros[c]?.length).map(c => {
+        const def = camposDash.find(x => x.campo === c)
+        const nombres = busq.filtros[c].map(v => def.etiquetaValor ? def.etiquetaValor(v, lineas.find(l => String(def.valor(l)) === v)) : v)
+        return `${def.etiqueta}: ${nombres.join(' o ')}`
+    })
+    const filtrosNoExportables = [
+        ...Object.keys(busq.filtros).filter(c => busq.filtros[c]?.length && !EXPORTABLES[c]).map(c => camposDash.find(x => x.campo === c)?.etiqueta || c),
+        ...(busq.textos.length ? ['búsqueda por texto'] : []),
+    ]
 
     const COLS = [
         { key: 'fecha', label: 'Fecha' },
@@ -706,22 +761,8 @@ function TabComercial() {
                         <label style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '4px' }}>Hasta</label>
                         <input type="date" value={hasta} onChange={e => setHasta(e.target.value)} style={selectStyle} />
                     </div>
-                    <div>
-                        <label style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '4px' }}>Producto</label>
-                        <FiltroCombo value={fProducto} onChange={setFProducto} options={opcProductos.map(([id, lbl]) => ({ value: id, label: lbl }))} width="220px" />
-                    </div>
-                    <div>
-                        <label style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '4px' }}>Cliente</label>
-                        <FiltroCombo value={fCliente} onChange={setFCliente} options={opcClientes.map(([id, lbl]) => ({ value: id, label: lbl }))} width="220px" />
-                    </div>
-                    <div>
-                        <label style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '4px' }}>Canal (categoría cliente)</label>
-                        <FiltroCombo value={fCanal} onChange={setFCanal} options={opcCanales.map(x => ({ value: x, label: x }))} width="200px" />
-                    </div>
-                    <div>
-                        <label style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '4px' }}>Vendedor</label>
-                        <FiltroCombo value={fVendedor} onChange={setFVendedor} options={opcVendedores.map(([id, lbl]) => ({ value: id, label: lbl }))} width="200px" />
-                    </div>
+                    <BarraBusqueda campos={camposDash} filas={lineas} unidad="líneas de venta" agrupar={false}
+                        placeholder="Buscar cliente, producto o nota de entrega…" {...blD.propsBarra} />
                     <button onClick={limpiar}
                         style={{ padding: '8px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 500, border: '1px solid #e5e7eb', backgroundColor: '#f9fafb', color: '#374151', cursor: 'pointer' }}>
                         Limpiar
@@ -733,13 +774,11 @@ function TabComercial() {
                 </div>
                 {exportando && (
                     <ExportadorDatos
-                        filtros={{ desde, hasta, producto: fProducto, cliente: fCliente, canal: fCanal, vendedor: fVendedor }}
+                        filtros={{ desde, hasta, ...filtrosExportables }}
                         filtrosTexto={[
                             `${desde.split('-').reverse().join('/')} – ${hasta.split('-').reverse().join('/')}`,
-                            fProducto && `Producto: ${opcProductos.find(([id]) => id === fProducto)?.[1] || ''}`,
-                            fCliente && `Cliente: ${opcClientes.find(([id]) => id === fCliente)?.[1] || ''}`,
-                            fCanal && `Canal: ${fCanal}`,
-                            fVendedor && `Vendedor: ${opcVendedores.find(([id]) => id === fVendedor)?.[1] || ''}`,
+                            ...textoFiltrosExportables,
+                            filtrosNoExportables.length && `No aplicados al archivo: ${filtrosNoExportables.join(', ')}`,
                         ].filter(Boolean).join(' · ')}
                         onCerrar={() => setExportando(false)}
                     />
