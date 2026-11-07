@@ -6,7 +6,7 @@
 //       unidad="notas" favoritos={favs} favoritoAplicado={nombre}
 //       onAplicarFavorito={f => …} onGuardarFavorito={(nombre, porDefecto) => …}
 //       onBorrarFavorito={f => …} onQuitarFavorito={() => …} />
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Search, SlidersHorizontal, ChevronDown, ChevronRight, X, Trash2, Star } from 'lucide-react'
 import {
     MAX_NIVELES, contarValores, tieneDatos, quitarUltima, alternarValor, alternarNivel, etiquetaDe, claveDe,
@@ -212,6 +212,29 @@ function Panel({ campos, filas, busqueda, onCambio, unidad, favoritos, favoritoA
     const [nombre, setNombre] = useState('')
     const [porDefecto, setPorDefecto] = useState(false)
 
+    // El panel arranca en el borde izquierdo de la barra; si no cabe en la pantalla
+    // se corre lo necesario para mostrarse completo (16 px de margen a cada lado).
+    // En el teléfono (≤ 760 px) va a pantalla completa y no se mueve.
+    const panelRef = useRef(null)
+    const [desplazar, setDesplazar] = useState(0)
+    useLayoutEffect(() => {
+        const ajustar = () => {
+            const el = panelRef.current
+            if (!el || window.innerWidth <= 760) { setDesplazar(0); return }
+            const padre = el.offsetParent?.getBoundingClientRect()
+            if (!padre) return
+            const ancho = el.offsetWidth, margen = 16
+            const izq = padre.left                       // donde arranca sin desplazar
+            let dx = 0
+            if (izq + ancho > window.innerWidth - margen) dx = (window.innerWidth - margen) - (izq + ancho)
+            if (izq + dx < margen) dx = margen - izq
+            setDesplazar(dx)
+        }
+        ajustar()
+        window.addEventListener('resize', ajustar)
+        return () => window.removeEventListener('resize', ajustar)
+    }, [])
+
     const conDatos = campos.filter(c => tieneDatos(filas, c))
     const fil = separar(conDatos.filter(c => c.filtrable))
     const grp = separar(conDatos.filter(c => c.agrupable))
@@ -241,7 +264,8 @@ function Panel({ campos, filas, busqueda, onCambio, unidad, favoritos, favoritoA
     }
 
     return (
-        <div className="bb-pop bb-panel" role="dialog" aria-label="Filtros, agrupar y favoritos">
+        <div className="bb-pop bb-panel" role="dialog" aria-label="Filtros, agrupar y favoritos" ref={panelRef}
+            style={desplazar ? { left: desplazar } : undefined}>
             <button type="button" className="bb-cerrar" aria-label="Cerrar" onClick={cerrar}><X size={18} /></button>
             <div className="bb-col">
                 <h5>Filtros <span title={`Dentro de un campo los valores se suman (o); entre campos se cruzan (y). El número es cuántas ${unidad} quedan con el resto de los filtros.`}>o dentro · y entre campos</span></h5>
