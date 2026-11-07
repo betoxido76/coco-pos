@@ -7,6 +7,9 @@ import { opcionesUnidad } from '../lib/unidades'
 import SelectorFechaTasa, { useTasasFecha, hoyYMD, fmtFechaCorta } from '../components/SelectorFechaTasa'
 import { ConfirmacionPago, METODOS_USD, METODOS_BS } from '../components/ModalPagoObligacion'
 import FiltroCombo from '../components/FiltroCombo'
+import BarraBusqueda from '../components/BarraBusqueda'
+import { useBusquedaLista, ControlGrupos, filasDeGrupos } from '../components/BusquedaLista'
+import { filtrar, agrupar, ordenGruposPor, campoMes, campoDia } from '../lib/busqueda'
 import { totalesDeItems, totalesDocumento, totalesGuardados, precioBaseItem, camposIvaLinea, camposIvaHeredados, itemAplicaIva, IVA_PCT } from '../lib/iva'
 import AnticiposOC, { SelectorAnticipos, totalAplicaciones, aplicacionesALista, anticiposConSaldoDeOC, ModalCancelarOCConAnticipo } from '../components/AnticiposOC'
 import { useAltoBarra, useOrden, ordenarFilas, ThOrden, BarraFija, TopTitulos, estiloTarjetaTabla } from '../components/TablaOrdenable'
@@ -65,12 +68,10 @@ export default function Compras() {
     const [devolucionActual, setDevolucionActual] = useState(null)
     const [ocAEditar, setOcAEditar] = useState(null)
 
-    // Filtros del listado de órdenes (se aplican en la consulta: la tabla pagina en el servidor)
-    const [fOC, setFOC] = useState('')
-    const [fProveedor, setFProveedor] = useState('')
-    const [fEstado, setFEstado] = useState('')
-    const [opcOC, setOpcOC] = useState([])
-    const [opcProveedores, setOpcProveedores] = useState([])
+    // Barra de búsqueda de cada lista (docs/plan-barra-busqueda.md): se filtra en el navegador
+    const blOC = useBusquedaLista('compras_ordenes')
+    const blRec = useBusquedaLista('compras_recepciones')
+    const blDev = useBusquedaLista('compras_devoluciones')
     const [anticiposPorOC, setAnticiposPorOC] = useState({}) // oc_id -> { anticipado, saldo }
     const [ocCancelando, setOcCancelando] = useState(null)   // { oc, anticipos } al cancelar una OC con anticipo
 
@@ -81,44 +82,25 @@ export default function Compras() {
     const [ordenDev, ordenarDev] = useOrden({ col: 'fecha', dir: 'desc' }, DESC)
     const [barraRef, altoBarra] = useAltoBarra([vista, tabActiva])
 
-    useEffect(() => { if (perfil?.empresa_id) cargarOpcionesFiltros() }, [perfil?.empresa_id])
-    useEffect(() => { setPaginaOrdenes(0) }, [fOC, fProveedor, fEstado, ordenOC])
-    useEffect(() => { setPaginaRecepciones(0) }, [ordenRec])
-    useEffect(() => { setPaginaDevoluciones(0) }, [ordenDev])
+    useEffect(() => { setPaginaOrdenes(0) }, [blOC.busq, ordenOC])
+    useEffect(() => { setPaginaRecepciones(0) }, [blRec.busq, ordenRec])
+    useEffect(() => { setPaginaDevoluciones(0) }, [blDev.busq, ordenDev])
 
-    // Las listas traen todas las filas y se ordenan/paginan en el navegador,
+    // Las listas traen todas las filas y se filtran/ordenan/paginan en el navegador,
     // para poder ordenar por cualquier columna
     useEffect(() => {
         if (tabActiva === 'ordenes') cargarOrdenes()
         else if (tabActiva === 'recepciones') cargarRecepciones()
         else cargarDevoluciones()
-    }, [tabActiva, fOC, fProveedor, fEstado])
-
-    async function cargarOpcionesFiltros() {
-        const [{ data: ocs }, { data: provs }] = await Promise.all([
-            supabase.from('ordenes_compra').select('id, numero_oc, proveedor_id')
-                .eq('empresa_id', perfil.empresa_id).order('created_at', { ascending: false }),
-            supabase.from('proveedores').select('id, nombre')
-                .eq('empresa_id', perfil.empresa_id).order('nombre'),
-        ])
-        setOpcOC((ocs || []).map(o => ({ value: o.id, label: o.numero_oc || 'S/N' })))
-        // Solo proveedores con órdenes: los demás darían siempre una lista vacía
-        const conOC = new Set((ocs || []).map(o => o.proveedor_id))
-        setOpcProveedores((provs || []).filter(p => conOC.has(p.id)).map(p => ({ value: p.id, label: p.nombre })))
-    }
+    }, [tabActiva])
 
     async function cargarOrdenes() {
         setLoading(true)
-        const data = await traerTodas(() => {
-            let q = supabase
-                .from('ordenes_compra')
-                .select(`*, proveedores(nombre)`)
-                .eq('empresa_id', perfil.empresa_id)
-            if (fOC) q = q.eq('id', fOC)
-            if (fProveedor) q = q.eq('proveedor_id', fProveedor)
-            if (fEstado) q = q.eq('estado', fEstado)
-            return q.order('created_at', { ascending: false }).order('id')
-        }).catch(() => null)
+        const data = await traerTodas(() => supabase
+            .from('ordenes_compra')
+            .select(`*, proveedores(nombre)`)
+            .eq('empresa_id', perfil.empresa_id)
+            .order('created_at', { ascending: false }).order('id')).catch(() => null)
         if (data) { setOrdenes(data); setTotalOrdenes(data.length) }
 
         // Anticipos de las OC, en bloques de 100 ids en paralelo
@@ -183,8 +165,49 @@ export default function Compras() {
         cargarOrdenes()
     }
 
+    // ── Campos de la barra de búsqueda de cada lista ──
+    const proveedorCampo = (extra = {}) => ({ campo: 'proveedor', etiqueta: 'Proveedor', valor: x => x.proveedor_id,
+        etiquetaValor: (k, x) => x?.proveedores?.nombre || 'Proveedor', texto: x => x.proveedores?.nombre,
+        filtrable: true, agrupable: true, buscable: true, comun: true, ...extra })
+    const estadoAnticipo = o => { const a = anticiposPorOC[o.id]; return !a ? null : a.saldo > 0.01 ? 'por_aplicar' : 'aplicado' }
+    const camposOC = [
+        proveedorCampo(),
+        { campo: 'estado', etiqueta: 'Estado', valor: o => o.estado, etiquetaValor: k => ESTADOS_OC.find(e => e.value === k)?.label || k,
+            orden: ESTADOS_OC.map(e => e.value), filtrable: true, agrupable: true, comun: true },
+        campoMes(o => o.fecha_emision, 'Mes de emisión', { comun: true }),
+        campoDia('entrega', 'Entrega esperada', o => o.fecha_entrega_esperada),
+        { campo: 'anticipo', etiqueta: 'Anticipo', valor: estadoAnticipo, orden: ['por_aplicar', 'aplicado'],
+            etiquetaValor: k => k === 'por_aplicar' ? 'Con anticipo por aplicar' : 'Anticipo aplicado', filtrable: true, agrupable: true },
+        { campo: 'oc', etiqueta: 'N° de OC', valor: o => o.numero_oc, texto: o => o.numero_oc, buscable: true },
+    ]
+    const ESTADOS_COBRO_REC = { pendiente: 'Pendiente', parcial: 'Parcial', pagado: 'Pagado', anulado: 'Anulado' }
+    const camposRec = [
+        proveedorCampo(),
+        { campo: 'cobro', etiqueta: 'Estado de pago', valor: r => r.estado_cobro || 'pendiente', etiquetaValor: k => ESTADOS_COBRO_REC[k] || k,
+            orden: Object.keys(ESTADOS_COBRO_REC), filtrable: true, agrupable: true, comun: true },
+        { campo: 'factura', etiqueta: 'Factura', valor: r => r.estado_factura === 'pendiente' ? 'sin' : 'con', orden: ['sin', 'con'],
+            etiquetaValor: k => k === 'sin' ? 'Sin factura' : 'Con factura', filtrable: true, agrupable: true, comun: true },
+        campoMes(r => r.fecha_compra, 'Mes de recepción', { comun: true }),
+        { campo: 'con_oc', etiqueta: 'Orden de compra', valor: r => r.orden_compra_id ? 'con' : 'sin', orden: ['con', 'sin'],
+            etiquetaValor: k => k === 'con' ? 'Con OC' : 'Sin OC', filtrable: true, agrupable: true },
+        { campo: 'anulada', etiqueta: 'Recepción', valor: r => r.estado === 'anulada' ? 'anulada' : 'vigente', orden: ['vigente', 'anulada'],
+            etiquetaValor: k => k === 'anulada' ? 'Anulada' : 'Vigente', filtrable: true },
+        { campo: 'doc', etiqueta: 'Documento', valor: r => r.numero_doc, texto: r => r.numero_doc, buscable: true },
+        { campo: 'doc_prov', etiqueta: 'Doc. del proveedor', valor: r => r.nro_doc_proveedor, texto: r => r.nro_doc_proveedor, buscable: true },
+        { campo: 'oc', etiqueta: 'N° de OC', valor: r => r.ordenes_compra?.numero_oc, texto: r => r.ordenes_compra?.numero_oc, buscable: true },
+    ]
+    const ESTADOS_ND = { pendiente: 'Pendiente', parcial: 'Parcial', aplicada: 'Aplicada', reembolsada: 'Reembolsada', anulada: 'Anulada' }
+    const camposDev = [
+        proveedorCampo(),
+        { campo: 'estado', etiqueta: 'Estado', valor: d => d.estado_nd, etiquetaValor: k => ESTADOS_ND[k] || k,
+            orden: Object.keys(ESTADOS_ND), filtrable: true, agrupable: true, comun: true },
+        campoMes(d => d.created_at, 'Mes', { comun: true }),
+        { campo: 'nd', etiqueta: 'N° de ND', valor: d => d.numero_nd, texto: d => d.numero_nd, buscable: true },
+        { campo: 'recepcion', etiqueta: 'Recepción origen', valor: d => d.compras?.numero_doc, texto: d => d.compras?.numero_doc, buscable: true },
+    ]
+
     const pagina = (filas, p) => filas.slice(p * PAGE_SIZE, (p + 1) * PAGE_SIZE)
-    const ordenesPagina = pagina(ordenarFilas(ordenes, {
+    const ordenesOrdenadas = ordenarFilas(filtrar(ordenes, blOC.busq, camposOC), {
         numero: o => o.numero_oc,
         proveedor: o => o.proveedores?.nombre,
         emision: o => o.fecha_emision,
@@ -192,8 +215,9 @@ export default function Compras() {
         total: o => Number(o.total || 0),
         anticipo: o => anticiposPorOC[o.id] ? (anticiposPorOC[o.id].saldo > 0.01 ? anticiposPorOC[o.id].saldo : anticiposPorOC[o.id].anticipado) : null,
         estado: o => o.estado,
-    }, ordenOC), paginaOrdenes)
-    const recepcionesPagina = pagina(ordenarFilas(recepciones, {
+    }, ordenOC)
+    const ordenesPagina = pagina(ordenesOrdenadas, paginaOrdenes)
+    const recepcionesOrdenadas = ordenarFilas(filtrar(recepciones, blRec.busq, camposRec), {
         numero: r => r.numero_doc,
         doc_prov: r => r.nro_doc_proveedor,
         proveedor: r => r.proveedores?.nombre,
@@ -201,21 +225,36 @@ export default function Compras() {
         oc: r => r.ordenes_compra?.numero_oc,
         total: r => Number(r.total || 0),
         cobro: r => r.estado_cobro || 'pendiente',
-    }, ordenRec), paginaRecepciones)
-    const devolucionesPagina = pagina(ordenarFilas(devoluciones, {
+    }, ordenRec)
+    const recepcionesPagina = pagina(recepcionesOrdenadas, paginaRecepciones)
+    const devolucionesOrdenadas = ordenarFilas(filtrar(devoluciones, blDev.busq, camposDev), {
         numero: d => d.numero_nd,
         proveedor: d => d.proveedores?.nombre,
         fecha: d => d.created_at,
         recepcion: d => d.compras?.numero_doc,
         monto: d => Number(d.monto_total || 0),
         estado: d => d.estado_nd,
-    }, ordenDev), paginaDevoluciones)
+    }, ordenDev)
+    const devolucionesPagina = pagina(devolucionesOrdenadas, paginaDevoluciones)
+
+    // Agrupado: por mes o fecha en orden cronológico; el resto, por monto (mayor primero). Lo anulado no suma.
+    const sumaTotal = (fs, leer, anulado) => fs.filter(x => !anulado(x)).reduce((s, x) => s + Number(leer(x) || 0), 0)
+    const arbolOC = blOC.busq.agrupar.length
+        ? agrupar(ordenesOrdenadas, blOC.busq.agrupar, camposOC, fs => ({ total: sumaTotal(fs, o => o.total, o => o.estado === 'cancelada') }), ordenGruposPor(camposOC, 'total')) : null
+    const arbolRec = blRec.busq.agrupar.length
+        ? agrupar(recepcionesOrdenadas, blRec.busq.agrupar, camposRec, fs => ({ total: sumaTotal(fs, r => r.total, r => r.estado === 'anulada') }), ordenGruposPor(camposRec, 'total')) : null
+    const arbolDev = blDev.busq.agrupar.length
+        ? agrupar(devolucionesOrdenadas, blDev.busq.agrupar, camposDev, fs => ({ total: sumaTotal(fs, d => d.monto_total, d => d.estado_nd === 'anulada') }), ordenGruposPor(camposDev, 'total')) : null
+    // Totales filtrados (sin paginar) para la paginación
+    const totalOrdenesF = ordenesOrdenadas.length
+    const totalRecepcionesF = recepcionesOrdenadas.length
+    const totalDevolucionesF = devolucionesOrdenadas.length
 
     if (vista === 'editar_oc')
         return <EditarOrden oc={ocAEditar} onGuardada={() => { cargarOrdenes(); setVista('lista') }} onCancelar={() => setVista('lista')} />
 
     if (vista === 'nueva_oc')
-        return <NuevaOrden onCreada={(oc) => { cargarOrdenes(); cargarOpcionesFiltros(); setOrdenActual(oc); setVista('detalle_oc') }} onCancelar={() => setVista('lista')} />
+        return <NuevaOrden onCreada={(oc) => { cargarOrdenes(); setOrdenActual(oc); setVista('detalle_oc') }} onCancelar={() => setVista('lista')} />
 
     if (vista === 'nueva_recepcion')
         return <NuevaRecepcion
@@ -269,20 +308,13 @@ export default function Compras() {
                 ))}
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: '12px', flexWrap: 'wrap', marginBottom: '12px' }}>
-                {tabActiva === 'ordenes' ? (
-                    <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-                        <FiltroCombo label="OC" value={fOC} onChange={setFOC} options={opcOC} width="160px" />
-                        <FiltroCombo label="Proveedor" value={fProveedor} onChange={setFProveedor} options={opcProveedores} width="240px" />
-                        <FiltroCombo label="Estado" value={fEstado} onChange={setFEstado} options={ESTADOS_OC} width="170px" />
-                        {(fOC || fProveedor || fEstado) && (
-                            <button onClick={() => { setFOC(''); setFProveedor(''); setFEstado('') }}
-                                style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '8px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: '#6b7280', fontSize: '13px', cursor: 'pointer' }}>
-                                <X size={14} /> Limpiar
-                            </button>
-                        )}
-                    </div>
-                ) : <div />}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '12px' }}>
+                {tabActiva === 'ordenes' && <BarraBusqueda campos={camposOC} filas={ordenes} unidad="órdenes"
+                    placeholder="Buscar proveedor o N° de OC…" {...blOC.propsBarra} />}
+                {tabActiva === 'recepciones' && <BarraBusqueda campos={camposRec} filas={recepciones} unidad="recepciones"
+                    placeholder="Buscar proveedor, documento, doc. del proveedor u OC…" {...blRec.propsBarra} />}
+                {tabActiva === 'devoluciones' && <BarraBusqueda campos={camposDev} filas={devoluciones} unidad="devoluciones"
+                    placeholder="Buscar proveedor, N° de ND o recepción…" {...blDev.propsBarra} />}
                 <button onClick={() => setVista(tabActiva === 'ordenes' ? 'nueva_oc' : tabActiva === 'recepciones' ? 'nueva_recepcion' : 'nueva_devolucion')}
                     style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px 16px', fontSize: '14px', fontWeight: 500, cursor: 'pointer' }}>
                     <Plus size={16} /> {tabActiva === 'ordenes' ? 'Nueva Orden' : tabActiva === 'recepciones' ? 'Nueva Recepción' : 'Nueva Devolución'}
@@ -293,21 +325,23 @@ export default function Compras() {
             <TopTitulos.Provider value={altoBarra}>
             {tabActiva === 'ordenes' && (
                 <>
-                    <TablaOrdenes ordenes={ordenesPagina} orden={ordenOC} onOrdenar={ordenarOC} loading={loading} onVer={abrirDetalleOC} filtrado={!!(fOC || fProveedor || fEstado)} anticipos={anticiposPorOC}
+                    {!loading && <ControlGrupos arbol={arbolOC} n={totalOrdenesF} unidad={['orden', 'órdenes']} bl={blOC}
+                        resumen={`Total ${fmt(sumaTotal(ordenesOrdenadas, o => o.total, o => o.estado === 'cancelada'))}`} />}
+                    <TablaOrdenes ordenes={ordenesPagina} orden={ordenOC} onOrdenar={ordenarOC} loading={loading} onVer={abrirDetalleOC} filtrado={ordenes.length > 0} anticipos={anticiposPorOC}
                     onEditar={oc => { setOcAEditar(oc); setVista('editar_oc') }}
-                    onAnular={anularOC} />
-                    {totalOrdenes > PAGE_SIZE && (
+                    onAnular={anularOC} arbol={arbolOC} bl={blOC} />
+                    {!arbolOC && totalOrdenesF > PAGE_SIZE && (
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', marginTop: '8px' }}>
                             <span style={{ fontSize: '13px', color: '#6b7280' }}>
-                                Mostrando {paginaOrdenes * PAGE_SIZE + 1}–{Math.min((paginaOrdenes + 1) * PAGE_SIZE, totalOrdenes)} de {totalOrdenes}
+                                Mostrando {paginaOrdenes * PAGE_SIZE + 1}–{Math.min((paginaOrdenes + 1) * PAGE_SIZE, totalOrdenesF)} de {totalOrdenesF}
                             </span>
                             <div style={{ display: 'flex', gap: '8px' }}>
                                 <button onClick={() => setPaginaOrdenes(p => p - 1)} disabled={paginaOrdenes === 0}
                                     style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: paginaOrdenes === 0 ? '#d1d5db' : '#374151', cursor: paginaOrdenes === 0 ? 'default' : 'pointer' }}>
                                     ← Anterior
                                 </button>
-                                <button onClick={() => setPaginaOrdenes(p => p + 1)} disabled={(paginaOrdenes + 1) * PAGE_SIZE >= totalOrdenes}
-                                    style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: (paginaOrdenes + 1) * PAGE_SIZE >= totalOrdenes ? '#d1d5db' : '#374151', cursor: (paginaOrdenes + 1) * PAGE_SIZE >= totalOrdenes ? 'default' : 'pointer' }}>
+                                <button onClick={() => setPaginaOrdenes(p => p + 1)} disabled={(paginaOrdenes + 1) * PAGE_SIZE >= totalOrdenesF}
+                                    style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: (paginaOrdenes + 1) * PAGE_SIZE >= totalOrdenesF ? '#d1d5db' : '#374151', cursor: (paginaOrdenes + 1) * PAGE_SIZE >= totalOrdenesF ? 'default' : 'pointer' }}>
                                     Siguiente →
                                 </button>
                             </div>
@@ -317,19 +351,22 @@ export default function Compras() {
             )}
             {tabActiva === 'recepciones' && (
                 <>
-                    <TablaRecepciones recepciones={recepcionesPagina} orden={ordenRec} onOrdenar={ordenarRec} loading={loading} onVer={abrirDetalleRecepcion} />
-                    {totalRecepciones > PAGE_SIZE && (
+                    {!loading && <ControlGrupos arbol={arbolRec} n={totalRecepcionesF} unidad={['recepción', 'recepciones']} bl={blRec}
+                        resumen={`Total ${fmt(sumaTotal(recepcionesOrdenadas, r => r.total, r => r.estado === 'anulada'))}`} />}
+                    <TablaRecepciones recepciones={recepcionesPagina} orden={ordenRec} onOrdenar={ordenarRec} loading={loading} onVer={abrirDetalleRecepcion}
+                        arbol={arbolRec} bl={blRec} filtrado={recepciones.length > 0} />
+                    {!arbolRec && totalRecepcionesF > PAGE_SIZE && (
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', marginTop: '8px' }}>
                             <span style={{ fontSize: '13px', color: '#6b7280' }}>
-                                Mostrando {paginaRecepciones * PAGE_SIZE + 1}–{Math.min((paginaRecepciones + 1) * PAGE_SIZE, totalRecepciones)} de {totalRecepciones}
+                                Mostrando {paginaRecepciones * PAGE_SIZE + 1}–{Math.min((paginaRecepciones + 1) * PAGE_SIZE, totalRecepcionesF)} de {totalRecepcionesF}
                             </span>
                             <div style={{ display: 'flex', gap: '8px' }}>
                                 <button onClick={() => setPaginaRecepciones(p => p - 1)} disabled={paginaRecepciones === 0}
                                     style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: paginaRecepciones === 0 ? '#d1d5db' : '#374151', cursor: paginaRecepciones === 0 ? 'default' : 'pointer' }}>
                                     ← Anterior
                                 </button>
-                                <button onClick={() => setPaginaRecepciones(p => p + 1)} disabled={(paginaRecepciones + 1) * PAGE_SIZE >= totalRecepciones}
-                                    style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: (paginaRecepciones + 1) * PAGE_SIZE >= totalRecepciones ? '#d1d5db' : '#374151', cursor: (paginaRecepciones + 1) * PAGE_SIZE >= totalRecepciones ? 'default' : 'pointer' }}>
+                                <button onClick={() => setPaginaRecepciones(p => p + 1)} disabled={(paginaRecepciones + 1) * PAGE_SIZE >= totalRecepcionesF}
+                                    style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: (paginaRecepciones + 1) * PAGE_SIZE >= totalRecepcionesF ? '#d1d5db' : '#374151', cursor: (paginaRecepciones + 1) * PAGE_SIZE >= totalRecepcionesF ? 'default' : 'pointer' }}>
                                     Siguiente →
                                 </button>
                             </div>
@@ -345,19 +382,22 @@ export default function Compras() {
             )}
             {tabActiva === 'devoluciones' && (
                 <>
-                    <TablaDevoluciones devoluciones={devolucionesPagina} orden={ordenDev} onOrdenar={ordenarDev} loading={loading} onVer={abrirDetalleDevolucion} />
-                    {totalDevoluciones > PAGE_SIZE && (
+                    {!loading && <ControlGrupos arbol={arbolDev} n={totalDevolucionesF} unidad={['devolución', 'devoluciones']} bl={blDev}
+                        resumen={`Total ${fmt(sumaTotal(devolucionesOrdenadas, d => d.monto_total, d => d.estado_nd === 'anulada'))}`} />}
+                    <TablaDevoluciones devoluciones={devolucionesPagina} orden={ordenDev} onOrdenar={ordenarDev} loading={loading} onVer={abrirDetalleDevolucion}
+                        arbol={arbolDev} bl={blDev} filtrado={devoluciones.length > 0} />
+                    {!arbolDev && totalDevolucionesF > PAGE_SIZE && (
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', marginTop: '8px' }}>
                             <span style={{ fontSize: '13px', color: '#6b7280' }}>
-                                Mostrando {paginaDevoluciones * PAGE_SIZE + 1}–{Math.min((paginaDevoluciones + 1) * PAGE_SIZE, totalDevoluciones)} de {totalDevoluciones}
+                                Mostrando {paginaDevoluciones * PAGE_SIZE + 1}–{Math.min((paginaDevoluciones + 1) * PAGE_SIZE, totalDevolucionesF)} de {totalDevolucionesF}
                             </span>
                             <div style={{ display: 'flex', gap: '8px' }}>
                                 <button onClick={() => setPaginaDevoluciones(p => p - 1)} disabled={paginaDevoluciones === 0}
                                     style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: paginaDevoluciones === 0 ? '#d1d5db' : '#374151', cursor: paginaDevoluciones === 0 ? 'default' : 'pointer' }}>
                                     ← Anterior
                                 </button>
-                                <button onClick={() => setPaginaDevoluciones(p => p + 1)} disabled={(paginaDevoluciones + 1) * PAGE_SIZE >= totalDevoluciones}
-                                    style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: (paginaDevoluciones + 1) * PAGE_SIZE >= totalDevoluciones ? '#d1d5db' : '#374151', cursor: (paginaDevoluciones + 1) * PAGE_SIZE >= totalDevoluciones ? 'default' : 'pointer' }}>
+                                <button onClick={() => setPaginaDevoluciones(p => p + 1)} disabled={(paginaDevoluciones + 1) * PAGE_SIZE >= totalDevolucionesF}
+                                    style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', backgroundColor: '#fff', color: (paginaDevoluciones + 1) * PAGE_SIZE >= totalDevolucionesF ? '#d1d5db' : '#374151', cursor: (paginaDevoluciones + 1) * PAGE_SIZE >= totalDevolucionesF ? 'default' : 'pointer' }}>
                                     Siguiente →
                                 </button>
                             </div>
@@ -372,12 +412,47 @@ export default function Compras() {
 
 // ─── Tablas de Listado ──────────────────────────────────────
 // Títulos fijos (el alto de la barra llega por TopTitulos) y ordenables
-function TablaOrdenes({ ordenes, orden, onOrdenar, loading, onVer, onEditar, onAnular, filtrado, anticipos = {} }) {
+function TablaOrdenes({ ordenes, orden, onOrdenar, loading, onVer, onEditar, onAnular, filtrado, anticipos = {}, arbol, bl }) {
     const editable = (estado) => estado === 'pendiente' || estado === 'aprobada'
+    const fila = o => (
+        <tr key={o.id} style={{ borderBottom: '1px solid #f3f4f6' }}
+            onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
+            onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+            <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>{o.numero_oc}</td>
+            <td style={{ padding: '12px 16px', fontSize: '13px', color: '#374151' }}>{o.proveedores?.nombre || '—'}</td>
+            <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{new Date(o.fecha_emision).toLocaleDateString('es-VE')}</td>
+            <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{o.fecha_entrega_esperada ? new Date(o.fecha_entrega_esperada).toLocaleDateString('es-VE') : '—'}</td>
+            <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(o.total)}</td>
+            <td style={{ padding: '12px 16px', fontSize: '12px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                {anticipos[o.id] ? (
+                    anticipos[o.id].saldo > 0.01
+                        ? <span title={`Anticipado ${fmt(anticipos[o.id].anticipado)}`} style={{ fontWeight: 600, color: '#854d0e' }}>{fmt(anticipos[o.id].saldo)} por aplicar</span>
+                        : <span style={{ color: '#166534' }}>{fmt(anticipos[o.id].anticipado)} aplicado</span>
+                ) : <span style={{ color: '#d1d5db' }}>—</span>}
+            </td>
+            <td style={{ padding: '12px 16px' }}><BadgeOC estado={o.estado} /></td>
+            <td style={{ padding: '12px 16px' }}>
+                <div style={{ display: 'flex', gap: '6px' }}>
+                    <button onClick={() => onVer(o)} style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
+                        <FileText size={13} /> Ver
+                    </button>
+                    {editable(o.estado) && <>
+                        <button onClick={() => onEditar(o)} style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #d1d5db', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
+                            <Pencil size={12} /> Editar
+                        </button>
+                        <button onClick={() => onAnular(o)} style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #fecaca', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#dc2626', cursor: 'pointer' }}>
+                            <Ban size={12} /> Anular
+                        </button>
+                    </>}
+                </div>
+            </td>
+        </tr>
+    )
+
     return (
         <div style={estiloTarjetaTabla}>
             {loading ? <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af' }}>Cargando...</div> : ordenes.length === 0 ?
-                <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af' }}>{filtrado ? 'No hay órdenes para los filtros seleccionados.' : 'No hay órdenes registradas.'}</div> : (
+                <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af' }}>{filtrado ? 'Ninguna orden coincide con la búsqueda.' : 'No hay órdenes registradas.'}</div> : (
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
                             <tr>
@@ -388,40 +463,9 @@ function TablaOrdenes({ ordenes, orden, onOrdenar, loading, onVer, onEditar, onA
                             </tr>
                         </thead>
                         <tbody>
-                            {ordenes.map(o => (
-                                <tr key={o.id} style={{ borderBottom: '1px solid #f3f4f6' }}
-                                    onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
-                                    onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
-                                    <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>{o.numero_oc}</td>
-                                    <td style={{ padding: '12px 16px', fontSize: '13px', color: '#374151' }}>{o.proveedores?.nombre || '—'}</td>
-                                    <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{new Date(o.fecha_emision).toLocaleDateString('es-VE')}</td>
-                                    <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{o.fecha_entrega_esperada ? new Date(o.fecha_entrega_esperada).toLocaleDateString('es-VE') : '—'}</td>
-                                    <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(o.total)}</td>
-                                    <td style={{ padding: '12px 16px', fontSize: '12px', textAlign: 'right', whiteSpace: 'nowrap' }}>
-                                        {anticipos[o.id] ? (
-                                            anticipos[o.id].saldo > 0.01
-                                                ? <span title={`Anticipado ${fmt(anticipos[o.id].anticipado)}`} style={{ fontWeight: 600, color: '#854d0e' }}>{fmt(anticipos[o.id].saldo)} por aplicar</span>
-                                                : <span style={{ color: '#166534' }}>{fmt(anticipos[o.id].anticipado)} aplicado</span>
-                                        ) : <span style={{ color: '#d1d5db' }}>—</span>}
-                                    </td>
-                                    <td style={{ padding: '12px 16px' }}><BadgeOC estado={o.estado} /></td>
-                                    <td style={{ padding: '12px 16px' }}>
-                                        <div style={{ display: 'flex', gap: '6px' }}>
-                                            <button onClick={() => onVer(o)} style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
-                                                <FileText size={13} /> Ver
-                                            </button>
-                                            {editable(o.estado) && <>
-                                                <button onClick={() => onEditar(o)} style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #d1d5db', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
-                                                    <Pencil size={12} /> Editar
-                                                </button>
-                                                <button onClick={() => onAnular(o)} style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #fecaca', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#dc2626', cursor: 'pointer' }}>
-                                                    <Ban size={12} /> Anular
-                                                </button>
-                                            </>}
-                                        </div>
-                                    </td>
-                                </tr>
-                            ))}
+                            {arbol
+                                ? filasDeGrupos({ grupos: arbol, bl, colsEtiqueta: 4, celdas: [{ key: 'total', align: 'right', contenido: g => fmt(g.sumas.total) }, { key: 'anticipo' }, { key: 'estado' }, { key: 'acc' }], renderFila: fila, unidad: ['orden', 'órdenes'], padding: '12px 16px' })
+                                : ordenes.map(fila)}
                         </tbody>
                     </table>
                 )}
@@ -429,11 +473,37 @@ function TablaOrdenes({ ordenes, orden, onOrdenar, loading, onVer, onEditar, onA
     )
 }
 
-function TablaRecepciones({ recepciones, orden, onOrdenar, loading, onVer }) {
+function TablaRecepciones({ recepciones, orden, onOrdenar, loading, onVer, arbol, bl, filtrado }) {
+    const fila = r => {
+        const esAnulada = r.estado === 'anulada'
+        return (
+        <tr key={r.id} style={{ borderBottom: '1px solid #f3f4f6', opacity: esAnulada ? 0.55 : 1 }}
+            onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
+            onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+            <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>
+                {r.numero_doc || 'S/N'}
+                {esAnulada && <span style={{ marginLeft: '8px', fontFamily: 'system-ui', fontSize: '11px', fontWeight: 600, color: '#dc2626', backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '4px', padding: '1px 6px' }}>Anulada</span>}
+                {!esAnulada && r.estado_factura === 'pendiente' && <span style={{ marginLeft: '8px', fontFamily: 'system-ui', fontSize: '11px', fontWeight: 600, color: '#92400e', backgroundColor: '#fef3c7', borderRadius: '4px', padding: '1px 6px' }}>Sin factura</span>}
+            </td>
+            <td style={{ padding: '12px 16px', fontSize: '12px', fontFamily: 'monospace', color: '#6b7280' }}>{r.nro_doc_proveedor || '—'}</td>
+            <td style={{ padding: '12px 16px', fontSize: '13px', color: '#374151' }}>{r.proveedores?.nombre || '—'}</td>
+            <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{new Date(r.fecha_compra).toLocaleDateString('es-VE')}</td>
+            <td style={{ padding: '12px 16px', fontSize: '12px', color: '#6b7280' }}>{r.ordenes_compra?.numero_oc || '—'}</td>
+            <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(r.total)}</td>
+            <td style={{ padding: '12px 16px' }}><BadgeCobro estado={r.estado_cobro || 'pendiente'} /></td>
+            <td style={{ padding: '12px 16px' }}>
+                <button onClick={() => onVer(r)} style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
+                    <FileText size={13} /> Ver
+                </button>
+            </td>
+        </tr>
+        )
+    }
+
     return (
         <div style={estiloTarjetaTabla}>
             {loading ? <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af' }}>Cargando...</div> : recepciones.length === 0 ?
-                <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af' }}>No hay recepciones registradas.</div> : (
+                <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af' }}>{filtrado ? 'Ninguna recepción coincide con la búsqueda.' : 'No hay recepciones registradas.'}</div> : (
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
                             <tr>
@@ -444,31 +514,9 @@ function TablaRecepciones({ recepciones, orden, onOrdenar, loading, onVer }) {
                             </tr>
                         </thead>
                         <tbody>
-                            {recepciones.map(r => {
-                                const esAnulada = r.estado === 'anulada'
-                                return (
-                                <tr key={r.id} style={{ borderBottom: '1px solid #f3f4f6', opacity: esAnulada ? 0.55 : 1 }}
-                                    onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
-                                    onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
-                                    <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>
-                                        {r.numero_doc || 'S/N'}
-                                        {esAnulada && <span style={{ marginLeft: '8px', fontFamily: 'system-ui', fontSize: '11px', fontWeight: 600, color: '#dc2626', backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '4px', padding: '1px 6px' }}>Anulada</span>}
-                                        {!esAnulada && r.estado_factura === 'pendiente' && <span style={{ marginLeft: '8px', fontFamily: 'system-ui', fontSize: '11px', fontWeight: 600, color: '#92400e', backgroundColor: '#fef3c7', borderRadius: '4px', padding: '1px 6px' }}>Sin factura</span>}
-                                    </td>
-                                    <td style={{ padding: '12px 16px', fontSize: '12px', fontFamily: 'monospace', color: '#6b7280' }}>{r.nro_doc_proveedor || '—'}</td>
-                                    <td style={{ padding: '12px 16px', fontSize: '13px', color: '#374151' }}>{r.proveedores?.nombre || '—'}</td>
-                                    <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{new Date(r.fecha_compra).toLocaleDateString('es-VE')}</td>
-                                    <td style={{ padding: '12px 16px', fontSize: '12px', color: '#6b7280' }}>{r.ordenes_compra?.numero_oc || '—'}</td>
-                                    <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(r.total)}</td>
-                                    <td style={{ padding: '12px 16px' }}><BadgeCobro estado={r.estado_cobro || 'pendiente'} /></td>
-                                    <td style={{ padding: '12px 16px' }}>
-                                        <button onClick={() => onVer(r)} style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
-                                            <FileText size={13} /> Ver
-                                        </button>
-                                    </td>
-                                </tr>
-                                )
-                            })}
+                            {arbol
+                                ? filasDeGrupos({ grupos: arbol, bl, colsEtiqueta: 5, celdas: [{ key: 'total', align: 'right', contenido: g => fmt(g.sumas.total) }, { key: 'cobro' }, { key: 'acc' }], renderFila: fila, unidad: ['recepción', 'recepciones'], padding: '12px 16px' })
+                                : recepciones.map(fila)}
                         </tbody>
                     </table>
                 )}
@@ -476,17 +524,40 @@ function TablaRecepciones({ recepciones, orden, onOrdenar, loading, onVer }) {
     )
 }
 
-function TablaDevoluciones({ devoluciones, orden, onOrdenar, loading, onVer }) {
+function TablaDevoluciones({ devoluciones, orden, onOrdenar, loading, onVer, arbol, bl, filtrado }) {
     const ND_ESTADOS = {
         pendiente:   { bg: '#fffbeb', color: '#854d0e', label: 'Pendiente' },
         aplicada:    { bg: '#dcfce7', color: '#166534', label: 'Aplicada' },
         reembolsada: { bg: '#dbeafe', color: '#1e40af', label: 'Reembolsada' },
         anulada:     { bg: '#f3f4f6', color: '#6b7280', label: 'Anulada' },
     }
+    const fila = d => {
+        const cfg = ND_ESTADOS[d.estado_nd] || ND_ESTADOS.pendiente
+        return (
+            <tr key={d.id} style={{ borderBottom: '1px solid #f3f4f6' }}
+                onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
+                onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>{d.numero_nd || '—'}</td>
+                <td style={{ padding: '12px 16px', fontSize: '13px', color: '#374151' }}>{d.proveedores?.nombre || '—'}</td>
+                <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{new Date(d.created_at).toLocaleDateString('es-VE')}</td>
+                <td style={{ padding: '12px 16px', fontSize: '12px', color: '#6b7280', fontFamily: 'monospace' }}>{d.compras?.numero_doc || '—'}</td>
+                <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(d.monto_total)}</td>
+                <td style={{ padding: '12px 16px' }}>
+                    <span style={{ backgroundColor: cfg.bg, color: cfg.color, padding: '2px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 500 }}>{cfg.label}</span>
+                </td>
+                <td style={{ padding: '12px 16px' }}>
+                    <button onClick={() => onVer(d)} style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
+                        <FileText size={13} /> Ver
+                    </button>
+                </td>
+            </tr>
+        )
+    }
+
     return (
         <div style={estiloTarjetaTabla}>
             {loading ? <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af' }}>Cargando...</div> : devoluciones.length === 0 ?
-                <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af' }}>No hay devoluciones registradas.</div> : (
+                <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af' }}>{filtrado ? 'Ninguna devolución coincide con la búsqueda.' : 'No hay devoluciones registradas.'}</div> : (
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
                             <tr>
@@ -497,28 +568,9 @@ function TablaDevoluciones({ devoluciones, orden, onOrdenar, loading, onVer }) {
                             </tr>
                         </thead>
                         <tbody>
-                            {devoluciones.map(d => {
-                                const cfg = ND_ESTADOS[d.estado_nd] || ND_ESTADOS.pendiente
-                                return (
-                                    <tr key={d.id} style={{ borderBottom: '1px solid #f3f4f6' }}
-                                        onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
-                                        onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
-                                        <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>{d.numero_nd || '—'}</td>
-                                        <td style={{ padding: '12px 16px', fontSize: '13px', color: '#374151' }}>{d.proveedores?.nombre || '—'}</td>
-                                        <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{new Date(d.created_at).toLocaleDateString('es-VE')}</td>
-                                        <td style={{ padding: '12px 16px', fontSize: '12px', color: '#6b7280', fontFamily: 'monospace' }}>{d.compras?.numero_doc || '—'}</td>
-                                        <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(d.monto_total)}</td>
-                                        <td style={{ padding: '12px 16px' }}>
-                                            <span style={{ backgroundColor: cfg.bg, color: cfg.color, padding: '2px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 500 }}>{cfg.label}</span>
-                                        </td>
-                                        <td style={{ padding: '12px 16px' }}>
-                                            <button onClick={() => onVer(d)} style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
-                                                <FileText size={13} /> Ver
-                                            </button>
-                                        </td>
-                                    </tr>
-                                )
-                            })}
+                            {arbol
+                                ? filasDeGrupos({ grupos: arbol, bl, colsEtiqueta: 4, celdas: [{ key: 'monto', align: 'right', contenido: g => fmt(g.sumas.total) }, { key: 'estado' }, { key: 'acc' }], renderFila: fila, unidad: ['devolución', 'devoluciones'], padding: '12px 16px' })
+                                : devoluciones.map(fila)}
                         </tbody>
                     </table>
                 )}
