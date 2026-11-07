@@ -9,7 +9,7 @@ import { ModalEmitirNC, ModalMotivosNC } from '../components/NotasCredito'
 import ModalAnularNC from '../components/ModalAnularNC'
 import { sinSaldoQueCobrar } from '../lib/cobro'
 import BarraBusqueda from '../components/BarraBusqueda'
-import { busquedaVacia, filtrar, pasa, soloNivelCliente, agrupar, clavesDe, leerFavoritos, guardarFavoritos } from '../lib/busqueda'
+import { busquedaVacia, filtrar, pasa, soloNivelCliente, agrupar, ordenGruposPor, clavesDe, leerFavoritos, guardarFavoritos } from '../lib/busqueda'
 import { useOrden, ordenarFilas, useAltoBarra, ThOrden, BarraFija, estiloTarjetaTabla } from '../components/TablaOrdenable'
 import { totalesGuardados, precioBaseItem, redondear2 } from '../lib/iva'
 import BloqueRetencionesCobro from '../components/BloqueRetencionesCobro'
@@ -409,7 +409,7 @@ export default function CuentasCobrar() {
             etiquetaValor: k => catNombres[k] || 'Categoría', filtrable: true, agrupable: true, nivelCliente: true })),
         { campo: 'condicion', etiqueta: 'Condición de pago', valor: f => f.v.clientes?.condicion_pago,
             etiquetaValor: k => ({ contado: 'Contado', credito: 'Crédito' }[k] || k), filtrable: true, agrupable: true, nivelCliente: true },
-        { campo: 'mes', etiqueta: 'Mes de emisión', valor: f => mesCaracas(f.v.created_at), etiquetaValor: etiquetaMes, orden: 'desc',
+        { campo: 'mes', etiqueta: 'Mes de emisión', valor: f => mesCaracas(f.v.created_at), etiquetaValor: etiquetaMes, orden: 'valor_desc',
             filtrable: true, agrupable: true },
         { campo: 'contribuyente', etiqueta: 'Contribuyente especial', valor: f => f.v.clientes?.contribuyente_especial ? 'si' : 'no',
             etiquetaValor: k => k === 'si' ? 'Sí' : 'No', orden: ['si', 'no'], filtrable: true, nivelCliente: true },
@@ -514,7 +514,7 @@ export default function CuentasCobrar() {
         cobrado: s.cobrado + f.cobrado, saldo: s.saldo + f.saldo,
     }), { total: 0, retenciones: 0, cobrado: 0, saldo: 0 })
     const arbolGrupos = agrupado
-        ? agrupar(filasOrdenadas, busq.agrupar, camposBusqueda, sumarFilas, (a, b) => b.sumas.saldo - a.sumas.saldo)
+        ? agrupar(filasOrdenadas, busq.agrupar, camposBusqueda, sumarFilas, ordenGruposPor(camposBusqueda, 'saldo'))
         : null
     const alternarGrupo = clave => setGruposAbiertos(s => { const n = new Set(s); n.has(clave) ? n.delete(clave) : n.add(clave); return n })
     // Estado de cuenta: con un solo cliente en la barra

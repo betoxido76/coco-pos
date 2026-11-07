@@ -74,10 +74,15 @@ function ordenarValores(lista, def) {
         const pos = v => { const i = def.orden.indexOf(v.valor); return i < 0 ? 999 : i }
         return lista.sort((a, b) => pos(a) - pos(b))
     }
-    const alfa = (a, b) => a.etiqueta.localeCompare(b.etiqueta, 'es', { numeric: true, sensitivity: 'base' })
+    // 'valor' / 'valor_desc': por la clave (fechas AAAA-MM-DD, meses AAAA-MM); si no, por la etiqueta
+    const porValor = def.orden === 'valor' || def.orden === 'valor_desc'
+    const cmp = (a, b) => porValor
+        ? String(a.valor).localeCompare(String(b.valor))
+        : a.etiqueta.localeCompare(b.etiqueta, 'es', { numeric: true, sensitivity: 'base' })
+    const desc = def.orden === 'desc' || def.orden === 'valor_desc'
     return lista.sort((a, b) => {
         if (a.valor === NULO || b.valor === NULO) return a.valor === NULO ? 1 : -1   // "Sin …" al final
-        return def.orden === 'desc' ? -alfa(a, b) : alfa(a, b)
+        return desc ? -cmp(a, b) : cmp(a, b)
     })
 }
 
@@ -123,6 +128,20 @@ export function agrupar(filas, niveles, campos, sumar, ordenGrupos, prefijo = ''
     })
     const porDefecto = (a, b) => a.etiqueta.localeCompare(b.etiqueta, 'es', { numeric: true })
     return grupos.sort(ordenGrupos || porDefecto)
+}
+
+// Orden de los grupos: los campos de fecha/mes (orden 'valor' o 'valor_desc') en orden
+// cronológico; el resto, por el subtotal `suma` de mayor a menor (p. ej. 'saldo' o 'total').
+export function ordenGruposPor(campos, suma) {
+    return (a, b) => {
+        const def = campos.find(c => c.campo === a.campo)
+        if (def?.orden === 'valor' || def?.orden === 'valor_desc') {
+            if (a.valor === NULO || b.valor === NULO) return a.valor === NULO ? 1 : -1
+            const c = String(a.valor).localeCompare(String(b.valor))
+            return def.orden === 'valor' ? c : -c
+        }
+        return (b.sumas?.[suma] || 0) - (a.sumas?.[suma] || 0)
+    }
 }
 
 // Todas las claves de un árbol (para "Abrir todo")
@@ -204,6 +223,17 @@ export const campoVencimiento = (leer, extra = {}) => ({
 
 // Campo de mes (AAAA-MM), del más reciente al más viejo. `leer(fila)` devuelve la fecha.
 export const campoMes = (leer, etiqueta = 'Mes', extra = {}) => ({
-    campo: 'mes', etiqueta, valor: f => fechaLocal(leer(f))?.slice(0, 7) || null, etiquetaValor: etiquetaMes, orden: 'desc',
+    campo: 'mes', etiqueta, valor: f => fechaLocal(leer(f))?.slice(0, 7) || null, etiquetaValor: etiquetaMes, orden: 'valor_desc',
+    filtrable: true, agrupable: true, ...extra,
+})
+
+// Campo de un día (AAAA-MM-DD), p. ej. la fecha programada de despacho. Orden cronológico.
+const DIAS_CORTOS = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb']
+export const etiquetaDia = (ymd) => {
+    const d = new Date(ymd + 'T00:00:00')
+    return isNaN(d) ? ymd : `${DIAS_CORTOS[d.getDay()]} ${ymd.slice(8, 10)}/${ymd.slice(5, 7)}/${ymd.slice(0, 4)}`
+}
+export const campoDia = (campo, etiqueta, leer, extra = {}) => ({
+    campo, etiqueta, valor: f => fechaLocal(leer(f)), etiquetaValor: etiquetaDia, orden: 'valor',
     filtrable: true, agrupable: true, ...extra,
 })

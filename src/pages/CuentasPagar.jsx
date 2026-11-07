@@ -7,7 +7,7 @@ import { PanelAnticiposCxP, saldoAnticiposEmpresa } from '../components/Anticipo
 import ModalPagoGasto from '../components/ModalPagoGasto'
 import BarraBusqueda from '../components/BarraBusqueda'
 import { useBusquedaLista, ControlGrupos, filasDeGrupos } from '../components/BusquedaLista'
-import { filtrar, agrupar, campoVencimiento, campoMes } from '../lib/busqueda'
+import { filtrar, agrupar, ordenGruposPor, campoVencimiento, campoMes } from '../lib/busqueda'
 import { useOrden, ordenarFilas, useAltoBarra, ThOrden, TopTitulos } from '../components/TablaOrdenable'
 import { precioBaseItem, totalesGuardados } from '../lib/iva'
 import ModalPagoRecepcion, { pagoDirectoCompra } from '../components/ModalPagoRecepcion'
@@ -304,18 +304,17 @@ export default function CuentasPagar() {
     }, ordenGastos)
 
     // ── Agrupado: grupos ordenados por saldo, con subtotales ──
-    const porSaldo = (a, b) => b.sumas.saldo - a.sumas.saldo
     const arbolCompras = blC.busq.agrupar.length
         ? agrupar(comprasOrdenadas, blC.busq.agrupar, camposCompras, cs => cs.reduce((s, c) => ({
             total: s.total + Number(c.total || 0), pagado: s.pagado + calcularCobrado(c),
             retenciones: s.retenciones + calcularRetencion(c), saldo: s.saldo + calcularSaldo(c),
-        }), { total: 0, pagado: 0, retenciones: 0, saldo: 0 }), porSaldo)
+        }), { total: 0, pagado: 0, retenciones: 0, saldo: 0 }), ordenGruposPor(camposCompras, 'saldo'))
         : null
     const arbolGastos = blG.busq.agrupar.length
         ? agrupar(gastosOrdenados, blG.busq.agrupar, camposGastos, gs => gs.reduce((s, g) => {
             const k = cuentaG(g)
             return { total: s.total + k.total, pagado: s.pagado + k.pagado, retenciones: s.retenciones + k.retenciones, saldo: s.saldo + k.saldo }
-        }, { total: 0, pagado: 0, retenciones: 0, saldo: 0 }), porSaldo)
+        }, { total: 0, pagado: 0, retenciones: 0, saldo: 0 }), ordenGruposPor(camposGastos, 'saldo'))
         : null
     // Subtotales de un grupo bajo Total, Pagado, [Retenciones] y Saldo; Estado y acción vacíos
     const celdasSubtotal = [

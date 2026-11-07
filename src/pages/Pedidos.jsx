@@ -8,6 +8,9 @@ import { sinSaldoQueCobrar } from '../lib/cobro'
 import { almacenPredeterminado, verificarStock, moverStockLote } from '../lib/inventario'
 import ModalFaltanteStock from '../components/ModalFaltanteStock'
 import FiltroCombo from '../components/FiltroCombo'
+import BarraBusqueda from '../components/BarraBusqueda'
+import { useBusquedaLista, ControlGrupos, filasDeGrupos } from '../components/BusquedaLista'
+import { filtrar, agrupar, ordenGruposPor, campoMes, campoDia } from '../lib/busqueda'
 import AvisoDocumentoEntrega from '../components/AvisoDocumentoEntrega'
 import AvisoExoneracion from '../components/AvisoExoneracion'
 import { exoneracionVigente, aplicaIvaCliente } from '../lib/exoneracion'
@@ -58,19 +61,18 @@ function SortableTh({ label, col, sortCol, sortDir, onSort, right, top }) {
 // ══════════════════════════════════════════════════════════════
 export default function Pedidos() {
     const { perfil } = useAuth()
-    const [tabActiva, setTabActiva] = useState('pendientes')
+    // Barra de búsqueda (docs/plan-barra-busqueda.md); la pestaña de estado se guarda con los favoritos
+    const blP = useBusquedaLista('pedidos', { pestanaPorDefecto: 'pendientes' })
+    const tabActiva = blP.pestana
+    const setTabActiva = blP.setPestana
     const [pedidos, setPedidos] = useState([])
     const [loading, setLoading] = useState(true)
     const [pedidoActual, setPedidoActual] = useState(null)
     const [modalAnulacion, setModalAnulacion] = useState(null)
-    const [busqueda, setBusqueda] = useState('')
-    const [filtroVendedor, setFiltroVendedor] = useState('')
-    const [vendedores, setVendedores] = useState([])
     const [toasts, setToasts] = useState([])
     const [reloadKey, setReloadKey] = useState(0)
     const [conteos, setConteos] = useState({ pendiente: 0, aprobado: 0, alistado: 0, facturado: 0 })
-    const [clientes, setClientes] = useState([])
-    const [filtroCliente, setFiltroCliente] = useState('')
+    const [catNombres, setCatNombres] = useState({})   // categorias_clientes id → nombre
     const [fechaDesde, setFechaDesde] = useState('')
     const [fechaHasta, setFechaHasta] = useState('')
     const [filtroSku, setFiltroSku] = useState('')
@@ -105,25 +107,8 @@ export default function Pedidos() {
 
     useEffect(() => {
         if (!perfil?.empresa_id) return
-        supabase.from('pedidos')
-            .select('vendedor_id, usuarios(id, nombre)')
-            .eq('empresa_id', perfil.empresa_id)
-            .not('vendedor_id', 'is', null)
-            .then(({ data }) => {
-                if (!data) return
-                const seen = new Set()
-                const unicos = data
-                    .filter(p => p.usuarios && !seen.has(p.vendedor_id) && seen.add(p.vendedor_id))
-                    .map(p => ({ id: p.vendedor_id, nombre: p.usuarios.nombre }))
-                    .sort((a, b) => a.nombre.localeCompare(b.nombre))
-                setVendedores(unicos)
-            })
-    }, [perfil?.empresa_id])
-
-    useEffect(() => {
-        if (!perfil?.empresa_id) return
-        supabase.from('clientes').select('id, nombre').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('nombre')
-            .then(({ data }) => setClientes(data || []))
+        supabase.from('categorias_clientes').select('id, nombre').eq('empresa_id', perfil.empresa_id)
+            .then(({ data }) => setCatNombres(Object.fromEntries((data || []).map(c => [c.id, c.nombre]))))
     }, [perfil?.empresa_id])
 
     // Resolver el filtro por SKU/producto a un conjunto de pedido_id
@@ -144,7 +129,7 @@ export default function Pedidos() {
     }, [filtroSku, perfil?.empresa_id])
 
     // Resetear a la primera página cuando cambian tab o filtros
-    useEffect(() => { setPagina(0) }, [tabActiva, busqueda, filtroVendedor, filtroCliente, fechaDesde, fechaHasta, filtroSku])
+    useEffect(() => { setPagina(0) }, [tabActiva, blP.busq, fechaDesde, fechaHasta, filtroSku])
 
     function handleSort(col) {
         if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
@@ -184,8 +169,9 @@ export default function Pedidos() {
             .from('pedidos')
             .select(`
                 *,
-                clientes(nombre, rif, descripcion, direccion_fiscal),
-                usuarios(nombre)
+                clientes(nombre, rif, descripcion, direccion_fiscal, cat1_id),
+                usuarios(nombre),
+                direcciones_entrega(ciudad)
             `)
             .eq('empresa_id', perfil.empresa_id)
             .order('created_at', { ascending: false })
@@ -202,20 +188,32 @@ export default function Pedidos() {
         setLoading(false)
     }
 
-    const filtrados = pedidos.filter(p => {
-        const q = busqueda.toLowerCase()
-        const matchBusqueda = !q ||
-            p.clientes?.nombre?.toLowerCase().includes(q) ||
-            p.clientes?.descripcion?.toLowerCase().includes(q) ||
-            p.numero_pedido?.toLowerCase().includes(q) ||
-            p.usuarios?.nombre?.toLowerCase().includes(q)
-        const matchVendedor = filtroVendedor ? p.vendedor_id === filtroVendedor : true
-        const matchCliente = filtroCliente ? p.cliente_id === filtroCliente : true
+    // ── Campos de la barra de búsqueda ──
+    const camposPedidos = [
+        { campo: 'cliente', etiqueta: 'Cliente', valor: p => p.cliente_id, etiquetaValor: (k, p) => p?.clientes?.nombre || 'Cliente',
+            texto: p => `${p.clientes?.nombre || ''} ${p.clientes?.descripcion || ''}`, filtrable: true, agrupable: true, buscable: true, comun: true },
+        { campo: 'vendedor', etiqueta: 'Vendedor', valor: p => p.vendedor_id, etiquetaValor: (k, p) => p?.usuarios?.nombre || 'Vendedor',
+            texto: p => p.usuarios?.nombre, filtrable: true, agrupable: true, buscable: true, comun: true },
+        campoDia('programada', 'Fecha programada', p => p.fecha_despacho, { comun: true }),
+        { campo: 'origen', etiqueta: 'Origen', valor: p => p.origen, orden: ['oficina', 'campo'],
+            etiquetaValor: k => ({ oficina: 'Oficina', campo: 'Fuerza de ventas' }[k] || k), filtrable: true, agrupable: true, comun: true },
+        { campo: 'ciudad', etiqueta: 'Ciudad de entrega', valor: p => p.direcciones_entrega?.ciudad, filtrable: true, agrupable: true },
+        { campo: 'cat1', etiqueta: 'Categoría 1', valor: p => p.clientes?.cat1_id, etiquetaValor: k => catNombres[k] || 'Categoría', filtrable: true, agrupable: true },
+        campoDia('prometida', 'Fecha prometida', p => p.fecha_entrega),
+        campoMes(p => p.fecha_pedido, 'Mes del pedido'),
+        { campo: 'estado', etiqueta: 'Estado', valor: p => p.estado, etiquetaValor: k => ESTADOS[k]?.label || k,
+            orden: Object.keys(ESTADOS), filtrable: true, agrupable: true },
+        { campo: 'pedido', etiqueta: 'N° de pedido', valor: p => p.numero_pedido, texto: p => p.numero_pedido, buscable: true },
+        { campo: 'oc', etiqueta: 'O/C del cliente', valor: p => p.oc_cliente, texto: p => p.oc_cliente, buscable: true },
+        { campo: 'rif', etiqueta: 'RIF', valor: p => p.clientes?.rif, texto: p => p.clientes?.rif, buscable: true },
+    ]
+    // Barra + rango de fechas del pedido + producto (se resuelve en la base a ids de pedido)
+    const filtrados = filtrar(pedidos, blP.busq, camposPedidos).filter(p => {
         const fp = (p.fecha_pedido || '').slice(0, 10)
         const matchDesde = !fechaDesde || (fp && fp >= fechaDesde)
         const matchHasta = !fechaHasta || (fp && fp <= fechaHasta)
         const matchSku = !skuMatch || skuMatch.has(p.id)
-        return matchBusqueda && matchVendedor && matchCliente && matchDesde && matchHasta && matchSku
+        return matchDesde && matchHasta && matchSku
     })
     const ordenados = [...filtrados].sort((a, b) => {
         const va = sortVal(a, sortCol), vb = sortVal(b, sortCol)
@@ -224,6 +222,84 @@ export default function Pedidos() {
     })
     const totalFiltrados = ordenados.length
     const paginados = ordenados.slice(pagina * pageSize, (pagina + 1) * pageSize)
+    const sumaTotal = ps => ps.reduce((s, p) => s + Number(p.total || 0), 0)
+    // Agrupado: por fecha en orden cronológico; el resto, por monto (mayor primero)
+    const arbolPedidos = blP.busq.agrupar.length
+        ? agrupar(ordenados, blP.busq.agrupar, camposPedidos, ps => ({ total: sumaTotal(ps) }), ordenGruposPor(camposPedidos, 'total'))
+        : null
+
+    // Fila de cada tabla (también dentro de un grupo)
+    const filaAnulado = p => (
+        <tr key={p.id} style={{ borderBottom: '1px solid #f3f4f6' }}
+            onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
+            onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+            <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', fontWeight: 600, color: '#9ca3af' }}>{p.numero_pedido || '—'}</td>
+            <td style={{ padding: '12px 16px', fontSize: '12px', fontFamily: 'monospace', color: p.oc_cliente ? '#9ca3af' : '#d1d5db' }}>{p.oc_cliente || '—'}</td>
+            <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>
+                {p.clientes?.nombre || '—'}
+                {p.clientes?.rif && <div style={{ fontSize: '11px', color: '#9ca3af', fontFamily: 'monospace' }}>{p.clientes.rif}</div>}
+            </td>
+            <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{p.usuarios?.nombre || '—'}</td>
+            <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280', whiteSpace: 'nowrap' }}>
+                {new Date(p.fecha_pedido).toLocaleDateString('es-VE')}
+            </td>
+            <td style={{ padding: '12px 16px', fontSize: '13px', color: '#dc2626', maxWidth: '280px' }}>
+                {p.motivo_anulacion || '—'}
+            </td>
+            <td style={{ padding: '12px 16px' }}>
+                <button onClick={() => setPedidoActual(p)}
+                    style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
+                    <FileText size={13} /> Ver
+                </button>
+            </td>
+        </tr>
+    )
+
+    const filaPedido = p => (
+        <tr key={p.id} style={{ borderBottom: '1px solid #f3f4f6' }}
+            onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
+            onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+            <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', color: '#374151', fontWeight: 600 }}>
+                {p.numero_pedido || '—'}
+            </td>
+            <td style={{ padding: '12px 16px', fontSize: '12px', fontFamily: 'monospace', color: p.oc_cliente ? '#374151' : '#d1d5db' }}>
+                {p.oc_cliente || '—'}
+            </td>
+            <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>
+                {p.clientes?.nombre || '—'}
+                {p.clientes?.descripcion && <span style={{ fontWeight: 400, color: '#9ca3af', marginLeft: '6px', fontSize: '12px' }}>— {p.clientes.descripcion}</span>}
+                {p.clientes?.rif && <div style={{ fontSize: '11px', color: '#9ca3af', fontFamily: 'monospace' }}>{p.clientes.rif}</div>}
+            </td>
+            <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{p.usuarios?.nombre || '—'}</td>
+            <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280', whiteSpace: 'nowrap' }}>
+                {new Date(p.fecha_pedido).toLocaleDateString('es-VE')}
+            </td>
+            <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280', whiteSpace: 'nowrap' }}>
+                {p.fecha_entrega ? new Date(p.fecha_entrega + 'T00:00:00').toLocaleDateString('es-VE') : '—'}
+            </td>
+            <td style={{ padding: '12px 16px', fontSize: '13px', whiteSpace: 'nowrap', color: p.fecha_despacho ? '#1f2937' : '#d1d5db', fontWeight: p.fecha_despacho ? 500 : 400 }}>
+                {p.fecha_despacho ? new Date(p.fecha_despacho + 'T00:00:00').toLocaleDateString('es-VE') : '—'}
+            </td>
+            <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937' }}>
+                <TotalPedido pedido={p} />
+            </td>
+            <td style={{ padding: '12px 16px' }}><BadgeEstado estado={p.estado} /></td>
+            <td style={{ padding: '12px 16px' }}>
+                <div style={{ display: 'flex', gap: '6px' }}>
+                    <button onClick={() => setPedidoActual(p)}
+                        style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
+                        <FileText size={13} /> Ver
+                    </button>
+                    {(tabActiva === 'aprobados' || tabActiva === 'alistados') && (
+                        <button onClick={() => setModalAnulacion(p)}
+                            style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #fca5a5', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#dc2626', cursor: 'pointer' }}>
+                            <Ban size={12} /> Anular
+                        </button>
+                    )}
+                </div>
+            </td>
+        </tr>
+    )
 
     if (pedidoActual)
         return <DetallePedido
@@ -265,7 +341,7 @@ export default function Pedidos() {
                     const isActive = tabActiva === tab.key
                     const hasItems = count > 0
                     return (
-                        <button key={tab.key} onClick={() => { setTabActiva(tab.key); setBusqueda(''); setFiltroVendedor(''); setFiltroCliente(''); setFechaDesde(''); setFechaHasta(''); setFiltroSku('') }}
+                        <button key={tab.key} onClick={() => setTabActiva(tab.key)}
                             style={{
                                 padding: '8px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 500,
                                 border: '1px solid', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px',
@@ -290,18 +366,13 @@ export default function Pedidos() {
             </div>
 
             {/* Filtros */}
-            <div style={{ display: 'flex', gap: '10px', marginBottom: '12px', flexWrap: 'wrap' }}>
-                <div style={{ position: 'relative', flex: 1, minWidth: '200px' }}>
-                    <Search size={15} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
-                    <input type="text" placeholder="Buscar por cliente, pedido o vendedor..."
-                        value={busqueda} onChange={e => setBusqueda(e.target.value)}
-                        style={{ ...inputStyle, paddingLeft: '32px' }} />
-                </div>
-                <input type="text" placeholder="SKU o producto..."
+            <div style={{ display: 'flex', gap: '10px', marginBottom: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
+                <BarraBusqueda campos={camposPedidos} filas={pedidos} unidad="pedidos"
+                    placeholder="Buscar cliente, vendedor, N° de pedido, O/C o RIF…" {...blP.propsBarra} />
+                {/* El producto se busca en las líneas del pedido (en la base): va aparte de la barra */}
+                <input id="pedidos-producto" type="text" placeholder="SKU o producto…"
                     value={filtroSku} onChange={e => setFiltroSku(e.target.value)}
                     style={{ ...inputStyle, width: 'auto', minWidth: '160px' }} />
-                <FiltroCombo value={filtroCliente} onChange={setFiltroCliente} options={clientes.map(x => ({ value: x.id, label: x.nombre }))} placeholder="Todos los clientes" width="220px" />
-                <FiltroCombo value={filtroVendedor} onChange={setFiltroVendedor} options={vendedores.map(x => ({ value: x.id, label: x.nombre }))} placeholder="Todos los vendedores" width="220px" />
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                     <span style={{ fontSize: '12px', color: '#6b7280' }}>Desde</span>
                     <input type="date" value={fechaDesde} onChange={e => setFechaDesde(e.target.value)}
@@ -313,13 +384,16 @@ export default function Pedidos() {
             </div>
             </BarraFija>
 
+            {!loading && <ControlGrupos arbol={arbolPedidos} n={totalFiltrados} unidad={['pedido', 'pedidos']} bl={blP}
+                resumen={tabActiva !== 'anulados' ? `Total ${fmt(sumaTotal(ordenados))}` : undefined} />}
+
             {/* Tabla */}
             <div style={estiloTarjetaTabla}>
                 {loading ? (
                     <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
                 ) : filtrados.length === 0 ? (
                     <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>
-                        No hay pedidos en este estado
+                        {pedidos.length ? 'Ningún pedido coincide con la búsqueda' : 'No hay pedidos en este estado'}
                     </div>
                 ) : tabActiva === 'anulados' ? (
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -337,31 +411,7 @@ export default function Pedidos() {
                             </tr>
                         </thead>
                         <tbody>
-                            {paginados.map(p => (
-                                <tr key={p.id} style={{ borderBottom: '1px solid #f3f4f6' }}
-                                    onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
-                                    onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
-                                    <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', fontWeight: 600, color: '#9ca3af' }}>{p.numero_pedido || '—'}</td>
-                                    <td style={{ padding: '12px 16px', fontSize: '12px', fontFamily: 'monospace', color: p.oc_cliente ? '#9ca3af' : '#d1d5db' }}>{p.oc_cliente || '—'}</td>
-                                    <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>
-                                        {p.clientes?.nombre || '—'}
-                                        {p.clientes?.rif && <div style={{ fontSize: '11px', color: '#9ca3af', fontFamily: 'monospace' }}>{p.clientes.rif}</div>}
-                                    </td>
-                                    <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{p.usuarios?.nombre || '—'}</td>
-                                    <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280', whiteSpace: 'nowrap' }}>
-                                        {new Date(p.fecha_pedido).toLocaleDateString('es-VE')}
-                                    </td>
-                                    <td style={{ padding: '12px 16px', fontSize: '13px', color: '#dc2626', maxWidth: '280px' }}>
-                                        {p.motivo_anulacion || '—'}
-                                    </td>
-                                    <td style={{ padding: '12px 16px' }}>
-                                        <button onClick={() => setPedidoActual(p)}
-                                            style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
-                                            <FileText size={13} /> Ver
-                                        </button>
-                                    </td>
-                                </tr>
-                            ))}
+                            {arbolPedidos ? filasDeGrupos({ grupos: arbolPedidos, bl: blP, colsEtiqueta: 5, celdas: [{ key: 'motivo' }, { key: 'acc' }], renderFila: filaAnulado, unidad: ['pedido', 'pedidos'], padding: '12px 16px' }) : paginados.map(filaAnulado)}
                         </tbody>
                     </table>
                 ) : (
@@ -383,55 +433,11 @@ export default function Pedidos() {
                             </tr>
                         </thead>
                         <tbody>
-                            {paginados.map(p => (
-                                <tr key={p.id} style={{ borderBottom: '1px solid #f3f4f6' }}
-                                    onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
-                                    onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
-                                    <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', color: '#374151', fontWeight: 600 }}>
-                                        {p.numero_pedido || '—'}
-                                    </td>
-                                    <td style={{ padding: '12px 16px', fontSize: '12px', fontFamily: 'monospace', color: p.oc_cliente ? '#374151' : '#d1d5db' }}>
-                                        {p.oc_cliente || '—'}
-                                    </td>
-                                    <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>
-                                        {p.clientes?.nombre || '—'}
-                                        {p.clientes?.descripcion && <span style={{ fontWeight: 400, color: '#9ca3af', marginLeft: '6px', fontSize: '12px' }}>— {p.clientes.descripcion}</span>}
-                                        {p.clientes?.rif && <div style={{ fontSize: '11px', color: '#9ca3af', fontFamily: 'monospace' }}>{p.clientes.rif}</div>}
-                                    </td>
-                                    <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{p.usuarios?.nombre || '—'}</td>
-                                    <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280', whiteSpace: 'nowrap' }}>
-                                        {new Date(p.fecha_pedido).toLocaleDateString('es-VE')}
-                                    </td>
-                                    <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280', whiteSpace: 'nowrap' }}>
-                                        {p.fecha_entrega ? new Date(p.fecha_entrega + 'T00:00:00').toLocaleDateString('es-VE') : '—'}
-                                    </td>
-                                    <td style={{ padding: '12px 16px', fontSize: '13px', whiteSpace: 'nowrap', color: p.fecha_despacho ? '#1f2937' : '#d1d5db', fontWeight: p.fecha_despacho ? 500 : 400 }}>
-                                        {p.fecha_despacho ? new Date(p.fecha_despacho + 'T00:00:00').toLocaleDateString('es-VE') : '—'}
-                                    </td>
-                                    <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937' }}>
-                                        <TotalPedido pedido={p} />
-                                    </td>
-                                    <td style={{ padding: '12px 16px' }}><BadgeEstado estado={p.estado} /></td>
-                                    <td style={{ padding: '12px 16px' }}>
-                                        <div style={{ display: 'flex', gap: '6px' }}>
-                                            <button onClick={() => setPedidoActual(p)}
-                                                style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
-                                                <FileText size={13} /> Ver
-                                            </button>
-                                            {(tabActiva === 'aprobados' || tabActiva === 'alistados') && (
-                                                <button onClick={() => setModalAnulacion(p)}
-                                                    style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #fca5a5', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#dc2626', cursor: 'pointer' }}>
-                                                    <Ban size={12} /> Anular
-                                                </button>
-                                            )}
-                                        </div>
-                                    </td>
-                                </tr>
-                            ))}
+                            {arbolPedidos ? filasDeGrupos({ grupos: arbolPedidos, bl: blP, colsEtiqueta: 7, celdas: [{ key: 'total', contenido: g => fmt(g.sumas.total) }, { key: 'estado' }, { key: 'acc' }], renderFila: filaPedido, unidad: ['pedido', 'pedidos'], padding: '12px 16px' }) : paginados.map(filaPedido)}
                         </tbody>
                     </table>
                 )}
-                {!loading && totalFiltrados > 0 && (
+                {!loading && totalFiltrados > 0 && !arbolPedidos && (
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderTop: '1px solid #e5e7eb', backgroundColor: '#f9fafb' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                             <span style={{ fontSize: '13px', color: '#6b7280' }}>

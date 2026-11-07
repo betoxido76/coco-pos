@@ -12,7 +12,7 @@ import ModalFaltanteStock from '../components/ModalFaltanteStock'
 import FiltroCombo from '../components/FiltroCombo'
 import BarraBusqueda from '../components/BarraBusqueda'
 import { useBusquedaLista, ControlGrupos, filasDeGrupos } from '../components/BusquedaLista'
-import { filtrar, agrupar, campoMes } from '../lib/busqueda'
+import { filtrar, agrupar, ordenGruposPor, campoMes } from '../lib/busqueda'
 import AvisoDocumentoEntrega from '../components/AvisoDocumentoEntrega'
 import AvisoExoneracion from '../components/AvisoExoneracion'
 import { exoneracionVigente, aplicaIvaCliente } from '../lib/exoneracion'
@@ -203,7 +203,7 @@ export default function Ventas() {
     const arbolNotas = blV.busq.agrupar.length
         ? agrupar(ventasOrdenadas, blV.busq.agrupar, camposNotas,
             vs => ({ total: vs.filter(v => v.estado_cobro !== 'anulado').reduce((s, v) => s + Number(v.total || 0), 0) }),
-            (a, b) => b.sumas.total - a.sumas.total)
+            ordenGruposPor(camposNotas, 'total'))
         : null
 
     // Una nota de la lista (también dentro de un grupo)
