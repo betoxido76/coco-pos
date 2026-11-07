@@ -3,12 +3,13 @@ import { createPortal } from 'react-dom'
 import * as XLSX from 'xlsx'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
-import { X, DollarSign, CheckSquare, FileText, Ban } from 'lucide-react'
+import { X, DollarSign, CheckSquare, FileText, Ban, ChevronDown, ChevronRight } from 'lucide-react'
 import SelectorFechaTasa, { useTasasFecha, hoyYMD, fmtFechaCorta, fechaAtimestamp, OPCIONES_TASA } from '../components/SelectorFechaTasa'
 import { ModalEmitirNC, ModalMotivosNC } from '../components/NotasCredito'
 import ModalAnularNC from '../components/ModalAnularNC'
 import { sinSaldoQueCobrar } from '../lib/cobro'
-import FiltroCombo from '../components/FiltroCombo'
+import BarraBusqueda from '../components/BarraBusqueda'
+import { busquedaVacia, filtrar, pasa, soloNivelCliente, agrupar, clavesDe, leerFavoritos, guardarFavoritos } from '../lib/busqueda'
 import { useOrden, ordenarFilas, useAltoBarra, ThOrden, BarraFija, estiloTarjetaTabla } from '../components/TablaOrdenable'
 import { totalesGuardados, precioBaseItem, redondear2 } from '../lib/iva'
 import BloqueRetencionesCobro from '../components/BloqueRetencionesCobro'
@@ -44,6 +45,21 @@ function semaforo(fechaVenc) {
 
 const PAGE_SIZE = 50
 
+// Datos del cliente que necesitan la tabla y la barra de búsqueda (docs/plan-barra-busqueda.md)
+const EMBED_CLIENTE_CXC = 'clientes(nombre, rif, condicion_pago, dias_credito, contribuyente_especial, paga_indexado, cat1_id, cat2_id, cat3_id, cat4_id)'
+
+// Tramos de vencimiento de la barra de búsqueda
+const TRAMOS_VENC = [['por_vencer', 'Por vencer'], ['1_30', '1–30 días'], ['31_60', '31–60 días'], ['61_90', '61–90 días'], ['mas_90', 'Más de 90 días']]
+function tramoVencimiento(fechaVenc) {
+    if (!fechaVenc) return null
+    const hoy = new Date(); hoy.setHours(0, 0, 0, 0)
+    const dias = Math.round((hoy - new Date(fechaVenc + 'T00:00:00')) / 86400000)
+    return dias <= 0 ? 'por_vencer' : dias <= 30 ? '1_30' : dias <= 60 ? '31_60' : dias <= 90 ? '61_90' : 'mas_90'
+}
+const MESES_CORTOS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']
+const etiquetaMes = (aaaamm) => { const [a, m] = aaaamm.split('-'); return `${MESES_CORTOS[Number(m) - 1]} ${a}` }
+const mesCaracas = (ts) => ts ? new Date(ts).toLocaleDateString('en-CA', { timeZone: 'America/Caracas' }).slice(0, 7) : null
+
 // Fecha corta para las columnas de la tabla (dd/mm/aa): ahorra ancho
 const fmtFechaTabla = (d) => d.toLocaleDateString('es-VE', { day: '2-digit', month: '2-digit', year: '2-digit' })
 
@@ -72,17 +88,24 @@ export default function CuentasCobrar() {
     const [cobradoKpi, setCobradoKpi] = useState({})
     // { venta_id: { iva: true, islr: true } } retenciones ya registradas de las parciales
     const [vigentesKpi, setVigentesKpi] = useState({})
-    const [saldoFavor, setSaldoFavor] = useState(0)
+    // NC con saldo a favor (por cliente): el KPI se filtra con los atributos del cliente de la barra
+    const [ncsFavor, setNcsFavor] = useState([])
     const [loading, setLoading] = useState(true)
-    const [filtro, setFiltro] = useState('por_cobrar')
+    // Barra de búsqueda (docs/plan-barra-busqueda.md). Favoritos en este navegador, por empresa y usuario.
+    const claveFav = `mipos_busquedas_cxc_${perfil?.empresa_id}_${perfil?.id || 'yo'}`
+    const [favoritos, setFavoritos] = useState(() => leerFavoritos(claveFav))
+    const favInicial = favoritos.find(f => f.porDefecto) || null
+    const [busq, setBusq] = useState(() => favInicial?.busqueda || busquedaVacia())
+    const [favAplicado, setFavAplicado] = useState(() => favInicial?.nombre || null)
+    const [gruposAbiertos, setGruposAbiertos] = useState(() => new Set())
+    const [filtro, setFiltro] = useState(() => favInicial?.pestana || 'por_cobrar')
     const [modalVenta, setModalVenta] = useState(null)       // cobro individual
     const [modalMultiple, setModalMultiple] = useState(false) // cobro múltiple
     const [modalEstadoCuenta, setModalEstadoCuenta] = useState(false)
     const [tasas, setTasas] = useState({ tasa_bcv: 1, tasa_euro: 1, tasa_binance: 1 })
     const [clientes, setClientes] = useState([])
-    const [filtroCliente, setFiltroCliente] = useState('')
-    const [categorias1, setCategorias1] = useState([])
-    const [filtroCat1, setFiltroCat1] = useState('')
+    const [catNombres, setCatNombres] = useState({})        // categorias_clientes id → nombre (los 4 niveles)
+    const [usuariosNombres, setUsuariosNombres] = useState({})   // vendedor id → nombre
     // { venta_id: { cobrado, ultimaFecha } } — cobros de la página en un solo lote
     const [cobrosPagina, setCobrosPagina] = useState({})
     const [cobrosListos, setCobrosListos] = useState(false)
@@ -104,25 +127,44 @@ export default function CuentasCobrar() {
     const [aprobando, setAprobando] = useState(null)
     const [modalDiferencial, setModalDiferencial] = useState(null)   // nota a llevar a diferencial cambiario
 
-    useEffect(() => { setPagina(0) }, [filtro, filtroCliente, filtroCat1, orden])
+    useEffect(() => { setPagina(0) }, [filtro, busq, orden])
     // Alto de la barra fija de filtros: los títulos de la tabla se pegan justo debajo
     const [barraRef, altoBarra] = useAltoBarra([vista])
     const [ordenNc, ordenarNc] = useOrden({ col: 'fecha', dir: 'desc' }, ['numero', 'fecha', 'monto'])
-    useEffect(() => { cargar() }, [filtro, filtroCliente, filtroCat1])
+    // La pestaña de estado trae las notas; la barra filtra en el navegador
+    useEffect(() => { cargar() }, [filtro])
     // Limpiar selección al cambiar filtro
-    useEffect(() => { setSeleccionadas([]) }, [filtro, filtroCliente, filtroCat1])
+    useEffect(() => { setSeleccionadas([]) }, [filtro, busq])
+    // Al cambiar la agrupación, los grupos arrancan cerrados
+    useEffect(() => { setGruposAbiertos(new Set()) }, [busq.agrupar.join('|')])
 
     useEffect(() => {
         supabase.from('clientes').select('id, nombre, cat1_id, paga_indexado')
             .eq('empresa_id', perfil.empresa_id).eq('activo', true).order('nombre')
             .then(({ data }) => setClientes(data || []))
         supabase.from('categorias_clientes').select('id, nombre')
-            .eq('empresa_id', perfil.empresa_id).eq('activo', true).eq('nivel', 1).order('nombre')
-            .then(({ data }) => setCategorias1(data || []))
+            .eq('empresa_id', perfil.empresa_id)
+            .then(({ data }) => setCatNombres(Object.fromEntries((data || []).map(c => [c.id, c.nombre]))))
+        supabase.from('usuarios').select('id, nombre').eq('empresa_id', perfil.empresa_id)
+            .then(({ data }) => setUsuariosNombres(Object.fromEntries((data || []).map(u => [u.id, u.nombre]))))
     }, [])
 
-    // El selector de cliente se acota a la categoría elegida
-    const clientesFiltrados = filtroCat1 ? clientes.filter(c => c.cat1_id === filtroCat1) : clientes
+    // ── Barra de búsqueda ──
+    function cambiarBusqueda(b) { setBusq(b); setFavAplicado(null) }
+    function aplicarFavorito(f) {
+        setFiltro(f.pestana || 'por_cobrar'); setBusq(f.busqueda || busquedaVacia()); setFavAplicado(f.nombre)
+    }
+    function quitarFavorito() { setBusq(busquedaVacia()); setFavAplicado(null) }
+    function guardarFavorito(nombre, porDefecto) {
+        const nuevo = { id: Date.now().toString(36), nombre, porDefecto, pestana: filtro, busqueda: busq }
+        const lista = [...favoritos.filter(f => f.nombre !== nombre).map(f => porDefecto ? { ...f, porDefecto: false } : f), nuevo]
+        setFavoritos(lista); guardarFavoritos(claveFav, lista); setFavAplicado(nombre)
+    }
+    function borrarFavorito(fav) {
+        const lista = favoritos.filter(f => f.id !== fav.id)
+        setFavoritos(lista); guardarFavoritos(claveFav, lista)
+        if (favAplicado === fav.nombre) setFavAplicado(null)
+    }
 
     async function cargar() {
         setLoading(true)
@@ -131,11 +173,8 @@ export default function CuentasCobrar() {
             : filtro === 'por_cobrar' ? ['pendiente', 'parcial']
             : [filtro]
 
-        // !inner solo cuando se filtra por categoría: con el embed normal una venta
-        // sin cliente seguiría apareciendo, que es el comportamiento sin filtro.
-        const embedCli = filtroCat1
-            ? 'clientes!inner(nombre, condicion_pago, dias_credito, contribuyente_especial, paga_indexado)'
-            : 'clientes(nombre, condicion_pago, dias_credito, contribuyente_especial, paga_indexado)'
+        // Atributos que usa la barra de búsqueda: cliente, categorías y vendedor del pedido
+        const embedCli = `${EMBED_CLIENTE_CXC}, pedidos!pedido_id(vendedor_id)`
 
         // Se traen TODAS las notas del filtro (no solo la página) para poder
         // ordenar por cualquier columna, incluidas las calculadas (cobrado,
@@ -152,8 +191,6 @@ export default function CuentasCobrar() {
                     .order('created_at', { ascending: true })
                     .order('id', { ascending: true })
                     .range(desde, desde + 999)
-                if (filtroCliente) q = q.eq('cliente_id', filtroCliente)
-                if (filtroCat1) q = q.eq('clientes.cat1_id', filtroCat1)
                 const { data, error } = await q
                 if (error) throw error
                 filas.push(...(data || []))
@@ -225,23 +262,19 @@ export default function CuentasCobrar() {
         setCobrosListos(true)
     }
 
-    // KPIs de cartera (pendiente + parcial), independientes del filtro de pestaña;
-    // solo respetan el filtro de cliente. Se corre fuera de cargar() para no
-    // bloquear la tabla.
+    // KPIs de cartera (pendiente + parcial), independientes del filtro de pestaña.
+    // Respetan todos los filtros de la barra de búsqueda (se aplican en el
+    // navegador, más abajo). Se corre fuera de cargar() para no bloquear la tabla.
     async function cargarKpis() {
         try {
-            // Montos de la nota y estatus del cliente: para descontar la retención por registrar
-            const kpiSelect = 'id, total, subtotal, base_gravada, base_exenta, iva, estado_cobro, fecha_vencimiento_pago, cliente_id, created_at'
-                + (filtroCat1 ? ', clientes!inner(cat1_id, contribuyente_especial)' : ', clientes(contribuyente_especial)')
-            let kpiQ = supabase
+            // Montos de la nota (retención por registrar) y los atributos que filtra la barra
+            const kpiSelect = 'id, numero_factura, nro_referencia, oc_cliente, usuario_id, total, subtotal, base_gravada, base_exenta, iva, estado_cobro, fecha_vencimiento_pago, cliente_id, created_at, '
+                + `${EMBED_CLIENTE_CXC}, pedidos!pedido_id(vendedor_id)`
+            const { data: kpi } = await supabase
                 .from('ventas')
                 .select(kpiSelect)
                 .eq('empresa_id', perfil.empresa_id)
                 .in('estado_cobro', ['pendiente', 'parcial'])
-            if (filtroCliente) kpiQ = kpiQ.eq('cliente_id', filtroCliente)
-            if (filtroCat1) kpiQ = kpiQ.eq('clientes.cat1_id', filtroCat1)
-
-            const { data: kpi } = await kpiQ
             if (!kpi) return
             setKpiData(kpi)
 
@@ -284,17 +317,13 @@ export default function CuentasCobrar() {
 
     async function cargarSaldoFavor() {
         try {
-            const ncSelect = 'id, monto_devuelto, estado_nc' + (filtroCat1 ? ', clientes!inner(cat1_id)' : '')
-            let ncQ = supabase.from('devoluciones')
-                .select(ncSelect)
+            // Con los datos del cliente: la barra filtra este KPI por sus atributos (cliente, categorías…)
+            const { data: ncs } = await supabase.from('devoluciones')
+                .select(`id, monto_devuelto, estado_nc, cliente_id, ${EMBED_CLIENTE_CXC}`)
                 .eq('empresa_id', perfil.empresa_id)
                 .eq('genera_credito', true)
                 .in('estado_nc', ['pendiente', 'parcial'])
-            if (filtroCliente) ncQ = ncQ.eq('cliente_id', filtroCliente)
-            if (filtroCat1) ncQ = ncQ.eq('clientes.cat1_id', filtroCat1)
-
-            const { data: ncs } = await ncQ
-            if (!ncs?.length) { setSaldoFavor(0); return }
+            if (!ncs?.length) { setNcsFavor([]); return }
 
             // Solo las 'parcial' tienen aplicaciones; acotar el .in() a ellas evita
             // un IN gigante, igual que con las facturas parciales de arriba.
@@ -308,8 +337,11 @@ export default function CuentasCobrar() {
                 })
             }
 
-            setSaldoFavor(ncs.reduce(
-                (s, n) => s + Math.max(0, Number(n.monto_devuelto || 0) - (aplicado[n.id] || 0)), 0))
+            // Forma de fila de CxC ({ v }) para filtrarla con la misma configuración de la barra
+            setNcsFavor(ncs.map(n => ({
+                v: { cliente_id: n.cliente_id, clientes: n.clientes },
+                saldo: Math.max(0, Number(n.monto_devuelto || 0) - (aplicado[n.id] || 0)),
+            })))
         } catch (e) {
             console.error('Error cargando saldo a favor:', e)
         }
@@ -354,16 +386,61 @@ export default function CuentasCobrar() {
         })
     }
 
-    // ─── Métricas de cartera (sobre kpiData = pendiente + parcial) ───
+    const pctRet = pctRetencionClientes(perfil?.empresas)
+    const hayRetClientes = pctRet.iva > 0 || pctRet.islr > 0
+    // Pestaña de diferencial cambiario: solo si algún cliente no paga indexado
+    const hayNoIndexados = puedeAnular && clientes.some(c => c.paga_indexado === false)
+
+    // ─── Campos de la barra de búsqueda (docs/plan-barra-busqueda.md) ───
+    // Cada fila es { v: venta con clientes y pedidos, faltaComprobante, retRegistrada, diferencial, … }.
+    // nivelCliente = atributo del cliente: también filtra el saldo a favor (NC).
+    const nombreCliente = (id, f) => f?.v?.clientes?.nombre || clientes.find(c => c.id === id)?.nombre || 'Cliente'
+    const camposBusqueda = [
+        { campo: 'cliente', etiqueta: 'Cliente', valor: f => f.v.cliente_id, etiquetaValor: nombreCliente, texto: f => f.v.clientes?.nombre,
+            filtrable: true, agrupable: true, buscable: true, comun: true, nivelCliente: true },
+        { campo: 'cat1', etiqueta: 'Categoría 1', valor: f => f.v.clientes?.cat1_id, etiquetaValor: k => catNombres[k] || 'Categoría',
+            filtrable: true, agrupable: true, comun: true, nivelCliente: true },
+        { campo: 'vendedor', etiqueta: 'Vendedor', valor: f => f.v.pedidos?.vendedor_id || f.v.usuario_id, etiquetaValor: k => usuariosNombres[k] || 'Usuario',
+            filtrable: true, agrupable: true, comun: true },
+        { campo: 'vencimiento', etiqueta: 'Vencimiento', valor: f => tramoVencimiento(f.v.fecha_vencimiento_pago),
+            etiquetaValor: k => (TRAMOS_VENC.find(t => t[0] === k) || [k, k])[1], orden: TRAMOS_VENC.map(t => t[0]),
+            filtrable: true, agrupable: true, comun: true },
+        ...[2, 3, 4].map(n => ({ campo: `cat${n}`, etiqueta: `Categoría ${n}`, valor: f => f.v.clientes?.[`cat${n}_id`],
+            etiquetaValor: k => catNombres[k] || 'Categoría', filtrable: true, agrupable: true, nivelCliente: true })),
+        { campo: 'condicion', etiqueta: 'Condición de pago', valor: f => f.v.clientes?.condicion_pago,
+            etiquetaValor: k => ({ contado: 'Contado', credito: 'Crédito' }[k] || k), filtrable: true, agrupable: true, nivelCliente: true },
+        { campo: 'mes', etiqueta: 'Mes de emisión', valor: f => mesCaracas(f.v.created_at), etiquetaValor: etiquetaMes, orden: 'desc',
+            filtrable: true, agrupable: true },
+        { campo: 'contribuyente', etiqueta: 'Contribuyente especial', valor: f => f.v.clientes?.contribuyente_especial ? 'si' : 'no',
+            etiquetaValor: k => k === 'si' ? 'Sí' : 'No', orden: ['si', 'no'], filtrable: true, nivelCliente: true },
+        ...(hayRetClientes ? [{ campo: 'retencion', etiqueta: 'Retención', orden: ['falta', 'registrada'],
+            valor: f => f.faltaComprobante ? 'falta' : f.retRegistrada > 0 ? 'registrada' : null,
+            etiquetaValor: k => ({ falta: 'Falta comprobante', registrada: 'Con retención registrada' }[k] || k), filtrable: true }] : []),
+        { campo: 'diferencial', etiqueta: 'Diferencial cambiario', valor: f => f.diferencial > 0.005 ? 'si' : null,
+            etiquetaValor: () => 'Con diferencial cambiario', filtrable: true },
+        // Solo búsqueda por texto
+        { campo: 'nota', etiqueta: 'N° de nota', valor: f => f.v.numero_factura, texto: f => f.v.numero_factura, buscable: true },
+        { campo: 'factura', etiqueta: 'Factura', valor: f => f.v.nro_referencia, texto: f => f.v.nro_referencia, buscable: true },
+        { campo: 'oc', etiqueta: 'O/C del cliente', valor: f => f.v.oc_cliente, texto: f => f.v.oc_cliente, buscable: true },
+        { campo: 'rif', etiqueta: 'RIF', valor: f => f.v.clientes?.rif, texto: f => f.v.clientes?.rif, buscable: true },
+    ]
+
+    // ─── Métricas de cartera (pendiente + parcial, con los filtros de la barra) ───
     const hoyKpi = new Date()
     // Neto de la retención por registrar: es lo que de verdad se le cobrará al cliente
     const saldoKpi = (v) => Math.max(0, Number(v.total || 0) - (cobradoKpi[v.id] || 0)
         - retencionesPorRegistrar(v, perfil?.empresas, vigentesKpi[v.id]).total)
     const esVencidaKpi = (v) => v.fecha_vencimiento_pago && new Date(v.fecha_vencimiento_pago) < hoyKpi
+    // Las notas pendientes con la forma de fila de la barra (las que tienen diferencial ya están pagadas)
+    const kpiVisibles = filtrar(kpiData.map(v => {
+        const retPend = retencionesPorRegistrar(v, perfil?.empresas, vigentesKpi[v.id]).total
+        return { v, retRegistrada: vigentesKpi[v.id] ? 1 : 0, diferencial: 0, faltaComprobante: retPend > 0 && saldoKpi(v) <= 0.01 }
+    }), busq, camposBusqueda).map(f => f.v)
+    const saldoFavor = filtrar(ncsFavor, soloNivelCliente(busq, camposBusqueda), camposBusqueda).reduce((s, n) => s + n.saldo, 0)
 
-    const totalPendiente = kpiData.reduce((s, v) => s + saldoKpi(v), 0)
-    const valorVencido = kpiData.filter(esVencidaKpi).reduce((s, v) => s + saldoKpi(v), 0)
-    const valorPorVencer = kpiData.filter(v => !esVencidaKpi(v)).reduce((s, v) => s + saldoKpi(v), 0)
+    const totalPendiente = kpiVisibles.reduce((s, v) => s + saldoKpi(v), 0)
+    const valorVencido = kpiVisibles.filter(esVencidaKpi).reduce((s, v) => s + saldoKpi(v), 0)
+    const valorPorVencer = kpiVisibles.filter(v => !esVencidaKpi(v)).reduce((s, v) => s + saldoKpi(v), 0)
     // Puede quedar negativa: el cliente tiene más crédito que deuda.
     const deudaNeta = totalPendiente - saldoFavor
     const pctVencido = totalPendiente > 0 ? (valorVencido / totalPendiente) * 100 : 0
@@ -371,16 +448,11 @@ export default function CuentasCobrar() {
 
     // Días calle ponderado: Σ((hoy - emisión) * saldo) / Σ saldo. Pondera por el
     // saldo pendiente (para parciales, solo el valor aún por cobrar).
-    const diasCalleNum = kpiData.reduce((s, v) => {
+    const diasCalleNum = kpiVisibles.reduce((s, v) => {
         const dias = Math.max(0, Math.floor((hoyKpi - new Date(v.created_at)) / 86400000))
         return s + dias * saldoKpi(v)
     }, 0)
     const diasCalle = totalPendiente > 0 ? (diasCalleNum / totalPendiente).toFixed(1) : '0.0'
-
-    const pctRet = pctRetencionClientes(perfil?.empresas)
-    const hayRetClientes = pctRet.iva > 0 || pctRet.islr > 0
-    // Pestaña de diferencial cambiario: solo si algún cliente no paga indexado
-    const hayNoIndexados = puedeAnular && clientes.some(c => c.paga_indexado === false)
     const mostrarCheckboxes = ['por_cobrar', 'pendiente', 'parcial'].includes(filtro)
     // En Pendientes no hay pagos todavía: las columnas de pago irían siempre vacías
     const mostrarColsPago = filtro !== 'pendiente'
@@ -416,7 +488,9 @@ export default function CuentasCobrar() {
             diasPago: diasEntre(v.created_at, cob?.ultimaFecha),
         }
     })
-    const filasOrdenadas = ordenarFilas(filasCxc, {
+    // La barra filtra las notas de la pestaña; los conteos del panel se hacen sobre todas (filasCxc)
+    const filasBusqueda = filtrar(filasCxc, busq, camposBusqueda)
+    const filasOrdenadas = ordenarFilas(filasBusqueda, {
         nota: f => f.v.numero_factura,
         factura: f => f.v.nro_referencia,
         cliente: f => f.v.clientes?.nombre,
@@ -432,6 +506,19 @@ export default function CuentasCobrar() {
     }, orden)
     const totalRegistros = filasOrdenadas.length
     const filasPagina = filasOrdenadas.slice(pagina * PAGE_SIZE, (pagina + 1) * PAGE_SIZE)
+
+    // Agrupado: árbol de grupos con subtotales, ordenados por saldo (mayor primero). Sin paginación.
+    const agrupado = busq.agrupar.length > 0
+    const sumarFilas = fs => fs.reduce((s, f) => ({
+        total: s.total + Number(f.v.total || 0), retenciones: s.retenciones + f.retenciones,
+        cobrado: s.cobrado + f.cobrado, saldo: s.saldo + f.saldo,
+    }), { total: 0, retenciones: 0, cobrado: 0, saldo: 0 })
+    const arbolGrupos = agrupado
+        ? agrupar(filasOrdenadas, busq.agrupar, camposBusqueda, sumarFilas, (a, b) => b.sumas.saldo - a.sumas.saldo)
+        : null
+    const alternarGrupo = clave => setGruposAbiertos(s => { const n = new Set(s); n.has(clave) ? n.delete(clave) : n.add(clave); return n })
+    // Estado de cuenta: con un solo cliente en la barra
+    const clienteUnico = busq.filtros.cliente?.length === 1 ? busq.filtros.cliente[0] : null
     const columnasCxc = [
         { key: 'chk', label: mostrarCheckboxes ? '☑' : '' },
         { key: 'dot', label: '' },
@@ -452,6 +539,126 @@ export default function CuentasCobrar() {
         { key: 'estado', label: 'Estado', orden: true },
         { key: 'acc', label: '' },
     ]
+
+    // Fila de grupo: nombre, cantidad de notas y subtotales bajo Total / Ret. / Cobrado / Saldo.
+    // Se lee, no tiene acciones; clic para abrir o cerrar.
+    const idxColTotal = columnasCxc.findIndex(c => c.key === 'total')
+    const FONDO_NIVEL = ['#eef2f7', '#f4f6fa', '#f9fafb']
+    const renderGrupos = (grupos, nivel) => grupos.flatMap(g => {
+        const abierto = gruposAbiertos.has(g.clave)
+        const sub = c => !cobrosListos && c !== 'total' ? '—'
+            : c === 'total' ? fmt(g.sumas.total)
+            : c === 'retenciones' ? (g.sumas.retenciones > 0.005 ? fmt(g.sumas.retenciones) : '—')
+            : c === 'cobrado' ? fmt(g.sumas.cobrado)
+            : c === 'saldo' ? fmt(g.sumas.saldo) : ''
+        const fila = (
+            <tr key={g.clave} onClick={() => alternarGrupo(g.clave)} aria-expanded={abierto}
+                style={{ cursor: 'pointer', backgroundColor: FONDO_NIVEL[nivel] || FONDO_NIVEL[2], borderBottom: '1px solid #e5e7eb' }}>
+                <td colSpan={idxColTotal} style={{ padding: `10px 14px 10px ${14 + nivel * 22}px`, fontSize: '13px', fontWeight: 600, color: '#0F1F3D' }}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                        {abierto ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+                        {g.etiqueta}
+                        <span style={{ fontWeight: 400, color: '#6b7280', fontSize: '12px' }}>· {g.n} {g.n === 1 ? 'nota' : 'notas'}</span>
+                    </span>
+                </td>
+                {columnasCxc.slice(idxColTotal).map(c => (
+                    <td key={c.key} style={{ padding: '10px 14px', fontSize: '13px', fontWeight: 600, whiteSpace: 'nowrap',
+                        color: c.key === 'saldo' ? (g.sumas.saldo > 0.01 ? '#ef4444' : '#16a34a') : c.key === 'cobrado' ? '#16a34a' : c.key === 'retenciones' ? '#4338ca' : '#1f2937' }}>
+                        {sub(c.key)}
+                    </td>
+                ))}
+            </tr>
+        )
+        if (!abierto) return [fila]
+        return [fila, ...(g.hijos ? renderGrupos(g.hijos, nivel + 1) : g.filas.map(renderFila))]
+    })
+
+    // Una nota de la tabla (también dentro de un grupo)
+    const renderFila =({ v, cob, cobrado, saldo: saldoFila, diasPago, retRegistrada, retPendiente, faltaComprobante, diferencial, puedeDiferencial }) => {
+        const sem = semaforo(v.fecha_vencimiento_pago)
+        const seleccionada = seleccionadas.includes(v.id)
+        const deshabilitada = v.estado_cobro === 'pagado' ||
+            (clienteSeleccionado && v.cliente_id !== clienteSeleccionado && !seleccionada)
+        return (
+            <tr key={v.id} style={{ borderBottom: '1px solid #f3f4f6', backgroundColor: seleccionada ? '#eff6ff' : sem?.bg || 'transparent', opacity: deshabilitada && mostrarCheckboxes ? 0.45 : 1, outline: seleccionada ? '2px solid #1d4ed8' : 'none', outlineOffset: '-2px' }}>
+                <td style={{ padding: '12px 8px 12px 14px' }}>
+                    {mostrarCheckboxes && v.estado_cobro !== 'pagado' && (
+                        <input type="checkbox" checked={seleccionada}
+                            disabled={deshabilitada && !seleccionada}
+                            onChange={() => toggleSeleccion(v)}
+                            style={{ width: '16px', height: '16px', cursor: deshabilitada && !seleccionada ? 'not-allowed' : 'pointer', accentColor: '#1d4ed8' }} />
+                    )}
+                </td>
+                <td style={{ padding: '12px 8px 12px 0', fontSize: '18px' }}>{sem?.dot || '⚪'}</td>
+                <td style={{ padding: '12px 8px', fontSize: '12px', fontFamily: 'monospace', color: '#374151', whiteSpace: 'nowrap' }}>{v.numero_factura}</td>
+                {/* "Factura" = ventas.nro_referencia, la Ref que se carga en Ventas → ver nota */}
+                <td style={{ padding: '12px 14px', fontSize: '13px', fontFamily: 'monospace', color: v.nro_referencia ? '#374151' : '#d1d5db' }}>{v.nro_referencia || '—'}</td>
+                <td style={{ padding: '12px 14px', fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>{v.clientes?.nombre || '—'}</td>
+                <td style={{ padding: '12px 8px', fontSize: '12px', color: '#6b7280', whiteSpace: 'nowrap' }}>{fmtFechaTabla(new Date(v.created_at))}</td>
+                {mostrarColsPago && (
+                    <>
+                        <td style={{ padding: '12px 8px', fontSize: '12px', whiteSpace: 'nowrap', color: cob?.ultimaFecha ? '#374151' : '#d1d5db' }}>
+                            {cob?.ultimaFecha ? fmtFechaTabla(parseFecha(cob.ultimaFecha)) : '—'}
+                        </td>
+                        <td style={{ padding: '12px 8px', fontSize: '12px', whiteSpace: 'nowrap', color: diasPago != null ? '#374151' : '#d1d5db' }}>
+                            {diasPago != null ? `${diasPago} d` : '—'}
+                        </td>
+                    </>
+                )}
+                <td style={{ padding: '12px 8px', whiteSpace: 'nowrap' }}
+                    title={v.fecha_vencimiento_pago ? `Vence el ${fmtFechaTabla(new Date(v.fecha_vencimiento_pago + 'T00:00:00'))}` : undefined}>
+                    {sem ? <span style={{ fontSize: '12px', fontWeight: 500, color: sem.color }}>{sem.label}</span>
+                        : <span style={{ fontSize: '12px', color: '#9ca3af' }}>—</span>}
+                </td>
+                <td style={{ padding: '12px 14px', fontSize: '13px', fontWeight: 600, color: '#1f2937' }}>{fmt(v.total)}</td>
+                {hayRetClientes && (
+                    <td style={{ padding: '12px 8px', fontSize: '12px', whiteSpace: 'nowrap' }}
+                        title={retPendiente > 0
+                            ? `${retRegistrada > 0 ? `Registrada ${fmt(retRegistrada)} · ` : ''}Por registrar ${fmt(retPendiente)} (estimada con el % de la empresa)`
+                            : retRegistrada > 0 ? 'Registrada' : undefined}>
+                        {!cobrosListos ? '—'
+                            : retRegistrada + retPendiente < 0.005 ? <span style={{ color: '#d1d5db' }}>—</span>
+                            // Gris itálica = todavía por registrar (estimada)
+                            : <span style={retPendiente > 0 ? { color: '#818cf8', fontStyle: 'italic' } : { color: '#4338ca' }}>
+                                {fmt(retRegistrada + retPendiente)}
+                            </span>}
+                    </td>
+                )}
+                <td style={{ padding: '12px 14px', fontSize: '13px', color: '#16a34a' }}>
+                    {cobrosListos ? fmt(cobrado) : '—'}
+                </td>
+                <td style={{ padding: '12px 14px', fontSize: '13px', fontWeight: 600, color: '#ef4444' }}>
+                    {!cobrosListos ? '—'
+                        : faltaComprobante ? <span style={{ color: '#4338ca', fontSize: '12px', fontWeight: 500, whiteSpace: 'nowrap' }}>Falta comprobante</span>
+                        : saldoFila > 0.01 ? fmt(saldoFila)
+                        : <span style={{ color: '#16a34a' }}>✓ Pagado</span>}
+                    {cobrosListos && diferencial > 0.005 && (
+                        <div title="Saldo llevado a pérdida por diferencial cambiario" style={{ fontSize: '11px', fontWeight: 500, color: '#b45309', whiteSpace: 'nowrap' }}>
+                            Dif. camb. {fmt(diferencial)}
+                        </div>
+                    )}
+                </td>
+                <td style={{ padding: '12px 14px' }}><BadgeCobro estado={v.estado_cobro} /></td>
+                <td style={{ padding: '12px 14px' }}>
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                        {v.estado_cobro !== 'pagado' && (
+                            <button onClick={() => setModalVenta(v)}
+                                style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', padding: '5px 10px', fontSize: '12px', fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                <DollarSign size={12} /> Cobrar
+                            </button>
+                        )}
+                        {cobrosListos && puedeDiferencial && (
+                            <button onClick={() => setModalDiferencial(v)}
+                                title="Llevar el saldo a pérdida por diferencial cambiario"
+                                style={{ backgroundColor: '#fff', color: '#b45309', border: '1px solid #fcd34d', borderRadius: '6px', padding: '5px 10px', fontSize: '12px', fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                Dif. cambiario
+                            </button>
+                        )}
+                    </div>
+                </td>
+            </tr>
+        )
+    }
 
     return (
         <div style={{ padding: '24px' }}>
@@ -489,8 +696,8 @@ export default function CuentasCobrar() {
                         { label: 'Total pendiente', valor: fmt(totalPendiente), sub: fmtBs(totalPendiente * tasas.tasa_bcv), color: '#1f2937' },
                         { label: 'Saldo a favor (NC)', valor: fmt(saldoFavor), sub: saldoFavor > 0.01 ? 'crédito del cliente sin aplicar' : 'sin notas de crédito vivas', color: '#d97706' },
                         { label: 'Deuda neta', valor: fmt(deudaNeta), sub: 'pendiente menos crédito', color: deudaNeta > 0 ? '#1f2937' : '#16a34a' },
-                        { label: 'Facturas vencidas', valor: kpiData.filter(esVencidaKpi).length, sub: 'requieren atención', color: '#ef4444' },
-                        { label: 'Facturas al día', valor: kpiData.filter(v => !esVencidaKpi(v)).length, sub: 'dentro del plazo', color: '#16a34a' },
+                        { label: 'Facturas vencidas', valor: kpiVisibles.filter(esVencidaKpi).length, sub: 'requieren atención', color: '#ef4444' },
+                        { label: 'Facturas al día', valor: kpiVisibles.filter(v => !esVencidaKpi(v)).length, sub: 'dentro del plazo', color: '#16a34a' },
                         { label: 'Días calle ponderado', valor: `${diasCalle} días`, sub: 'promedio ponderado por saldo', color: '#d97706' },
                         { label: 'Valor vencido', valor: fmt(valorVencido), pct: `${pctVencido.toFixed(0)}%`, sub: fmtBs(valorVencido * tasas.tasa_bcv), color: '#ef4444' },
                         { label: 'Valor por vencer', valor: fmt(valorPorVencer), pct: `${pctPorVencer.toFixed(0)}%`, sub: fmtBs(valorPorVencer * tasas.tasa_bcv), color: '#16a34a' },
@@ -511,22 +718,19 @@ export default function CuentasCobrar() {
                 <div ref={barraRef} style={{ position: 'sticky', top: 0, zIndex: 20, backgroundColor: '#f9fafb', margin: '0 -24px', padding: '12px 24px 4px' }}>
                 <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
                     {[['por_cobrar', 'Por cobrar'], ['pendiente', 'Pendientes'], ['parcial', 'Parciales'], ['pagado', 'Pagadas'], ['todos', 'Todas']].map(([val, lbl]) => (
-                        <button key={val} onClick={() => setFiltro(val)}
+                        <button key={val} onClick={() => { setFiltro(val); setFavAplicado(null) }}
                             style={{ padding: '7px 16px', borderRadius: '8px', fontSize: '13px', border: '1px solid', cursor: 'pointer', borderColor: filtro === val ? '#16a34a' : '#e5e7eb', backgroundColor: filtro === val ? '#16a34a' : '#fff', color: filtro === val ? '#fff' : '#6b7280' }}>
                             {lbl}
                         </button>
                     ))}
-                    <FiltroCombo value={filtroCliente} onChange={setFiltroCliente} options={clientesFiltrados.map(x => ({ value: x.id, label: x.nombre }))} placeholder="Todos los clientes" width="240px" />
-                    <FiltroCombo value={filtroCat1}
-                        onChange={cat => {
-                            setFiltroCat1(cat)
-                            // Si el cliente elegido no pertenece a la categoría, se limpia
-                            if (cat && filtroCliente && !clientes.some(c => c.id === filtroCliente && c.cat1_id === cat)) setFiltroCliente('')
-                        }}
-                        options={categorias1.map(x => ({ value: x.id, label: x.nombre }))} placeholder="Todas las categorías" width="220px" />
-                    {filtroCliente && (
+                    <BarraBusqueda campos={camposBusqueda} filas={filasCxc} busqueda={busq} onCambio={cambiarBusqueda} unidad="notas"
+                        placeholder="Buscar cliente, N° de nota, factura, O/C o RIF…"
+                        favoritos={favoritos} favoritoAplicado={favAplicado}
+                        onAplicarFavorito={aplicarFavorito} onGuardarFavorito={guardarFavorito}
+                        onBorrarFavorito={borrarFavorito} onQuitarFavorito={quitarFavorito} />
+                    {clienteUnico && (
                         <button onClick={() => setModalEstadoCuenta(true)}
-                            style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 500, border: 'none', backgroundColor: '#1d4ed8', color: '#fff', cursor: 'pointer' }}>
+                            style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 500, border: 'none', backgroundColor: '#1d4ed8', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' }}>
                             <FileText size={14} /> Estado de cuenta
                         </button>
                     )}
@@ -555,11 +759,23 @@ export default function CuentasCobrar() {
                 )}
                 </div>
 
+                {/* Agrupado: cuántos grupos y abrir/cerrar todos */}
+                {agrupado && !loading && filasOrdenadas.length > 0 && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '12px', color: '#6b7280', margin: '0 0 8px 2px' }}>
+                        <span>{arbolGrupos.length} {arbolGrupos.length === 1 ? 'grupo' : 'grupos'} · {filasOrdenadas.length} notas</span>
+                        <button onClick={() => setGruposAbiertos(new Set(clavesDe(arbolGrupos)))}
+                            style={{ background: 'none', border: 'none', padding: 0, color: '#0E7F70', fontWeight: 600, fontSize: '12px', cursor: 'pointer' }}>Abrir todo</button>
+                        <button onClick={() => setGruposAbiertos(new Set())}
+                            style={{ background: 'none', border: 'none', padding: 0, color: '#0E7F70', fontWeight: 600, fontSize: '12px', cursor: 'pointer' }}>Cerrar todo</button>
+                    </div>
+                )}
+
                 {/* Tabla facturas. overflow 'clip' (no 'hidden') para que los títulos
                     puedan quedar fijos: 'hidden' crea su propio contenedor de scroll. */}
                 <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'clip' }}>
                     {loading ? <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
                         : ventas.length === 0 ? <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>No hay facturas en este estado</div>
+                        : filasOrdenadas.length === 0 ? <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Ninguna nota coincide con la búsqueda</div>
                             : (
                                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                                     <thead>
@@ -573,97 +789,13 @@ export default function CuentasCobrar() {
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {filasPagina.map(({ v, cob, cobrado, saldo: saldoFila, diasPago, retRegistrada, retPendiente, faltaComprobante, diferencial, puedeDiferencial }) => {
-                                            const sem = semaforo(v.fecha_vencimiento_pago)
-                                            const seleccionada = seleccionadas.includes(v.id)
-                                            const deshabilitada = v.estado_cobro === 'pagado' ||
-                                                (clienteSeleccionado && v.cliente_id !== clienteSeleccionado && !seleccionada)
-                                            return (
-                                                <tr key={v.id} style={{ borderBottom: '1px solid #f3f4f6', backgroundColor: seleccionada ? '#eff6ff' : sem?.bg || 'transparent', opacity: deshabilitada && mostrarCheckboxes ? 0.45 : 1, outline: seleccionada ? '2px solid #1d4ed8' : 'none', outlineOffset: '-2px' }}>
-                                                    <td style={{ padding: '12px 8px 12px 14px' }}>
-                                                        {mostrarCheckboxes && v.estado_cobro !== 'pagado' && (
-                                                            <input type="checkbox" checked={seleccionada}
-                                                                disabled={deshabilitada && !seleccionada}
-                                                                onChange={() => toggleSeleccion(v)}
-                                                                style={{ width: '16px', height: '16px', cursor: deshabilitada && !seleccionada ? 'not-allowed' : 'pointer', accentColor: '#1d4ed8' }} />
-                                                        )}
-                                                    </td>
-                                                    <td style={{ padding: '12px 8px 12px 0', fontSize: '18px' }}>{sem?.dot || '⚪'}</td>
-                                                    <td style={{ padding: '12px 8px', fontSize: '12px', fontFamily: 'monospace', color: '#374151', whiteSpace: 'nowrap' }}>{v.numero_factura}</td>
-                                                    {/* "Factura" = ventas.nro_referencia, la Ref que se carga en Ventas → ver nota */}
-                                                    <td style={{ padding: '12px 14px', fontSize: '13px', fontFamily: 'monospace', color: v.nro_referencia ? '#374151' : '#d1d5db' }}>{v.nro_referencia || '—'}</td>
-                                                    <td style={{ padding: '12px 14px', fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>{v.clientes?.nombre || '—'}</td>
-                                                    <td style={{ padding: '12px 8px', fontSize: '12px', color: '#6b7280', whiteSpace: 'nowrap' }}>{fmtFechaTabla(new Date(v.created_at))}</td>
-                                                    {mostrarColsPago && (
-                                                        <>
-                                                            <td style={{ padding: '12px 8px', fontSize: '12px', whiteSpace: 'nowrap', color: cob?.ultimaFecha ? '#374151' : '#d1d5db' }}>
-                                                                {cob?.ultimaFecha ? fmtFechaTabla(parseFecha(cob.ultimaFecha)) : '—'}
-                                                            </td>
-                                                            <td style={{ padding: '12px 8px', fontSize: '12px', whiteSpace: 'nowrap', color: diasPago != null ? '#374151' : '#d1d5db' }}>
-                                                                {diasPago != null ? `${diasPago} d` : '—'}
-                                                            </td>
-                                                        </>
-                                                    )}
-                                                    <td style={{ padding: '12px 8px', whiteSpace: 'nowrap' }}
-                                                        title={v.fecha_vencimiento_pago ? `Vence el ${fmtFechaTabla(new Date(v.fecha_vencimiento_pago + 'T00:00:00'))}` : undefined}>
-                                                        {sem ? <span style={{ fontSize: '12px', fontWeight: 500, color: sem.color }}>{sem.label}</span>
-                                                            : <span style={{ fontSize: '12px', color: '#9ca3af' }}>—</span>}
-                                                    </td>
-                                                    <td style={{ padding: '12px 14px', fontSize: '13px', fontWeight: 600, color: '#1f2937' }}>{fmt(v.total)}</td>
-                                                    {hayRetClientes && (
-                                                        <td style={{ padding: '12px 8px', fontSize: '12px', whiteSpace: 'nowrap' }}
-                                                            title={retPendiente > 0
-                                                                ? `${retRegistrada > 0 ? `Registrada ${fmt(retRegistrada)} · ` : ''}Por registrar ${fmt(retPendiente)} (estimada con el % de la empresa)`
-                                                                : retRegistrada > 0 ? 'Registrada' : undefined}>
-                                                            {!cobrosListos ? '—'
-                                                                : retRegistrada + retPendiente < 0.005 ? <span style={{ color: '#d1d5db' }}>—</span>
-                                                                // Gris itálica = todavía por registrar (estimada)
-                                                                : <span style={retPendiente > 0 ? { color: '#818cf8', fontStyle: 'italic' } : { color: '#4338ca' }}>
-                                                                    {fmt(retRegistrada + retPendiente)}
-                                                                </span>}
-                                                        </td>
-                                                    )}
-                                                    <td style={{ padding: '12px 14px', fontSize: '13px', color: '#16a34a' }}>
-                                                        {cobrosListos ? fmt(cobrado) : '—'}
-                                                    </td>
-                                                    <td style={{ padding: '12px 14px', fontSize: '13px', fontWeight: 600, color: '#ef4444' }}>
-                                                        {!cobrosListos ? '—'
-                                                            : faltaComprobante ? <span style={{ color: '#4338ca', fontSize: '12px', fontWeight: 500, whiteSpace: 'nowrap' }}>Falta comprobante</span>
-                                                            : saldoFila > 0.01 ? fmt(saldoFila)
-                                                            : <span style={{ color: '#16a34a' }}>✓ Pagado</span>}
-                                                        {cobrosListos && diferencial > 0.005 && (
-                                                            <div title="Saldo llevado a pérdida por diferencial cambiario" style={{ fontSize: '11px', fontWeight: 500, color: '#b45309', whiteSpace: 'nowrap' }}>
-                                                                Dif. camb. {fmt(diferencial)}
-                                                            </div>
-                                                        )}
-                                                    </td>
-                                                    <td style={{ padding: '12px 14px' }}><BadgeCobro estado={v.estado_cobro} /></td>
-                                                    <td style={{ padding: '12px 14px' }}>
-                                                        <div style={{ display: 'flex', gap: '6px' }}>
-                                                            {v.estado_cobro !== 'pagado' && (
-                                                                <button onClick={() => setModalVenta(v)}
-                                                                    style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', padding: '5px 10px', fontSize: '12px', fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                                                                    <DollarSign size={12} /> Cobrar
-                                                                </button>
-                                                            )}
-                                                            {cobrosListos && puedeDiferencial && (
-                                                                <button onClick={() => setModalDiferencial(v)}
-                                                                    title="Llevar el saldo a pérdida por diferencial cambiario"
-                                                                    style={{ backgroundColor: '#fff', color: '#b45309', border: '1px solid #fcd34d', borderRadius: '6px', padding: '5px 10px', fontSize: '12px', fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                                                                    Dif. cambiario
-                                                                </button>
-                                                            )}
-                                                        </div>
-                                                    </td>
-                                                </tr>
-                                            )
-                                        })}
+                                        {agrupado ? renderGrupos(arbolGrupos, 0) : filasPagina.map(renderFila)}
                                     </tbody>
                                 </table>
                             )}
                 </div>
 
-                {totalRegistros > PAGE_SIZE && (
+                {!agrupado && totalRegistros > PAGE_SIZE && (
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', marginTop: '8px' }}>
                         <span style={{ fontSize: '13px', color: '#6b7280' }}>
                             Mostrando {pagina * PAGE_SIZE + 1}–{Math.min((pagina + 1) * PAGE_SIZE, totalRegistros)} de {totalRegistros}
@@ -797,8 +929,8 @@ export default function CuentasCobrar() {
                     onCerrar={() => setModalMultiple(false)}
                     onCobrado={() => { setModalMultiple(false); setSeleccionadas([]); cargar() }} />
             )}
-            {modalEstadoCuenta && filtroCliente && (
-                <ModalEstadoCuenta clienteId={filtroCliente} tasaBcv={tasas.tasa_bcv}
+            {modalEstadoCuenta && clienteUnico && (
+                <ModalEstadoCuenta clienteId={clienteUnico} tasaBcv={tasas.tasa_bcv}
                     onCerrar={() => setModalEstadoCuenta(false)} />
             )}
             {modalDiferencial && (

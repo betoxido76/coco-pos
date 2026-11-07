@@ -1,6 +1,12 @@
 # Plan — Barra de búsqueda estilo Odoo (piloto en CxC)
 
-Propuesto 2026-11-07, **pendiente de aprobación**. Nada construido aún.
+Aprobado 2026-11-07 con estas respuestas: los KPIs siguen **todos** los filtros;
+el recorrido lo hace quien cobra en Meraki; tramos 1–30 / 31–60 / 61–90 / +90; a los
+usuarios de SOMA les gustó su barra.
+
+**Estado:** fases 1 a 4 construidas y publicadas el 2026-11-07
+(`src/lib/busqueda.js`, `src/components/BarraBusqueda.jsx`, CxC). Falta la fase 5
+(recorrido con Meraki) y, según el resultado, volverla estándar en CLAUDE.md §15.
 
 ## Objetivo
 
