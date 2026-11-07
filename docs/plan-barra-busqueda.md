@@ -5,8 +5,16 @@ el recorrido lo hace quien cobra en Meraki; tramos 1–30 / 31–60 / 61–90 / 
 usuarios de SOMA les gustó su barra.
 
 **Estado:** fases 1 a 4 construidas y publicadas el 2026-11-07
-(`src/lib/busqueda.js`, `src/components/BarraBusqueda.jsx`, CxC). Falta la fase 5
-(recorrido con Meraki) y, según el resultado, volverla estándar en CLAUDE.md §15.
+(`src/lib/busqueda.js`, `src/components/BarraBusqueda.jsx`, CxC). El mismo día, a pedido
+del usuario y antes del recorrido, se extendió a CxP (Compras y Gastos programados),
+Ventas (notas de entrega), Pedidos, Gastos y Compras (órdenes, recepciones y
+devoluciones), con las piezas compartidas de `src/components/BusquedaLista.jsx`; la
+regla de CLAUDE.md §15 ya la describe. Falta la fase 5 (recorrido con Meraki) en CxC,
+y ajustar en todas las pantallas lo que salga de ahí.
+
+En las pantallas con rango de fechas (Ventas, Pedidos, Gastos) el Desde/Hasta sigue
+junto a la barra; en Ventas se guarda con los favoritos. En Pedidos, el filtro por
+producto (SKU o nombre) sigue aparte porque se resuelve en la base.
 
 ## Objetivo
 

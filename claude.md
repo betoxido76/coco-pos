@@ -565,7 +565,17 @@ Al cerrar un ítem, borrarlo de esta tabla.
   - Para conversión de tipo de insumo entre formulario y `stock_ubicacion`: `{ materias_primas→materia_prima, materiales_empaque→material_empaque, consumibles→consumible, productos_terminados→producto_terminado }`
   - Para conversión desde `compra_items.tipo_insumo` (singular) a nombre de tabla (plural): `{ materia_prima→materias_primas, empaque→materiales_empaque, material_empaque→materiales_empaque, consumible→consumibles, producto_terminado→productos_terminados }`
 - Estilos: inline styles con objetos JS (no clases Tailwind, excepto en Login/ResetPassword)
-- **Filtros de lista**: usar `src/components/FiltroCombo.jsx` (lista + búsqueda por
+- **Filtros de lista: barra de búsqueda estilo Odoo** (`docs/plan-barra-busqueda.md`). La usan CxC,
+  CxP (Compras y Gastos programados), Ventas (notas), Pedidos, Gastos y Compras (OC, recepciones,
+  devoluciones). Para una lista nueva: declarar sus campos (`{ campo, etiqueta, valor, etiquetaValor,
+  texto, filtrable, agrupable, buscable, comun }`, con `campoVencimiento` / `campoMes` / `campoDia` de
+  `src/lib/busqueda.js`), `useBusquedaLista(pantalla, { pestanaPorDefecto })` + `<BarraBusqueda>` +
+  `filtrar` + `agrupar(…, ordenGruposPor(campos, 'total'|'saldo'))` + `ControlGrupos` y
+  `filasDeGrupos` (`src/components/BusquedaLista.jsx`); la fila de la tabla va en una función
+  (`renderFila`) para reutilizarla dentro de los grupos. Se filtra en el navegador sobre las filas
+  ya cargadas; las pestañas de estado se quedan (y se guardan con los favoritos); los KPIs siguen
+  los filtros de la barra. Los meses y fechas se ordenan por su valor (`orden: 'valor'|'valor_desc'`).
+- Fuera de esas listas, filtros sueltos con `src/components/FiltroCombo.jsx` (lista + búsqueda por
   cualquier parte del texto, sin acentos ni mayúsculas; `value=''` = Todos; prop
   `disabled`). No usar `<select>` para filtros; los `<select>` de formularios siguen igual.
 - **Listas: filtros y títulos fijos + orden por columna** con `src/components/TablaOrdenable.jsx`:
