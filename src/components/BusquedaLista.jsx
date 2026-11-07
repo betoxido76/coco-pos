@@ -58,14 +58,18 @@ export function useBusquedaLista(pantalla, { pestanaPorDefecto = null } = {}) {
 }
 
 // "N grupos · M registros · Abrir todo · Cerrar todo" sobre la tabla agrupada
-export function ControlGrupos({ arbol, n, unidad = ['registro', 'registros'], bl }) {
-    if (!arbol || !n) return null
+// `resumen` (opcional) se muestra también sin agrupar cuando hay búsqueda: p. ej. "Total $1.234,00"
+export function ControlGrupos({ arbol, n, unidad = ['registro', 'registros'], bl, resumen }) {
+    const hayBusqueda = Object.values(bl.busq.filtros).some(v => v.length) || bl.busq.textos.length > 0
+    if (!n || (!arbol && !(resumen && hayBusqueda))) return null
     const btn = { background: 'none', border: 'none', padding: 0, color: '#0E7F70', fontWeight: 600, fontSize: '12px', cursor: 'pointer' }
     return (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '12px', color: '#6b7280', margin: '0 0 8px 2px' }}>
-            <span>{arbol.length} {arbol.length === 1 ? 'grupo' : 'grupos'} · {n} {n === 1 ? unidad[0] : unidad[1]}</span>
-            <button style={btn} onClick={() => bl.setAbiertos(new Set(clavesDe(arbol)))}>Abrir todo</button>
-            <button style={btn} onClick={() => bl.setAbiertos(new Set())}>Cerrar todo</button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '12px', color: '#6b7280', margin: '0 0 8px 2px', flexWrap: 'wrap' }}>
+            <span>{arbol ? `${arbol.length} ${arbol.length === 1 ? 'grupo' : 'grupos'} · ` : ''}{n} {n === 1 ? unidad[0] : unidad[1]}{resumen ? ` · ${resumen}` : ''}</span>
+            {arbol && <>
+                <button style={btn} onClick={() => bl.setAbiertos(new Set(clavesDe(arbol)))}>Abrir todo</button>
+                <button style={btn} onClick={() => bl.setAbiertos(new Set())}>Cerrar todo</button>
+            </>}
         </div>
     )
 }

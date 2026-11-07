@@ -10,6 +10,9 @@ import { sinSaldoQueCobrar } from '../lib/cobro'
 import { almacenPredeterminado, verificarStock, moverStockLote } from '../lib/inventario'
 import ModalFaltanteStock from '../components/ModalFaltanteStock'
 import FiltroCombo from '../components/FiltroCombo'
+import BarraBusqueda from '../components/BarraBusqueda'
+import { useBusquedaLista, ControlGrupos, filasDeGrupos } from '../components/BusquedaLista'
+import { filtrar, agrupar, campoMes } from '../lib/busqueda'
 import AvisoDocumentoEntrega from '../components/AvisoDocumentoEntrega'
 import AvisoExoneracion from '../components/AvisoExoneracion'
 import { exoneracionVigente, aplicaIvaCliente } from '../lib/exoneracion'
@@ -25,8 +28,10 @@ function semaforo(stock) {
     return { color: '#16a34a', bg: '#f0fdf4', label: `${stock} uds.` }
 }
 
-// Filtros de la lista de notas de entrega ('' = sin filtro)
-const FILTROS_VACIOS = { desde: '', hasta: '', nota: '', pedido: '', referencia: '', cliente: '', estado: '' }
+// Rango de fechas de la lista de notas ('' = sin límite). Va junto a la barra de búsqueda y se
+// guarda con los favoritos (docs/plan-barra-busqueda.md)
+const RANGO_VACIO = { desde: '', hasta: '' }
+const ESTADOS_COBRO = { pendiente: 'Pendiente', parcial: 'Parcial', pagado: 'Pagado', anulado: 'Anulado' }
 const estiloLabelFiltro = { fontSize: '11px', fontWeight: 500, color: '#6b7280', display: 'block', marginBottom: '4px' }
 const estiloInputFiltro = (valor, width) => ({
     width, padding: '8px 12px', border: '1px solid', borderColor: valor ? '#16a34a' : '#d1d5db', borderRadius: '8px',
@@ -60,13 +65,24 @@ export default function Ventas() {
     const [sortCol, setSortCol] = useState('fecha')
     const [sortDir, setSortDir] = useState('desc')
     const [solicitudesDevCount, setSolicitudesDevCount] = useState(0)
-    const [filtros, setFiltros] = useState(FILTROS_VACIOS)
-    const setFiltro = (campo, valor) => { setFiltros(f => ({ ...f, [campo]: valor })); setPagina(0) }
+    // Barra de búsqueda de las notas; el rango de fechas viaja como "pestaña" del favorito
+    const blV = useBusquedaLista('ventas_notas', { pestanaPorDefecto: RANGO_VACIO })
+    const rango = blV.pestana || RANGO_VACIO
+    const setRango = (campo, valor) => { blV.setPestana({ ...rango, [campo]: valor }); setPagina(0) }
+    const [catNombres, setCatNombres] = useState({})          // categorias_clientes id → nombre
+    const [usuariosNombres, setUsuariosNombres] = useState({})   // vendedor id → nombre
+    useEffect(() => { setPagina(0) }, [blV.busq])
     // Alto de la barra fija de filtros: los títulos de la tabla se pegan debajo
     const [barraRef, altoBarra] = useAltoBarra([tabActiva, vista])
     const [ordenPedidos, ordenarPedidos] = useOrden({ col: 'pedido', dir: 'desc' }, ['pedido', 'entrega'])
 
-    useEffect(() => { cargarVentas(); cargarConteoSolicitudes() }, [])
+    useEffect(() => {
+        cargarVentas(); cargarConteoSolicitudes()
+        supabase.from('categorias_clientes').select('id, nombre').eq('empresa_id', perfil.empresa_id)
+            .then(({ data }) => setCatNombres(Object.fromEntries((data || []).map(c => [c.id, c.nombre]))))
+        supabase.from('usuarios').select('id, nombre').eq('empresa_id', perfil.empresa_id)
+            .then(({ data }) => setUsuariosNombres(Object.fromEntries((data || []).map(u => [u.id, u.nombre]))))
+    }, [])
     useEffect(() => { if (tabActiva === 'pedidos') cargarPedidosAprobados() }, [tabActiva])
 
     async function cargarConteoSolicitudes() {
@@ -82,7 +98,7 @@ export default function Ventas() {
         setLoading(true)
         const { data } = await supabase
             .from('ventas')
-            .select(`*, clientes(nombre, direccion_fiscal), devoluciones(id), pedidos!pedido_id(numero_pedido)`)
+            .select(`*, clientes(nombre, rif, direccion_fiscal, condicion_pago, cat1_id, cat2_id, cat3_id, cat4_id), devoluciones(id), pedidos!pedido_id(numero_pedido, vendedor_id)`)
             .eq('empresa_id', perfil.empresa_id)
             .limit(5000)
         if (data) setVentas(data)
@@ -133,25 +149,39 @@ export default function Ventas() {
         setPagina(0)
     }
 
-    // La fecha de la nota se compara en hora de Venezuela, igual que se muestra
-    const contiene = (valor, buscado) => String(valor || '').toLowerCase().includes(buscado.trim().toLowerCase())
-    const ventasFiltradas = ventas.filter(v => {
+    // ── Campos de la barra de búsqueda (docs/plan-barra-busqueda.md) ──
+    const camposNotas = [
+        { campo: 'cliente', etiqueta: 'Cliente', valor: v => v.cliente_id, etiquetaValor: (k, v) => v?.clientes?.nombre || 'Cliente',
+            texto: v => v.clientes?.nombre, filtrable: true, agrupable: true, buscable: true, comun: true },
+        { campo: 'vendedor', etiqueta: 'Vendedor', valor: v => v.pedidos?.vendedor_id || v.usuario_id, etiquetaValor: k => usuariosNombres[k] || 'Usuario',
+            filtrable: true, agrupable: true, comun: true },
+        { campo: 'estado', etiqueta: 'Estado de cobro', valor: v => v.estado_cobro, etiquetaValor: k => ESTADOS_COBRO[k] || k,
+            orden: Object.keys(ESTADOS_COBRO), filtrable: true, agrupable: true, comun: true },
+        campoMes(v => v.fecha_venta || v.created_at, 'Mes de emisión', { comun: true }),
+        { campo: 'cat1', etiqueta: 'Categoría 1', valor: v => v.clientes?.cat1_id, etiquetaValor: k => catNombres[k] || 'Categoría', filtrable: true, agrupable: true },
+        ...[2, 3, 4].map(n => ({ campo: `cat${n}`, etiqueta: `Categoría ${n}`, valor: v => v.clientes?.[`cat${n}_id`],
+            etiquetaValor: k => catNombres[k] || 'Categoría', filtrable: true, agrupable: true })),
+        { campo: 'condicion', etiqueta: 'Condición de pago', valor: v => v.clientes?.condicion_pago,
+            etiquetaValor: k => ({ contado: 'Contado', credito: 'Crédito' }[k] || k), filtrable: true, agrupable: true },
+        { campo: 'origen', etiqueta: 'Origen', valor: v => v.pedido_id ? 'pedido' : 'directa', orden: ['pedido', 'directa'],
+            etiquetaValor: k => k === 'pedido' ? 'Desde pedido' : 'Venta directa', filtrable: true, agrupable: true },
+        { campo: 'devolucion', etiqueta: 'Devolución', valor: v => v.devoluciones?.length ? 'si' : null,
+            etiquetaValor: () => 'Con devolución', filtrable: true },
+        { campo: 'exonerada', etiqueta: 'IVA', valor: v => v.exoneracion_id ? 'si' : null, etiquetaValor: () => 'Exonerada de IVA', filtrable: true },
+        // Solo búsqueda por texto
+        { campo: 'nota', etiqueta: 'Nota de entrega', valor: v => v.numero_factura, texto: v => v.numero_factura, buscable: true },
+        { campo: 'pedido', etiqueta: 'N° de pedido', valor: v => v.pedidos?.numero_pedido, texto: v => v.pedidos?.numero_pedido, buscable: true },
+        { campo: 'referencia', etiqueta: 'Referencia', valor: v => v.nro_referencia, texto: v => v.nro_referencia, buscable: true },
+        { campo: 'oc', etiqueta: 'O/C del cliente', valor: v => v.oc_cliente, texto: v => v.oc_cliente, buscable: true },
+        { campo: 'rif', etiqueta: 'RIF', valor: v => v.clientes?.rif, texto: v => v.clientes?.rif, buscable: true },
+    ]
+    // El rango de fechas se compara en hora de Venezuela, igual que se muestra
+    const ventasRango = ventas.filter(v => {
         const ymd = ymdCaracas(v.fecha_venta || v.created_at)
-        if (filtros.desde && ymd < filtros.desde) return false
-        if (filtros.hasta && ymd > filtros.hasta) return false
-        if (filtros.nota.trim() && !contiene(v.numero_factura, filtros.nota)) return false
-        if (filtros.pedido.trim() && !contiene(v.pedidos?.numero_pedido, filtros.pedido)) return false
-        if (filtros.referencia.trim() && !contiene(v.nro_referencia, filtros.referencia)) return false
-        if (filtros.cliente && v.cliente_id !== filtros.cliente) return false
-        if (filtros.estado && v.estado_cobro !== filtros.estado) return false
-        return true
+        return !(rango.desde && ymd < rango.desde) && !(rango.hasta && ymd > rango.hasta)
     })
-    const hayFiltros = Object.values(filtros).some(x => String(x).trim())
-    const opcClientes = [...new Map(ventas.filter(v => v.cliente_id).map(v => [v.cliente_id, v.clientes?.nombre || '—'])).entries()]
-        .map(([value, label]) => ({ value, label }))
-        .sort((a, b) => a.label.localeCompare(b.label))
-    const opcEstados = [...new Set(ventas.map(v => v.estado_cobro).filter(Boolean))].sort()
-        .map(e => ({ value: e, label: e.charAt(0).toUpperCase() + e.slice(1) }))
+    const ventasFiltradas = filtrar(ventasRango, blV.busq, camposNotas)
+    const totalFiltrado = ventasFiltradas.filter(v => v.estado_cobro !== 'anulado').reduce((s, v) => s + Number(v.total || 0), 0)
 
     const ventasOrdenadas = [...ventasFiltradas].sort((a, b) => {
         let va, vb
@@ -169,6 +199,49 @@ export default function Ventas() {
     })
     const totalVentas = ventasOrdenadas.length
     const ventasPaginadas = ventasOrdenadas.slice(pagina * pageSize, (pagina + 1) * pageSize)
+    // Agrupado: grupos por monto (mayor primero), con el total sumado; las notas anuladas no suman
+    const arbolNotas = blV.busq.agrupar.length
+        ? agrupar(ventasOrdenadas, blV.busq.agrupar, camposNotas,
+            vs => ({ total: vs.filter(v => v.estado_cobro !== 'anulado').reduce((s, v) => s + Number(v.total || 0), 0) }),
+            (a, b) => b.sumas.total - a.sumas.total)
+        : null
+
+    // Una nota de la lista (también dentro de un grupo)
+    const filaNota = v => (
+        <tr key={v.id} style={{ borderBottom: '1px solid #f3f4f6' }}
+            onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
+            onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+            <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    {v.numero_factura}
+                    {v.devoluciones?.length > 0 && (
+                        <span style={{ fontSize: '10px', backgroundColor: '#fef3c7', color: '#92400e', padding: '1px 6px', borderRadius: '20px', fontFamily: 'sans-serif' }}>
+                            Con devolución
+                        </span>
+                    )}
+                </div>
+            </td>
+            <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', color: v.pedidos?.numero_pedido ? '#374151' : '#d1d5db' }}>
+                {v.pedidos?.numero_pedido || '—'}
+            </td>
+            <td style={{ padding: '12px 16px', fontSize: '12px', fontFamily: 'monospace', color: v.nro_referencia ? '#374151' : '#d1d5db' }}>
+                {v.nro_referencia || '—'}
+            </td>
+            <td style={{ padding: '12px 16px', fontSize: '12px', fontFamily: 'monospace', color: v.oc_cliente ? '#374151' : '#d1d5db' }}>
+                {v.oc_cliente || '—'}
+            </td>
+            <td style={{ padding: '12px 16px', fontSize: '13px', color: '#374151' }}>{v.clientes?.nombre || '—'}</td>
+            <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{new Date(v.fecha_venta || v.created_at).toLocaleDateString('es-VE')}</td>
+            <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(v.total)}</td>
+            <td style={{ padding: '12px 16px' }}><BadgeCobro estado={v.estado_cobro} /></td>
+            <td style={{ padding: '12px 16px' }}>
+                <button onClick={() => abrirFactura(v)}
+                    style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
+                    <FileText size={13} /> Ver
+                </button>
+            </td>
+        </tr>
+    )
 
     return (
         <div style={{ padding: '24px' }}>
@@ -243,36 +316,18 @@ export default function Ventas() {
                 <div ref={barraRef} style={{ position: 'sticky', top: 0, zIndex: 30, backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px 20px', marginBottom: '20px', boxShadow: '0 4px 12px rgba(0,0,0,0.06)', display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
                     <div>
                         <label style={estiloLabelFiltro}>Desde</label>
-                        <input type="date" value={filtros.desde} onChange={e => setFiltro('desde', e.target.value)} style={estiloInputFiltro(filtros.desde, '140px')} />
+                        <input id="ventas-desde" type="date" value={rango.desde} onChange={e => setRango('desde', e.target.value)} style={estiloInputFiltro(rango.desde, '140px')} />
                     </div>
                     <div>
                         <label style={estiloLabelFiltro}>Hasta</label>
-                        <input type="date" value={filtros.hasta} onChange={e => setFiltro('hasta', e.target.value)} style={estiloInputFiltro(filtros.hasta, '140px')} />
+                        <input id="ventas-hasta" type="date" value={rango.hasta} onChange={e => setRango('hasta', e.target.value)} style={estiloInputFiltro(rango.hasta, '140px')} />
                     </div>
-                    <div>
-                        <label style={estiloLabelFiltro}>Nota de entrega</label>
-                        <input value={filtros.nota} onChange={e => setFiltro('nota', e.target.value)} placeholder="NE-…" style={estiloInputFiltro(filtros.nota, '130px')} />
-                    </div>
-                    <div>
-                        <label style={estiloLabelFiltro}>N° Pedido</label>
-                        <input value={filtros.pedido} onChange={e => setFiltro('pedido', e.target.value)} placeholder="PED-…" style={estiloInputFiltro(filtros.pedido, '130px')} />
-                    </div>
-                    <div>
-                        <label style={estiloLabelFiltro}>Referencia</label>
-                        <input value={filtros.referencia} onChange={e => setFiltro('referencia', e.target.value)} placeholder="Todas" style={estiloInputFiltro(filtros.referencia, '130px')} />
-                    </div>
-                    <FiltroCombo label="Cliente" value={filtros.cliente} onChange={v => setFiltro('cliente', v)} options={opcClientes} width="240px" />
-                    <FiltroCombo label="Estado" value={filtros.estado} onChange={v => setFiltro('estado', v)} options={opcEstados} width="150px" />
-                    <button onClick={() => { setFiltros(FILTROS_VACIOS); setPagina(0) }} disabled={!hayFiltros}
-                        style={{ padding: '8px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 500, border: '1px solid #e5e7eb', backgroundColor: '#f9fafb', color: hayFiltros ? '#374151' : '#d1d5db', cursor: hayFiltros ? 'pointer' : 'default' }}>
-                        Limpiar
-                    </button>
-                    {hayFiltros && !loading && (
-                        <span style={{ fontSize: '13px', color: '#6b7280', paddingBottom: '8px' }}>
-                            {ventasFiltradas.length} de {ventas.length} notas
-                        </span>
-                    )}
+                    <BarraBusqueda campos={camposNotas} filas={ventasRango} unidad="notas"
+                        placeholder="Buscar cliente, nota, pedido, referencia, O/C o RIF…" {...blV.propsBarra} />
                 </div>
+            )}
+            {tabActiva === 'ventas' && !loading && (
+                <ControlGrupos arbol={arbolNotas} n={ventasFiltradas.length} unidad={['nota', 'notas']} bl={blV} resumen={`Total ${fmt(totalFiltrado)}`} />
             )}
 
             {/* Tab Ventas */}
@@ -283,7 +338,7 @@ export default function Ventas() {
                     ) : ventas.length === 0 ? (
                         <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>No hay ventas registradas.</div>
                     ) : ventasFiltradas.length === 0 ? (
-                        <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Ninguna nota coincide con los filtros.</div>
+                        <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Ninguna nota coincide con la búsqueda.</div>
                     ) : (
                         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                             <thead>
@@ -307,45 +362,15 @@ export default function Ventas() {
                                 </tr>
                             </thead>
                             <tbody>
-                                {ventasPaginadas.map(v => (
-                                    <tr key={v.id} style={{ borderBottom: '1px solid #f3f4f6' }}
-                                        onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
-                                        onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
-                                        <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                                {v.numero_factura}
-                                                {v.devoluciones?.length > 0 && (
-                                                    <span style={{ fontSize: '10px', backgroundColor: '#fef3c7', color: '#92400e', padding: '1px 6px', borderRadius: '20px', fontFamily: 'sans-serif' }}>
-                                                        Con devolución
-                                                    </span>
-                                                )}
-                                            </div>
-                                        </td>
-                                        <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', color: v.pedidos?.numero_pedido ? '#374151' : '#d1d5db' }}>
-                                            {v.pedidos?.numero_pedido || '—'}
-                                        </td>
-                                        <td style={{ padding: '12px 16px', fontSize: '12px', fontFamily: 'monospace', color: v.nro_referencia ? '#374151' : '#d1d5db' }}>
-                                            {v.nro_referencia || '—'}
-                                        </td>
-                                        <td style={{ padding: '12px 16px', fontSize: '12px', fontFamily: 'monospace', color: v.oc_cliente ? '#374151' : '#d1d5db' }}>
-                                            {v.oc_cliente || '—'}
-                                        </td>
-                                        <td style={{ padding: '12px 16px', fontSize: '13px', color: '#374151' }}>{v.clientes?.nombre || '—'}</td>
-                                        <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{new Date(v.fecha_venta || v.created_at).toLocaleDateString('es-VE')}</td>
-                                        <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(v.total)}</td>
-                                        <td style={{ padding: '12px 16px' }}><BadgeCobro estado={v.estado_cobro} /></td>
-                                        <td style={{ padding: '12px 16px' }}>
-                                            <button onClick={() => abrirFactura(v)}
-                                                style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
-                                                <FileText size={13} /> Ver
-                                            </button>
-                                        </td>
-                                    </tr>
-                                ))}
+                                {arbolNotas
+                                    ? filasDeGrupos({ grupos: arbolNotas, bl: blV, colsEtiqueta: 6, unidad: ['nota', 'notas'], padding: '12px 16px',
+                                        celdas: [{ key: 'total', align: 'right', contenido: g => fmt(g.sumas.total) }, { key: 'estado' }, { key: 'acc' }],
+                                        renderFila: filaNota })
+                                    : ventasPaginadas.map(filaNota)}
                             </tbody>
                         </table>
                     )}
-                    {totalVentas > 0 && (
+                    {totalVentas > 0 && !arbolNotas && (
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderTop: '1px solid #e5e7eb', backgroundColor: '#f9fafb' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                                 <span style={{ fontSize: '13px', color: '#6b7280' }}>
