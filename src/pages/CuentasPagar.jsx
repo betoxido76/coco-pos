@@ -5,7 +5,9 @@ import { AlertTriangle, CheckCircle, Clock, DollarSign, FileText } from 'lucide-
 import { labelMetodo } from '../components/ModalPagoObligacion'
 import { PanelAnticiposCxP, saldoAnticiposEmpresa } from '../components/AnticiposOC'
 import ModalPagoGasto from '../components/ModalPagoGasto'
-import FiltroCombo from '../components/FiltroCombo'
+import BarraBusqueda from '../components/BarraBusqueda'
+import { useBusquedaLista, ControlGrupos, filasDeGrupos } from '../components/BusquedaLista'
+import { filtrar, agrupar, campoVencimiento, campoMes } from '../lib/busqueda'
 import { useOrden, ordenarFilas, useAltoBarra, ThOrden, TopTitulos } from '../components/TablaOrdenable'
 import { precioBaseItem, totalesGuardados } from '../lib/iva'
 import ModalPagoRecepcion, { pagoDirectoCompra } from '../components/ModalPagoRecepcion'
@@ -92,13 +94,14 @@ export default function CuentasPagar() {
     const [pagos, setPagos] = useState({})
     const [pagosKpi, setPagosKpi] = useState({})
     const [loading, setLoading] = useState(true)
-    const [filtro, setFiltro] = useState('pendiente')
     const [compraSeleccionada, setCompraSeleccionada] = useState(null)
     const [mostrarModal, setMostrarModal] = useState(false)
     const [tasas, setTasas] = useState({})
-    const [proveedores, setProveedores] = useState([])
-    const [filtroProveedor, setFiltroProveedor] = useState('')
-    const [soloSinFactura, setSoloSinFactura] = useState(false)
+    // Barra de búsqueda (docs/plan-barra-busqueda.md): una por lista. La pestaña de estado de
+    // Compras (Pendientes, Parciales…) se guarda con los favoritos.
+    const blC = useBusquedaLista('cxp_compras', { pestanaPorDefecto: 'pendiente' })
+    const blG = useBusquedaLista('cxp_gastos')
+    const filtro = blC.pestana
     const [pagina, setPagina] = useState(0)
     const [tabSeccion, setTabSeccion] = useState('compras')
     // Orden de cada tabla (clic en el título) y alto de la barra fija de
@@ -117,8 +120,9 @@ export default function CuentasPagar() {
     const [saldoAnticipos, setSaldoAnticipos] = useState(0)
     const [saldoCreditos, setSaldoCreditos] = useState(0)   // notas de crédito de proveedores con saldo
 
-    useEffect(() => { setPagina(0) }, [filtro, filtroProveedor, soloSinFactura, ordenCompras])
-    useEffect(() => { cargarDatos() }, [filtro, filtroProveedor])
+    useEffect(() => { setPagina(0) }, [filtro, blC.busq, ordenCompras])
+    // La pestaña de estado trae las recepciones; la barra filtra en el navegador
+    useEffect(() => { cargarDatos() }, [filtro])
     useEffect(() => { if (tabSeccion === 'gastos') cargarGastosPendientes() }, [tabSeccion])
     // Anticipos a favor: activo, NO se resta de la deuda (se muestran por separado)
     useEffect(() => { if (perfil?.empresa_id) saldoAnticiposEmpresa(perfil.empresa_id).then(setSaldoAnticipos) }, [perfil?.empresa_id, tabSeccion])
@@ -128,24 +132,17 @@ export default function CuentasPagar() {
             .then(n => setSaldoCreditos(n.reduce((s, x) => s + x.saldo, 0)))
     }, [perfil?.empresa_id, tabSeccion])
 
-    useEffect(() => {
-        supabase.from('proveedores').select('id, nombre')
-            .eq('empresa_id', perfil.empresa_id).eq('activo', true).order('nombre')
-            .then(({ data }) => setProveedores(data || []))
-    }, [])
-
     async function cargarDatos() {
         setLoading(true)
 
         let kpiQ = supabase
             .from('compras')
-            .select(`id, total, descuento_pago, estado_cobro, estado_factura, fecha_vencimiento_pago, condicion_pago, pago_usd, pago_bs, tasa_cambio, base_gravada, base_exenta, iva, proveedores(${PROV_RETENCION})`)
+            .select(`id, numero_doc, nro_doc_proveedor, proveedor_id, created_at, total, descuento_pago, estado_cobro, estado_factura, fecha_vencimiento_pago, condicion_pago, pago_usd, pago_bs, tasa_cambio, base_gravada, base_exenta, iva, proveedores(nombre, ${PROV_RETENCION}), ordenes_compra(numero_oc)`)
             .eq('empresa_id', perfil.empresa_id)
             // Contado y crédito: una recepción de contado también pasa por CxP
             // (vence el día que se recibe) — docs/plan-retenciones.md
             .neq('estado_cobro', 'anulado')
         if (filtro !== 'todos') kpiQ = kpiQ.eq('estado_cobro', filtro)
-        if (filtroProveedor) kpiQ = kpiQ.eq('proveedor_id', filtroProveedor)
 
         // Se traen TODAS las recepciones del filtro (no solo la página) para poder
         // ordenar por cualquier columna, incluidas pagado y saldo. La paginación
@@ -162,7 +159,6 @@ export default function CuentasPagar() {
                     .order('id', { ascending: true })
                     .range(desde, desde + 999)
                 if (filtro !== 'todos') q = q.eq('estado_cobro', filtro)
-                if (filtroProveedor) q = q.eq('proveedor_id', filtroProveedor)
                 const { data, error } = await q
                 if (error) return null
                 filas.push(...(data || []))
@@ -227,11 +223,27 @@ export default function CuentasPagar() {
         return Math.max(0, Number(c.total || 0) - Number(c.descuento_pago || 0)
             - pagadoSinRetenciones(c, pc) - retencionesCompra(agente, c, pc))
     }
-    const totalPendiente = kpiData.reduce((s, c) => s + saldoKpi(c), 0)
+    // ── Campos de la barra de búsqueda: Compras (cada fila es la recepción) ──
+    const camposCompras = [
+        { campo: 'proveedor', etiqueta: 'Proveedor', valor: c => c.proveedor_id, etiquetaValor: (k, c) => c?.proveedores?.nombre || 'Proveedor',
+            texto: c => c.proveedores?.nombre, filtrable: true, agrupable: true, buscable: true, comun: true },
+        campoVencimiento(c => c.fecha_vencimiento_pago),
+        { campo: 'factura', etiqueta: 'Factura', valor: c => c.estado_factura === 'pendiente' ? 'sin' : 'con', orden: ['sin', 'con'],
+            etiquetaValor: k => k === 'sin' ? 'Sin factura' : 'Con factura', filtrable: true, agrupable: true, comun: true },
+        { campo: 'condicion', etiqueta: 'Condición de pago', valor: c => c.condicion_pago,
+            etiquetaValor: k => ({ contado: 'Contado', credito: 'Crédito' }[k] || k), filtrable: true, agrupable: true },
+        campoMes(c => c.created_at, 'Mes de recepción'),
+        { campo: 'documento', etiqueta: 'Documento', valor: c => c.numero_doc, texto: c => c.numero_doc, buscable: true },
+        { campo: 'doc_prov', etiqueta: 'Doc. del proveedor', valor: c => c.nro_doc_proveedor, texto: c => c.nro_doc_proveedor, buscable: true },
+        { campo: 'oc', etiqueta: 'Orden de compra', valor: c => c.ordenes_compra?.numero_oc, texto: c => c.ordenes_compra?.numero_oc, buscable: true },
+    ]
+    // KPIs: la pestaña de estado + los filtros de la barra
+    const kpiVisibles = filtrar(kpiData, blC.busq, camposCompras)
+    const totalPendiente = kpiVisibles.reduce((s, c) => s + saldoKpi(c), 0)
     // Recepciones que llegaron sin factura: su total es un estimado
-    const totalSinFactura = kpiData.filter(c => c.estado_factura === 'pendiente').reduce((s, c) => s + saldoKpi(c), 0)
-    const vencidas = kpiData.filter(c => c.fecha_vencimiento_pago && new Date(c.fecha_vencimiento_pago) < new Date()).length
-    const alDia = kpiData.filter(c => c.fecha_vencimiento_pago && new Date(c.fecha_vencimiento_pago) >= new Date()).length
+    const totalSinFactura = kpiVisibles.filter(c => c.estado_factura === 'pendiente').reduce((s, c) => s + saldoKpi(c), 0)
+    const vencidas = kpiVisibles.filter(c => c.fecha_vencimiento_pago && new Date(c.fecha_vencimiento_pago) < new Date()).length
+    const alDia = kpiVisibles.filter(c => c.fecha_vencimiento_pago && new Date(c.fecha_vencimiento_pago) >= new Date()).length
 
     async function cargarGastosPendientes() {
         setLoadingGastos(true)
@@ -252,7 +264,7 @@ export default function CuentasPagar() {
     const cuentaG = g => cuentaGasto(g, abonosGasto[g.id] || [], agente, tasas)
 
     // Filas ordenadas de cada pestaña (los vacíos van siempre al final)
-    const comprasOrdenadas = ordenarFilas(soloSinFactura ? compras.filter(c => c.estado_factura === 'pendiente') : compras, {
+    const comprasOrdenadas = ordenarFilas(filtrar(compras, blC.busq, camposCompras), {
         documento: c => c.numero_doc,
         doc_prov: c => c.nro_doc_proveedor,
         proveedor: c => c.proveedores?.nombre,
@@ -265,7 +277,21 @@ export default function CuentasPagar() {
     }, ordenCompras)
     const totalRegistros = comprasOrdenadas.length
     const comprasPagina = comprasOrdenadas.slice(pagina * PAGE_SIZE, (pagina + 1) * PAGE_SIZE)
-    const gastosOrdenados = ordenarFilas(gastosPend, {
+    // ── Campos de la barra: Gastos programados ──
+    const camposGastos = [
+        { campo: 'tipo', etiqueta: 'Tipo de gasto', valor: g => g.tipo_gasto_id || g.categoria, etiquetaValor: (k, g) => g?.tipos_gastos?.nombre || g?.categoria || 'Tipo',
+            filtrable: true, agrupable: true, comun: true },
+        { campo: 'proveedor', etiqueta: 'Proveedor', valor: g => g.proveedor_id, etiquetaValor: (k, g) => g?.proveedores?.nombre || 'Proveedor',
+            texto: g => g.proveedores?.nombre, filtrable: true, agrupable: true, buscable: true, comun: true },
+        campoVencimiento(g => g.fecha_vencimiento),
+        { campo: 'estado', etiqueta: 'Estado', valor: g => g.estado, orden: ['pendiente', 'parcial'],
+            etiquetaValor: k => ({ pendiente: 'Pendiente', parcial: 'Parcial' }[k] || k), filtrable: true, agrupable: true },
+        campoMes(g => g.fecha, 'Mes del gasto'),
+        { campo: 'documento', etiqueta: 'Documento', valor: g => g.numero_gasto, texto: g => g.numero_gasto, buscable: true },
+        { campo: 'nombre', etiqueta: 'Nombre', valor: g => g.nombre, texto: g => `${g.nombre || ''} ${g.descripcion || ''}`, buscable: true },
+        { campo: 'factura', etiqueta: 'Factura', valor: g => g.numero_factura, texto: g => g.numero_factura, buscable: true },
+    ]
+    const gastosOrdenados = ordenarFilas(filtrar(gastosPend, blG.busq, camposGastos), {
         documento: g => g.numero_gasto,
         nombre: g => g.nombre,
         tipo: g => g.tipos_gastos?.nombre || g.categoria,
@@ -276,9 +302,126 @@ export default function CuentasPagar() {
         saldo: g => cuentaG(g).saldo,
         estado: g => g.estado,
     }, ordenGastos)
+
+    // ── Agrupado: grupos ordenados por saldo, con subtotales ──
+    const porSaldo = (a, b) => b.sumas.saldo - a.sumas.saldo
+    const arbolCompras = blC.busq.agrupar.length
+        ? agrupar(comprasOrdenadas, blC.busq.agrupar, camposCompras, cs => cs.reduce((s, c) => ({
+            total: s.total + Number(c.total || 0), pagado: s.pagado + calcularCobrado(c),
+            retenciones: s.retenciones + calcularRetencion(c), saldo: s.saldo + calcularSaldo(c),
+        }), { total: 0, pagado: 0, retenciones: 0, saldo: 0 }), porSaldo)
+        : null
+    const arbolGastos = blG.busq.agrupar.length
+        ? agrupar(gastosOrdenados, blG.busq.agrupar, camposGastos, gs => gs.reduce((s, g) => {
+            const k = cuentaG(g)
+            return { total: s.total + k.total, pagado: s.pagado + k.pagado, retenciones: s.retenciones + k.retenciones, saldo: s.saldo + k.saldo }
+        }, { total: 0, pagado: 0, retenciones: 0, saldo: 0 }), porSaldo)
+        : null
+    // Subtotales de un grupo bajo Total, Pagado, [Retenciones] y Saldo; Estado y acción vacíos
+    const celdasSubtotal = [
+        { key: 'total', align: 'right', contenido: g => fmt(g.sumas.total) },
+        { key: 'pagado', align: 'right', contenido: g => fmt(g.sumas.pagado), color: () => '#16a34a' },
+        ...(agente ? [{ key: 'ret', align: 'right', contenido: g => fmt(g.sumas.retenciones), color: g => g.sumas.retenciones > 0 ? '#854d0e' : '#9ca3af' }] : []),
+        { key: 'saldo', align: 'right', contenido: g => fmt(g.sumas.saldo), color: g => g.sumas.saldo > 0.01 ? '#dc2626' : '#16a34a' },
+        { key: 'estado' }, { key: 'acc' },
+    ]
+
     function abrirModal(compra) {
         setCompraSeleccionada(compra)
         setMostrarModal(true)
+    }
+
+    // Fila de cada tabla (también dentro de un grupo)
+    const filaCompra = c => {
+        const saldo = calcularSaldo(c)
+        const cobrado = calcularCobrado(c)
+        const retencion = calcularRetencion(c)
+        return (
+            <tr key={c.id} style={{ borderBottom: '1px solid #f3f4f6' }}
+                onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
+                onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                <td style={{ padding: '12px 16px', textAlign: 'center' }}>
+                    {c.estado_cobro !== 'pagado' && c.estado_cobro !== 'anulado' && (
+                        <span style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '50%', backgroundColor: semaforo(c.fecha_vencimiento_pago) }} />
+                    )}
+                </td>
+                <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>
+                    {c.numero_doc}
+                    {c.estado_factura === 'pendiente' && <div><BadgeSinFactura /></div>}
+                </td>
+                <td style={{ padding: '12px 16px', fontSize: '12px', fontFamily: 'monospace', color: '#6b7280' }}>{c.nro_doc_proveedor || '—'}</td>
+                <td style={{ padding: '12px 16px', fontSize: '13px', color: '#374151' }}>{c.proveedores?.nombre || '—'}</td>
+                <td style={{ padding: '12px 16px', fontSize: '13px' }}>
+                    <div>{c.fecha_vencimiento_pago ? new Date(c.fecha_vencimiento_pago).toLocaleDateString('es-VE') : '—'}</div>
+                    {c.estado_cobro !== 'pagado' && <BadgeVencimiento fecha={c.fecha_vencimiento_pago} />}
+                </td>
+                <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(c.total)}</td>
+                <td style={{ padding: '12px 16px', fontSize: '13px', color: '#16a34a', textAlign: 'right' }}>{fmt(cobrado)}</td>
+                {agente && <td style={{ padding: '12px 16px', fontSize: '13px', color: retencion > 0 ? '#854d0e' : '#9ca3af', textAlign: 'right' }}>{fmt(retencion)}</td>}
+                <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: saldo > 0 ? '#dc2626' : '#16a34a', textAlign: 'right' }}>{fmt(saldo)}</td>
+                <td style={{ padding: '12px 16px' }}><BadgeEstado estado={c.estado_cobro} /></td>
+                <td style={{ padding: '12px 16px' }}>
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                        {c.estado_factura === 'pendiente' && c.estado_cobro !== 'anulado' ? (
+                            <button onClick={() => { setCompraVer(c); setAbrirFactura(true) }}
+                                style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: '#d97706', color: '#fff', border: 'none', borderRadius: '6px', padding: '5px 10px', fontSize: '12px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                <FileText size={12} /> Registrar factura
+                            </button>
+                        ) : c.estado_cobro !== 'pagado' && c.estado_cobro !== 'anulado' && (
+                            <button onClick={() => abrirModal(c)}
+                                style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', padding: '5px 10px', fontSize: '12px', cursor: 'pointer' }}>
+                                <DollarSign size={12} /> Pagar
+                            </button>
+                        )}
+                        <button onClick={() => setCompraVer(c)}
+                            style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
+                            <FileText size={13} /> Ver
+                        </button>
+                    </div>
+                </td>
+            </tr>
+        )
+    }
+
+    const filaGasto = g => {
+        const { total, pagado, retenciones, saldo } = cuentaG(g)
+        return (
+            <tr key={g.id} style={{ borderBottom: '1px solid #f3f4f6' }}
+                onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
+                onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                <td style={{ padding: '12px 16px', textAlign: 'center' }}>
+                    <span style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '50%', backgroundColor: semaforo(g.fecha_vencimiento) }} />
+                </td>
+                <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>{g.numero_gasto || '—'}</td>
+                <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1f2937', fontWeight: 500 }}>
+                    {g.nombre}
+                    {g.proveedores?.nombre && <div style={{ fontSize: '11px', color: '#6b7280', marginTop: '2px' }}>Proveedor: {g.proveedores.nombre}</div>}
+                    {g.descripcion && <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '2px' }}>{g.descripcion}</div>}
+                </td>
+                <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{g.tipos_gastos?.nombre || g.categoria || '—'}</td>
+                <td style={{ padding: '12px 16px', fontSize: '13px' }}>
+                    <div style={{ marginBottom: '2px' }}>{g.fecha_vencimiento ? new Date(g.fecha_vencimiento + 'T00:00:00').toLocaleDateString('es-VE') : '—'}</div>
+                    <BadgeVencimiento fecha={g.fecha_vencimiento ? g.fecha_vencimiento + 'T00:00:00' : null} />
+                </td>
+                <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(total)}</td>
+                <td style={{ padding: '12px 16px', fontSize: '13px', color: '#16a34a', textAlign: 'right' }}>{fmt(pagado)}</td>
+                {agente && <td style={{ padding: '12px 16px', fontSize: '13px', color: retenciones > 0 ? '#854d0e' : '#9ca3af', textAlign: 'right' }}>{fmt(retenciones)}</td>}
+                <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: saldo > 0 ? '#dc2626' : '#16a34a', textAlign: 'right' }}>{fmt(saldo)}</td>
+                <td style={{ padding: '12px 16px' }}><BadgeEstado estado={g.estado} /></td>
+                <td style={{ padding: '12px 16px' }}>
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                        <button onClick={() => setGastoPagando(g)}
+                            style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', padding: '5px 10px', fontSize: '12px', cursor: 'pointer' }}>
+                            <DollarSign size={12} /> {g.estado === 'parcial' ? 'Abonar' : 'Pagar'}
+                        </button>
+                        <button onClick={() => setGastoVerCxp(g)}
+                            style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
+                            <FileText size={13} /> Ver
+                        </button>
+                    </div>
+                </td>
+            </tr>
+        )
     }
 
     if (compraVer) return (
@@ -342,28 +485,32 @@ export default function CuentasPagar() {
             {/* Filtros (solo para compras) */}
             {tabSeccion === 'compras' && <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
                 {[['pendiente', 'Pendientes'], ['parcial', 'Parciales'], ['pagado', 'Pagadas'], ['todos', 'Todas']].map(([val, label]) => (
-                    <button key={val} onClick={() => setFiltro(val)}
+                    <button key={val} onClick={() => blC.setPestana(val)}
                         style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid #e5e7eb', cursor: 'pointer', backgroundColor: filtro === val ? '#16a34a' : '#fff', color: filtro === val ? '#fff' : '#374151', fontWeight: filtro === val ? 500 : 400 }}>
                         {label}
                     </button>
                 ))}
-                <FiltroCombo value={filtroProveedor} onChange={setFiltroProveedor} options={proveedores.map(x => ({ value: x.id, label: x.nombre }))} placeholder="Todos los proveedores" width="240px" />
-                <button onClick={() => setSoloSinFactura(v => !v)}
-                    style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', border: '1px solid', cursor: 'pointer',
-                        borderColor: soloSinFactura ? '#d97706' : '#e5e7eb', backgroundColor: soloSinFactura ? '#fffbeb' : '#fff', color: soloSinFactura ? '#92400e' : '#374151' }}>
-                    Sin factura
-                </button>
+                <BarraBusqueda campos={camposCompras} filas={compras} unidad="recepciones"
+                    placeholder="Buscar proveedor, documento, doc. del proveedor u OC…" {...blC.propsBarra} />
+            </div>}
+
+            {tabSeccion === 'gastos' && <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
+                <BarraBusqueda campos={camposGastos} filas={gastosPend} unidad="gastos"
+                    placeholder="Buscar proveedor, documento, nombre o factura…" {...blG.propsBarra} />
             </div>}
 
             </div>
 
             {/* Tabla compras. overflow 'clip' (no 'hidden') para que los títulos
                 puedan quedar fijos: 'hidden' crea su propio contenedor de scroll. */}
+            {tabSeccion === 'compras' && !loading && <ControlGrupos arbol={arbolCompras} n={comprasOrdenadas.length} unidad={['recepción', 'recepciones']} bl={blC} />}
             {tabSeccion === 'compras' && <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'clip' }}>
                 {loading ? (
                     <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
                 ) : compras.length === 0 ? (
                     <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>No hay compras {filtro !== 'todos' ? `con estado "${filtro}"` : ''}</div>
+                ) : comprasOrdenadas.length === 0 ? (
+                    <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Ninguna recepción coincide con la búsqueda</div>
                 ) : (
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
@@ -382,62 +529,15 @@ export default function CuentasPagar() {
                             </tr>
                         </thead>
                         <tbody>
-                            {comprasPagina.map(c => {
-                                const saldo = calcularSaldo(c)
-                                const cobrado = calcularCobrado(c)
-                                const retencion = calcularRetencion(c)
-                                return (
-                                    <tr key={c.id} style={{ borderBottom: '1px solid #f3f4f6' }}
-                                        onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
-                                        onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
-                                        <td style={{ padding: '12px 16px', textAlign: 'center' }}>
-                                            {c.estado_cobro !== 'pagado' && c.estado_cobro !== 'anulado' && (
-                                                <span style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '50%', backgroundColor: semaforo(c.fecha_vencimiento_pago) }} />
-                                            )}
-                                        </td>
-                                        <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>
-                                            {c.numero_doc}
-                                            {c.estado_factura === 'pendiente' && <div><BadgeSinFactura /></div>}
-                                        </td>
-                                        <td style={{ padding: '12px 16px', fontSize: '12px', fontFamily: 'monospace', color: '#6b7280' }}>{c.nro_doc_proveedor || '—'}</td>
-                                        <td style={{ padding: '12px 16px', fontSize: '13px', color: '#374151' }}>{c.proveedores?.nombre || '—'}</td>
-                                        <td style={{ padding: '12px 16px', fontSize: '13px' }}>
-                                            <div>{c.fecha_vencimiento_pago ? new Date(c.fecha_vencimiento_pago).toLocaleDateString('es-VE') : '—'}</div>
-                                            {c.estado_cobro !== 'pagado' && <BadgeVencimiento fecha={c.fecha_vencimiento_pago} />}
-                                        </td>
-                                        <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(c.total)}</td>
-                                        <td style={{ padding: '12px 16px', fontSize: '13px', color: '#16a34a', textAlign: 'right' }}>{fmt(cobrado)}</td>
-                                        {agente && <td style={{ padding: '12px 16px', fontSize: '13px', color: retencion > 0 ? '#854d0e' : '#9ca3af', textAlign: 'right' }}>{fmt(retencion)}</td>}
-                                        <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: saldo > 0 ? '#dc2626' : '#16a34a', textAlign: 'right' }}>{fmt(saldo)}</td>
-                                        <td style={{ padding: '12px 16px' }}><BadgeEstado estado={c.estado_cobro} /></td>
-                                        <td style={{ padding: '12px 16px' }}>
-                                            <div style={{ display: 'flex', gap: '6px' }}>
-                                                {c.estado_factura === 'pendiente' && c.estado_cobro !== 'anulado' ? (
-                                                    <button onClick={() => { setCompraVer(c); setAbrirFactura(true) }}
-                                                        style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: '#d97706', color: '#fff', border: 'none', borderRadius: '6px', padding: '5px 10px', fontSize: '12px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                                                        <FileText size={12} /> Registrar factura
-                                                    </button>
-                                                ) : c.estado_cobro !== 'pagado' && c.estado_cobro !== 'anulado' && (
-                                                    <button onClick={() => abrirModal(c)}
-                                                        style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', padding: '5px 10px', fontSize: '12px', cursor: 'pointer' }}>
-                                                        <DollarSign size={12} /> Pagar
-                                                    </button>
-                                                )}
-                                                <button onClick={() => setCompraVer(c)}
-                                                    style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
-                                                    <FileText size={13} /> Ver
-                                                </button>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                )
-                            })}
+                            {arbolCompras
+                                ? filasDeGrupos({ grupos: arbolCompras, bl: blC, colsEtiqueta: 5, celdas: celdasSubtotal, renderFila: filaCompra, unidad: ['recepción', 'recepciones'], padding: '12px 16px' })
+                                : comprasPagina.map(filaCompra)}
                         </tbody>
                     </table>
                 )}
             </div>}
 
-            {tabSeccion === 'compras' && totalRegistros > PAGE_SIZE && (
+            {tabSeccion === 'compras' && !arbolCompras && totalRegistros > PAGE_SIZE && (
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', marginTop: '8px' }}>
                     <span style={{ fontSize: '13px', color: '#6b7280' }}>
                         Mostrando {pagina * PAGE_SIZE + 1}–{Math.min((pagina + 1) * PAGE_SIZE, totalRegistros)} de {totalRegistros}
@@ -456,12 +556,15 @@ export default function CuentasPagar() {
             )}
 
             {/* Tabla gastos programados */}
+            {tabSeccion === 'gastos' && !loadingGastos && <ControlGrupos arbol={arbolGastos} n={gastosOrdenados.length} unidad={['gasto', 'gastos']} bl={blG} />}
             {tabSeccion === 'gastos' && (
                 <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'clip' }}>
                     {loadingGastos ? (
                         <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Cargando...</div>
                     ) : gastosPend.length === 0 ? (
                         <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>No hay gastos programados pendientes</div>
+                    ) : gastosOrdenados.length === 0 ? (
+                        <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af', fontSize: '14px' }}>Ningún gasto coincide con la búsqueda</div>
                     ) : (
                         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                             <thead>
@@ -480,46 +583,9 @@ export default function CuentasPagar() {
                                 </tr>
                             </thead>
                             <tbody>
-                                {gastosOrdenados.map(g => {
-                                    const { total, pagado, retenciones, saldo } = cuentaG(g)
-                                    return (
-                                        <tr key={g.id} style={{ borderBottom: '1px solid #f3f4f6' }}
-                                            onMouseEnter={e => e.currentTarget.style.backgroundColor = '#f9fafb'}
-                                            onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
-                                            <td style={{ padding: '12px 16px', textAlign: 'center' }}>
-                                                <span style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '50%', backgroundColor: semaforo(g.fecha_vencimiento) }} />
-                                            </td>
-                                            <td style={{ padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', color: '#374151' }}>{g.numero_gasto || '—'}</td>
-                                            <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1f2937', fontWeight: 500 }}>
-                                                {g.nombre}
-                                                {g.proveedores?.nombre && <div style={{ fontSize: '11px', color: '#6b7280', marginTop: '2px' }}>Proveedor: {g.proveedores.nombre}</div>}
-                                                {g.descripcion && <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '2px' }}>{g.descripcion}</div>}
-                                            </td>
-                                            <td style={{ padding: '12px 16px', fontSize: '13px', color: '#6b7280' }}>{g.tipos_gastos?.nombre || g.categoria || '—'}</td>
-                                            <td style={{ padding: '12px 16px', fontSize: '13px' }}>
-                                                <div style={{ marginBottom: '2px' }}>{g.fecha_vencimiento ? new Date(g.fecha_vencimiento + 'T00:00:00').toLocaleDateString('es-VE') : '—'}</div>
-                                                <BadgeVencimiento fecha={g.fecha_vencimiento ? g.fecha_vencimiento + 'T00:00:00' : null} />
-                                            </td>
-                                            <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>{fmt(total)}</td>
-                                            <td style={{ padding: '12px 16px', fontSize: '13px', color: '#16a34a', textAlign: 'right' }}>{fmt(pagado)}</td>
-                                            {agente && <td style={{ padding: '12px 16px', fontSize: '13px', color: retenciones > 0 ? '#854d0e' : '#9ca3af', textAlign: 'right' }}>{fmt(retenciones)}</td>}
-                                            <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: 600, color: saldo > 0 ? '#dc2626' : '#16a34a', textAlign: 'right' }}>{fmt(saldo)}</td>
-                                            <td style={{ padding: '12px 16px' }}><BadgeEstado estado={g.estado} /></td>
-                                            <td style={{ padding: '12px 16px' }}>
-                                                <div style={{ display: 'flex', gap: '6px' }}>
-                                                    <button onClick={() => setGastoPagando(g)}
-                                                        style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', padding: '5px 10px', fontSize: '12px', cursor: 'pointer' }}>
-                                                        <DollarSign size={12} /> {g.estado === 'parcial' ? 'Abonar' : 'Pagar'}
-                                                    </button>
-                                                    <button onClick={() => setGastoVerCxp(g)}
-                                                        style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', color: '#374151', cursor: 'pointer' }}>
-                                                        <FileText size={13} /> Ver
-                                                    </button>
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    )
-                                })}
+                                {arbolGastos
+                                    ? filasDeGrupos({ grupos: arbolGastos, bl: blG, colsEtiqueta: 5, celdas: celdasSubtotal, renderFila: filaGasto, unidad: ['gasto', 'gastos'], padding: '12px 16px' })
+                                    : gastosOrdenados.map(filaGasto)}
                             </tbody>
                         </table>
                     )}

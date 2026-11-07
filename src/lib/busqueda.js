@@ -171,3 +171,39 @@ export function guardarFavoritos(clave, lista) {
     try { localStorage.setItem(clave, JSON.stringify(lista)); return true }
     catch { return false }
 }
+
+// ── Campos que se repiten en varias pantallas ──
+export const TRAMOS_VENCIMIENTO = [['por_vencer', 'Por vencer'], ['1_30', '1–30 días'], ['31_60', '31–60 días'], ['61_90', '61–90 días'], ['mas_90', 'Más de 90 días']]
+
+// Fecha local AAAA-MM-DD: una columna date viene tal cual; un timestamp se lleva a hora de Caracas
+export function fechaLocal(v) {
+    if (!v) return null
+    const s = String(v)
+    if (s.length === 10) return s
+    const d = new Date(s)
+    return isNaN(d) ? null : d.toLocaleDateString('en-CA', { timeZone: 'America/Caracas' })
+}
+
+export function tramoVencimiento(fecha) {
+    const ymd = fechaLocal(fecha)
+    if (!ymd) return null
+    const hoy = new Date(); hoy.setHours(0, 0, 0, 0)
+    const dias = Math.round((hoy - new Date(ymd + 'T00:00:00')) / 86400000)
+    return dias <= 0 ? 'por_vencer' : dias <= 30 ? '1_30' : dias <= 60 ? '31_60' : dias <= 90 ? '61_90' : 'mas_90'
+}
+
+const MESES_CORTOS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']
+export const etiquetaMes = (aaaamm) => { const [a, m] = String(aaaamm).split('-'); return `${MESES_CORTOS[Number(m) - 1] || m} ${a}` }
+
+// Campo "Vencimiento" por tramos. `leer(fila)` devuelve la fecha de vencimiento.
+export const campoVencimiento = (leer, extra = {}) => ({
+    campo: 'vencimiento', etiqueta: 'Vencimiento', valor: f => tramoVencimiento(leer(f)),
+    etiquetaValor: k => (TRAMOS_VENCIMIENTO.find(t => t[0] === k) || [k, k])[1], orden: TRAMOS_VENCIMIENTO.map(t => t[0]),
+    filtrable: true, agrupable: true, comun: true, ...extra,
+})
+
+// Campo de mes (AAAA-MM), del más reciente al más viejo. `leer(fila)` devuelve la fecha.
+export const campoMes = (leer, etiqueta = 'Mes', extra = {}) => ({
+    campo: 'mes', etiqueta, valor: f => fechaLocal(leer(f))?.slice(0, 7) || null, etiquetaValor: etiquetaMes, orden: 'desc',
+    filtrable: true, agrupable: true, ...extra,
+})
