@@ -378,6 +378,12 @@ bancaria. Todo lector de saldo ya lo cuenta; los de caja lo excluyen
 sobre `diferencial_id`). Pestaña CxC → Dif. cambiario con totales y Excel. UI en
 `src/components/DiferencialCambiario.jsx`. Ver `docs/plan-diferencial-cambiario.md`.
 
+### Días promedio de pago (CxC)
+
+Tags "Días promedio de pago" y "Atraso vs plazo": notas pagadas (vista `v_cxc_dias_pago`), solo
+dinero, cada abono ponderado por su monto; cifra grande ponderada por monto y debajo el promedio
+simple. Siguen la barra; sin filtro de mes, últimos 12 meses. Ver `docs/plan-dias-pago.md`.
+
 Los cobros y gastos manejan `monto_usd` + `monto_bs` + `tasa_cambio` + `tipo_tasa`.
 El equivalente en USD = `monto_usd + (monto_bs / tasa)`.
 

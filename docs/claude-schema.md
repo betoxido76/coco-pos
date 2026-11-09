@@ -78,6 +78,9 @@ diferenciales_cambiarios -- DC-000001: venta_id, cliente_id, fecha (último pago
                       --   total_nota, cobrado_usd, bs_pagados, tasa_nota, tasa_ultimo_pago,
                       --   referencia_usd (parte explicada por la tasa), motivo, estado vigente/anulado.
                       --   Un vigente por nota. Escritura SOLO por RPC (docs/plan-diferencial-cambiario.md)
+v_cxc_dias_pago       -- Vista (security_invoker): una fila por nota pagada con monto_dinero, dias_pago
+                      --   (ponderado por abono, solo dinero), plazo_dias y atributos de la barra de CxC.
+                      --   docs/plan-dias-pago.md
 devoluciones          -- Notas de crédito (monto_devuelto con IVA; subtotal, base_gravada, base_exenta, iva)
                       --   numero_nc, cliente_id, nota_liquidacion, fecha_liquidacion
                       --   estado_nc CHECK IN ('pendiente','aplicada','reembolsada','anulada')

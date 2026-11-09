@@ -90,6 +90,8 @@ export default function CuentasCobrar() {
     const [vigentesKpi, setVigentesKpi] = useState({})
     // NC con saldo a favor (por cliente): el KPI se filtra con los atributos del cliente de la barra
     const [ncsFavor, setNcsFavor] = useState([])
+    // Notas pagadas para el KPI de días promedio de pago (v_cxc_dias_pago)
+    const [diasPagoData, setDiasPagoData] = useState([])
     const [loading, setLoading] = useState(true)
     // Barra de búsqueda (docs/plan-barra-busqueda.md). Favoritos en este navegador, por empresa y usuario.
     const claveFav = `mipos_busquedas_cxc_${perfil?.empresa_id}_${perfil?.id || 'yo'}`
@@ -219,6 +221,40 @@ export default function CuentasCobrar() {
 
         cargarKpis()
         cargarSaldoFavor()
+        cargarDiasPago()
+    }
+
+    // Días promedio de pago: notas pagadas con sus días ya ponderados por abono
+    // (vista v_cxc_dias_pago, docs/plan-dias-pago.md). Se filtra con la barra.
+    async function cargarDiasPago() {
+        try {
+            const filas = []
+            for (let desde = 0; ; desde += 1000) {
+                const { data, error } = await supabase.from('v_cxc_dias_pago')
+                    .select('id, cliente_id, created_at, fecha_vencimiento_pago, numero_factura, nro_referencia, oc_cliente, usuario_id, vendedor_id, total, cliente_nombre, cliente_rif, condicion_pago, contribuyente_especial, paga_indexado, cat1_id, cat2_id, cat3_id, cat4_id, tiene_retencion, monto_diferencial, monto_dinero, dias_pago, plazo_dias')
+                    .eq('empresa_id', perfil.empresa_id)
+                    .gt('monto_dinero', 0)
+                    .order('id').range(desde, desde + 999)
+                if (error) throw error
+                filas.push(...(data || []))
+                if (!data || data.length < 1000) break
+            }
+            // Forma de fila de CxC ({ v, … }) para filtrarla con los mismos campos de la barra
+            setDiasPagoData(filas.map(r => ({
+                v: {
+                    id: r.id, cliente_id: r.cliente_id, created_at: r.created_at, fecha_vencimiento_pago: r.fecha_vencimiento_pago,
+                    numero_factura: r.numero_factura, nro_referencia: r.nro_referencia, oc_cliente: r.oc_cliente,
+                    usuario_id: r.usuario_id, total: r.total, pedidos: { vendedor_id: r.vendedor_id },
+                    clientes: { nombre: r.cliente_nombre, rif: r.cliente_rif, condicion_pago: r.condicion_pago,
+                        contribuyente_especial: r.contribuyente_especial, paga_indexado: r.paga_indexado,
+                        cat1_id: r.cat1_id, cat2_id: r.cat2_id, cat3_id: r.cat3_id, cat4_id: r.cat4_id },
+                },
+                retRegistrada: r.tiene_retencion ? 1 : 0, diferencial: Number(r.monto_diferencial || 0), faltaComprobante: false,
+                monto: Number(r.monto_dinero), dias: Number(r.dias_pago), plazo: Number(r.plazo_dias),
+            })))
+        } catch (e) {
+            console.error('Error cargando días de pago CxC:', e)
+        }
     }
 
     // Cobros de todas las notas cargadas, resueltos aquí: las celdas solo leen
@@ -453,6 +489,21 @@ export default function CuentasCobrar() {
         return s + dias * saldoKpi(v)
     }, 0)
     const diasCalle = totalPendiente > 0 ? (diasCalleNum / totalPendiente).toFixed(1) : '0.0'
+
+    // Días promedio de pago (notas pagadas, solo dinero): ponderado por monto y simple,
+    // y atraso contra el plazo de cada nota. Sin filtro de mes: últimos 12 meses.
+    const desdeDiasPago = new Date(hoyKpi); desdeDiasPago.setFullYear(desdeDiasPago.getFullYear() - 1)
+    const pagadasVisibles = filtrar(busq.filtros.mes?.length ? diasPagoData
+        : diasPagoData.filter(f => new Date(f.v.created_at) >= desdeDiasPago), busq, camposBusqueda)
+    const montoPagadas = pagadasVisibles.reduce((s, f) => s + f.monto, 0)
+    const pond = (fn) => montoPagadas > 0 ? pagadasVisibles.reduce((s, f) => s + fn(f) * f.monto, 0) / montoPagadas : 0
+    const simple = (fn) => pagadasVisibles.length ? pagadasVisibles.reduce((s, f) => s + fn(f), 0) / pagadasVisibles.length : 0
+    const diasPagoPond = pond(f => f.dias), diasPagoSimple = simple(f => f.dias)
+    const atrasoPond = pond(f => f.dias - f.plazo), atrasoSimple = simple(f => f.dias - f.plazo)
+    const plazoPond = pond(f => f.plazo)
+    const fmtDias = (n) => `${n.toFixed(1)} d`
+    const fmtAtraso = (n) => `${n > 0.05 ? '+' : n < -0.05 ? '−' : ''}${Math.abs(n).toFixed(1)} d`
+    const ventanaDiasPago = busq.filtros.mes?.length ? 'meses filtrados' : 'últimos 12 meses'
     const mostrarCheckboxes = ['por_cobrar', 'pendiente', 'parcial'].includes(filtro)
     // En Pendientes no hay pagos todavía: las columnas de pago irían siempre vacías
     const mostrarColsPago = filtro !== 'pendiente'
@@ -691,20 +742,31 @@ export default function CuentasCobrar() {
             {/* ─── Vista CxC ─── */}
             {vista === 'cxc' && (<>
                 {/* KPI */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '24px' }}>
+                {/* Fila 1: montos de la cartera. Fila 2: cantidades y días. */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: '16px', marginBottom: '24px' }}>
                     {[
                         { label: 'Total pendiente', valor: fmt(totalPendiente), sub: fmtBs(totalPendiente * tasas.tasa_bcv), color: '#1f2937' },
                         { label: 'Saldo a favor (NC)', valor: fmt(saldoFavor), sub: saldoFavor > 0.01 ? 'crédito del cliente sin aplicar' : 'sin notas de crédito vivas', color: '#d97706' },
                         { label: 'Deuda neta', valor: fmt(deudaNeta), sub: 'pendiente menos crédito', color: deudaNeta > 0 ? '#1f2937' : '#16a34a' },
+                        { label: 'Valor vencido', valor: fmt(valorVencido), pct: `${pctVencido.toFixed(0)}%`, sub: fmtBs(valorVencido * tasas.tasa_bcv), color: '#ef4444' },
+                        { label: 'Valor por vencer', valor: fmt(valorPorVencer), pct: `${pctPorVencer.toFixed(0)}%`, sub: fmtBs(valorPorVencer * tasas.tasa_bcv), color: '#16a34a' },
                         { label: 'Facturas vencidas', valor: kpiVisibles.filter(esVencidaKpi).length, sub: 'requieren atención', color: '#ef4444' },
                         { label: 'Facturas al día', valor: kpiVisibles.filter(v => !esVencidaKpi(v)).length, sub: 'dentro del plazo', color: '#16a34a' },
                         { label: 'Días calle ponderado', valor: `${diasCalle} días`, sub: 'promedio ponderado por saldo', color: '#d97706' },
-                        { label: 'Valor vencido', valor: fmt(valorVencido), pct: `${pctVencido.toFixed(0)}%`, sub: fmtBs(valorVencido * tasas.tasa_bcv), color: '#ef4444' },
-                        { label: 'Valor por vencer', valor: fmt(valorPorVencer), pct: `${pctPorVencer.toFixed(0)}%`, sub: fmtBs(valorPorVencer * tasas.tasa_bcv), color: '#16a34a' },
+                        { label: 'Días promedio de pago', valor: pagadasVisibles.length ? fmtDias(diasPagoPond) : '—',
+                            sub: pagadasVisibles.length ? `simple ${fmtDias(diasPagoSimple)} · ${pagadasVisibles.length} notas` : `sin notas pagadas (${ventanaDiasPago})`,
+                            title: `Notas pagadas (${ventanaDiasPago}), emisión → cobro, solo dinero (sin retenciones, NC ni diferencial cambiario). `
+                                + 'La cifra grande pondera cada abono por su monto; "simple" promedia las notas por igual.',
+                            color: '#1d4ed8' },
+                        { label: 'Atraso vs plazo', valor: pagadasVisibles.length ? fmtAtraso(atrasoPond) : '—',
+                            sub: pagadasVisibles.length ? `simple ${fmtAtraso(atrasoSimple)} · plazo prom. ${fmtDias(plazoPond)}` : '—',
+                            title: 'Días de pago menos el plazo de cada nota (vencimiento − emisión). Positivo = pagó después de vencer; negativo = antes. '
+                                + 'La cifra grande pondera por monto; el plazo promedio también.',
+                            color: atrasoPond > 0.05 ? '#ef4444' : '#16a34a' },
                     ].map(k => (
-                        <div key={k.label} style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px 20px' }}>
+                        <div key={k.label} title={k.title} style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '16px 20px', cursor: k.title ? 'help' : undefined }}>
                             <p style={{ fontSize: '12px', color: '#6b7280', margin: '0 0 4px' }}>{k.label}</p>
-                            <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+                            <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', flexWrap: 'wrap' }}>
                                 <p style={{ fontSize: '22px', fontWeight: 700, color: k.color, margin: 0 }}>{k.valor}</p>
                                 {k.pct != null && <span style={{ fontSize: '20px', fontWeight: 700, color: k.color }}>({k.pct})</span>}
                             </div>
