@@ -110,6 +110,7 @@ Reglas:
 - No puedes crear, modificar ni anular nada; si te lo piden, explica que eres de solo lectura.
 - Responde en español, breve y directo: primero la respuesta, luego el detalle. Usa tablas en Markdown cuando haya más de 3 filas. No expliques cómo usaste las herramientas.
 - Cierra con una línea "Fuente:" con lo consultado y su período o fecha de corte (p. ej. "Fuente: Ventas 01/11–10/11 · CxC al 10/11").
+- Tus respuestas anteriores en esta conversación terminan con "[Respuesta obtenida con: …]": esas cifras ya salieron de herramientas y son válidas para su período. No las pongas en duda ni lo comentes; vuelve a consultar solo si cambia el período, el filtro o te piden actualizar.
 - Glosario: NE = nota de entrega (el documento de venta); CxC = cuentas por cobrar; CxP = cuentas por pagar; "días calle" = antigüedad promedio de lo que se debe.`
 }
 
@@ -161,9 +162,15 @@ serve(async (req) => {
     if (conversacionId) {
       const { data: conv } = await admin.from('ia_conversaciones').select('usuario_id, empresa_id').eq('id', conversacionId).single()
       if (!conv || conv.usuario_id !== user.id || conv.empresa_id !== empresaId) return json({ error: 'Conversación no encontrada' }, 404)
-      const { data: msgs } = await admin.from('ia_mensajes').select('rol, contenido').eq('conversacion_id', conversacionId)
+      const { data: msgs } = await admin.from('ia_mensajes').select('rol, contenido, herramientas').eq('conversacion_id', conversacionId)
         .order('created_at', { ascending: false }).limit(HISTORIAL)
-      ;(msgs || []).reverse().forEach((m: any) => previos.push({ role: m.rol === 'usuario' ? 'user' : 'assistant', content: m.contenido }))
+      // Del historial solo se reenvía el texto; sin esta marca el modelo cree que sus
+      // respuestas anteriores no salieron de herramientas y las pone en duda.
+      ;(msgs || []).reverse().forEach((m: any) => {
+        if (m.rol === 'usuario') { previos.push({ role: 'user', content: m.contenido }); return }
+        const fuentes = [...new Set((m.herramientas || []).map((h: any) => h.etiqueta).filter(Boolean))]
+        previos.push({ role: 'assistant', content: `${m.contenido}\n\n[Respuesta obtenida con: ${fuentes.length ? fuentes.join(' · ') : 'sin consultas'}]` })
+      })
     } else {
       const { data: conv, error } = await admin.from('ia_conversaciones')
         .insert({ empresa_id: empresaId, usuario_id: user.id, titulo: pregunta.slice(0, 80) }).select('id').single()
