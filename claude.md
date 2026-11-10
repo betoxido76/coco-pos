@@ -429,6 +429,14 @@ Claude con salida JSON; decodifica con NHTSA vPIC. Guarda en `lab_vin_escaneos`
 `OPENROUTER_API_KEY` (si existe; el laboratorio elige Haiku, Sonnet u Opus) o
 `ANTHROPIC_API_KEY`. No es un módulo de clientes: la app definitiva irá aparte.
 
+### `asistente` (Asistente IA, `docs/plan-asistente-ia.md`)
+Chat de solo lectura (`/asistente`, módulo `asistente`). La IA (OpenRouter vía `supabase/functions/_shared/ia.ts`,
+modelo por empresa en `empresas.ia_modelo`, Sonnet por defecto) solo puede llamar las funciones `asistente_*`
+(SECURITY INVOKER, empresa validada con `_asistente_empresa`), filtradas por los módulos del usuario. Cupo:
+`empresas.ia_activa` + `ia_limite_mensual_usd` (Super Admin → empresa → IA); el superadmin no tiene límite.
+Todo uso de IA se registra en `ia_consumo`; conversaciones en `ia_conversaciones` / `ia_mensajes`.
+**Una herramienta nueva = función `asistente_*` de solo lectura + entrada en `HERRAMIENTAS` del index.ts.**
+
 **Nota importante:** Ambas Edge Functions requieren el header `apikey` además del `Authorization` para funcionar desde el frontend. El CORS está configurado con `Access-Control-Allow-Origin: *`.
 
 ---
@@ -527,7 +535,7 @@ Al cerrar un ítem, borrarlo de esta tabla.
 | Recorrido de kits | Alta | Nada se probó en navegador (la base sí, en BEGIN/ROLLBACK: ciclo, faltante de PT y armado). Crear un kit de prueba (2 PT + 1 empaque), armarlo por orden normal y por armado rápido, intentar armar sin stock de un PT, venderlo. Desarmar y costeo siguen fuera de alcance (`docs/plan-kits.md`). |
 | Recorrido de factura en recepción | Alta | Nada se probó en navegador (la RPC sí, en BEGIN/ROLLBACK). Recepción sin factura → intento de pago (bloqueado) → registrar factura dentro y fuera del 5 % → pagar. Corregir REC-000054 (Injaca: tiene factura, precios unitarios a corregir; hoy sus líneas suman $4.955,88 y el encabezado $5.005,55) con "Corregir factura". Intentar corregir una recepción con abonos (bloqueado). |
 | Precios con 2 decimales en ventas | Media | `venta_items`, `pedido_items` y `devolucion_items.precio_unitario` siguen en numeric(12,2) (compras pasó a 6 en `compra_items_precio_6dec.sql`). Revisar si los descuentos generan precios base con más decimales; cambiarlo toca `recalcular_totales_pedido` y las vistas del exportador. |
-| Asistente de IA | Media | Plan de la fase 1 en `docs/plan-asistente-ia.md` (pendiente de aprobación): registro de consumo de IA por empresa con límite y panel en Super Admin, y prototipo de chat de solo lectura con herramientas sobre ventas, CxC, pedidos, cobros, stock, CxP y gastos. |
+| Asistente de IA (piloto Meraki) | Alta | Fase 1 desplegada 2026-11-10 (`docs/plan-asistente-ia.md`). Falta: probar en navegador como superadmin, límite por usuario (preguntas/día y velocidad), revisar privacidad en OpenRouter, activar a 1–2 usuarios de Meraki y la evaluación con 20 preguntas reales (Haiku vs Sonnet). |
 | Recepción no transaccional | Baja | La recepción se guarda en varios pasos desde el navegador (compra, aplicación de anticipos, ítems, stock); el pago va aparte por CxP. Si un paso falla, avisa y queda para completarlo a mano. Llevarla a una RPC. |
 
 ---
