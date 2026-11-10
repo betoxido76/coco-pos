@@ -1,4 +1,4 @@
-import { StrictMode } from 'react'
+import { StrictMode, lazy, Suspense } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
@@ -25,6 +25,8 @@ import Bancos from './pages/Bancos'
 import Despacho from './pages/Despacho'
 import Requisiciones from './pages/Requisiciones'
 import ResetPassword from './pages/ResetPassword'
+// Carga diferida: trae react-markdown solo al abrir el asistente
+const Asistente = lazy(() => import('./pages/Asistente'))
 import './index.css'
 import AvisoNuevaVersion from './components/AvisoNuevaVersion'
 
@@ -94,6 +96,7 @@ function App() {
         <Route path="bancos" element={<ModuloProtegido modulo="bancos"><Bancos /></ModuloProtegido>} />
         <Route path="despacho" element={<ModuloProtegido modulo="despacho"><Despacho /></ModuloProtegido>} />
         <Route path="requisiciones" element={<ModuloProtegido modulo="requisiciones"><Requisiciones /></ModuloProtegido>} />
+        <Route path="asistente" element={<ModuloProtegido modulo="asistente"><Suspense fallback={null}><Asistente /></Suspense></ModuloProtegido>} />
         <Route path="superadmin" element={<SuperAdmin />} />
         <Route path="laboratorio-vin" element={<SoloSuperadmin><LaboratorioVin /></SoloSuperadmin>} />
         <Route path="reset-password" element={<ResetPassword />} />

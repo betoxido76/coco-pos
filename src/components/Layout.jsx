@@ -5,7 +5,7 @@ import {
     LayoutDashboard, Package, ShoppingCart,
     TrendingDown, CreditCard, LogOut, Menu, X, Truck, FolderTree,
     ClipboardList, DollarSign, FlaskConical, AlertTriangle, ArrowLeftRight,
-    User, Tag, BarChart2, Landmark, RefreshCw, PackageCheck, Building2, ClipboardCheck, Shield, ScanLine
+    User, Tag, BarChart2, Landmark, RefreshCw, PackageCheck, Building2, ClipboardCheck, Shield, ScanLine, Sparkles
 } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { LogoSomaOps } from './MarcaSoma'
@@ -48,6 +48,7 @@ const NAV_ITEMS = [
     { key: 'finanzas', to: '/finanzas', icon: BarChart2, label: 'Finanzas' },
     { key: 'bancos', to: '/bancos', icon: Landmark, label: 'Bancos' },
     { key: 'administracion', to: '/administracion', icon: FolderTree, label: 'Administración' },
+    { key: 'asistente', to: '/asistente', icon: Sparkles, label: 'Asistente IA' },
 ]
 
 // Solo superadmin: no son módulos de la tabla `modulos` (la app instalada no tiene

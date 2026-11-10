@@ -1,6 +1,8 @@
 # Plan — Asistente de IA (fase 1: base de consumo + prototipo de solo lectura)
 
-Propuesto 2026-10-26, **pendiente de aprobación**. Nada construido aún.
+Propuesto 2026-10-26. **Aprobado 2026-11-10** tras la llamada con Meraki: Meraki aprobó el piloto.
+SQL: `asistente_ia_fase1.sql` (consumo), `asistente_ia_fase2.sql` (herramientas). Edge Function
+`asistente` + adaptador `supabase/functions/_shared/ia.ts`. Pantalla `/asistente` (`src/pages/Asistente.jsx`).
 
 ## Objetivo
 
@@ -44,7 +46,7 @@ Pantalla /asistente ──pregunta──▶ Edge Function `asistente`
 | Modelo | Configurable por empresa. Arranque: **Claude Sonnet 5.5** para el asistente (buen uso de herramientas a costo medio); medir **Haiku 5.5** con las mismas preguntas y quedarse con el más barato que acierte. Opus solo si los análisis lo piden |
 | Alcance de datos (fase 1) | Ventas, CxC, pedidos, cobros, inventario (stock), CxP y gastos. Producción queda para después |
 | Escritura | **Ninguna.** El asistente no crea, edita ni anula nada en la fase 1 |
-| Usuarios (fase 1) | Solo superadmin, con la empresa activa del selector. Los clientes, en la fase 2 |
+| Usuarios (fase 1) | Superadmin (empresa activa del selector) **y el piloto de Meraki**: 1–2 usuarios con el módulo `asistente` (lo asigna el superadmin). Resto de clientes, en la fase 2 |
 | Cifras | Regla del sistema: todo número sale de una herramienta y la respuesta dice de dónde y de qué período ("CxC al 26/10"). Si no hay herramienta para algo, lo dice en vez de suponer |
 | Datos como datos | Nombres, notas y descripciones que devuelven las herramientas son datos, nunca instrucciones (el sistema lo indica; como todo es lectura, el daño posible es bajo) |
 | Topes por pregunta | Máx. 8 vueltas de herramientas y salida acotada; cada herramienta devuelve máx. 200 filas y avisa si recortó |
@@ -200,8 +202,26 @@ Corregir datos en producción, publicar código, cambiar configuraciones ni toca
 permisos. Eso sigue siendo trabajo del superadmin con herramientas de desarrollo,
 no de los usuarios de las empresas.
 
-## Por decidir antes de construir
+## Decidido al aprobar (2026-11-10)
 
-1. ¿El prototipo solo para ti, o también para el admin de Meraki como piloto?
-2. Límite mensual de gasto para el prototipo (propuesta: USD 10).
-3. ¿Producción entra ya en la fase 1 o después?
+1. Piloto con 1–2 usuarios de Meraki (módulo `asistente`), gratis para ellos (propuesta comercial).
+2. Límite del piloto: USD 10/mes (`empresas.ia_limite_mensual_usd`), ajustable en Super Admin → empresa → IA.
+3. Producción queda para después.
+4. Modelo del piloto: Sonnet 5.5; la evaluación (subfase 5) decide si Haiku alcanza.
+
+## Cómo quedó construido
+
+- **Acceso**: módulo `asistente` en `modulos` (menú "Asistente IA"). La empresa necesita
+  `ia_activa` y cupo; el superadmin no tiene límite (su uso se registra igual, a nombre de la empresa).
+- **Herramientas**: `buscar` siempre; el resto según `usuario_modulos` (ventas, cxc → cartera y
+  cobros, pedidos, inventario → stock, cxp, gastos). Funciones `asistente_*` SECURITY INVOKER que
+  validan la empresa con `_asistente_empresa` y crean tablas temporales (por eso son VOLATILE: se
+  llaman por POST).
+- **Cartera CxC del asistente**: saldo de `v_export_cartera_cxc`, antes de las retenciones por
+  registrar (la pantalla las descuenta): puede diferir un poco del KPI "Total pendiente".
+- **Sin margen ni costo** en la fase 1: los costos de las MP fabricadas de Meraki están mal cargados.
+- **Bucle**: máx. 8 vueltas; en la última se fuerza la respuesta (`tool_choice: none`). Resultado de
+  una herramienta máx. 60.000 caracteres. Se reenvían los últimos 10 mensajes de la conversación.
+- **Caché**: instrucciones + herramientas con `cache_control` (OpenRouter lo pasa a Anthropic).
+- **Consumo**: una fila de `ia_consumo` por llamada al modelo; `leer-vin` también registra (a
+  nombre de la empresa del superadmin).

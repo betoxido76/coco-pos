@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabaseClient'
 import { Check, X, Building2, Plus, User, Shield, Eye, EyeOff } from 'lucide-react'
 import SaludInventarioOperador from '../components/SaludInventarioOperador'
+import PanelIAEmpresa from '../components/PanelIAEmpresa'
 
 const inputStyle = {
     width: '100%', padding: '8px 12px', border: '1px solid #d1d5db',
@@ -360,6 +361,7 @@ export default function SuperAdmin() {
                                 {[
                                     { key: 'modulos', label: `Módulos (${modulosEmpresa.size})` },
                                     { key: 'usuarios', label: `Usuarios (${usuarios.length})` },
+                                    { key: 'ia', label: 'IA' },
                                 ].map(tab => (
                                     <button key={tab.key} onClick={() => setTabPanel(tab.key)}
                                         style={{
@@ -414,6 +416,9 @@ export default function SuperAdmin() {
                                 </div>
                             </>
                         )}
+
+                        {/* ── TAB IA: interruptor, límite, modelo y consumo ── */}
+                        {tabPanel === 'ia' && <PanelIAEmpresa empresaId={empresaSel} />}
 
                         {/* ── TAB USUARIOS ── */}
                         {tabPanel === 'usuarios' && (

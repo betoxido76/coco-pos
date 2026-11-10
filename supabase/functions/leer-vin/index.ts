@@ -8,6 +8,7 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import Anthropic from 'npm:@anthropic-ai/sdk@0.137.0'
+import { MODELOS, registrarConsumo } from '../_shared/ia.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -123,6 +124,8 @@ async function leerImagen(imagen: string, mediaType: string) {
     lectura: JSON.parse(texto),
     modelo: resp.model,
     tokens: { entrada: resp.usage?.input_tokens, salida: resp.usage?.output_tokens },
+    // La API directa no informa el costo: precio de lista de Opus
+    costo_usd: ((resp.usage?.input_tokens || 0) * MODELOS.opus.entrada + (resp.usage?.output_tokens || 0) * MODELOS.opus.salida) / 1e6,
   }
 }
 
@@ -182,7 +185,7 @@ serve(async (req) => {
     const { data: { user }, error: authError } = await supabaseUser.auth.getUser()
     if (authError || !user) return json({ error: 'Token inválido' }, 401)
 
-    const { data: perfil } = await supabaseUser.from('usuarios').select('rol').eq('id', user.id).single()
+    const { data: perfil } = await supabaseUser.from('usuarios').select('rol, empresa_id').eq('id', user.id).single()
     if (perfil?.rol !== 'superadmin') return json({ error: 'Acceso denegado' }, 403)
 
     // ── 2. Leer y/o decodificar ──
@@ -208,7 +211,15 @@ serve(async (req) => {
     const t0 = Date.now()
     const { lectura, modelo, tokens, costo_usd } = viaOpenRouter
       ? await leerImagenOpenRouter(imagen, mediaType, body.modelo)
-      : { ...(await leerImagen(imagen, mediaType)), costo_usd: null }
+      : await leerImagen(imagen, mediaType)
+    // Consumo de IA a nombre de la empresa del superadmin (el operador)
+    if (perfil.empresa_id) {
+      const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+      await registrarConsumo(admin, {
+        proveedor: viaOpenRouter ? 'openrouter' : 'anthropic', empresa_id: perfil.empresa_id, usuario_id: user.id,
+        funcion: 'lectura_vin', modelo, uso: { entrada: tokens.entrada || 0, salida: tokens.salida || 0, cacheLectura: 0, costo: Number(costo_usd || 0) },
+      })
+    }
     const v = validarVin(lectura.vin)
     return json({
       ...v,
