@@ -7,6 +7,16 @@
 //
 //   const filas = await traerTodas(() => supabase.from('mermas').select('*')
 //       .eq('empresa_id', empresaId).order('created_at').order('id'))
+// Igual que traerTodas pero devuelve { data, error } como una consulta normal de
+// supabase-js: sirve para envolver una consulta existente sin tocar el código que
+// la lee (destructuring, Promise.all, .then).
+//
+//   const { data } = await conTodas(() => supabase.from('productos_terminados').select('id, nombre').order('id'))
+export async function conTodas(construir) {
+    try { return { data: await traerTodas(construir), error: null } }
+    catch (error) { return { data: null, error } }
+}
+
 export async function traerTodas(construir) {
     const filas = []
     for (let desde = 0; ; desde += 1000) {

@@ -13,7 +13,7 @@ import { filtrar, agrupar, ordenGruposPor, campoMes, campoDia } from '../lib/bus
 import { totalesDeItems, totalesDocumento, totalesGuardados, precioBaseItem, camposIvaLinea, camposIvaHeredados, itemAplicaIva, IVA_PCT } from '../lib/iva'
 import AnticiposOC, { SelectorAnticipos, totalAplicaciones, aplicacionesALista, anticiposConSaldoDeOC, ModalCancelarOCConAnticipo } from '../components/AnticiposOC'
 import { useAltoBarra, useOrden, ordenarFilas, ThOrden, BarraFija, TopTitulos, estiloTarjetaTabla } from '../components/TablaOrdenable'
-import { traerTodas } from '../lib/traerTodas'
+import { conTodas, traerTodas } from '../lib/traerTodas'
 import ModalPagoRecepcion from '../components/ModalPagoRecepcion'
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
@@ -616,11 +616,11 @@ function PanelBusquedaAutopartes({ perfil, insumos, onAgregar }) {
     const [buscando, setBuscando] = useState(false)
 
     useEffect(() => {
-        supabase.from('productos_autopartes').select('marca').eq('empresa_id', perfil.empresa_id).not('marca', 'is', null)
+        conTodas(() => supabase.from('productos_autopartes').select('marca').eq('empresa_id', perfil.empresa_id).not('marca', 'is', null).order('id'))
             .then(({ data }) => setMarcasRepuesto([...new Set((data || []).map(p => p.marca).filter(Boolean))].sort()))
-        supabase.from('productos_autopartes').select('tipo').eq('empresa_id', perfil.empresa_id).not('tipo', 'is', null)
+        conTodas(() => supabase.from('productos_autopartes').select('tipo').eq('empresa_id', perfil.empresa_id).not('tipo', 'is', null).order('id'))
             .then(({ data }) => setTiposRepuesto([...new Set((data || []).map(p => p.tipo).filter(Boolean))].sort()))
-        supabase.from('productos_terminados').select('categoria_1').eq('empresa_id', perfil.empresa_id).eq('activo', true).not('categoria_1', 'is', null)
+        conTodas(() => supabase.from('productos_terminados').select('categoria_1').eq('empresa_id', perfil.empresa_id).eq('activo', true).not('categoria_1', 'is', null).order('id'))
             .then(({ data }) => setCategoriasRepuesto([...new Set((data || []).map(p => p.categoria_1).filter(Boolean))].sort()))
         supabase.from('vehiculos').select('marca').eq('empresa_id', perfil.empresa_id).order('marca')
             .then(({ data }) => setMarcasV([...new Set((data || []).map(v => v.marca).filter(Boolean))].sort()))
@@ -646,8 +646,8 @@ function PanelBusquedaAutopartes({ perfil, insumos, onAgregar }) {
             const { data: vData } = await vQ
             const vehiculoIds = (vData || []).map(v => v.id)
             if (vehiculoIds.length === 0) { setResultados([]); setBuscando(false); return }
-            const { data: pvData } = await supabase.from('producto_vehiculo')
-                .select('producto_id, año_inicio, año_fin').eq('empresa_id', perfil.empresa_id).in('vehiculo_id', vehiculoIds)
+            const { data: pvData } = await conTodas(() => supabase.from('producto_vehiculo')
+                .select('producto_id, año_inicio, año_fin').eq('empresa_id', perfil.empresa_id).in('vehiculo_id', vehiculoIds).order('id'))
             let pvFiltrado = pvData || []
             if (anioV.trim()) {
                 const y = Number(anioV)
@@ -841,14 +841,14 @@ function NuevaOrden({ onCreada, onCancelar }) {
     }
 
     useEffect(() => {
-        supabase.from('proveedores').select('id, nombre').eq('activo', true).order('nombre')
+        supabase.from('proveedores').select('id, nombre').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
             .then(({ data }) => setProveedores(data || []))
 
         Promise.all([
-            supabase.from('materias_primas').select('id, nombre, codigo, stock_actual, unidad_medida, costo_compra_promedio, aplica_iva').eq('activo', true),
-            supabase.from('materiales_empaque').select('id, nombre, codigo, stock_actual, unidad_medida, costo_compra_promedio, aplica_iva').eq('activo', true),
-            supabase.from('consumibles').select('id, nombre, codigo, stock_actual, unidad_medida, costo_compra_promedio, aplica_iva').eq('activo', true),
-            supabase.from('productos_terminados').select('id, nombre, sku, stock_actual, unidad_medida, costo_promedio, tipo_producto, aplica_iva').eq('activo', true)
+            supabase.from('materias_primas').select('id, nombre, codigo, stock_actual, unidad_medida, costo_compra_promedio, aplica_iva').eq('activo', true).eq('empresa_id', perfil.empresa_id),
+            supabase.from('materiales_empaque').select('id, nombre, codigo, stock_actual, unidad_medida, costo_compra_promedio, aplica_iva').eq('activo', true).eq('empresa_id', perfil.empresa_id),
+            supabase.from('consumibles').select('id, nombre, codigo, stock_actual, unidad_medida, costo_compra_promedio, aplica_iva').eq('activo', true).eq('empresa_id', perfil.empresa_id),
+            conTodas(() => supabase.from('productos_terminados').select('id, nombre, sku, stock_actual, unidad_medida, costo_promedio, tipo_producto, aplica_iva').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('id'))
         ]).then(([mp, emp, con, pt]) => {
             const unidos = [
                 ...(mp.data || []).map(i => ({ ...i, tipo: 'materias_primas', costo: i.costo_compra_promedio })),
@@ -1284,7 +1284,7 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
         Promise.all([
             supabase.from('materias_primas').select('id, nombre, codigo, unidad_medida, costo_compra_promedio, aplica_iva').eq('empresa_id', perfil.empresa_id),
             supabase.from('materiales_empaque').select('id, nombre, codigo, unidad_medida, costo_compra_promedio, aplica_iva').eq('empresa_id', perfil.empresa_id),
-            supabase.from('productos_terminados').select('id, nombre, sku, unidad_medida, costo_promedio, aplica_iva').eq('empresa_id', perfil.empresa_id),
+            conTodas(() => supabase.from('productos_terminados').select('id, nombre, sku, unidad_medida, costo_promedio, aplica_iva').eq('empresa_id', perfil.empresa_id).order('id')),
             supabase.from('consumibles').select('id, nombre, codigo, unidad_medida, costo_compra_promedio, aplica_iva').eq('empresa_id', perfil.empresa_id),
         ]).then(([mp, me, pt, con]) => {
             const mapa = {}
@@ -2515,7 +2515,7 @@ function DetalleOrden({ orden, onVolver }) {
         Promise.all([
             supabase.from('materias_primas').select('id, nombre, aplica_iva').eq('empresa_id', orden.empresa_id),
             supabase.from('materiales_empaque').select('id, nombre, aplica_iva').eq('empresa_id', orden.empresa_id),
-            supabase.from('productos_terminados').select('id, nombre, aplica_iva').eq('empresa_id', orden.empresa_id),
+            conTodas(() => supabase.from('productos_terminados').select('id, nombre, aplica_iva').eq('empresa_id', orden.empresa_id).order('id')),
             supabase.from('consumibles').select('id, nombre, aplica_iva').eq('empresa_id', orden.empresa_id)
         ]).then(([mp, emp, pt, con]) => {
             const mapa = {}, iva = {}
@@ -2771,7 +2771,7 @@ function DetalleRecepcion({ recepcion, onVolver }) {
         Promise.all([
             supabase.from('materias_primas').select('id, nombre').eq('empresa_id', perfil.empresa_id),
             supabase.from('materiales_empaque').select('id, nombre').eq('empresa_id', perfil.empresa_id),
-            supabase.from('productos_terminados').select('id, nombre').eq('empresa_id', perfil.empresa_id),
+            conTodas(() => supabase.from('productos_terminados').select('id, nombre').eq('empresa_id', perfil.empresa_id).order('id')),
             supabase.from('consumibles').select('id, nombre').eq('empresa_id', perfil.empresa_id)
         ]).then(([mp, emp, pt, con]) => {
             const mapa = {}
@@ -2976,7 +2976,7 @@ function NuevaDevolucion({ onCreada, onCancelar }) {
             supabase.from('materias_primas').select('id, nombre, codigo, stock_actual, costo_compra_promedio, aplica_iva').eq('empresa_id', perfil.empresa_id).eq('activo', true),
             supabase.from('materiales_empaque').select('id, nombre, codigo, stock_actual, costo_compra_promedio, aplica_iva').eq('empresa_id', perfil.empresa_id).eq('activo', true),
             supabase.from('consumibles').select('id, nombre, codigo, stock_actual, costo_compra_promedio, aplica_iva').eq('empresa_id', perfil.empresa_id).eq('activo', true),
-            supabase.from('productos_terminados').select('id, nombre, sku, stock_actual, costo_promedio, aplica_iva').eq('empresa_id', perfil.empresa_id).eq('activo', true),
+            conTodas(() => supabase.from('productos_terminados').select('id, nombre, sku, stock_actual, costo_promedio, aplica_iva').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('id')),
         ]).then(([provs, alms, mp, me, cons, pt]) => {
             setProveedores(provs.data || [])
             setAlmacenes(alms.data || [])
@@ -3337,11 +3337,11 @@ function EditarOrden({ oc, onGuardada, onCancelar }) {
     async function cargarDatos() {
         setCargando(true)
         const [provRes, mpRes, meRes, conRes, ptRes, itemsRes] = await Promise.all([
-            supabase.from('proveedores').select('id, nombre').eq('activo', true).order('nombre'),
-            supabase.from('materias_primas').select('id, nombre, codigo, aplica_iva, costo_compra_promedio').eq('activo', true),
-            supabase.from('materiales_empaque').select('id, nombre, codigo, aplica_iva, costo_compra_promedio').eq('activo', true),
-            supabase.from('consumibles').select('id, nombre, codigo, aplica_iva, costo_compra_promedio').eq('activo', true),
-            supabase.from('productos_terminados').select('id, nombre, sku, aplica_iva, costo_promedio, tipo_producto').eq('activo', true),
+            supabase.from('proveedores').select('id, nombre').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre'),
+            supabase.from('materias_primas').select('id, nombre, codigo, aplica_iva, costo_compra_promedio').eq('activo', true).eq('empresa_id', perfil.empresa_id),
+            supabase.from('materiales_empaque').select('id, nombre, codigo, aplica_iva, costo_compra_promedio').eq('activo', true).eq('empresa_id', perfil.empresa_id),
+            supabase.from('consumibles').select('id, nombre, codigo, aplica_iva, costo_compra_promedio').eq('activo', true).eq('empresa_id', perfil.empresa_id),
+            conTodas(() => supabase.from('productos_terminados').select('id, nombre, sku, aplica_iva, costo_promedio, tipo_producto').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('id')),
             supabase.from('orden_compra_items').select('*').eq('orden_id', oc.id),
         ])
 

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import { conTodas } from '../lib/traerTodas'
 import { Plus, Search, Pencil, X, Check, AlertTriangle, Trash2 } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { ajustarStockMaestro, almacenPredeterminado } from '../lib/inventario'
@@ -71,11 +72,11 @@ export default function Productos() {
 
     async function cargar() {
         setLoading(true)
-        const { data } = await supabase
+        const { data } = await conTodas(() => supabase
             .from('productos_terminados')
             .select('*')
             .eq('empresa_id', perfil.empresa_id)
-            .order('nombre')
+            .order('nombre').order('id'))
         if (data) setProductos(data)
         setLoading(false)
     }

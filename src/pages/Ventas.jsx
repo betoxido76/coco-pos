@@ -17,7 +17,7 @@ import AvisoDocumentoEntrega from '../components/AvisoDocumentoEntrega'
 import AvisoExoneracion from '../components/AvisoExoneracion'
 import { exoneracionVigente, aplicaIvaCliente } from '../lib/exoneracion'
 import { ymdCaracas } from '../components/SelectorFechaTasa'
-import { traerTodas } from '../lib/traerTodas'
+import { conTodas, traerTodas } from '../lib/traerTodas'
 import { useAltoBarra, useOrden, ordenarFilas, ThOrden, estiloTarjetaTabla } from '../components/TablaOrdenable'
 
 
@@ -902,11 +902,11 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
                 .then(({ data }) => setCuentasBancarias(data || []))
         }
         if (esAutopartes) {
-            supabase.from('productos_autopartes').select('marca').eq('empresa_id', perfil.empresa_id).not('marca', 'is', null)
+            conTodas(() => supabase.from('productos_autopartes').select('marca').eq('empresa_id', perfil.empresa_id).not('marca', 'is', null).order('id'))
                 .then(({ data }) => setMarcasRepuesto([...new Set((data || []).map(p => p.marca).filter(Boolean))].sort()))
-            supabase.from('productos_autopartes').select('tipo').eq('empresa_id', perfil.empresa_id).not('tipo', 'is', null)
+            conTodas(() => supabase.from('productos_autopartes').select('tipo').eq('empresa_id', perfil.empresa_id).not('tipo', 'is', null).order('id'))
                 .then(({ data }) => setTiposRepuesto([...new Set((data || []).map(p => p.tipo).filter(Boolean))].sort()))
-            supabase.from('productos_terminados').select('categoria_1').eq('empresa_id', perfil.empresa_id).eq('activo', true).not('categoria_1', 'is', null)
+            conTodas(() => supabase.from('productos_terminados').select('categoria_1').eq('empresa_id', perfil.empresa_id).eq('activo', true).not('categoria_1', 'is', null).order('id'))
                 .then(({ data }) => setCategoriasRepuesto([...new Set((data || []).map(p => p.categoria_1).filter(Boolean))].sort()))
             supabase.from('vehiculos').select('marca').eq('empresa_id', perfil.empresa_id).order('marca')
                 .then(({ data }) => setMarcasV([...new Set((data || []).map(v => v.marca).filter(Boolean))].sort()))
@@ -916,13 +916,13 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
     useEffect(() => {
         if (!perfil?.empresa_id) return
         if (!listaId) {
-            supabase.from('productos_terminados').select('id, nombre, sku, precio_venta, stock_actual, unidad_medida, aplica_iva, tipo_producto, unidad_venta_2, factor_conversion_2, costo_promedio').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
+            conTodas(() => supabase.from('productos_terminados').select('id, nombre, sku, precio_venta, stock_actual, unidad_medida, aplica_iva, tipo_producto, unidad_venta_2, factor_conversion_2, costo_promedio').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre').order('id'))
                 .then(({ data }) => setProductos(data || []))
             return
         }
-        supabase.from('producto_precios')
+        conTodas(() => supabase.from('producto_precios')
             .select('precio, productos_terminados(id, nombre, sku, stock_actual, unidad_medida, aplica_iva, tipo_producto, unidad_venta_2, factor_conversion_2, costo_promedio)')
-            .eq('lista_id', listaId).eq('empresa_id', perfil.empresa_id)
+            .eq('lista_id', listaId).eq('empresa_id', perfil.empresa_id).order('id'))
             .then(({ data }) => {
                 if (data) setProductos(data.filter(p => p.productos_terminados).map(p => ({ ...p.productos_terminados, precio_venta: p.precio })))
             })
@@ -1017,10 +1017,10 @@ function NuevaVenta({ onVentaCreada, onCancelar }) {
             const vehiculoIds = (vData || []).map(v => v.id)
             if (vehiculoIds.length === 0) { setResultadosAvanzados([]); setBuscandoAvanzado(false); return }
 
-            const { data: pvData } = await supabase.from('producto_vehiculo')
+            const { data: pvData } = await conTodas(() => supabase.from('producto_vehiculo')
                 .select('producto_id, año_inicio, año_fin')
                 .eq('empresa_id', perfil.empresa_id)
-                .in('vehiculo_id', vehiculoIds)
+                .in('vehiculo_id', vehiculoIds).order('id'))
             let pvFiltrado = pvData || []
             if (anioV.trim()) {
                 const y = Number(anioV)

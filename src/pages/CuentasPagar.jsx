@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import { conTodas } from '../lib/traerTodas'
 import { useAuth } from '../contexts/AuthContext'
 import { AlertTriangle, CheckCircle, Clock, DollarSign, FileText } from 'lucide-react'
 import { labelMetodo } from '../components/ModalPagoObligacion'
@@ -687,7 +688,7 @@ function DetalleRecepcionCxP({ compra: compraInicial, abrirFactura = false, onVo
         Promise.all([
             supabase.from('materias_primas').select('id, nombre').eq('empresa_id', perfil.empresa_id),
             supabase.from('materiales_empaque').select('id, nombre').eq('empresa_id', perfil.empresa_id),
-            supabase.from('productos_terminados').select('id, nombre').eq('empresa_id', perfil.empresa_id),
+            conTodas(() => supabase.from('productos_terminados').select('id, nombre').eq('empresa_id', perfil.empresa_id).order('id')),
             supabase.from('consumibles').select('id, nombre').eq('empresa_id', perfil.empresa_id),
         ]).then(([mp, me, pt, con]) => {
             const mapa = {}

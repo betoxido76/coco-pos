@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
-import { traerTodas } from '../lib/traerTodas'
+import { conTodas, traerTodas } from '../lib/traerTodas'
 import { useAuth } from '../contexts/AuthContext'
 import SaludInventario from '../components/SaludInventario'
 import { Package, AlertTriangle, Search, Layers, Beaker, Truck, ArrowDownLeft, ArrowUpRight, History, Filter, Warehouse, ArrowLeftRight, Plus, ShieldCheck } from 'lucide-react'
@@ -392,7 +392,7 @@ function VistaPorAlmacen() {
     async function abrirNuevoStock() {
         // Cargar todos los productos/insumos disponibles
         const [pt, mp, me, con] = await Promise.all([
-            supabase.from('productos_terminados').select('id, nombre, sku').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre'),
+            conTodas(() => supabase.from('productos_terminados').select('id, nombre, sku').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre').order('id')),
             supabase.from('materias_primas').select('id, nombre, codigo').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre'),
             supabase.from('materiales_empaque').select('id, nombre, codigo').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre'),
             supabase.from('consumibles').select('id, nombre, codigo').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre'),
@@ -479,7 +479,7 @@ function VistaPorAlmacen() {
         if (stock.length === 0) return
         async function cargarNombres() {
             const [pt, mp, me, con] = await Promise.all([
-                supabase.from('productos_terminados').select('id, nombre, sku').eq('empresa_id', perfil.empresa_id),
+                conTodas(() => supabase.from('productos_terminados').select('id, nombre, sku').eq('empresa_id', perfil.empresa_id).order('id')),
                 supabase.from('materias_primas').select('id, nombre, codigo').eq('empresa_id', perfil.empresa_id),
                 supabase.from('materiales_empaque').select('id, nombre, codigo').eq('empresa_id', perfil.empresa_id),
                 supabase.from('consumibles').select('id, nombre, codigo').eq('empresa_id', perfil.empresa_id),

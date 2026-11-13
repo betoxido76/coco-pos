@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import { conTodas } from '../lib/traerTodas'
 import { useAuth } from '../contexts/AuthContext'
 import { Plus, X, FlaskConical, Trash2, Pencil } from 'lucide-react'
 import { useAltoBarra, useOrden, ordenarFilas, ThOrden, BarraFija, estiloTarjetaTabla } from '../components/TablaOrdenable'
@@ -257,7 +258,7 @@ function ModalReceta({ receta, tabActivo, recetas = [], onGuardada, onCerrar }) 
 
     useEffect(() => {
         Promise.all([
-            supabase.from('productos_terminados').select('id, nombre, sku, unidad_medida').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre'),
+            conTodas(() => supabase.from('productos_terminados').select('id, nombre, sku, unidad_medida').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre').order('id')),
             supabase.from('materias_primas').select('id, nombre, codigo, unidad_medida').eq('activo', true).eq('empresa_id', perfil.empresa_id).eq('tipo_producto', 'producido').order('nombre'),
             supabase.from('materias_primas').select('id, nombre, codigo, unidad_medida').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre'),
             supabase.from('materiales_empaque').select('id, nombre, codigo, unidad_medida').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre'),

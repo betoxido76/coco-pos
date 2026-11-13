@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import { conTodas } from '../lib/traerTodas'
 import { useAuth } from '../contexts/AuthContext'
 import { precioBaseItem, baseLinea, totalesDeItems, camposIvaLinea, IVA_PCT } from '../lib/iva'
 import { exoneracionVigente, aplicaIvaCliente } from '../lib/exoneracion'
@@ -499,10 +500,10 @@ function ListaClientes({ onVerFicha, onNuevoPedido, onVolver }) {
             supabase.from('clientes')
                 .select('id, nombre, rif, descripcion, condicion_pago, dias_credito, telefono, limite_credito')
                 .eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre'),
-            supabase.from('ventas')
+            conTodas(() => supabase.from('ventas')
                 .select('cliente_id')
                 .eq('empresa_id', perfil.empresa_id)
-                .in('estado_cobro', ['pendiente', 'parcial'])
+                .in('estado_cobro', ['pendiente', 'parcial']).order('id'))
         ]).then(([{ data: clientesData }, { data: ventasData }]) => {
             if (clientesData) { setClientes(clientesData); cacheSet(cacheKey, clientesData) }
             if (ventasData) setClientesConDeuda(new Set(ventasData.map(v => v.cliente_id)))
@@ -817,9 +818,9 @@ function FichaCliente({ cliente, onNuevoPedido, onVolver }) {
 
     async function cargarProductosCambio() {
         if (productosCambio.length > 0) return
-        const { data } = await supabase.from('productos_terminados')
+        const { data } = await conTodas(() => supabase.from('productos_terminados')
             .select('id, nombre, sku, unidad_medida')
-            .eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
+            .eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre').order('id'))
         setProductosCambio(data || [])
     }
 
@@ -1853,9 +1854,9 @@ function FlujoPedido({ clienteInicial, itemsIniciales, onPedidoCreado, onCancela
         const cached = cacheGet(cacheKey)
         if (cached) aplicarProductos(cached)
 
-        supabase.from('producto_precios')
+        conTodas(() => supabase.from('producto_precios')
             .select('precio, productos_terminados(id, nombre, sku, unidad_medida, stock_actual, aplica_iva, unidad_venta_2, factor_conversion_2)')
-            .eq('lista_id', listaId).eq('empresa_id', perfil.empresa_id)
+            .eq('lista_id', listaId).eq('empresa_id', perfil.empresa_id).order('id'))
             .then(({ data }) => {
                 if (data) {
                     const prods = data.filter(p => p.productos_terminados).map(p => ({

@@ -1,5 +1,6 @@
 import { useContext, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import { conTodas } from '../lib/traerTodas'
 import { useAuth } from '../contexts/AuthContext'
 import { PackageCheck, ChevronRight, Check, AlertTriangle, Truck, FileText, Ban, RotateCcw, Search, Plus, X } from 'lucide-react'
 import { itemAplicaIva, precioIncluyeIva, precioBaseItem, baseLinea, totalesDeItems, totalesGuardados, IVA_PCT } from '../lib/iva'
@@ -126,19 +127,21 @@ export default function Despacho() {
     async function cargar() {
         if (tabActiva === 'devoluciones') { setLoading(false); return }
         setLoading(true)
-        let q = supabase
-            .from('pedidos')
-            .select('*, clientes(nombre, rif, descripcion, direccion_fiscal), usuarios(nombre)')
-            .eq('empresa_id', perfil.empresa_id)
-            .order('created_at', { ascending: false })
+        // En bloques de 1000 (la API corta cada respuesta en ese tope)
+        const { data } = await conTodas(() => {
+            let q = supabase
+                .from('pedidos')
+                .select('*, clientes(nombre, rif, descripcion, direccion_fiscal), usuarios(nombre)')
+                .eq('empresa_id', perfil.empresa_id)
+                .order('created_at', { ascending: false })
 
-        if (tabActiva === 'alistamiento') q = q.eq('estado', 'aprobado')
-        else if (tabActiva === 'porregistrar') q = q.eq('estado', 'alistado')
-        else if (tabActiva === 'despacho') q = q.eq('estado', 'facturado')
-        else if (tabActiva === 'completados') q = q.in('estado', ['rechazado', 'despachado'])
-        else q = q.eq('estado', 'anulado')
-
-        const { data } = await q
+            if (tabActiva === 'alistamiento') q = q.eq('estado', 'aprobado')
+            else if (tabActiva === 'porregistrar') q = q.eq('estado', 'alistado')
+            else if (tabActiva === 'despacho') q = q.eq('estado', 'facturado')
+            else if (tabActiva === 'completados') q = q.in('estado', ['rechazado', 'despachado'])
+            else q = q.eq('estado', 'anulado')
+            return q.order('id')
+        })
         if (data) setPedidos(data)
         setLoading(false)
     }

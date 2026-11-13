@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import { conTodas } from '../lib/traerTodas'
 import { useAuth } from '../contexts/AuthContext'
 import { Save, Check, Search, Plus, X } from 'lucide-react'
 import { useAltoBarra, useOrden, ordenarFilas, ThOrden, BarraFija, estiloTarjetaTabla } from '../components/TablaOrdenable'
@@ -58,11 +59,11 @@ export default function ListasPrecios() {
         setExito(false)
         setError('')
 
-        const { data: prods, error: errProds } = await supabase
+        const { data: prods, error: errProds } = await conTodas(() => supabase
             .from('productos_terminados')
             .select('id, nombre, sku, unidad_medida, precio_venta')
             .eq('empresa_id', perfil.empresa_id)
-            .order('nombre')
+            .order('nombre').order('id'))
 
         if (errProds) {
             setError('Error al cargar productos: ' + errProds.message)
@@ -71,11 +72,11 @@ export default function ListasPrecios() {
         }
 
         const listaIdActual = listaId
-        const { data: preciosExistentes } = await supabase
+        const { data: preciosExistentes } = await conTodas(() => supabase
             .from('producto_precios')
             .select('producto_id, precio')
             .eq('lista_id', listaIdActual)
-            .eq('empresa_id', perfil.empresa_id)
+            .eq('empresa_id', perfil.empresa_id).order('id'))
 
         const listaProds = prods || []
         setProductos(listaProds)

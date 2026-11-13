@@ -11,6 +11,7 @@
 // inventario (decisión 0.3 del plan).
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import { conTodas } from '../lib/traerTodas'
 import { useAuth } from '../contexts/AuthContext'
 import { Plus, X, FileText, Trash2, Settings, Check } from 'lucide-react'
 import FiltroCombo from '../components/FiltroCombo'
@@ -231,8 +232,8 @@ function NuevaRequisicion({ areas, onCreada, onCancelar }) {
     // Stock del almacén elegido: solo para quien tiene inventario
     useEffect(() => {
         if (!esAlmacen || !almacenId) { setStock({}); return }
-        supabase.from('stock_ubicacion').select('item_id, cantidad')
-            .eq('empresa_id', perfil.empresa_id).eq('almacen_id', almacenId)
+        conTodas(() => supabase.from('stock_ubicacion').select('item_id, cantidad')
+            .eq('empresa_id', perfil.empresa_id).eq('almacen_id', almacenId).order('id'))
             .then(({ data }) => {
                 const m = {}
                 ;(data || []).forEach(s => { m[s.item_id] = (m[s.item_id] || 0) + Number(s.cantidad || 0) })

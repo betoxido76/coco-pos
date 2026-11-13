@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import { conTodas } from '../lib/traerTodas'
 import { useAuth } from '../contexts/AuthContext'
 import { Check, X, FileText, ChevronRight, Clock, Search, Bell, Ban, Pencil, Trash2 } from 'lucide-react'
 import { precioBaseItem, baseLinea, totalesDeItems, totalesGuardados, camposIvaLinea, IVA_PCT } from '../lib/iva'
@@ -165,25 +166,27 @@ export default function Pedidos() {
 
     async function cargar() {
         setLoading(true)
-        let q = supabase
-            .from('pedidos')
-            .select(`
-                *,
-                clientes(nombre, rif, descripcion, direccion_fiscal, cat1_id),
-                usuarios(nombre),
-                direcciones_entrega(ciudad)
-            `)
-            .eq('empresa_id', perfil.empresa_id)
-            .order('created_at', { ascending: false })
+        // En bloques de 1000 (la API corta cada respuesta en ese tope)
+        const { data } = await conTodas(() => {
+            let q = supabase
+                .from('pedidos')
+                .select(`
+                    *,
+                    clientes(nombre, rif, descripcion, direccion_fiscal, cat1_id),
+                    usuarios(nombre),
+                    direcciones_entrega(ciudad)
+                `)
+                .eq('empresa_id', perfil.empresa_id)
+                .order('created_at', { ascending: false })
 
-        if (tabActiva === 'pendientes') q = q.eq('estado', 'pendiente')
-        else if (tabActiva === 'aprobados') q = q.eq('estado', 'aprobado')
-        else if (tabActiva === 'alistados') q = q.eq('estado', 'alistado')
-        else if (tabActiva === 'pordespachar') q = q.eq('estado', 'facturado')
-        else if (tabActiva === 'historial') q = q.in('estado', ['rechazado', 'despachado'])
-        else if (tabActiva === 'anulados') q = q.eq('estado', 'anulado')
-
-        const { data } = await q
+            if (tabActiva === 'pendientes') q = q.eq('estado', 'pendiente')
+            else if (tabActiva === 'aprobados') q = q.eq('estado', 'aprobado')
+            else if (tabActiva === 'alistados') q = q.eq('estado', 'alistado')
+            else if (tabActiva === 'pordespachar') q = q.eq('estado', 'facturado')
+            else if (tabActiva === 'historial') q = q.in('estado', ['rechazado', 'despachado'])
+            else if (tabActiva === 'anulados') q = q.eq('estado', 'anulado')
+            return q.order('id')
+        })
         if (data) setPedidos(data)
         setLoading(false)
     }
@@ -658,15 +661,15 @@ function DetallePedido({ pedido, onVolver }) {
     async function cargarCatalogoEdit() {
         const campos = 'id, nombre, sku, precio_venta, aplica_iva, tipo_producto, unidad_medida, unidad_venta_2, factor_conversion_2'
         if (pedido.lista_precio_id) {
-            const { data } = await supabase.from('producto_precios')
+            const { data } = await conTodas(() => supabase.from('producto_precios')
                 .select(`precio, productos_terminados(${campos}, activo)`)
-                .eq('empresa_id', perfil.empresa_id).eq('lista_id', pedido.lista_precio_id)
+                .eq('empresa_id', perfil.empresa_id).eq('lista_id', pedido.lista_precio_id).order('id'))
             setCatalogoEdit((data || []).filter(x => x.productos_terminados?.activo)
                 .map(x => ({ ...x.productos_terminados, precio_venta: Number(x.precio) }))
                 .sort((a, b) => a.nombre.localeCompare(b.nombre)))
         } else {
-            const { data } = await supabase.from('productos_terminados').select(campos)
-                .eq('empresa_id', perfil.empresa_id).eq('activo', true).order('nombre')
+            const { data } = await conTodas(() => supabase.from('productos_terminados').select(campos)
+                .eq('empresa_id', perfil.empresa_id).eq('activo', true).order('nombre').order('id'))
             setCatalogoEdit(data || [])
         }
     }

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import { conTodas } from '../lib/traerTodas'
 import { useAuth } from '../contexts/AuthContext'
 import { useNavigate } from 'react-router-dom'
 import { Search, Share2, ShoppingCart, Car, Tag, ChevronDown } from 'lucide-react'
@@ -68,21 +69,21 @@ export default function Cotizador() {
     // Cargar categorías, marcas y tipos de repuesto
     useEffect(() => {
         if (!perfil?.empresa_id) return
-        supabase.from('productos_terminados')
+        conTodas(() => supabase.from('productos_terminados')
             .select('categoria_1').eq('empresa_id', perfil.empresa_id).eq('activo', true)
-            .not('categoria_1', 'is', null)
+            .not('categoria_1', 'is', null).order('id'))
             .then(({ data }) => {
                 const unicas = [...new Set((data || []).map(p => p.categoria_1).filter(Boolean))].sort()
                 setCategorias(unicas)
             })
-        supabase.from('productos_autopartes')
-            .select('marca').eq('empresa_id', perfil.empresa_id).not('marca', 'is', null)
+        conTodas(() => supabase.from('productos_autopartes')
+            .select('marca').eq('empresa_id', perfil.empresa_id).not('marca', 'is', null).order('id'))
             .then(({ data }) => {
                 const unicas = [...new Set((data || []).map(p => p.marca).filter(Boolean))].sort()
                 setMarcasRepuesto(unicas)
             })
-        supabase.from('productos_autopartes')
-            .select('tipo').eq('empresa_id', perfil.empresa_id).not('tipo', 'is', null)
+        conTodas(() => supabase.from('productos_autopartes')
+            .select('tipo').eq('empresa_id', perfil.empresa_id).not('tipo', 'is', null).order('id'))
             .then(({ data }) => {
                 const unicos = [...new Set((data || []).map(p => p.tipo).filter(Boolean))].sort()
                 setTiposRepuesto(unicos)
@@ -180,10 +181,10 @@ export default function Cotizador() {
         if (vehiculoIds.length === 0) { setResultados([]); setBuscando(false); return }
 
         // 2. Obtener producto_vehiculo para esos vehículos
-        const { data: pvData, error: pvErr } = await supabase.from('producto_vehiculo')
+        const { data: pvData, error: pvErr } = await conTodas(() => supabase.from('producto_vehiculo')
             .select('producto_id, vehiculo_id, año_inicio, año_fin, posicion')
             .eq('empresa_id', perfil.empresa_id)
-            .in('vehiculo_id', vehiculoIds)
+            .in('vehiculo_id', vehiculoIds).order('id'))
         if (pvErr) { setError('Error: ' + pvErr.message); setBuscando(false); return }
 
         // 3. Filtrar por año en JS

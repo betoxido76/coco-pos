@@ -1,5 +1,6 @@
 import { useContext, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import { conTodas } from '../lib/traerTodas'
 import { useAuth } from '../contexts/AuthContext'
 import { Plus, X, Check, Trash2 } from 'lucide-react'
 import { ymdCaracas, inicioDiaCaracas, finDiaCaracas } from '../components/SelectorFechaTasa'
@@ -101,7 +102,7 @@ export default function Finanzas() {
             // Caja realizada: cada movimiento en su fecha REAL, no la de carga.
             // Una NC aplicada como cobro no es dinero que entra, ni la retención
             // que nos hace un cliente (docs/plan-retenciones-clientes.md).
-            supabase.from('cobros')
+            conTodas(() => supabase.from('cobros')
                 .select('*, ventas(numero_factura, clientes(nombre))')
                 .eq('empresa_id', perfil.empresa_id)
                 .is('devolucion_id', null)
@@ -109,12 +110,12 @@ export default function Finanzas() {
                 // Ni el saldo llevado a diferencial cambiario (docs/plan-diferencial-cambiario.md)
                 .is('diferencial_id', null)
                 .gte('fecha_cobro', inicioDiaCaracas(desde))
-                .lte('fecha_cobro', finDiaCaracas(hasta)),
+                .lte('fecha_cobro', finDiaCaracas(hasta)).order('id')),
 
-            supabase.from('ventas')
+            conTodas(() => supabase.from('ventas')
                 .select('id, numero_factura, total, fecha_vencimiento_pago, estado_cobro, clientes(nombre)')
                 .eq('empresa_id', perfil.empresa_id)
-                .in('estado_cobro', ['pendiente', 'parcial']),
+                .in('estado_cobro', ['pendiente', 'parcial']).order('id')),
 
             supabase.from('gastos')
                 .select('*, tipos_gastos(nombre)')

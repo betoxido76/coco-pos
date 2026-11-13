@@ -4,7 +4,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { moverStock, almacenPredeterminado } from '../lib/inventario'
 import { Plus, Search, Check, X, RefreshCw, Trash2, ArrowRight, ClipboardList, Eye } from 'lucide-react'
 import { useAltoBarra, useOrden, ordenarFilas, ThOrden, BarraFija, TopTitulos, estiloTarjetaTabla } from '../components/TablaOrdenable'
-import { traerTodas } from '../lib/traerTodas'
+import { conTodas, traerTodas } from '../lib/traerTodas'
 
 const fmt = (n) => Number(n || 0).toLocaleString('es-VE', { minimumFractionDigits: 0, maximumFractionDigits: 3 })
 
@@ -1068,7 +1068,7 @@ function NuevoCambio({ onRegistrado, onCancelar }) {
         supabase.from('usuarios').select('id, nombre').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('nombre')
             .then(({ data }) => setDespachadores(data || []))
 
-        supabase.from('productos_terminados').select('id, nombre, sku, unidad_medida, stock_actual').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
+        conTodas(() => supabase.from('productos_terminados').select('id, nombre, sku, unidad_medida, stock_actual').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre').order('id'))
             .then(({ data }) => setProductos(data || []))
 
         supabase.from('almacenes').select('id, nombre, es_default')

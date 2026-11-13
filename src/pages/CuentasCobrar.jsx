@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import * as XLSX from 'xlsx'
 import { supabase } from '../lib/supabaseClient'
+import { conTodas } from '../lib/traerTodas'
 import { useAuth } from '../contexts/AuthContext'
 import { X, DollarSign, CheckSquare, FileText, Ban, ChevronDown, ChevronRight } from 'lucide-react'
 import SelectorFechaTasa, { useTasasFecha, hoyYMD, fmtFechaCorta, fechaAtimestamp, OPCIONES_TASA } from '../components/SelectorFechaTasa'
@@ -306,11 +307,11 @@ export default function CuentasCobrar() {
             // Montos de la nota (retención por registrar) y los atributos que filtra la barra
             const kpiSelect = 'id, numero_factura, nro_referencia, oc_cliente, usuario_id, total, subtotal, base_gravada, base_exenta, iva, estado_cobro, fecha_vencimiento_pago, cliente_id, created_at, '
                 + `${EMBED_CLIENTE_CXC}, pedidos!pedido_id(vendedor_id)`
-            const { data: kpi } = await supabase
+            const { data: kpi } = await conTodas(() => supabase
                 .from('ventas')
                 .select(kpiSelect)
                 .eq('empresa_id', perfil.empresa_id)
-                .in('estado_cobro', ['pendiente', 'parcial'])
+                .in('estado_cobro', ['pendiente', 'parcial']).order('id'))
             if (!kpi) return
             setKpiData(kpi)
 
@@ -2391,12 +2392,12 @@ function TabAnularNE() {
     async function cargar() {
         setLoading(true)
         // Candidatos = pedidos facturados (aún no despachados) y su venta/NE
-        const { data: peds } = await supabase.from('pedidos')
+        const { data: peds } = await conTodas(() => supabase.from('pedidos')
             .select('id, numero_pedido, venta_id, cliente_id, clientes(nombre)')
             .eq('empresa_id', perfil.empresa_id)
             .eq('estado', 'facturado')
             .not('venta_id', 'is', null)
-            .order('created_at', { ascending: false })
+            .order('created_at', { ascending: false }).order('id'))
         const ventaIds = [...new Set((peds || []).map(p => p.venta_id).filter(Boolean))]
         let ventasMap = {}
         if (ventaIds.length > 0) {

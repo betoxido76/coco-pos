@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import { conTodas } from '../lib/traerTodas'
 import { useAuth } from '../contexts/AuthContext'
 import { moverStock, moverStockLote, almacenPredeterminado, verificarStock } from '../lib/inventario'
 import { Plus, ChevronRight, X, AlertTriangle, Check, FlaskConical, Package, Search } from 'lucide-react'
@@ -129,13 +130,15 @@ export default function Produccion() {
 
     async function cargar() {
         setLoading(true)
-        let q = supabase
-            .from('ordenes_produccion')
-            .select('*, productos_terminados(nombre, sku, unidad_medida), materias_primas!mp_salida_id(nombre, codigo, unidad_medida)')
-            .eq('empresa_id', perfil.empresa_id)
-            .order('created_at', { ascending: false })
-        if (filtroEstado !== 'todos') q = q.eq('estado', filtroEstado)
-        const { data } = await q
+        // En bloques de 1000 (la API corta cada respuesta en ese tope)
+        const { data } = await conTodas(() => {
+            let q = supabase
+                .from('ordenes_produccion')
+                .select('*, productos_terminados(nombre, sku, unidad_medida), materias_primas!mp_salida_id(nombre, codigo, unidad_medida)')
+                .eq('empresa_id', perfil.empresa_id)
+            if (filtroEstado !== 'todos') q = q.eq('estado', filtroEstado)
+            return q.order('created_at', { ascending: false }).order('id')
+        })
         if (data) setOrdenes(data)
         setLoading(false)
     }
@@ -416,7 +419,7 @@ function NuevaOrden({ onCreada, onCancelar }) {
     const [alertaLote, setAlertaLote] = useState(false)
 
     useEffect(() => {
-        supabase.from('productos_terminados').select('id, nombre, sku, unidad_medida, vida_util_dias').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
+        conTodas(() => supabase.from('productos_terminados').select('id, nombre, sku, unidad_medida, vida_util_dias').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre').order('id'))
             .then(({ data }) => setProductos(data || []))
         supabase.from('materias_primas').select('id, nombre, codigo, unidad_medida, vida_util_dias')
             .eq('activo', true).eq('empresa_id', perfil.empresa_id).eq('tipo_producto', 'producido').order('nombre')
@@ -425,7 +428,7 @@ function NuevaOrden({ onCreada, onCancelar }) {
             .then(({ data }) => setInsumosMp(data || []))
         supabase.from('materiales_empaque').select('id, nombre, codigo, unidad_medida, stock_actual').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre')
             .then(({ data }) => setInsumosMe(data || []))
-        supabase.from('productos_terminados').select('id, nombre, sku, unidad_medida, stock_actual').eq('activo', true).eq('empresa_id', perfil.empresa_id).neq('tipo_producto', 'servicio').order('nombre')
+        conTodas(() => supabase.from('productos_terminados').select('id, nombre, sku, unidad_medida, stock_actual').eq('activo', true).eq('empresa_id', perfil.empresa_id).neq('tipo_producto', 'servicio').order('nombre').order('id'))
             .then(({ data }) => setInsumosPt((data || []).map(p => ({ ...p, codigo: p.sku }))))
 
         // Cargar almacenes
@@ -435,11 +438,11 @@ function NuevaOrden({ onCreada, onCancelar }) {
             .then(({ data }) => setAlmacenes(data || []))
 
         // Cargar stock por almacén para todos los insumos
-        supabase.from('stock_ubicacion')
+        conTodas(() => supabase.from('stock_ubicacion')
             .select('item_id, tipo_item, cantidad, almacen_id, almacenes(nombre)')
             .eq('empresa_id', perfil.empresa_id)
             .in('tipo_item', ['materia_prima', 'material_empaque', 'producto_terminado'])
-            .gt('cantidad', 0)
+            .gt('cantidad', 0).order('id'))
             .then(({ data }) => {
                 if (!data) return
                 const mapa = {}
@@ -1302,7 +1305,7 @@ function ModalCierre({ orden, producto, onCerrar, onCerrada }) {
             supabase.from('almacenes').select('id, nombre, es_default').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('es_default', { ascending: false }).order('nombre'),
             supabase.from('materias_primas').select('id, nombre, codigo, unidad_medida, stock_actual').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre'),
             supabase.from('materiales_empaque').select('id, nombre, codigo, unidad_medida, stock_actual').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre'),
-            supabase.from('productos_terminados').select('id, nombre, sku, unidad_medida, stock_actual').eq('activo', true).eq('empresa_id', perfil.empresa_id).neq('tipo_producto', 'servicio').order('nombre'),
+            conTodas(() => supabase.from('productos_terminados').select('id, nombre, sku, unidad_medida, stock_actual').eq('activo', true).eq('empresa_id', perfil.empresa_id).neq('tipo_producto', 'servicio').order('nombre').order('id')),
         ])
 
         setAlmacenes(alms || [])

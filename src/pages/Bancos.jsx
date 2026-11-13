@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import { conTodas } from '../lib/traerTodas'
 import { useAuth } from '../contexts/AuthContext'
 import { ArrowLeft, Plus, Edit2, Landmark, ArrowRightLeft } from 'lucide-react'
 import { ymdCaracas, inicioDiaCaracas, finDiaCaracas } from '../components/SelectorFechaTasa'
@@ -36,7 +37,7 @@ async function calcularSaldoCuenta(cuentaId, moneda, saldoInicial) {
     // Las aplicaciones de anticipo (pagos_proveedor.anticipo_id) y las
     // retenciones no tienen cuenta bancaria: no son salida de esta cuenta.
     const [{ data: cobros }, { data: movs }, { data: pagos }, { data: gastosPagados }, { data: abonosGasto }, { data: anticipos }, { data: reembolsos }] = await Promise.all([
-        supabase.from('cobros').select('monto_usd, monto_bs').eq('cuenta_bancaria_id', cuentaId),
+        conTodas(() => supabase.from('cobros').select('monto_usd, monto_bs').eq('cuenta_bancaria_id', cuentaId).order('id')),
         supabase.from('movimientos_financieros').select('monto_usd, monto_bs, tipo').eq('cuenta_bancaria_id', cuentaId).eq('estado', 'pagado'),
         supabase.from('pagos_proveedor').select('monto_usd, monto_bs').eq('cuenta_bancaria_id', cuentaId).eq('anulado', false),
         supabase.from('gastos').select('id, monto_usd, monto_bs').eq('cuenta_bancaria_id', cuentaId).eq('estado', 'pagado'),
@@ -262,10 +263,10 @@ function VistaDetalle({ cuenta, tasas, onVolver }) {
         // Cobros y pagos se ubican por su fecha REAL (fecha_cobro / fecha_pago), no
         // por cuándo se cargaron: un pago registrado con fecha pasada va en su día.
         const [{ data: cobros }, { data: movManuales }, { data: pagos }, { data: gastosPagados }, { data: abonosGasto }, { data: anticipos }, { data: reembolsos }, saldo] = await Promise.all([
-            supabase.from('cobros')
+            conTodas(() => supabase.from('cobros')
                 .select('id, monto_usd, monto_bs, fecha_cobro, ventas(numero_factura, clientes(nombre))')
                 .eq('cuenta_bancaria_id', cuenta.id)
-                .gte('fecha_cobro', inicioDiaCaracas(desde)).lte('fecha_cobro', finDiaCaracas(hasta)),
+                .gte('fecha_cobro', inicioDiaCaracas(desde)).lte('fecha_cobro', finDiaCaracas(hasta)).order('id')),
 
             supabase.from('movimientos_financieros')
                 .select('id, monto_usd, monto_bs, tipo, concepto, descripcion, fecha')

@@ -546,6 +546,12 @@ Al cerrar un ítem, borrarlo de esta tabla.
   recibe "permission denied"). En el mismo SQL que la crea, además de RLS y políticas:
   `GRANT SELECT, INSERT, UPDATE, DELETE ON public.x TO authenticated, service_role;` (`anon` solo si la
   pantalla de login la lee). Las vistas nuevas ya llevaban `GRANT SELECT ... TO authenticated`.
+- **Tope de 1000 filas**: la API devuelve como máximo 1000 filas por consulta y `.limit(5000)` NO lo
+  levanta (corta en silencio). Toda consulta que pueda pasar de 1000 filas (catálogos de productos,
+  listas de precios, notas, pedidos, cobros, stock de un almacén) va con `traerTodas` o `conTodas`
+  (`src/lib/traerTodas.js`; `conTodas` devuelve `{ data, error }` para envolver una consulta existente)
+  y un `.order('id')` al final. Pasó en Ventas, Inventario, Productos y nueva venta (Super Frenos tiene
+  más de 3.000 productos). No hace falta en consultas de un solo documento ni en búsquedas filtradas.
 - `useAuth()` en cada componente que necesite `perfil`
 - `perfil?.empresa_id` — siempre validar antes de usar
 - Todas las queries: `.eq('empresa_id', perfil.empresa_id)`
