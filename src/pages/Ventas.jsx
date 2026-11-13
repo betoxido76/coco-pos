@@ -17,6 +17,7 @@ import AvisoDocumentoEntrega from '../components/AvisoDocumentoEntrega'
 import AvisoExoneracion from '../components/AvisoExoneracion'
 import { exoneracionVigente, aplicaIvaCliente } from '../lib/exoneracion'
 import { ymdCaracas } from '../components/SelectorFechaTasa'
+import { traerTodas } from '../lib/traerTodas'
 import { useAltoBarra, useOrden, ordenarFilas, ThOrden, estiloTarjetaTabla } from '../components/TablaOrdenable'
 
 
@@ -96,12 +97,19 @@ export default function Ventas() {
 
     async function cargarVentas() {
         setLoading(true)
-        const { data } = await supabase
-            .from('ventas')
-            .select(`*, clientes(nombre, rif, direccion_fiscal, condicion_pago, cat1_id, cat2_id, cat3_id, cat4_id), devoluciones(id), pedidos!pedido_id(numero_pedido, vendedor_id)`)
-            .eq('empresa_id', perfil.empresa_id)
-            .limit(5000)
-        if (data) setVentas(data)
+        // En bloques de 1000: la API corta cada respuesta en ese tope (antes, con
+        // .limit(5000), las empresas con más de 1000 notas veían solo una parte).
+        // Las líneas traen código y nombre del producto para la búsqueda por texto.
+        try {
+            const data = await traerTodas(() => supabase
+                .from('ventas')
+                .select(`*, clientes(nombre, rif, direccion_fiscal, condicion_pago, cat1_id, cat2_id, cat3_id, cat4_id), devoluciones(id), pedidos!pedido_id(numero_pedido, vendedor_id), venta_items(productos_terminados(sku, nombre))`)
+                .eq('empresa_id', perfil.empresa_id)
+                .order('created_at').order('id'))
+            setVentas(data)
+        } catch (e) {
+            console.error('Error cargando ventas:', e)
+        }
         setLoading(false)
     }
 
@@ -174,6 +182,9 @@ export default function Ventas() {
         { campo: 'referencia', etiqueta: 'Referencia', valor: v => v.nro_referencia, texto: v => v.nro_referencia, buscable: true },
         { campo: 'oc', etiqueta: 'O/C del cliente', valor: v => v.oc_cliente, texto: v => v.oc_cliente, buscable: true },
         { campo: 'rif', etiqueta: 'RIF', valor: v => v.clientes?.rif, texto: v => v.clientes?.rif, buscable: true },
+        // Notas que llevan un producto o servicio (código o nombre)
+        { campo: 'producto', etiqueta: 'Producto (código o nombre)', valor: () => null, buscable: true,
+            texto: v => (v.venta_items || []).map(i => `${i.productos_terminados?.sku || ''} ${i.productos_terminados?.nombre || ''}`).join(' | ') },
     ]
     // El rango de fechas se compara en hora de Venezuela, igual que se muestra
     const ventasRango = ventas.filter(v => {

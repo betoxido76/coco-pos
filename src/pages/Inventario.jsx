@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import { traerTodas } from '../lib/traerTodas'
 import { useAuth } from '../contexts/AuthContext'
 import SaludInventario from '../components/SaludInventario'
 import { Package, AlertTriangle, Search, Layers, Beaker, Truck, ArrowDownLeft, ArrowUpRight, History, Filter, Warehouse, ArrowLeftRight, Plus, ShieldCheck } from 'lucide-react'
@@ -92,19 +93,19 @@ function VistaStock() {
         // antes se cargaban con IVA y aquí se dividían entre 1,16.
 
         if (tipoFiltro === 'todos' || tipoFiltro === 'pt') {
-            const { data } = await supabase.from('productos_terminados').select('*').eq('activo', true).eq('empresa_id', perfil.empresa_id).neq('tipo_producto', 'servicio').limit(5000)
+            const data = await traerTodas(() => supabase.from('productos_terminados').select('*').eq('activo', true).eq('empresa_id', perfil.empresa_id).neq('tipo_producto', 'servicio').order('id')).catch(e => { console.error(e); return [] })
             if (data) datos = [...datos, ...data.map(p => ({ ...p, tipo: 'Producto Terminado', codigo: p.sku, precio: Number(p.costo_promedio || 0), vencimiento: null }))]
         }
         if (tipoFiltro === 'todos' || tipoFiltro === 'mp') {
-            const { data } = await supabase.from('materias_primas').select('*').eq('activo', true).eq('empresa_id', perfil.empresa_id).limit(5000)
+            const data = await traerTodas(() => supabase.from('materias_primas').select('*').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('id')).catch(e => { console.error(e); return [] })
             if (data) datos = [...datos, ...data.map(p => ({ ...p, tipo: 'Materia Prima', codigo: p.codigo, precio: Number(p.costo_compra_promedio || 0), vencimiento: p.fecha_vencimiento }))]
         }
         if (tipoFiltro === 'todos' || tipoFiltro === 'emp') {
-            const { data } = await supabase.from('materiales_empaque').select('*').eq('activo', true).eq('empresa_id', perfil.empresa_id).limit(5000)
+            const data = await traerTodas(() => supabase.from('materiales_empaque').select('*').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('id')).catch(e => { console.error(e); return [] })
             if (data) datos = [...datos, ...data.map(p => ({ ...p, tipo: 'Material Empaque', codigo: p.codigo, precio: Number(p.costo_compra_promedio || 0), vencimiento: p.fecha_vencimiento }))]
         }
         if (tipoFiltro === 'todos' || tipoFiltro === 'con') {
-            const { data } = await supabase.from('consumibles').select('*').eq('activo', true).eq('empresa_id', perfil.empresa_id).limit(5000)
+            const data = await traerTodas(() => supabase.from('consumibles').select('*').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('id')).catch(e => { console.error(e); return [] })
             if (data) datos = [...datos, ...data.map(p => ({ ...p, tipo: 'Consumible', codigo: p.codigo, precio: Number(p.costo_compra_promedio || 0), vencimiento: p.fecha_vencimiento }))]
         }
 
@@ -355,13 +356,14 @@ function VistaPorAlmacen() {
 
     async function cargarStock(aid) {
         setLoading(true)
-        const { data } = await supabase.from('stock_ubicacion')
+        // En bloques de 1000: la API corta cada respuesta en ese tope
+        const data = await traerTodas(() => supabase.from('stock_ubicacion')
             .select('*, almacen_ubicaciones(nombre)')
             .eq('almacen_id', aid)
             .eq('empresa_id', perfil.empresa_id)
             .gt('cantidad', 0)
-            .order('tipo_item').order('item_id')
-            .limit(5000)
+            .order('tipo_item').order('item_id').order('id'))
+            .catch(e => { console.error(e); return [] })
         if (data) setStock(data)
         setLoading(false)
     }
