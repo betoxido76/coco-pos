@@ -17,28 +17,33 @@ const corsHeaders = {
 const MAX_VUELTAS = 8
 const MAX_RESULTADO = 60_000   // caracteres de una respuesta de herramienta que se le pasan al modelo
 const HISTORIAL = 10           // mensajes previos de la conversación que se reenvían
+const POR_MINUTO = 6           // ritmo máximo de preguntas por usuario (el tope diario es por empresa)
 
 // ── Herramientas: nombre → RPC, módulo que la habilita, parámetros permitidos ──
 const fecha = { type: 'string', description: 'Fecha AAAA-MM-DD' }
 const uuid = (d: string) => ({ type: 'string', description: `${d} (id que devuelve buscar)` })
 const limite = { type: 'integer', description: 'Máximo de grupos o filas a devolver (1-200, por defecto 50)' }
+const detalle = { type: 'boolean', description: 'true = lista también los documentos' }
+const canal = { type: 'string', description: 'Canal del cliente (categoría 1), nombre exacto; si dudas, búscalo con buscar tipo categoria_cliente' }
 
 const HERRAMIENTAS: (Herramienta & { rpc: string; modulo: string | null; etiqueta: string })[] = [
   {
     nombre: 'buscar', rpc: 'asistente_buscar', modulo: null, etiqueta: 'Búsqueda',
-    descripcion: 'Resuelve un nombre (o parte, o RIF/código) a su id. Úsala antes de filtrar por cliente, producto, proveedor o vendedor. Si hay varios candidatos, pregunta al usuario cuál.',
+    descripcion: 'Resuelve un nombre (o parte, o RIF/código) a su id. Úsala antes de filtrar por cliente, producto, proveedor o vendedor. Si hay varios candidatos, pregunta al usuario cuál. Los productos traen sus precios vigentes por lista (sin IVA). categoria_cliente / categoria_producto devuelven los nombres exactos de las categorías (texto "*" = todas).',
     parametros: { type: 'object', properties: {
-      tipo: { type: 'string', enum: ['cliente', 'producto', 'proveedor', 'vendedor'] },
+      tipo: { type: 'string', enum: ['cliente', 'producto', 'proveedor', 'vendedor', 'categoria_cliente', 'categoria_producto'] },
       texto: { type: 'string' } }, required: ['tipo', 'texto'], additionalProperties: false },
   },
   {
     nombre: 'ventas_resumen', rpc: 'asistente_ventas_resumen', modulo: 'ventas', etiqueta: 'Ventas',
-    descripcion: 'Ventas facturadas (notas de entrega) en un período: totales y agrupadas. Por defecto, el mes en curso. Con producto o agrupando por producto/categoría trabaja a nivel de líneas.',
+    descripcion: 'Ventas facturadas (notas de entrega) en un período: totales y agrupadas. Por defecto, el mes en curso. Con producto, categoría de producto o agrupando por producto/categoría trabaja a nivel de líneas. detalle=true lista las notas. No descuenta notas de crédito.',
     parametros: { type: 'object', properties: {
       desde: fecha, hasta: fecha,
       agrupar: { type: 'string', enum: ['ninguno', 'dia', 'semana', 'mes', 'cliente', 'vendedor', 'canal', 'ciudad', 'producto', 'categoria_producto'] },
-      cliente_id: uuid('Cliente'), producto_id: uuid('Producto'), vendedor_id: uuid('Vendedor'),
-      canal: { type: 'string', description: 'Canal del cliente (categoría 1), p. ej. Farmacias' }, limite },
+      cliente_id: uuid('Cliente'), producto_id: uuid('Producto'), vendedor_id: uuid('Vendedor'), canal,
+      categoria_cliente: { type: 'string', description: 'Categoría del cliente de cualquier nivel (nombre exacto, ver buscar categoria_cliente)' },
+      categoria_producto: { type: 'string', description: 'Categoría del producto de cualquier nivel (nombre exacto, ver buscar categoria_producto)' },
+      detalle, limite },
       additionalProperties: false },
   },
   {
@@ -69,6 +74,31 @@ const HERRAMIENTAS: (Herramienta & { rpc: string; modulo: string | null; etiquet
       cliente_id: uuid('Cliente'), detalle: { type: 'boolean' }, limite }, additionalProperties: false },
   },
   {
+    nombre: 'notas_credito', rpc: 'asistente_notas_credito', modulo: 'cxc', etiqueta: 'Notas de crédito',
+    descripcion: 'Notas de crédito a clientes emitidas en un período (con y sin crédito), por cliente, canal, motivo, tipo o mes, con su % sobre las ventas del mismo período y filtros. Incluye aparte el diferencial cambiario llevado a pérdida.',
+    parametros: { type: 'object', properties: {
+      desde: fecha, hasta: fecha,
+      agrupar: { type: 'string', enum: ['ninguno', 'cliente', 'canal', 'motivo', 'tipo', 'mes'] },
+      cliente_id: uuid('Cliente'), canal, detalle, limite }, additionalProperties: false },
+  },
+  {
+    nombre: 'clientes', rpc: 'asistente_clientes', modulo: 'ventas', etiqueta: 'Clientes',
+    descripcion: 'Ficha de clientes: condición y días de crédito, límite y crédito disponible, saldo y vencido en CxC, lista de precios, contacto, última compra y días sin comprar, ventas de 90 días y días promedio de pago (12 meses). inactivos_dias=N lista los que no compran hace N días o más.',
+    parametros: { type: 'object', properties: {
+      cliente_id: uuid('Cliente'), canal, vendedor_id: uuid('Vendedor (de la última venta)'),
+      inactivos_dias: { type: 'integer' },
+      orden: { type: 'string', enum: ['saldo', 'nombre', 'dias_sin_comprar', 'ventas_90d', 'dias_pago', 'credito_disponible'] },
+      limite }, additionalProperties: false },
+  },
+  {
+    nombre: 'dias_pago', rpc: 'asistente_dias_pago', modulo: 'cxc', etiqueta: 'Días de pago',
+    descripcion: 'Cuántos días tardan los clientes en pagar sus notas (ya pagadas), ponderado por monto y simple, contra el plazo otorgado. Por cliente, canal, vendedor o mes de emisión. Por defecto, notas emitidas en los últimos 12 meses.',
+    parametros: { type: 'object', properties: {
+      desde: fecha, hasta: fecha,
+      agrupar: { type: 'string', enum: ['ninguno', 'cliente', 'canal', 'vendedor', 'mes'] },
+      cliente_id: uuid('Cliente'), vendedor_id: uuid('Vendedor'), canal, limite }, additionalProperties: false },
+  },
+  {
     nombre: 'stock', rpc: 'asistente_stock', modulo: 'inventario', etiqueta: 'Inventario',
     descripcion: 'Existencias actuales de productos terminados, materias primas, material de empaque o consumibles. Filtra por texto o los que están bajo el mínimo; por_almacen=true desglosa por almacén.',
     parametros: { type: 'object', properties: {
@@ -83,6 +113,41 @@ const HERRAMIENTAS: (Herramienta & { rpc: string; modulo: string | null; etiquet
       agrupar: { type: 'string', enum: ['ninguno', 'proveedor', 'tramo', 'origen'] },
       proveedor_id: uuid('Proveedor'), solo_vencidas: { type: 'boolean' }, detalle: { type: 'boolean' }, limite },
       additionalProperties: false },
+  },
+  {
+    nombre: 'compras_resumen', rpc: 'asistente_compras_resumen', modulo: 'compras', etiqueta: 'Compras',
+    descripcion: 'Compras recibidas (recepciones) en un período, por proveedor, insumo, tipo de insumo o mes. Agrupando por insumo da cantidad y precio promedio, mínimo y máximo sin IVA. insumo = parte del nombre o código.',
+    parametros: { type: 'object', properties: {
+      desde: fecha, hasta: fecha,
+      agrupar: { type: 'string', enum: ['ninguno', 'proveedor', 'insumo', 'tipo_insumo', 'mes'] },
+      proveedor_id: uuid('Proveedor'), insumo: { type: 'string' },
+      tipo_insumo: { type: 'string', enum: ['materia_prima', 'material_empaque', 'consumible', 'producto_terminado'] },
+      detalle, limite }, additionalProperties: false },
+  },
+  {
+    nombre: 'pagos_proveedor', rpc: 'asistente_pagos_proveedor', modulo: 'cxp', etiqueta: 'Pagos a proveedores',
+    descripcion: 'Dinero pagado a proveedores en un período (por fecha real del pago): recepciones, anticipos y gastos. Agrupa por proveedor, día, semana, mes, método, cuenta u origen. Excluye retenciones, notas de crédito y aplicación de anticipos.',
+    parametros: { type: 'object', properties: {
+      desde: fecha, hasta: fecha,
+      agrupar: { type: 'string', enum: ['ninguno', 'proveedor', 'dia', 'semana', 'mes', 'metodo', 'cuenta', 'origen'] },
+      proveedor_id: uuid('Proveedor'), origen: { type: 'string', enum: ['todos', 'compras', 'gastos'] }, limite },
+      additionalProperties: false },
+  },
+  {
+    nombre: 'movimientos', rpc: 'asistente_movimientos', modulo: 'inventario', etiqueta: 'Movimientos',
+    descripcion: 'Entradas y salidas de inventario en un período (por defecto, últimos 7 días), por ítem, origen, día, almacén o tipo de ítem. texto = parte del nombre o código. detalle=true lista los movimientos.',
+    parametros: { type: 'object', properties: {
+      desde: fecha, hasta: fecha,
+      tipo_item: { type: 'string', enum: ['producto_terminado', 'materia_prima', 'material_empaque', 'consumible'] },
+      texto: { type: 'string' },
+      origen: { type: 'string', description: 'p. ej. pedido_facturado, venta, recepcion_compra, produccion_consumo, produccion_cierre, transferencia, ajuste_manual, merma' },
+      agrupar: { type: 'string', enum: ['ninguno', 'item', 'origen', 'dia', 'almacen', 'tipo_item'] },
+      detalle, limite }, additionalProperties: false },
+  },
+  {
+    nombre: 'tasas', rpc: 'asistente_tasas', modulo: null, etiqueta: 'Tasas',
+    descripcion: 'Tasas de cambio BCV, euro y Binance (Bs. por divisa) de una fecha (por defecto hoy) o de un rango desde/hasta. Úsala para convertir montos a Bs.',
+    parametros: { type: 'object', properties: { fecha, desde: fecha, hasta: fecha }, additionalProperties: false },
   },
   {
     nombre: 'gastos_resumen', rpc: 'asistente_gastos_resumen', modulo: 'gastos', etiqueta: 'Gastos',
@@ -100,7 +165,8 @@ function instrucciones(empresa: string, hoy: string, nombreUsuario: string, tema
 Hoy es ${hoy} (hora de Venezuela). Puedes consultar: ${temas.join(', ')}.
 
 Reglas:
-- Todo número que des sale de una herramienta. Nunca inventes, estimes ni completes cifras. Si no hay herramienta para algo (por ejemplo márgenes, costos, producción, bancos), dilo claramente y sugiere dónde verlo en el sistema.
+- Todo número que des sale de una herramienta. Nunca inventes, estimes ni completes cifras. Si no hay herramienta para algo (por ejemplo márgenes, costos, producción, mermas, saldos de bancos), dilo claramente y sugiere dónde verlo en el sistema.
+- Puedes hacer cuentas simples con cifras de herramientas (sumas, %, conversión a Bs. con la tasa de la fecha); di cómo lo calculaste en una línea.
 - Para filtrar por un cliente, producto, proveedor o vendedor, primero resuelve su id con "buscar". Si hay varios candidatos plausibles, pregunta cuál antes de seguir.
 - Si la pregunta es ambigua en algo que cambia la respuesta (período, qué cuenta como "venta"), asume lo más razonable y dilo en una línea; pregunta solo si de verdad no puedes elegir.
 - "Este mes" = desde el día 1 hasta hoy. "El mes pasado" = el mes calendario anterior completo. Las semanas empiezan el lunes.
@@ -111,7 +177,7 @@ Reglas:
 - Responde en español, breve y directo: primero la respuesta, luego el detalle. Usa tablas en Markdown cuando haya más de 3 filas. No expliques cómo usaste las herramientas.
 - Cierra con una línea "Fuente:" con lo consultado y su período o fecha de corte (p. ej. "Fuente: Ventas 01/11–10/11 · CxC al 10/11").
 - Tus respuestas anteriores en esta conversación terminan con "[Respuesta obtenida con: …]": esas cifras ya salieron de herramientas y son válidas para su período. No las pongas en duda ni lo comentes; vuelve a consultar solo si cambia el período, el filtro o te piden actualizar.
-- Glosario: NE = nota de entrega (el documento de venta); CxC = cuentas por cobrar; CxP = cuentas por pagar; "días calle" = antigüedad promedio de lo que se debe.`
+- Glosario: NE = nota de entrega (el documento de venta); NC = nota de crédito; CxC = cuentas por cobrar; CxP = cuentas por pagar; "días calle" = antigüedad promedio de lo que se debe; "días de pago" = cuánto tardaron en pagar las notas ya pagadas.`
 }
 
 const dmy = (s?: string) => s ? s.slice(0, 10).split('-').reverse().slice(0, 2).join('/') : ''
@@ -154,6 +220,23 @@ serve(async (req) => {
 
     const cupo = await verificarCupo(admin, empresaId, esSuper)
     if (cupo.motivo) return json({ error: cupo.motivo, cupo: true }, 402)
+
+    // ── Límite por usuario: preguntas por día (configurable por empresa) y por minuto ──
+    if (!esSuper) {
+      const hoyCcs = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Caracas' })
+      const inicioDia = new Date(`${hoyCcs}T00:00:00-04:00`).toISOString()
+      const haceMinuto = new Date(Date.now() - 60_000).toISOString()
+      const [{ data: delDia, error: e1 }, { data: delMinuto, error: e2 }] = await Promise.all([
+        admin.rpc('ia_preguntas_usuario', { p_usuario: user.id, p_desde: inicioDia }),
+        admin.rpc('ia_preguntas_usuario', { p_usuario: user.id, p_desde: haceMinuto }),
+      ])
+      if (e1 || e2) throw new Error(`No se pudo revisar el límite: ${(e1 || e2)!.message}`)
+      const tope = Number(cupo.empresa?.ia_preguntas_dia_usuario ?? 40)
+      if (Number(delDia || 0) >= tope)
+        return json({ error: `Llegaste al máximo de ${tope} preguntas por día. Mañana se renueva; si necesitas más, pídelo al administrador.`, cupo: true }, 429)
+      if (Number(delMinuto || 0) >= POR_MINUTO)
+        return json({ error: 'Vas muy rápido: espera un minuto antes de la próxima pregunta.', cupo: true }, 429)
+    }
     const modelo = body.modelo && esSuper ? body.modelo : (cupo.empresa?.ia_modelo || 'sonnet')
 
     // ── Conversación ──
@@ -178,9 +261,12 @@ serve(async (req) => {
       conversacionId = conv.id
     }
 
+    // La pregunta se guarda al empezar: así cuenta para el límite aunque la respuesta falle
+    await admin.from('ia_mensajes').insert({ conversacion_id: conversacionId, rol: 'usuario', contenido: pregunta })
+
     const hoy = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Caracas' })
     const system = instrucciones(cupo.empresa?.nombre || 'la empresa', hoy, perfil.nombre || 'el usuario',
-      [...new Set(disponibles.filter(h => h.modulo).map(h => h.etiqueta))])
+      [...new Set(disponibles.filter(h => h.nombre !== 'buscar').map(h => h.etiqueta))])
     const mensajes: Record<string, unknown>[] = [...previos, { role: 'user', content: pregunta }]
     const usadas: { nombre: string; argumentos: unknown; filas?: number; recortado?: boolean; error?: string; etiqueta?: string }[] = []
     let costo = 0, respuesta = '', modeloReal = modelo
@@ -211,8 +297,8 @@ serve(async (req) => {
           const d: any = data
           usadas.push({
             nombre: h.nombre, argumentos: args, error: error?.message,
-            filas: d?.grupos?.length ?? d?.items?.length ?? d?.resultados?.length ?? d?.documentos?.length,
-            recortado: d?.recortado, etiqueta: h.modulo ? etiquetaConsulta(h.etiqueta, d) : undefined,
+            filas: d?.grupos?.length ?? d?.items?.length ?? d?.resultados?.length ?? d?.documentos?.length ?? d?.clientes?.length ?? d?.tasas?.length,
+            recortado: d?.recortado, etiqueta: h.nombre !== 'buscar' ? etiquetaConsulta(h.etiqueta, d) : undefined,
           })
         }
         let texto = JSON.stringify(resultado)
@@ -223,10 +309,8 @@ serve(async (req) => {
     if (!respuesta) respuesta = 'No pude terminar de responder. Intenta con una pregunta más acotada.'
 
     const consulto = [...new Set(usadas.map(u => u.etiqueta).filter(Boolean))] as string[]
-    await admin.from('ia_mensajes').insert([
-      { conversacion_id: conversacionId, rol: 'usuario', contenido: pregunta },
-      { conversacion_id: conversacionId, rol: 'asistente', contenido: respuesta, herramientas: usadas, modelo: modeloReal, costo_usd: costo },
-    ])
+    await admin.from('ia_mensajes').insert(
+      { conversacion_id: conversacionId, rol: 'asistente', contenido: respuesta, herramientas: usadas, modelo: modeloReal, costo_usd: costo })
     await admin.from('ia_conversaciones').update({ updated_at: new Date().toISOString() }).eq('id', conversacionId)
 
     return json({ conversacion_id: conversacionId, respuesta, consulto, modelo: modeloReal, ...(esSuper ? { costo_usd: costo, herramientas: usadas } : {}) }, 200)

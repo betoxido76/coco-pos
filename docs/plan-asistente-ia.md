@@ -225,3 +225,19 @@ no de los usuarios de las empresas.
 - **Caché**: instrucciones + herramientas con `cache_control` (OpenRouter lo pasa a Anthropic).
 - **Consumo**: una fila de `ia_consumo` por llamada al modelo; `leer-vin` también registra (a
   nombre de la empresa del superadmin).
+
+### Paquete 2 de consultas y límite por usuario (2026-11-15, `asistente_ia_fase3.sql`)
+
+- **Nuevas**: `notas_credito` (cxc; NC con y sin crédito por cliente, canal, motivo, tipo o mes, % sobre
+  las ventas del mismo período y filtros, diferencial cambiario aparte), `clientes` (ventas; ficha,
+  crédito disponible, última compra / inactivos, días de pago 12 m), `dias_pago` (cxc; mismo cálculo que
+  el tag de CxC sobre `v_cxc_dias_pago`), `compras_resumen` (compras; precio promedio por insumo),
+  `pagos_proveedor` (cxp; dinero a recepciones, anticipos y gastos), `movimientos` (inventario) y `tasas`
+  (todos).
+- **Mejoras**: `ventas_resumen` filtra por categoría de cliente y de producto de cualquier nivel y lista
+  las notas (`detalle`); `buscar` resuelve categorías y trae los precios vigentes por lista.
+- **Límite por usuario**: `empresas.ia_preguntas_dia_usuario` (40 por defecto, Super Admin → IA) y 6
+  preguntas por minuto fijo en la función. La pregunta se guarda al empezar, así cuenta aunque falle.
+  El panel muestra preguntas de hoy y del mes y costo por usuario.
+- **Sigue fuera**: bancos y flujo de caja, producción y mermas, márgenes, OC abiertas, anticipos/NC de
+  proveedores como consulta propia, visitas comerciales.

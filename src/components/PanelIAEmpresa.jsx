@@ -21,8 +21,10 @@ const td = { padding: '8px 12px', fontSize: '13px', color: '#374151', borderBott
 
 export default function PanelIAEmpresa({ empresaId }) {
     const [cfg, setCfg] = useState(null)
-    const [form, setForm] = useState({ ia_activa: false, ia_limite_mensual_usd: '', ia_modelo: '' })
+    const [form, setForm] = useState({ ia_activa: false, ia_limite_mensual_usd: '', ia_modelo: '', ia_preguntas_dia_usuario: 40 })
     const [consumo, setConsumo] = useState([])
+    const [preguntas, setPreguntas] = useState([])   // preguntas del mes en curso (ia_mensajes rol usuario)
+    const [usuarios, setUsuarios] = useState({})
     const [cargando, setCargando] = useState(true)
     const [guardando, setGuardando] = useState(false)
     const [msg, setMsg] = useState('')
@@ -32,14 +34,21 @@ export default function PanelIAEmpresa({ empresaId }) {
     async function cargar() {
         setCargando(true); setMsg('')
         const desde = new Date(); desde.setMonth(desde.getMonth() - 11, 1); desde.setHours(0, 0, 0, 0)
-        const [{ data: emp }, { data: filas }] = await Promise.all([
-            supabase.from('empresas').select('ia_activa, ia_limite_mensual_usd, ia_modelo').eq('id', empresaId).single(),
+        const inicioMes = new Date(); inicioMes.setDate(1); inicioMes.setHours(0, 0, 0, 0)
+        const [{ data: emp }, { data: filas }, { data: pregs }, { data: usrs }] = await Promise.all([
+            supabase.from('empresas').select('ia_activa, ia_limite_mensual_usd, ia_modelo, ia_preguntas_dia_usuario').eq('id', empresaId).single(),
             supabase.from('ia_consumo').select('funcion, modelo, tokens_entrada, tokens_salida, tokens_cache_lectura, costo_usd, conversacion_id, usuario_id, created_at')
                 .eq('empresa_id', empresaId).gte('created_at', desde.toISOString()).order('created_at', { ascending: false }).limit(10000),
+            supabase.from('ia_mensajes').select('created_at, ia_conversaciones!inner(usuario_id, empresa_id)')
+                .eq('rol', 'usuario').eq('ia_conversaciones.empresa_id', empresaId).gte('created_at', inicioMes.toISOString()).limit(10000),
+            supabase.from('usuarios').select('id, nombre').eq('empresa_id', empresaId),
         ])
         setCfg(emp)
-        setForm({ ia_activa: !!emp?.ia_activa, ia_limite_mensual_usd: emp?.ia_limite_mensual_usd ?? '', ia_modelo: emp?.ia_modelo || '' })
+        setForm({ ia_activa: !!emp?.ia_activa, ia_limite_mensual_usd: emp?.ia_limite_mensual_usd ?? '', ia_modelo: emp?.ia_modelo || '',
+            ia_preguntas_dia_usuario: emp?.ia_preguntas_dia_usuario ?? 40 })
         setConsumo(filas || [])
+        setPreguntas(pregs || [])
+        setUsuarios(Object.fromEntries((usrs || []).map(u => [u.id, u.nombre])))
         setCargando(false)
     }
 
@@ -47,11 +56,13 @@ export default function PanelIAEmpresa({ empresaId }) {
         setGuardando(true); setMsg('')
         const limite = form.ia_limite_mensual_usd === '' ? null : Number(form.ia_limite_mensual_usd)
         if (limite != null && (isNaN(limite) || limite < 0)) { setMsg('El límite debe ser un número positivo'); setGuardando(false); return }
-        const { error } = await supabase.from('empresas')
-            .update({ ia_activa: form.ia_activa, ia_limite_mensual_usd: limite, ia_modelo: form.ia_modelo || null }).eq('id', empresaId)
+        const porDia = Number(form.ia_preguntas_dia_usuario)
+        if (!Number.isInteger(porDia) || porDia < 0) { setMsg('Las preguntas por día deben ser un número entero'); setGuardando(false); return }
+        const cambios = { ia_activa: form.ia_activa, ia_limite_mensual_usd: limite, ia_modelo: form.ia_modelo || null, ia_preguntas_dia_usuario: porDia }
+        const { error } = await supabase.from('empresas').update(cambios).eq('id', empresaId)
         setGuardando(false)
         setMsg(error ? `Error: ${error.message}` : 'Guardado')
-        if (!error) setCfg({ ...cfg, ia_activa: form.ia_activa, ia_limite_mensual_usd: limite, ia_modelo: form.ia_modelo || null })
+        if (!error) setCfg({ ...cfg, ...cambios })
     }
 
     if (cargando) return <div style={{ padding: '48px', textAlign: 'center', color: '#9ca3af' }}>Cargando…</div>
@@ -71,6 +82,19 @@ export default function PanelIAEmpresa({ empresaId }) {
     const pct = limite > 0 ? Math.min(100, gastoMes / limite * 100) : 0
     const cambiado = form.ia_activa !== !!cfg?.ia_activa || String(form.ia_limite_mensual_usd ?? '') !== String(cfg?.ia_limite_mensual_usd ?? '')
         || (form.ia_modelo || '') !== (cfg?.ia_modelo || '')
+        || String(form.ia_preguntas_dia_usuario) !== String(cfg?.ia_preguntas_dia_usuario ?? 40)
+
+    // Uso por usuario en el mes en curso: preguntas (hoy y en el mes) y costo del asistente
+    const hoyCcs = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Caracas' })
+    const porUsuario = {}
+    const filaU = (id) => porUsuario[id] || (porUsuario[id] = { id, hoy: 0, mes: 0, costo: 0 })
+    preguntas.forEach(p => {
+        if (mesCaracas(p.created_at) !== mesActual) return
+        const f = filaU(p.ia_conversaciones.usuario_id); f.mes++
+        if (new Date(p.created_at).toLocaleDateString('en-CA', { timeZone: 'America/Caracas' }) === hoyCcs) f.hoy++
+    })
+    consumo.forEach(c => { if (c.usuario_id && c.funcion === 'asistente' && mesCaracas(c.created_at) === mesActual) filaU(c.usuario_id).costo += Number(c.costo_usd) })
+    const filasUsuario = Object.values(porUsuario).sort((a, b) => b.costo - a.costo)
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -88,6 +112,11 @@ export default function PanelIAEmpresa({ empresaId }) {
                             onChange={e => setForm({ ...form, ia_limite_mensual_usd: e.target.value })} style={{ ...input, width: '150px' }} />
                     </div>
                     <div>
+                        <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '4px' }}>Preguntas por usuario al día</div>
+                        <input type="number" min="0" step="1" value={form.ia_preguntas_dia_usuario}
+                            onChange={e => setForm({ ...form, ia_preguntas_dia_usuario: e.target.value })} style={{ ...input, width: '110px' }} />
+                    </div>
+                    <div>
                         <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '4px' }}>Modelo del asistente</div>
                         <select value={form.ia_modelo} onChange={e => setForm({ ...form, ia_modelo: e.target.value })} style={input}>
                             {MODELOS.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
@@ -101,7 +130,8 @@ export default function PanelIAEmpresa({ empresaId }) {
                 </div>
                 <p style={{ fontSize: '12px', color: '#9ca3af', margin: '12px 0 0' }}>
                     Para usar el asistente, el usuario además necesita el módulo "Asistente IA" (pestañas Módulos y Usuarios).
-                    Al llegar al límite del mes, el asistente avisa que se agotó el cupo. El superadmin no tiene límite.
+                    Al llegar al límite del mes, el asistente avisa que se agotó el cupo. Cada usuario tiene además un tope de
+                    preguntas por día (hora de Venezuela) y de 6 por minuto. El superadmin no tiene límite.
                 </p>
             </div>
 
@@ -116,6 +146,29 @@ export default function PanelIAEmpresa({ empresaId }) {
                     <div style={{ height: '8px', backgroundColor: '#f3f4f6', borderRadius: '4px', overflow: 'hidden' }}>
                         <div style={{ width: `${pct}%`, height: '100%', backgroundColor: pct >= 90 ? '#dc2626' : pct >= 70 ? '#d97706' : '#16a34a' }} />
                     </div>
+                )}
+            </div>
+
+            <div style={{ backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                <div style={{ padding: '14px 20px', fontSize: '14px', fontWeight: 600, color: '#1f2937' }}>Uso por usuario en {etiquetaMes(mesActual)}</div>
+                {filasUsuario.length === 0 ? (
+                    <div style={{ padding: '0 20px 20px', fontSize: '13px', color: '#9ca3af' }}>Nadie ha usado el asistente este mes.</div>
+                ) : (
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead><tr>
+                            <th style={th}>Usuario</th><th style={th}>Preguntas hoy</th><th style={th}>Preguntas del mes</th><th style={th}>Costo del mes</th>
+                        </tr></thead>
+                        <tbody>
+                            {filasUsuario.map(f => (
+                                <tr key={f.id}>
+                                    <td style={td}>{usuarios[f.id] || 'Superadmin / otro'}</td>
+                                    <td style={td}>{f.hoy} <span style={{ color: '#9ca3af' }}>de {cfg?.ia_preguntas_dia_usuario ?? 40}</span></td>
+                                    <td style={td}>{f.mes}</td>
+                                    <td style={{ ...td, fontWeight: 600 }}>{usd(f.costo, 4)}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
                 )}
             </div>
 

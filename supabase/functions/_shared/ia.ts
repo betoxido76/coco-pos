@@ -83,7 +83,7 @@ export async function registrarConsumo(admin: SupabaseClient, fila: {
 
 // ¿La empresa puede usar IA este mes? El superadmin no tiene límite.
 export async function verificarCupo(admin: SupabaseClient, empresaId: string, esSuperadmin: boolean) {
-  const { data: emp } = await admin.from('empresas').select('nombre, ia_activa, ia_limite_mensual_usd, ia_modelo').eq('id', empresaId).single()
+  const { data: emp } = await admin.from('empresas').select('nombre, ia_activa, ia_limite_mensual_usd, ia_modelo, ia_preguntas_dia_usuario').eq('id', empresaId).single()
   const { data: gasto } = await admin.rpc('ia_gasto_mes', { p_empresa: empresaId })
   const usado = Number(gasto || 0)
   const limite = emp?.ia_limite_mensual_usd == null ? null : Number(emp.ia_limite_mensual_usd)

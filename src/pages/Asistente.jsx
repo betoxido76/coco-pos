@@ -15,6 +15,9 @@ const SUGERENCIAS = [
     '¿Qué pedidos hay programados para mañana?',
     '¿Qué productos están por debajo del mínimo?',
     '¿Qué le debemos a proveedores esta semana?',
+    '¿Qué % de notas de crédito tuvo cada canal el mes pasado?',
+    '¿Qué clientes no nos compran hace 45 días?',
+    '¿En cuántos días nos pagan los clientes, por canal?',
 ]
 
 async function preguntar(body) {
