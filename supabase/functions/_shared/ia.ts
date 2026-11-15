@@ -24,7 +24,7 @@ export type RespuestaModelo = {
 
 // mensajes: formato chat completions (system va aparte)
 export async function llamarModelo(opc: {
-  modelo: string; system: string; mensajes: Record<string, unknown>[]; herramientas: Herramienta[]; maxTokens?: number; titulo?: string
+  modelo: string; system: string; mensajes: Record<string, unknown>[]; herramientas: Herramienta[]; maxTokens?: number; titulo?: string; esfuerzo?: 'low' | 'medium' | 'high'
   soloTexto?: boolean   // obliga a responder sin pedir más herramientas
 }): Promise<RespuestaModelo> {
   const m = MODELOS[opc.modelo] || MODELOS.sonnet
@@ -37,6 +37,8 @@ export async function llamarModelo(opc: {
     body: JSON.stringify({
       model: m.openrouter,
       max_tokens: opc.maxTokens || 2500,
+      // Consultas de datos: poco razonamiento interno, para que el tope de salida quede para la respuesta
+      reasoning: { effort: opc.esfuerzo || 'low' },
       usage: { include: true },               // devuelve el costo en USD de la llamada
       // Solo proveedores que no guardan ni entrenan con los datos (independiente del panel de OpenRouter)
       provider: { data_collection: 'deny' },
