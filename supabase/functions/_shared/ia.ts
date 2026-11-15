@@ -38,6 +38,8 @@ export async function llamarModelo(opc: {
       model: m.openrouter,
       max_tokens: opc.maxTokens || 2500,
       usage: { include: true },               // devuelve el costo en USD de la llamada
+      // Solo proveedores que no guardan ni entrenan con los datos (independiente del panel de OpenRouter)
+      provider: { data_collection: 'deny' },
       // Instrucciones + herramientas son fijas: se cachean (se cobran ~10 % al repetirse)
       messages: [{ role: 'system', content: [{ type: 'text', text: opc.system, cache_control: { type: 'ephemeral' } }] }, ...opc.mensajes],
       ...(opc.herramientas.length ? {
