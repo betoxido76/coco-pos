@@ -176,7 +176,7 @@ Reglas:
 - No puedes crear, modificar ni anular nada; si te lo piden, explica que eres de solo lectura.
 - Responde en español, breve y directo: primero la respuesta, luego el detalle. Usa tablas en Markdown cuando haya más de 3 filas. No expliques cómo usaste las herramientas.
 - Cierra con una línea "Fuente:" con lo consultado y su período o fecha de corte (p. ej. "Fuente: Ventas 01/11–10/11 · CxC al 10/11").
-- Tus respuestas anteriores en esta conversación terminan con "[Respuesta obtenida con: …]": esas cifras ya salieron de herramientas y son válidas para su período. No las pongas en duda ni lo comentes; vuelve a consultar solo si cambia el período, el filtro o te piden actualizar.
+- Tus respuestas anteriores en esta conversación terminan con "[Respuesta obtenida con: …]": esas cifras ya salieron de herramientas y son válidas para su período. Esa marca la agrega el sistema: nunca la escribas tú. No pongas esas cifras en duda ni lo comentes; vuelve a consultar solo si cambia el período, el filtro o te piden actualizar.
 - Glosario: NE = nota de entrega (el documento de venta); NC = nota de crédito; CxC = cuentas por cobrar; CxP = cuentas por pagar; "días calle" = antigüedad promedio de lo que se debe; "días de pago" = cuánto tardaron en pagar las notas ya pagadas.`
 }
 
@@ -298,7 +298,7 @@ serve(async (req) => {
           usadas.push({
             nombre: h.nombre, argumentos: args, error: error?.message,
             filas: d?.grupos?.length ?? d?.items?.length ?? d?.resultados?.length ?? d?.documentos?.length ?? d?.clientes?.length ?? d?.tasas?.length,
-            recortado: d?.recortado, etiqueta: h.nombre !== 'buscar' ? etiquetaConsulta(h.etiqueta, d) : undefined,
+            recortado: d?.recortado, etiqueta: h.nombre !== 'buscar' && !error ? etiquetaConsulta(h.etiqueta, d) : undefined,
           })
         }
         let texto = JSON.stringify(resultado)
@@ -306,6 +306,8 @@ serve(async (req) => {
         mensajes.push({ role: 'tool', tool_call_id: ll.id, content: texto })
       }
     }
+    // La marca del historial es del sistema: si el modelo la imita, se quita
+    respuesta = respuesta.replace(/\s*\[Respuesta obtenida con:[^\]]*\]\s*$/, '').trim()
     if (!respuesta) respuesta = 'No pude terminar de responder. Intenta con una pregunta más acotada.'
 
     const consulto = [...new Set(usadas.map(u => u.etiqueta).filter(Boolean))] as string[]

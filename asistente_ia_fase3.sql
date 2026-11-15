@@ -199,7 +199,8 @@ begin
     alter table _anc add column grupo text;
     update _anc set grupo = case p_agrupar when 'cliente' then coalesce(cliente, '(sin cliente)')
         when 'canal' then coalesce(canal, '(sin canal)') when 'motivo' then motivo when 'tipo' then tipo
-        when 'mes' then to_char(fecha, 'YYYY-MM') end;
+        when 'mes' then to_char(fecha, 'YYYY-MM') end
+        where true;   -- pg_safeupdate (PostgREST) rechaza UPDATE sin WHERE
 
     -- Ventas del mismo período y filtros (base sin IVA), para el %
     drop table if exists _anv; create temp table _anv on commit drop as
@@ -509,7 +510,8 @@ begin
         when 'dia' then to_char(fecha, 'YYYY-MM-DD') when 'semana' then 'semana del ' || to_char(date_trunc('week', fecha), 'YYYY-MM-DD')
         when 'mes' then to_char(fecha, 'YYYY-MM') when 'cuenta' then coalesce(cuenta, '(sin cuenta)') when 'origen' then origen
         when 'metodo' then concat_ws(' + ', case when monto_usd > 0 then coalesce(metodo_usd, 'USD') end,
-                                            case when monto_bs > 0 then coalesce(metodo_bs, 'Bs.') end) end;
+                                            case when monto_bs > 0 then coalesce(metodo_bs, 'Bs.') end) end
+        where true;
 
     select jsonb_build_object('pagos', count(*), 'total_equiv_usd', round(coalesce(sum(monto_equiv_usd), 0), 2),
         'en_usd', round(coalesce(sum(monto_usd), 0), 2), 'en_bs', round(coalesce(sum(monto_bs), 0), 2),
@@ -561,7 +563,8 @@ begin
     update _amv set grupo = case p_agrupar
         when 'item' then coalesce(item_codigo || ' · ', '') || item_nombre
         when 'origen' then origen when 'dia' then to_char(fecha, 'YYYY-MM-DD')
-        when 'almacen' then coalesce(almacen, '(sin almacén)') when 'tipo_item' then tipo_item end;
+        when 'almacen' then coalesce(almacen, '(sin almacén)') when 'tipo_item' then tipo_item end
+        where true;
 
     select jsonb_build_object('movimientos', count(*), 'items', count(distinct item_id),
         'entradas', round(coalesce(sum(delta) filter (where delta > 0), 0), 3),
