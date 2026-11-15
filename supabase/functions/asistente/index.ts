@@ -26,6 +26,11 @@ const limite = { type: 'integer', description: 'Máximo de grupos o filas a devo
 const detalle = { type: 'boolean', description: 'true = lista también los documentos' }
 const canal = { type: 'string', description: 'Canal del cliente (categoría 1), nombre exacto; si dudas, búscalo con buscar tipo categoria_cliente' }
 
+// Fuente de la herramienta analisis → módulo que la habilita
+const FUENTE_MODULO: Record<string, string> = {
+  ventas: 'ventas', pedidos: 'pedidos', cobros: 'cxc', cartera: 'cxc', compras: 'compras', gastos: 'gastos',
+}
+
 const HERRAMIENTAS: (Herramienta & { rpc: string; modulo: string | null; etiqueta: string })[] = [
   {
     nombre: 'buscar', rpc: 'asistente_buscar', modulo: null, etiqueta: 'Búsqueda',
@@ -145,6 +150,32 @@ const HERRAMIENTAS: (Herramienta & { rpc: string; modulo: string | null; etiquet
       detalle, limite }, additionalProperties: false },
   },
   {
+    nombre: 'analisis', rpc: 'asistente_analisis', modulo: null, etiqueta: 'Análisis',
+    descripcion: 'Tabla dinámica sobre una fuente: agrupa por 1 a 3 dimensiones a la vez y calcula las medidas pedidas, con filtros '
+      + '(incluir o excluir valores de cualquier dimensión). Úsala para cruces que las otras consultas no hacen: ventas por producto y '
+      + 'canal y mes, compras por proveedor e insumo, cobros por vendedor y método, cartera por canal y tramo, etc. Para comparar '
+      + 'períodos agrupa por mes/trimestre/anio o llama dos veces. Los valores de filtro deben ser exactos (sácalos de buscar o de una '
+      + 'consulta previa agrupada por esa dimensión).\n'
+      + 'Dimensiones por fuente — ventas: dia, semana, mes, trimestre, anio, cliente, canal, categoria_cliente_2..4, vendedor, ciudad, '
+      + 'producto, categoria_producto_1..4, tipo_producto, estado. pedidos: las de tiempo, mes_entrega, dia_entrega, cliente, canal, '
+      + 'categoria_cliente_2, vendedor, ciudad, producto, categoria_producto_1..2, tipo_producto, estado. cobros: tiempo, cliente, canal, '
+      + 'vendedor, metodo, cuenta. compras: tiempo, proveedor, insumo, tipo_insumo. gastos: tiempo, tipo_gasto, categoria_gasto, '
+      + 'proveedor. cartera (saldo de hoy): mes, anio (de emisión), cliente, canal, categoria_cliente_2..4, vendedor, ciudad, tramo.\n'
+      + 'Medidas — ventas: base, total, unidades, notas, clientes, productos, precio_promedio, ticket_promedio. pedidos: base, total, '
+      + 'unidades, pedidos, clientes, productos. cobros: monto, cobros, clientes. compras: base, total, cantidad, recepciones, '
+      + 'proveedores, insumos, precio_promedio. gastos: monto, saldo, gastos. cartera: saldo, vencido, notas, clientes.',
+    parametros: { type: 'object', properties: {
+      fuente: { type: 'string', enum: ['ventas', 'pedidos', 'cobros', 'compras', 'gastos', 'cartera'] },
+      dimensiones: { type: 'array', items: { type: 'string' }, maxItems: 3, description: 'De 0 a 3; sin dimensiones devuelve solo totales' },
+      medidas: { type: 'array', items: { type: 'string' }, description: 'Si se omite, las principales de la fuente' },
+      filtros: { type: 'object', description: 'Solo incluir: {"dimension": ["valor", ...]}, p. ej. {"canal": ["Farmatodo"], "mes": ["2026-10"]}' },
+      excluir: { type: 'object', description: 'Excluir: mismo formato que filtros' },
+      desde: fecha, hasta: fecha,
+      orden: { type: 'string', enum: ['mayor', 'menor', 'dimension'], description: 'Por la primera medida (mayor/menor) o por las dimensiones. Por defecto: dimensión si la primera es de tiempo, si no mayor' },
+      limite: { type: 'integer', description: 'Máximo de filas (1-200, por defecto 100)' } },
+      required: ['fuente'], additionalProperties: false },
+  },
+  {
     nombre: 'tasas', rpc: 'asistente_tasas', modulo: null, etiqueta: 'Tasas',
     descripcion: 'Tasas de cambio BCV, euro y Binance (Bs. por divisa) de una fecha (por defecto hoy) o de un rango desde/hasta. Úsala para convertir montos a Bs.',
     parametros: { type: 'object', properties: { fecha, desde: fecha, hasta: fecha }, additionalProperties: false },
@@ -168,6 +199,7 @@ Reglas:
 - Todo número que des sale de una herramienta. Nunca inventes, estimes ni completes cifras. Si no hay herramienta para algo (por ejemplo márgenes, costos, producción, mermas, saldos de bancos), dilo claramente y sugiere dónde verlo en el sistema.
 - Puedes hacer cuentas simples con cifras de herramientas (sumas, %, conversión a Bs. con la tasa de la fecha); di cómo lo calculaste en una línea.
 - Para filtrar por un cliente, producto, proveedor o vendedor, primero resuelve su id con "buscar". Si hay varios candidatos plausibles, pregunta cuál antes de seguir.
+- Para cruces de varias dimensiones (por ejemplo producto × canal × mes), usa "analisis" en una sola llamada en vez de muchas consultas sueltas. Para cifras de un solo tema prefiere la consulta específica (cartera_cxc, notas_credito, dias_pago, etc.), que trae reglas y notas propias.
 - Si la pregunta es ambigua en algo que cambia la respuesta (período, qué cuenta como "venta"), asume lo más razonable y dilo en una línea; pregunta solo si de verdad no puedes elegir.
 - "Este mes" = desde el día 1 hasta hoy. "El mes pasado" = el mes calendario anterior completo. Las semanas empiezan el lunes.
 - Montos en USD con dos decimales y separador de miles (p. ej. $12,345.67). Di si un monto lleva IVA o no cuando importe.
@@ -216,7 +248,15 @@ serve(async (req) => {
       modulos = new Set((mods || []).map((m: any) => m.modulo_id))
       if (!modulos.has('asistente')) return json({ error: 'No tienes acceso al asistente' }, 403)
     }
-    const disponibles = HERRAMIENTAS.filter(h => !h.modulo || !modulos || modulos.has(h.modulo))
+    // analisis: cada fuente exige su módulo; la herramienta solo ofrece las fuentes permitidas
+    const fuentesPermitidas = Object.entries(FUENTE_MODULO).filter(([, mod]) => !modulos || modulos.has(mod)).map(([f]) => f)
+    const disponibles = HERRAMIENTAS
+      .filter(h => !h.modulo || !modulos || modulos.has(h.modulo))
+      .filter(h => h.nombre !== 'analisis' || fuentesPermitidas.length > 0)
+      .map(h => h.nombre !== 'analisis' || !modulos ? h : {
+        ...h, parametros: { ...(h.parametros as any), properties: { ...(h.parametros as any).properties,
+          fuente: { type: 'string', enum: fuentesPermitidas } } },
+      })
 
     const cupo = await verificarCupo(admin, empresaId, esSuper)
     if (cupo.motivo) return json({ error: cupo.motivo, cupo: true }, 402)
@@ -287,6 +327,8 @@ serve(async (req) => {
         try { args = JSON.parse(ll.argumentos || '{}') } catch { /* argumentos inválidos */ }
         if (!h) {
           resultado = { error: `Herramienta no disponible: ${ll.nombre}` }
+        } else if (h.nombre === 'analisis' && !fuentesPermitidas.includes(String(args.fuente))) {
+          resultado = { error: `Fuente no disponible para este usuario: ${args.fuente}` }
         } else {
           // Solo los parámetros declarados; la empresa la pone el servidor
           const permitidos = Object.keys((h.parametros as any).properties || {})
@@ -297,7 +339,7 @@ serve(async (req) => {
           const d: any = data
           usadas.push({
             nombre: h.nombre, argumentos: args, error: error?.message,
-            filas: d?.grupos?.length ?? d?.items?.length ?? d?.resultados?.length ?? d?.documentos?.length ?? d?.clientes?.length ?? d?.tasas?.length,
+            filas: d?.grupos?.length ?? d?.filas?.length ?? d?.items?.length ?? d?.resultados?.length ?? d?.documentos?.length ?? d?.clientes?.length ?? d?.tasas?.length,
             recortado: d?.recortado, etiqueta: h.nombre !== 'buscar' && !error ? etiquetaConsulta(h.etiqueta, d) : undefined,
           })
         }

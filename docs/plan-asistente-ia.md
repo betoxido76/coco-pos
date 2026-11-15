@@ -241,3 +241,14 @@ no de los usuarios de las empresas.
   El panel muestra preguntas de hoy y del mes y costo por usuario.
 - **Sigue fuera**: bancos y flujo de caja, producción y mermas, márgenes, OC abiertas, anticipos/NC de
   proveedores como consulta propia, visitas comerciales.
+
+### Consulta analítica flexible (2026-11-15, `asistente_ia_analisis.sql`)
+
+- `asistente_analisis`: tabla dinámica sobre ventas, pedidos, cobros, compras, gastos o cartera; hasta 3
+  dimensiones, medidas a elección, filtros de inclusión y exclusión. Dimensiones y medidas salen de listas
+  cerradas (`_asistente_dim_sql`, `_asistente_med_sql`); el modelo nunca escribe SQL. Ventas, pedidos y
+  compras se leen por línea (`v_export_*_detalle`).
+- Cada fuente exige su módulo (`FUENTE_MODULO` en el index.ts: ventas, pedidos, cxc → cobros y cartera,
+  compras, gastos); la herramienta solo ofrece las fuentes permitidas y el servidor lo vuelve a validar.
+- Al validarla aparecieron 17 encabezados de Meraki del 2026-10-05 sin base imponible (14 NE, REC-000061,
+  2 NC): se completaron desde sus líneas sin cambiar totales (`fix_encabezados_sin_base_20261005.sql`).
