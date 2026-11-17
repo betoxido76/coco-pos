@@ -18,6 +18,7 @@ declare
     v_dims text[] := coalesce(p_dimensiones, '{}'); v_meds text[];
     v_sel text := ''; v_grp text := ''; v_medsql text := ''; v_tot text := ''; v_where text := 'true';
     v_ord text; v_orden text; k text; v jsonb; d text; m text; i integer;
+    v_costos text[] := array['costo', 'margen', 'margen_pct', 'costo_unitario']; v_con_costo boolean;
     filas jsonb; n integer; tot jsonb;
 begin
     perform _asistente_empresa(p_empresa);
@@ -28,12 +29,14 @@ begin
             cliente_cat4 as cat_cliente_4, vendedor, direccion_ciudad as ciudad, sku, producto,
             producto_cat1 as cat_producto_1, producto_cat2 as cat_producto_2, producto_cat3 as cat_producto_3,
             producto_cat4 as cat_producto_4, tipo_producto, estado_cobro as estado, venta_id as doc_id, cliente_id,
-            linea_producto_id as item_id, base_linea as base, total_linea as total, linea_unidades_primarias as unidades
+            linea_producto_id as item_id, base_linea as base, total_linea as total, linea_unidades_primarias as unidades,
+            coalesce(costo_linea, 0) as costo, coalesce(linea_costo_estimado, false) as costo_estimado
             from v_export_ventas_detalle where empresa_id = $1 and not anulada and fecha between $2 and $3$b$;
         v_dims_ok := array['dia', 'semana', 'mes', 'trimestre', 'anio', 'cliente', 'canal', 'categoria_cliente_2',
             'categoria_cliente_3', 'categoria_cliente_4', 'vendedor', 'ciudad', 'producto', 'categoria_producto_1',
             'categoria_producto_2', 'categoria_producto_3', 'categoria_producto_4', 'tipo_producto', 'estado'];
-        v_meds_ok := array['base', 'total', 'unidades', 'notas', 'clientes', 'productos', 'precio_promedio', 'ticket_promedio'];
+        v_meds_ok := array['base', 'total', 'unidades', 'notas', 'clientes', 'productos', 'precio_promedio', 'ticket_promedio',
+            'costo', 'margen', 'margen_pct', 'costo_unitario'];
         v_meds_def := array['base', 'unidades', 'notas'];
         v_nota := 'Ventas facturadas (notas de entrega sin anular), leídas por línea. base = sin IVA; total = con IVA; '
                || 'unidades en la unidad primaria de cada producto; estado = estado de cobro de la nota. No descuenta notas de crédito.';
@@ -107,6 +110,11 @@ begin
             raise exception 'medida no válida para %: % (válidas: %)', p_fuente, m, array_to_string(v_meds_ok, ', ');
         end if;
     end loop;
+    -- Costos y márgenes: solo administración o finanzas (como los montos de activos)
+    v_con_costo := v_meds && v_costos;
+    if v_con_costo and not _asistente_ve_costos() then
+        raise exception 'Los costos y márgenes solo los pueden consultar usuarios de administración o finanzas';
+    end if;
 
     -- ── Filtros: {"dimension": ["valor", ...]} — igualdad sin acentos ni mayúsculas ──
     for i in 1..2 loop
@@ -138,6 +146,15 @@ begin
               || format('%L, %s', m, _asistente_med_sql(m, true));
     end loop;
 
+    if v_con_costo then
+        v_tot := v_tot || ', ''base_con_costo_estimado'', round(coalesce(sum(base) filter (where costo_estimado), 0)::numeric, 2)';
+        v_nota := v_nota || ' costo = costo promedio del producto al momento de la venta, guardado en cada línea desde el '
+               || '2026-10-06; las ventas anteriores usan el costo promedio ACTUAL (estimado): base_con_costo_estimado dice '
+               || 'cuánta venta del resultado tiene costo estimado. Los servicios no tienen costo. margen = base − costo; '
+               || 'margen_pct = margen ÷ base × 100; costo_unitario = costo ÷ unidades. Es costo promedio de inventario, '
+               || 'no un costeo de receta: depende de los costos de materia prima y producción cargados.';
+    end if;
+
     execute format('with base as (%s) select jsonb_build_object(%s) from base where %s', v_base, v_tot, v_where)
         into tot using p_empresa, v_desde, v_hasta;
 
@@ -167,6 +184,15 @@ begin
         'filas_totales', coalesce(n, 0), 'recortado', coalesce(n, 0) > v_lim,
         'nota', v_nota || ' Montos en USD. precio_promedio = base ÷ unidades: solo tiene sentido dentro de un mismo producto o insumo.');
 end $$;
+
+-- ¿El usuario puede ver costos y márgenes? Administración o finanzas (y superadmin)
+create or replace function public._asistente_ve_costos()
+returns boolean language sql stable security definer set search_path = public as $$
+    select is_superadmin()
+        or exists (select 1 from usuarios where id = auth.uid() and rol in ('admin', 'finanzas'));
+$$;
+revoke all on function public._asistente_ve_costos() from public, anon;
+grant execute on function public._asistente_ve_costos() to authenticated, service_role;
 
 -- Expresión SQL de cada dimensión sobre las columnas normalizadas (lista cerrada)
 create or replace function public._asistente_dim_sql(p_dim text)
@@ -207,10 +233,11 @@ $$;
 -- Expresión SQL de cada medida (lista cerrada); redondeada para mostrar o cruda para ordenar
 create or replace function public._asistente_med_sql(p_med text, p_redondear boolean)
 returns text language sql immutable as $$
-    select case when p_redondear and p_med in ('base', 'total', 'monto', 'saldo', 'vencido', 'ticket_promedio')
+    select case when p_redondear and p_med in ('base', 'total', 'monto', 'saldo', 'vencido', 'ticket_promedio',
+                                               'costo', 'margen', 'margen_pct')
                     then 'round((' || e || ')::numeric, 2)'
                 when p_redondear and p_med in ('unidades', 'cantidad') then 'round((' || e || ')::numeric, 3)'
-                when p_redondear and p_med = 'precio_promedio' then 'round((' || e || ')::numeric, 4)'
+                when p_redondear and p_med in ('precio_promedio', 'costo_unitario') then 'round((' || e || ')::numeric, 4)'
                 else e end
     from (select case p_med
         when 'base' then 'sum(base)' when 'monto' then 'sum(base)' when 'total' then 'sum(total)'
@@ -225,6 +252,10 @@ returns text language sql immutable as $$
         when 'ticket_promedio' then 'sum(base) / nullif(count(distinct doc_id), 0)'
         when 'saldo' then 'sum(saldo)'
         when 'vencido' then 'coalesce(sum(saldo) filter (where dias_vencida > 0), 0)'
+        when 'costo' then 'sum(costo)'
+        when 'margen' then 'sum(base) - sum(costo)'
+        when 'margen_pct' then '(sum(base) - sum(costo)) * 100 / nullif(sum(base), 0)'
+        when 'costo_unitario' then 'sum(costo) / nullif(sum(unidades), 0)'
     end as e) t
 $$;
 

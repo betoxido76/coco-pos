@@ -252,3 +252,13 @@ no de los usuarios de las empresas.
   compras, gastos); la herramienta solo ofrece las fuentes permitidas y el servidor lo vuelve a validar.
 - Al validarla aparecieron 17 encabezados de Meraki del 2026-10-05 sin base imponible (14 NE, REC-000061,
   2 NC): se completaron desde sus líneas sin cambiar totales (`fix_encabezados_sin_base_20261005.sql`).
+
+### Costos y márgenes de venta (2026-11-17)
+
+- `asistente_analisis`, fuente ventas: medidas `costo`, `margen`, `margen_pct` y `costo_unitario` (costo de la
+  línea de `v_export_ventas_detalle`). Solo admin/finanzas/superadmin: `_asistente_ve_costos()` en la base y,
+  en el index.ts, la descripción de la herramienta y una regla del prompt según el rol.
+- El costo es el costo promedio del producto al vender (`venta_items.costo_unitario`, guardado desde el
+  2026-10-06); antes se estima con el costo promedio actual. El resultado trae
+  `totales.base_con_costo_estimado` y el asistente lo advierte. Los servicios no tienen costo.
+- Es costo de inventario, no costeo de receta: su calidad depende de los costos de MP y producción cargados.

@@ -191,13 +191,15 @@ const HERRAMIENTAS: (Herramienta & { rpc: string; modulo: string | null; etiquet
   },
 ]
 
-function instrucciones(empresa: string, hoy: string, nombreUsuario: string, temas: string[]) {
+function instrucciones(empresa: string, hoy: string, nombreUsuario: string, temas: string[], verCostos: boolean) {
   return `Eres el asistente de datos de soma ops, el sistema de gestión de ${empresa}. Respondes preguntas de ${nombreUsuario} sobre la operación de la empresa usando SOLO las herramientas disponibles.
 
 Hoy es ${hoy} (hora de Venezuela). Puedes consultar: ${temas.join(', ')}.
 
 Reglas:
-- Todo número que des sale de una herramienta. Nunca inventes, estimes ni completes cifras. Si no hay herramienta para algo (por ejemplo márgenes, costos, producción, mermas, saldos de bancos), dilo claramente y sugiere dónde verlo en el sistema.
+- Todo número que des sale de una herramienta. Nunca inventes, estimes ni completes cifras. Si no hay herramienta para algo (por ejemplo ${verCostos ? '' : 'márgenes, costos, '}producción, mermas, saldos de bancos, activos fijos), dilo claramente y sugiere dónde verlo en el sistema.${verCostos ? `
+- Costos y márgenes de venta: usa "analisis" con fuente ventas y las medidas costo, margen, margen_pct o costo_unitario (por producto, categoría, canal, cliente, mes…). Al responder aclara en una línea: (1) es el costo promedio de inventario del producto al momento de vender, no un costeo de receta; (2) si el período incluye ventas anteriores al 06/10/2026, su costo es ESTIMADO con el costo actual: si totales.base_con_costo_estimado > 0, di cuánta venta usa costo estimado. Los servicios (despacho, etc.) no tienen costo. Un margen negativo o de 100 % suele indicar un costo mal cargado o una venta en $0: señálalo.` : `
+- Costos y márgenes: este usuario no tiene permiso para verlos (solo administración o finanzas); si los pide, díselo.`}
 - Puedes hacer cuentas simples con cifras de herramientas (sumas, %, conversión a Bs. con la tasa de la fecha); di cómo lo calculaste en una línea.
 - Para filtrar por un cliente, producto, proveedor o vendedor, primero resuelve su id con "buscar". Si hay varios candidatos plausibles, pregunta cuál antes de seguir.
 - Para cruces de varias dimensiones (por ejemplo producto × canal × mes), usa "analisis" en una sola llamada en vez de muchas consultas sueltas. Para cifras de un solo tema prefiere la consulta específica (cartera_cxc, notas_credito, dias_pago, etc.), que trae reglas y notas propias.
@@ -252,13 +254,17 @@ serve(async (req) => {
       modulos = new Set((mods || []).map((m: any) => m.modulo_id))
       if (!modulos.has('asistente')) return json({ error: 'No tienes acceso al asistente' }, 403)
     }
+    const verCostos = esSuper || ['admin', 'finanzas'].includes(perfil.rol)
     // analisis: cada fuente exige su módulo; la herramienta solo ofrece las fuentes permitidas
     const fuentesPermitidas = Object.entries(FUENTE_MODULO).filter(([, mod]) => !modulos || modulos.has(mod)).map(([f]) => f)
     const disponibles = HERRAMIENTAS
       .filter(h => !h.modulo || !modulos || modulos.has(h.modulo))
       .filter(h => h.nombre !== 'analisis' || fuentesPermitidas.length > 0)
-      .map(h => h.nombre !== 'analisis' || !modulos ? h : {
-        ...h, parametros: { ...(h.parametros as any), properties: { ...(h.parametros as any).properties,
+      .map(h => h.nombre !== 'analisis' ? h : {
+        ...h,
+        // Costos y márgenes: solo admin/finanzas (la base lo vuelve a validar)
+        descripcion: h.descripcion + (verCostos ? ' Costos (solo fuente ventas, admin/finanzas): costo, margen, margen_pct, costo_unitario.' : ''),
+        parametros: !modulos ? h.parametros : { ...(h.parametros as any), properties: { ...(h.parametros as any).properties,
           fuente: { type: 'string', enum: fuentesPermitidas } } },
       })
 
@@ -310,7 +316,7 @@ serve(async (req) => {
 
     const hoy = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Caracas' })
     const system = instrucciones(cupo.empresa?.nombre || 'la empresa', hoy, perfil.nombre || 'el usuario',
-      [...new Set(disponibles.filter(h => h.nombre !== 'buscar').map(h => h.etiqueta))])
+      [...new Set(disponibles.filter(h => h.nombre !== 'buscar').map(h => h.etiqueta))], verCostos)
     const mensajes: Record<string, unknown>[] = [...previos, { role: 'user', content: pregunta }]
     const usadas: { nombre: string; argumentos: unknown; filas?: number; recortado?: boolean; error?: string; etiqueta?: string }[] = []
     let costo = 0, respuesta = '', modeloReal = modelo, reintentoCorto = false
