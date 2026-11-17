@@ -223,6 +223,7 @@ function etiquetaConsulta(etq: string, r: any) {
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+  let esSuperadmin = false
   try {
     const authHeader = req.headers.get('Authorization')
     if (!authHeader) return json({ error: 'No autorizado' }, 401)
@@ -235,6 +236,7 @@ serve(async (req) => {
     const { data: perfil } = await admin.from('usuarios').select('nombre, rol, empresa_id').eq('id', user.id).single()
     if (!perfil) return json({ error: 'Usuario no encontrado' }, 403)
     const esSuper = perfil.rol === 'superadmin'
+    esSuperadmin = esSuper
 
     const body = await req.json().catch(() => ({}))
     const pregunta = String(body.pregunta || '').trim().slice(0, 4000)
@@ -375,7 +377,13 @@ _(La respuesta se cortó por largo. Pide un resumen o menos filas.)_`; break }
     return json({ conversacion_id: conversacionId, respuesta, consulto, modelo: modeloReal, ...(esSuper ? { costo_usd: costo, herramientas: usadas } : {}) }, 200)
   } catch (err) {
     console.error(err)
-    return json({ error: (err as Error).message || 'Error del asistente' }, 500)
+    const msg = (err as Error).message || 'Error del asistente'
+    // Los errores del proveedor de IA (saldo, tope de la clave, caída) traen datos internos
+    // (URL y hash de la clave): al cliente solo un mensaje claro; el detalle, al superadmin y al log
+    if (!esSuperadmin && /^OpenRouter:|OPENROUTER_API_KEY|aborted|timed? ?out/i.test(msg)) {
+      return json({ error: 'El asistente no está disponible en este momento por un problema con el servicio de IA. Ya quedó registrado; intenta más tarde o avísale al administrador.' }, 503)
+    }
+    return json({ error: msg }, 500)
   }
 })
 
