@@ -8,7 +8,7 @@ const SESSION_KEY = 'mipos_session_token'
 const TODOS_LOS_MODULOS = [
     'dashboard', 'inventario', 'ventas', 'pedidos', 'pedidos_campo',
     'compras', 'cxc', 'cxp', 'gastos', 'produccion', 'cambios', 'mermas', 'administracion',
-    'cotizador', 'finanzas', 'bancos', 'despacho', 'requisiciones',
+    'cotizador', 'finanzas', 'bancos', 'despacho', 'requisiciones', 'activos',
 ]
 
 // El superadmin ve todos los módulos del catálogo (tabla `modulos`). La lista

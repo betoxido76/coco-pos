@@ -5,7 +5,7 @@ import {
     LayoutDashboard, Package, ShoppingCart,
     TrendingDown, CreditCard, LogOut, Menu, X, Truck, FolderTree,
     ClipboardList, DollarSign, FlaskConical, AlertTriangle, ArrowLeftRight,
-    User, Tag, BarChart2, Landmark, RefreshCw, PackageCheck, Building2, ClipboardCheck, Shield, ScanLine, Sparkles
+    User, Tag, BarChart2, Landmark, RefreshCw, PackageCheck, Building2, ClipboardCheck, Shield, ScanLine, Sparkles, Archive
 } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { LogoSomaOps } from './MarcaSoma'
@@ -44,6 +44,7 @@ const NAV_ITEMS = [
     { key: 'cambios', to: '/cambios-mano-mano', icon: ArrowLeftRight, label: 'Cambios Mano a Mano' },
     { key: 'mermas', to: '/mermas', icon: AlertTriangle, label: 'Mermas' },
     { key: 'requisiciones', to: '/requisiciones', icon: ClipboardCheck, label: 'Requisiciones' },
+    { key: 'activos', to: '/activos', icon: Archive, label: 'Activos' },
     { key: 'cotizador', to: '/cotizador', icon: Tag, label: 'Cotizador' },
     { key: 'finanzas', to: '/finanzas', icon: BarChart2, label: 'Finanzas' },
     { key: 'bancos', to: '/bancos', icon: Landmark, label: 'Bancos' },

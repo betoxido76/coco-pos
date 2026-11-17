@@ -254,6 +254,22 @@ requisicion_items     -- tipo_item, item_id, foto nombre/código/unidad, cantida
                       --   'anulacion_requisicion' (nota = RQ · área).
 ```
 
+### Activos fijos — docs/plan-activos-fijos.md
+```
+activo_categorias     -- nombre, vida_util_meses (sugerida), activa. Editable desde la app
+activo_ubicaciones    -- nombre, activa ("Activos" sembrada). Editable desde la app. NO son almacenes
+activos               -- codigo AF-000001, nombre, categoria_id, marca, modelo, serial, ubicacion_id,
+                      --   responsable_id → usuarios, estado (operativo|mantenimiento|danado|desuso|baja),
+                      --   fecha_adquisicion, garantia_hasta, gasto_id | compra_id (origen), proveedor_id,
+                      --   baja: fecha_baja, tipo_baja, motivo_baja, baja_por. 3 FKs a usuarios → hint
+activo_valores        -- 1:1 con activos: valor_adquisicion, vida_util_meses, valor_residual,
+                      --   valor_recuperacion. RLS: solo admin/finanzas (_activos_ve_valores)
+activo_movimientos    -- historial: alta|edicion|traslado|responsable|estado|mantenimiento|baja|reactivacion,
+                      --   ubicacion_ant/nueva, responsable_ant/nuevo, estado_ant/nuevo, gasto_id, nota
+                      -- Escritura de activos/valores/movimientos SOLO por RPC
+empresas.activos_valor_minimo -- umbral (default 100): por debajo la app avisa que es gasto
+```
+
 ### Finanzas / Bancos
 ```
 cuentas_bancarias     -- Cuentas por empresa: banco, numero_cuenta, tipo_cuenta, moneda, saldo_inicial, activa

@@ -1,6 +1,7 @@
 # Plan — Control de activos fijos
 
-Estado: **propuesta** (2026-11-17), pendiente de cerrar la Fase 0 con Meraki.
+Estado: **fases 1 a 3 implementadas** (2026-11-17). Fases 4 a 7 (etiquetas QR, tomas físicas,
+carga inicial/reportes y recorrido) quedan en backlog.
 
 ## El problema
 
@@ -141,18 +142,32 @@ Módulo nuevo **`activos`**, que se activa por empresa desde SuperAdmin.
 | Dar de baja | Admin o finanzas, con motivo obligatorio |
 | Ver valores (adquisición y referencial) | Decisión 0.5 |
 
-## Fase 0 — Decisiones a cerrar con Meraki
+## Fase 0 — Decisiones (CERRADA 2026-11-17)
 
-| # | Pregunta | Propuesta |
+| # | Decisión | Resultado |
 |---|---|---|
-| 0.1 | ¿Desde qué valor algo es un activo? Una licuadora pequeña, ¿es activo o gasto? | Umbral por empresa, por ejemplo $100. Por debajo es gasto, salvo que quieran controlarlo igual |
-| 0.2 | Responsable: ¿usuario del sistema o cualquier empleado? | Lista de **personas** propia (nombre y cargo), con usuario opcional: muchos responsables (choferes, operarios) no usan el sistema |
-| 0.3 | Ubicaciones y categorías iniciales | Que Meraki envíe su lista |
-| 0.4 | ¿Tienen equipos en clientes (neveras en comodato)? | Si sí, ubicación "En cliente" con enlace al cliente |
-| 0.5 | ¿Quién ve los valores? | Admin y finanzas; el resto ve la ficha sin montos |
-| 0.6 | ¿Depreciación referencial? | Sí, línea recta, solo informativa (Galac es la oficial) |
-| 0.7 | ¿Etiquetas? ¿Qué impresora o papel tienen? | Hojas adhesivas carta o impresora de etiquetas; definir tamaño |
-| 0.8 | Inventario inicial | Meraki llena la plantilla Excel con lo que tiene hoy; luego toma física completa para pegar etiquetas y confirmar |
+| 0.1 | Umbral de activo | **$100** (`empresas.activos_valor_minimo`): por debajo la app avisa que es gasto y pide confirmar; no bloquea |
+| 0.2 | Responsables | **Usuarios del sistema** por ahora (`activos.responsable_id → usuarios`) |
+| 0.3 | Ubicaciones y categorías | Ubicación inicial **"Activos"**; ubicaciones propias (`activo_ubicaciones`, no `almacenes`, para no aparecer en los selectores de stock), editables por la empresa. 7 categorías sembradas con vida útil sugerida, editables |
+| 0.4 | Equipos en clientes | No por ahora; a futuro es una ubicación más (se agrega cliente_id si hace falta) |
+| 0.5 | Quién ve los montos | **Admin y finanzas** (y superadmin): montos en `activo_valores` con RLS propia |
+| 0.6 | Depreciación | Referencial en línea recta, solo informativa |
+| 0.7 | Etiquetas | No por ahora (fase 4 en backlog) |
+| 0.8 | Inventario inicial | **Uno a uno desde el sistema**, sin plantilla Excel |
+
+## Implementado (fases 1-3)
+
+- `activos_fijos.sql`: `activo_categorias`, `activo_ubicaciones` (escritura desde la app), `activos`,
+  `activo_valores`, `activo_movimientos` (solo lectura; escritura por RPC: `crear_activo` (1 a 50
+  unidades), `editar_activo`, `registrar_movimiento_activo` (traslado, responsable, estado,
+  mantenimiento), `dar_baja_activo` y `reactivar_activo` (admin/finanzas)). Módulo `activos`.
+- `src/pages/Activos.jsx`: lista con KPIs y filtros (FiltroCombo + búsqueda), ficha con historial,
+  movimientos, baja/reactivación, maestros de categorías y ubicaciones.
+- `src/components/Activos.jsx`: `FormActivo` (alta/edición, avisos de umbral y serial repetido) y
+  `ActivosDelDocumento` (detalle de Gastos y de Compras → recepción: activos enlazados y "Registrar
+  como activo", que precarga fecha, proveedor y valor).
+- La lista usa filtros sueltos y no la barra estilo Odoo; el mantenimiento se registra como nota
+  (la RPC ya acepta `gasto_id`, falta el selector en pantalla).
 
 ## Fases
 

@@ -4,7 +4,8 @@ import { Plus, Search, Trash2, Check, CheckCircle, FileText, X, AlertTriangle, T
 import { useAuth } from '../contexts/AuthContext'
 import { moverStockLote, verificarStock } from '../lib/inventario'
 import { opcionesUnidad } from '../lib/unidades'
-import SelectorFechaTasa, { useTasasFecha, hoyYMD, fmtFechaCorta } from '../components/SelectorFechaTasa'
+import SelectorFechaTasa, { useTasasFecha, hoyYMD, fmtFechaCorta, ymdCaracas } from '../components/SelectorFechaTasa'
+import { ActivosDelDocumento } from '../components/Activos'
 import { ConfirmacionPago, METODOS_USD, METODOS_BS } from '../components/ModalPagoObligacion'
 import FiltroCombo from '../components/FiltroCombo'
 import BarraBusqueda from '../components/BarraBusqueda'
@@ -2926,6 +2927,13 @@ function DetalleRecepcion({ recepcion, onVolver }) {
                     </div>
                 </div>
             </div>
+
+            {/* Activos fijos recibidos con esta recepción (docs/plan-activos-fijos.md) */}
+            <ActivosDelDocumento tipo="compra" anulado={anulada} origen={{
+                id: recepcion.id, numero: recepcion.numero_doc, proveedor: recepcion.proveedores?.nombre,
+                fecha: recepcion.fecha_factura || ymdCaracas(recepcion.fecha_compra), nombre: '',
+                valor: totalesGuardados(recepcion).subtotal,
+            }} />
 
             {mostrarAnular && (
                 <div className="no-print" style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>

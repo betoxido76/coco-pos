@@ -441,6 +441,12 @@ Todo uso de IA se registra en `ia_consumo`; conversaciones en `ia_conversaciones
 
 ---
 
+### Activos fijos (`docs/plan-activos-fijos.md`)
+Módulo `activos` (`/activos`): una ficha por equipo (AF-000001) con ubicación, responsable (usuario),
+estado e historial. **No es inventario**: no mueve stock ni costos. Montos en `activo_valores`, solo
+visibles para admin/finanzas. Escritura por RPC (`activos_fijos.sql`); categorías y ubicaciones se
+editan desde la app. Desde el detalle de un gasto o una recepción: "Registrar como activo".
+
 ## 10. Perfiles de negocio (pendiente de implementar)
 
 El sistema soporta múltiples perfiles de negocio mediante `perfil_negocio` en la tabla `empresas`. El primer perfil adicional es **autopartes**:
@@ -535,6 +541,7 @@ Al cerrar un ítem, borrarlo de esta tabla.
 | Recorrido de kits | Alta | Nada se probó en navegador (la base sí, en BEGIN/ROLLBACK: ciclo, faltante de PT y armado). Crear un kit de prueba (2 PT + 1 empaque), armarlo por orden normal y por armado rápido, intentar armar sin stock de un PT, venderlo. Desarmar y costeo siguen fuera de alcance (`docs/plan-kits.md`). |
 | Recorrido de factura en recepción | Alta | Nada se probó en navegador (la RPC sí, en BEGIN/ROLLBACK). Recepción sin factura → intento de pago (bloqueado) → registrar factura dentro y fuera del 5 % → pagar. Corregir REC-000054 (Injaca: tiene factura, precios unitarios a corregir; hoy sus líneas suman $4.955,88 y el encabezado $5.005,55) con "Corregir factura". Intentar corregir una recepción con abonos (bloqueado). |
 | Precios con 2 decimales en ventas | Media | `venta_items`, `pedido_items` y `devolucion_items.precio_unitario` siguen en numeric(12,2) (compras pasó a 6 en `compra_items_precio_6dec.sql`). Revisar si los descuentos generan precios base con más decimales; cambiarlo toca `recalcular_totales_pedido` y las vistas del exportador. |
+| Recorrido de activos fijos | Alta | Nada se probó en navegador (las RPC sí, en BEGIN/ROLLBACK). Activar el módulo `activos` a Meraki y a sus usuarios; registrar un activo suelto, otro desde un gasto (2 unidades) y otro desde una recepción; trasladar, cambiar responsable y estado, mantenimiento, editar montos, dar de baja y reactivar. Revisar que un usuario no admin/finanzas no vea montos. Fases 4-7 en `docs/plan-activos-fijos.md`. |
 | Asistente de IA (piloto Meraki) | Alta | Fase 1 desplegada 2026-11-10; paquete 2 de consultas (NC, clientes, días de pago, compras, pagos, movimientos, tasas) y límite por usuario 2026-11-15 (`docs/plan-asistente-ia.md`). Falta: revisar privacidad en OpenRouter, activar a 1–2 usuarios de Meraki y la evaluación con 20 preguntas reales (Haiku vs Sonnet). |
 | Recepción no transaccional | Baja | La recepción se guarda en varios pasos desde el navegador (compra, aplicación de anticipos, ítems, stock); el pago va aparte por CxP. Si un paso falla, avisa y queda para completarlo a mano. Llevarla a una RPC. |
 

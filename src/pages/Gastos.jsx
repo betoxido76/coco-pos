@@ -12,6 +12,7 @@ import { useAltoBarra, useOrden, ordenarFilas, ThOrden, BarraFija, estiloTarjeta
 import { traerTodas } from '../lib/traerTodas'
 import { proveedorRetiene, resumenRetencionProveedor, desgloseSugerido, avisoDesglose } from '../lib/retenciones'
 import { cuentaGasto, cargarPagosGastos, PROV_RETENCION } from '../lib/saldoGasto'
+import { ActivosDelDocumento } from '../components/Activos'
 
 const fmt = n => `$${Number(n || 0).toFixed(2)}`
 const fmtBs = n => `${Number(n || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`
@@ -1180,6 +1181,12 @@ function DetalleGasto({ gasto: g, tasas, onVolver }) {
                     </p>
                 </div>
             )}
+
+            {/* Activos fijos comprados con este gasto (docs/plan-activos-fijos.md) */}
+            <ActivosDelDocumento tipo="gasto" anulado={estado === 'anulado'} origen={{
+                id: g.id, numero: g.numero_gasto, proveedor: g.proveedores?.nombre, fecha: g.fecha, nombre: g.nombre,
+                valor: g.base_imponible != null ? Number(g.base_imponible) : totalUsd,
+            }} />
 
             {/* Historial de abonos */}
             {pagos.length > 0 && (

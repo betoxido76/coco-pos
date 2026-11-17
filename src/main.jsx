@@ -24,6 +24,7 @@ import Gastos from './pages/Gastos'
 import Bancos from './pages/Bancos'
 import Despacho from './pages/Despacho'
 import Requisiciones from './pages/Requisiciones'
+import Activos from './pages/Activos'
 import ResetPassword from './pages/ResetPassword'
 // Carga diferida: trae react-markdown solo al abrir el asistente
 const Asistente = lazy(() => import('./pages/Asistente'))
@@ -96,6 +97,7 @@ function App() {
         <Route path="bancos" element={<ModuloProtegido modulo="bancos"><Bancos /></ModuloProtegido>} />
         <Route path="despacho" element={<ModuloProtegido modulo="despacho"><Despacho /></ModuloProtegido>} />
         <Route path="requisiciones" element={<ModuloProtegido modulo="requisiciones"><Requisiciones /></ModuloProtegido>} />
+        <Route path="activos" element={<ModuloProtegido modulo="activos"><Activos /></ModuloProtegido>} />
         <Route path="asistente" element={<ModuloProtegido modulo="asistente"><Suspense fallback={null}><Asistente /></Suspense></ModuloProtegido>} />
         <Route path="superadmin" element={<SuperAdmin />} />
         <Route path="laboratorio-vin" element={<SoloSuperadmin><LaboratorioVin /></SoloSuperadmin>} />
