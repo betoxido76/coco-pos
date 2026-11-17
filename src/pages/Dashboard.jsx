@@ -321,7 +321,9 @@ function TabComercial() {
             productoSku: prod.sku || '',
             productoNombre: prod.nombre || '—',
             cantidad, precio, unidadesPrimarias,
-            // Facturación con IVA, cada línea con su convención (src/lib/iva.js)
+            // Ventas SIN IVA (el IVA no es ingreso); lineaTotal con IVA solo para la
+            // referencia del tag. Cada línea con su convención (src/lib/iva.js)
+            lineaBase: baseLinea(r, cantidad, 0),
             lineaTotal: conIva(baseLinea(r, cantidad, 0), itemAplicaIva(r)),
             diasCredito: (fecha && fechaVenc) ? Math.max(0, floorDias(fechaVenc - fecha)) : null,
             estatus,
@@ -399,7 +401,8 @@ function TabComercial() {
         }
         const desc = Number(r.descuento_item || 0)
         const dg = Number(p.descuento_global || 0)
-        const lineaTotal = conIva(baseLinea(r, cant || 0, desc), itemAplicaIva(r)) * (1 - dg / 100)
+        // Montos de pedidos SIN IVA, igual que las ventas
+        const lineaBase = baseLinea(r, cant || 0, desc) * (1 - dg / 100)
         return {
             pedidoId: r.pedido_id,
             estado: p.estado,
@@ -413,7 +416,7 @@ function TabComercial() {
             productoNombre: prod.nombre || '—',
             productoCat1: prod.categoria_1 || null, productoCat2: prod.categoria_2 || null,
             vendedorId: p.vendedor_id,
-            lineaTotal,
+            lineaBase,
         }
     }), [rawPedidoLineas, catMap])
 
@@ -538,7 +541,9 @@ function TabComercial() {
     const maxPageSuc = Math.max(0, Math.ceil(totalSucursales / pageSizeSuc) - 1)
 
     // ─── Ventas totales + Unidades vendidas + Días calle ponderado ───
-    const ventasTotales = useMemo(() => lineasFiltradas.reduce((s, l) => s + l.lineaTotal, 0), [lineasFiltradas])
+    // Ventas sin IVA (base imponible); con IVA solo como referencia (cuadra con las notas)
+    const ventasTotales = useMemo(() => lineasFiltradas.reduce((s, l) => s + l.lineaBase, 0), [lineasFiltradas])
+    const ventasConIva = useMemo(() => lineasFiltradas.reduce((s, l) => s + l.lineaTotal, 0), [lineasFiltradas])
     // Unidades vendidas normalizadas a la unidad primaria (respeta todos los filtros vía lineasFiltradas)
     const unidadesVendidas = useMemo(() => lineasFiltradas.reduce((s, l) => s + l.unidadesPrimarias, 0), [lineasFiltradas])
     // Días calle: sobre la cartera completa (sin filtro de fecha).
@@ -580,7 +585,7 @@ function TabComercial() {
         }
         pedidoLineasFiltradas.forEach(l => {
             const a = acc[l.estado]; if (!a) return
-            a.monto += l.lineaTotal; a.ids.add(l.pedidoId)
+            a.monto += l.lineaBase; a.ids.add(l.pedidoId)
         })
         return {
             aprobacion: { monto: acc.pendiente.monto, n: acc.pendiente.ids.size },
@@ -591,11 +596,11 @@ function TabComercial() {
     }, [pedidoLineasFiltradas])
 
     // ─── Datos de tortas fila 1 (por monto, nivel línea) ───
-    const pieCanal = useMemo(() => topN(agrupar(lineasFiltradas, l => l.canal, l => l.lineaTotal)), [lineasFiltradas])
-    const pieProducto = useMemo(() => topN(agrupar(lineasFiltradas, l => `${l.productoSku ? l.productoSku + ' · ' : ''}${l.productoNombre}`, l => l.lineaTotal)), [lineasFiltradas])
-    const pieCliente = useMemo(() => topN(agrupar(lineasFiltradas, l => `${l.clienteCodigo ? l.clienteCodigo + ' · ' : ''}${l.clienteNombre}`, l => l.lineaTotal)), [lineasFiltradas])
+    const pieCanal = useMemo(() => topN(agrupar(lineasFiltradas, l => l.canal, l => l.lineaBase)), [lineasFiltradas])
+    const pieProducto = useMemo(() => topN(agrupar(lineasFiltradas, l => `${l.productoSku ? l.productoSku + ' · ' : ''}${l.productoNombre}`, l => l.lineaBase)), [lineasFiltradas])
+    const pieCliente = useMemo(() => topN(agrupar(lineasFiltradas, l => `${l.clienteCodigo ? l.clienteCodigo + ' · ' : ''}${l.clienteNombre}`, l => l.lineaBase)), [lineasFiltradas])
     // Ventas por sucursal (punto de entrega) del cliente seleccionado
-    const pieSucursal = useMemo(() => topN(agrupar(lineasFiltradas, sucursalNombre, l => l.lineaTotal)), [lineasFiltradas, direccionMap])
+    const pieSucursal = useMemo(() => topN(agrupar(lineasFiltradas, sucursalNombre, l => l.lineaBase)), [lineasFiltradas, direccionMap])
 
     // ─── Datos de tortas fila 2 (nivel factura) ───
     // Estatus: ponderado por TOTAL facturado (para que "Pagado" no desaparezca)
@@ -643,7 +648,7 @@ function TabComercial() {
         const m = {}
         lineasFiltradas.forEach(l => {
             if (!l.fecha) return
-            m[ymdCaracas(l.fecha)] = (m[ymdCaracas(l.fecha)] || 0) + l.lineaTotal
+            m[ymdCaracas(l.fecha)] = (m[ymdCaracas(l.fecha)] || 0) + l.lineaBase
         })
         const ini = new Date(desde + 'T00:00:00')
         const fin = new Date(hasta + 'T00:00:00')
@@ -727,18 +732,18 @@ function TabComercial() {
     // Config de gráficas (para render uniforme + ampliar)
     const colorIdx = (d, i) => d._otros ? GRIS_OTROS : COLORES[i % COLORES.length]
     const fila1 = [
-        { id: 'canal', type: 'pie', title: 'Ventas por Canal', data: pieCanal, colorFn: colorIdx, showLegend: true },
-        { id: 'producto', type: 'pie', title: 'Ventas por Producto', data: pieProducto, colorFn: colorIdx, showLegend: false },
-        { id: 'cliente', type: 'pie', title: 'Ventas por Cliente', data: pieCliente, colorFn: colorIdx, showLegend: false },
+        { id: 'canal', type: 'pie', title: 'Ventas por Canal', subtitle: 'sin IVA', data: pieCanal, colorFn: colorIdx, showLegend: true },
+        { id: 'producto', type: 'pie', title: 'Ventas por Producto', subtitle: 'sin IVA', data: pieProducto, colorFn: colorIdx, showLegend: false },
+        { id: 'cliente', type: 'pie', title: 'Ventas por Cliente', subtitle: 'sin IVA', data: pieCliente, colorFn: colorIdx, showLegend: false },
     ]
     const fila2 = [
         { id: 'estatus', type: 'pie', title: 'Ventas por Estatus', subtitle: 'por monto facturado', data: pieEstatus, colorFn: d => COLOR_ESTATUS[d.name] || GRIS_OTROS, showLegend: true },
         { id: 'vencida', type: 'pie', title: 'Cartera vencida por antigüedad', subtitle: 'por saldo, solo vencidas', data: pieVencida, colorFn: d => COLOR_VENCIDA[d.name] || GRIS_OTROS, showLegend: true },
         { id: 'antig', type: 'pie', title: 'Saldo en calle por antigüedad', subtitle: 'por saldo, días desde emisión', data: pieAntig, colorFn: d => COLOR_ANTIG[d.name] || GRIS_OTROS, showLegend: true },
     ]
-    const serieCfg = { id: 'serie', type: 'line', title: 'Ventas diarias', subtitle: 'monto por día', data: serieDiaria }
+    const serieCfg = { id: 'serie', type: 'line', title: 'Ventas diarias', subtitle: 'monto por día, sin IVA', data: serieDiaria }
     // Torta de ventas por sucursal (sin leyenda; nombres visibles al pasar el mouse)
-    const sucursalCfg = { id: 'sucursal', type: 'pie', title: 'Ventas por Sucursal', subtitle: 'del cliente seleccionado', data: pieSucursal, colorFn: colorIdx, showLegend: false }
+    const sucursalCfg = { id: 'sucursal', type: 'pie', title: 'Ventas por Sucursal', subtitle: 'del cliente seleccionado, sin IVA', data: pieSucursal, colorFn: colorIdx, showLegend: false }
 
     // Los filtros y la paginación se conservan: solo cambia lo que se renderiza
     if (ventaVista)
@@ -798,7 +803,7 @@ function TabComercial() {
                 <>
                     {/* ─── Tags / indicadores (afectados por los filtros) ─── */}
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '12px', marginBottom: '20px' }}>
-                        <TagCard label="Ventas totales" valor={fmt(ventasTotales)} color="#1f2937" />
+                        <TagCard label="Ventas totales" valor={fmt(ventasTotales)} sub={`sin IVA · con IVA: ${fmt(ventasConIva)}`} color="#1f2937" />
                         <TagCard label="Unidades vendidas" valor={fmtNum(unidadesVendidas)} sub="en unidad primaria · sin servicios" color="#1f2937" />
                         <TagCard label="Días calle ponderado" valor={`${diasCalle} días`} sub="ponderado por saldo" color="#d97706" />
                         <TagCard label="Total pendiente" valor={fmt(cxc.totalPendiente)} sub="por cobrar" color="#1f2937" />
@@ -806,10 +811,10 @@ function TabComercial() {
                         <TagCard label="Facturas al día" valor={cxc.alDiaCount} sub="dentro del plazo" color="#16a34a" />
                         <TagCard label="Valor vencido" valor={`${fmt(cxc.valorVencido)} (${cxc.pctVencido.toFixed(0)}%)`} color="#ef4444" />
                         <TagCard label="Valor por vencer" valor={`${fmt(cxc.valorPorVencer)} (${cxc.pctPorVencer.toFixed(0)}%)`} color="#16a34a" />
-                        <TagCard label="Pedidos por aprobación" valor={fmt(pedidoKpis.aprobacion.monto)} sub={`${pedidoKpis.aprobacion.n} pedido${pedidoKpis.aprobacion.n === 1 ? '' : 's'}`} color="#854d0e" />
-                        <TagCard label="Pedidos por alistar" valor={fmt(pedidoKpis.alistar.monto)} sub={`${pedidoKpis.alistar.n} pedido${pedidoKpis.alistar.n === 1 ? '' : 's'}`} color="#1e40af" />
-                        <TagCard label="Pedidos por registrar" valor={fmt(pedidoKpis.registrar.monto)} sub={`${pedidoKpis.registrar.n} pedido${pedidoKpis.registrar.n === 1 ? '' : 's'}`} color="#c2410c" />
-                        <TagCard label="Pedidos por despachar" valor={fmt(pedidoKpis.despachar.monto)} sub={`${pedidoKpis.despachar.n} pedido${pedidoKpis.despachar.n === 1 ? '' : 's'}`} color="#166534" />
+                        <TagCard label="Pedidos por aprobación" valor={fmt(pedidoKpis.aprobacion.monto)} sub={`${pedidoKpis.aprobacion.n} pedido${pedidoKpis.aprobacion.n === 1 ? '' : 's'} · sin IVA`} color="#854d0e" />
+                        <TagCard label="Pedidos por alistar" valor={fmt(pedidoKpis.alistar.monto)} sub={`${pedidoKpis.alistar.n} pedido${pedidoKpis.alistar.n === 1 ? '' : 's'} · sin IVA`} color="#1e40af" />
+                        <TagCard label="Pedidos por registrar" valor={fmt(pedidoKpis.registrar.monto)} sub={`${pedidoKpis.registrar.n} pedido${pedidoKpis.registrar.n === 1 ? '' : 's'} · sin IVA`} color="#c2410c" />
+                        <TagCard label="Pedidos por despachar" valor={fmt(pedidoKpis.despachar.monto)} sub={`${pedidoKpis.despachar.n} pedido${pedidoKpis.despachar.n === 1 ? '' : 's'} · sin IVA`} color="#166534" />
                     </div>
 
                     {/* ─── Tabla de detalle ─── */}
