@@ -4,6 +4,7 @@ empresas              -- Clientes del sistema
                       --   agente_retencion boolean: retiene IVA/ISLR a proveedores (CLAUDE.md §7)
                       --   ret_clientes_pct_iva / ret_clientes_pct_islr numeric: % que le retienen
                       --   los clientes contribuyentes especiales (NULL/0 = no aplica)
+                      --   costeo_insumos ('ultimo_precio' default | 'promedio_ponderado'), plan-presentaciones-insumos
 usuarios              -- Roles: admin, vendedor, produccion, almacen, finanzas, superadmin
 modulos               -- Catálogo de módulos disponibles
 empresa_modulos       -- Módulos contratados por empresa
@@ -17,10 +18,17 @@ productos_terminados  -- SKU, stock_actual, costo_promedio, aplica_iva
 materias_primas       -- Insumos de producción
 materiales_empaque    -- Materiales de empaque
 consumibles           -- Consumibles generales
+                      --   (las 3) costo_compra_promedio numeric(18,8) (desde 2026-11-21; antes 4 dec.),
+                      --   costo_ultima_compra numeric(18,8) + fecha_ultima_compra (último costo / reposición)
+insumo_presentaciones -- Formas de compra de un insumo (docs/plan-presentaciones-insumos.md)
+                      --   tipo_insumo ('materia_prima'|'material_empaque'|'consumible'), insumo_id, nombre,
+                      --   factor (unidades base por presentación), marca, proveedor_id, codigo_barras, activa
+                      --   Único (insumo_id, nombre). Factor no editable si ya se usó (desactivar y crear otra)
 almacenes             -- Almacenes por empresa (con es_default)
 almacen_ubicaciones   -- Ubicaciones dentro de almacenes
 stock_ubicacion       -- Stock por almacén/ubicación (tabla pivote)
 movimientos_inventario -- Historial de todos los movimientos
+                      --   costo_unitario numeric(18,8): costo vigente al moverse (lo llena la fase 4)
 ```
 
 ### Invariante crítica
@@ -100,6 +108,10 @@ solicitud_devolucion_items -- Detalle de SDR: producto_id, cantidad_recibida, pr
 ordenes_compra        -- OC a proveedores (subtotal, base_gravada, base_exenta, iva, total)
 orden_compra_items    -- Detalle de OC
                       --   precio_unitario_esperado SIEMPRE sin IVA; aplica_iva, iva_pct
+                      --   presentacion_id, presentacion_nombre/factor (foto), cantidad_presentacion,
+                      --   precio_presentacion: NULL = línea sin presentación. Igual en compra_items y
+                      --   devolucion_proveedor_items. Trigger linea_presentacion_cuadra: cantidad base =
+                      --   cant. presentación × factor, precio base = precio presentación ÷ factor
 compras               -- Recepciones (subtotal, base_gravada, base_exenta, iva, total)
                       --   estado_factura ('pendiente' = llegó sin factura, no se paga | 'registrada',
                       --   default), fecha_factura, nro_nota_entrega, factura_registrada_por/_at,
@@ -107,7 +119,7 @@ compras               -- Recepciones (subtotal, base_gravada, base_exenta, iva, 
                       --   Factura y precios: RPC registrar_factura_recepcion (plan-factura-recepcion)
 compra_items          -- Detalle de recepciones
                       --   aplica_iva, iva_pct, precio_incluye_iva (true = recepción vieja), base_linea
-                      --   precio_unitario numeric(14,6); precio_recepcion = precio sin IVA que cargó
+                      --   precio_unitario numeric(20,10) (precio por g/ml); precio_recepcion = precio sin IVA que cargó
                       --   logística, se llena cuando CxP cambia el precio (referencia del 5 %)
                       --   tipo_insumo CHECK IN ('materia_prima','empaque','material_empaque','consumible','producto_terminado')
 pagos_proveedor       -- Pagos a proveedores

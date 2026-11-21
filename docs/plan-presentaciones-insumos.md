@@ -1,7 +1,8 @@
 # Plan: presentaciones de compra, unidad base y costeo de insumos
 
-Estado: **plan aprobado para arrancar (2026-11-21)**. Fase 0 (decisiones del
-cliente) en curso. Primer cliente que lo usa: Daveyana (pastelería, alta
+Estado: **fase 1 aplicada en producción (2026-11-21)**, `presentaciones_insumos_fase1.sql`,
+probada antes en BEGIN/ROLLBACK (21 casos: cuadre, errores, regresión Meraki, vistas
+del exportador idénticas). Fase 0 (decisiones del cliente) en curso. Primer cliente que lo usa: Daveyana (pastelería, alta
 2026-11-21). Meraki no debe notar ningún cambio de comportamiento.
 
 ## Problema
