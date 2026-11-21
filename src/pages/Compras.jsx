@@ -2986,6 +2986,7 @@ function DetalleRecepcion({ recepcion, onVolver }) {
 // ─── Nueva Devolución a Proveedor ──────────────────────────────
 function NuevaDevolucion({ onCreada, onCancelar }) {
     const { perfil } = useAuth()
+    const presentaciones = usePresentacionesCompra(perfil.empresa_id)
     const [proveedorId, setProveedorId] = useState('')
     const [compraOrigenId, setCompraOrigenId] = useState('')
     const [proveedores, setProveedores] = useState([])
@@ -3004,10 +3005,10 @@ function NuevaDevolucion({ onCreada, onCancelar }) {
         Promise.all([
             supabase.from('proveedores').select('id, nombre').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('nombre'),
             supabase.from('almacenes').select('id, nombre, es_default').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('nombre'),
-            supabase.from('materias_primas').select('id, nombre, codigo, stock_actual, costo_compra_promedio, aplica_iva').eq('empresa_id', perfil.empresa_id).eq('activo', true),
-            supabase.from('materiales_empaque').select('id, nombre, codigo, stock_actual, costo_compra_promedio, aplica_iva').eq('empresa_id', perfil.empresa_id).eq('activo', true),
-            supabase.from('consumibles').select('id, nombre, codigo, stock_actual, costo_compra_promedio, aplica_iva').eq('empresa_id', perfil.empresa_id).eq('activo', true),
-            conTodas(() => supabase.from('productos_terminados').select('id, nombre, sku, stock_actual, costo_promedio, aplica_iva').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('id')),
+            supabase.from('materias_primas').select('id, nombre, codigo, unidad_medida, stock_actual, costo_compra_promedio, aplica_iva').eq('empresa_id', perfil.empresa_id).eq('activo', true),
+            supabase.from('materiales_empaque').select('id, nombre, codigo, unidad_medida, stock_actual, costo_compra_promedio, aplica_iva').eq('empresa_id', perfil.empresa_id).eq('activo', true),
+            supabase.from('consumibles').select('id, nombre, codigo, unidad_medida, stock_actual, costo_compra_promedio, aplica_iva').eq('empresa_id', perfil.empresa_id).eq('activo', true),
+            conTodas(() => supabase.from('productos_terminados').select('id, nombre, sku, unidad_medida, stock_actual, costo_promedio, aplica_iva').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('id')),
         ]).then(([provs, alms, mp, me, cons, pt]) => {
             setProveedores(provs.data || [])
             setAlmacenes(alms.data || [])
@@ -3042,14 +3043,17 @@ function NuevaDevolucion({ onCreada, onCancelar }) {
         if (!data) return
         const tipoToPlural = { materia_prima: 'materias_primas', empaque: 'materiales_empaque', material_empaque: 'materiales_empaque', consumible: 'consumibles', producto_terminado: 'productos_terminados' }
         // Hereda IVA y convención de la recepción original
-        setItems(data.map(i => ({
-            id: i.insumo_id,
-            tipo: tipoToPlural[i.tipo_insumo] || 'materias_primas',
-            nombre: mapaNombres[i.insumo_id] || '—',
-            cantidad: i.cantidad,
-            precio_unitario: i.precio_unitario,
-            ...camposIvaHeredados(i),
-        })))
+        setItems(data.map(i => {
+            const ins = insumos.find(x => x.id === i.insumo_id)
+            return {
+                id: i.insumo_id,
+                tipo: tipoToPlural[i.tipo_insumo] || 'materias_primas',
+                nombre: mapaNombres[i.insumo_id] || '—',
+                unidad: ins?.unidad_medida,
+                ...lineaDesdeBD({ ...i, cantidadBase: i.cantidad, precioBase: i.precio_unitario }),
+                ...camposIvaHeredados(i),
+            }
+        }))
     }
 
     function agregarInsumo(insumo) {
@@ -3058,6 +3062,8 @@ function NuevaDevolucion({ onCreada, onCancelar }) {
             return [...prev, { id: insumo.id, tipo: insumo.tipo, nombre: insumo.nombre, unidad: insumo.unidad_medida, cantidad: 1, precio_unitario: insumo.costo || 0, ...camposIvaLinea(insumo.aplica_iva ?? true) }]
         })
         setBusquedaInsumo('')
+    }
+
     function cambiarCantidad(id, tipo, valor) {
         const n = parseFloat(valor)
         if (isNaN(n) || n <= 0) return
@@ -3072,7 +3078,6 @@ function NuevaDevolucion({ onCreada, onCancelar }) {
         const n = parseFloat(valor)
         if (isNaN(n) || n < 0) return
         setItems(prev => prev.map(i => (i.id === id && i.tipo === tipo) ? { ...i, precio_unitario: n } : i))
-    }
     }
 
     const insumosFiltrados = busquedaInsumo.length >= 2
@@ -3129,7 +3134,7 @@ function NuevaDevolucion({ onCreada, onCancelar }) {
         const itemsDevueltos = items.map(i => ({
             tipo_item: i.tipo,
             item_id: i.id,
-            cantidad: Number(i.cantidad),
+            cantidad: Number(i.cantidad) * (Number(i.factor) || 1),
         })).filter(i => i.cantidad > 0)
 
         try {
@@ -3340,7 +3345,7 @@ function DetalleDevolucion({ devolucion: dev, onVolver }) {
                         <tbody>
                             {items.map((item, idx) => (
                                 <tr key={idx} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                                    <td style={{ padding: '10px 16px', fontSize: '13px', color: '#1f2937', fontWeight: 500 }}>{item.nombre_insumo || '—'}</td>
+                                    <td style={{ padding: '10px 16px', fontSize: '13px', color: '#1f2937', fontWeight: 500 }}>{item.nombre_insumo || '—'}{textoPresentacionGuardada(item) && <div style={{ fontSize: '11px', color: '#6b7280', fontWeight: 400 }}>{textoPresentacionGuardada(item)}</div>}</td>
                                     <td style={{ padding: '10px 16px', fontSize: '11px', color: '#6b7280', textTransform: 'uppercase' }}>{item.tipo_insumo?.replace(/_/g, ' ') || '—'}</td>
                                     <td style={{ padding: '10px 16px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{Number(item.cantidad).toLocaleString('es-VE')}</td>
                                     <td style={{ padding: '10px 16px', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{fmtPrecio(precioBaseItem(item))}</td>
