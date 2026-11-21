@@ -82,6 +82,26 @@ export default function PresentacionesInsumo({ filas, onChange, unidad, costo, p
     )
 }
 
+// Selector de presentación para una línea de compra. Si el insumo no tiene
+// presentaciones no se dibuja nada (la línea se ve como siempre).
+//   opciones: presentaciones activas del insumo · value: presentacion_id o ''
+export function SelectorPresentacion({ opciones, unidad, value, onChange, nombreGuardado }) {
+    const lista = opciones || []
+    // Una línea guardada puede apuntar a una presentación ya desactivada
+    const falta = value && !lista.some(p => p.id === value)
+    if (lista.length === 0 && !falta) return null
+    return (
+        <select value={value || ''} onChange={e => { if (e.target.value !== (value || '')) onChange(lista.find(p => p.id === e.target.value) || null) }}
+            style={{ marginTop: '4px', maxWidth: '220px', padding: '3px 6px', border: '1px solid #99f6e4', borderRadius: '6px', fontSize: '12px', color: '#0f766e', backgroundColor: '#f0fdfa' }}>
+            <option value="">Por {unidad || 'unidad'}</option>
+            {falta && <option value={value}>{nombreGuardado || 'Presentación'} (inactiva)</option>}
+            {lista.map(p => (
+                <option key={p.id} value={p.id}>{p.nombre} ({Number(p.factor).toLocaleString('es-VE', { maximumFractionDigits: 6 })} {unidad || ''})</option>
+            ))}
+        </select>
+    )
+}
+
 const COLS = '1.6fr 1fr 1fr 1.2fr 1.1fr 78px'
 const input = {
     width: '100%', padding: '7px 9px', border: '1px solid #d1d5db', borderRadius: '7px',

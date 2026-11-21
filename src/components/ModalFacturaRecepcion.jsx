@@ -10,6 +10,12 @@ import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
 import { precioBaseItem, itemAplicaIva, totalesDeItems } from '../lib/iva'
 import { hoyYMD, ymdCaracas } from './SelectorFechaTasa'
+import { textoPresentacionGuardada } from '../lib/presentaciones'
+
+// Línea recibida por presentación (3 × Botella 2 L): en esta ventana el precio
+// se lee y se corrige POR PRESENTACIÓN, como viene en la factura del proveedor.
+// La RPC guarda el precio por unidad base (docs/plan-presentaciones-insumos.md).
+const factorFactura = (i) => (i.cantidad_presentacion != null && Number(i.factor) > 0 ? Number(i.factor) : 1)
 
 export const TOLERANCIA_FACTURA = 0.05
 
@@ -34,25 +40,31 @@ export default function ModalFacturaRecepcion({ compra, items, nombres = {}, onC
     const registrar = compra.estado_factura === 'pendiente'
     const [nro, setNro] = useState(compra.nro_doc_proveedor || '')
     const [fecha, setFecha] = useState(compra.fecha_factura || (compra.fecha_compra ? ymdCaracas(compra.fecha_compra) : hoyYMD()))
-    // Precio editable por línea, en base (sin IVA)
+    // Precio editable por línea, sin IVA: por unidad base o por presentación
     const [precios, setPrecios] = useState(() =>
-        Object.fromEntries(items.map(i => [i.id, String(Number(precioBaseItem(i).toFixed(6)))])))
+        Object.fromEntries(items.map(i => {
+            const f = factorFactura(i)
+            const p = f !== 1 && i.precio_presentacion != null ? Number(i.precio_presentacion) : precioBaseItem(i) * f
+            return [i.id, String(Number(p.toFixed(6)))]
+        })))
     const [motivo, setMotivo] = useState(compra.motivo_diferencia_factura || '')
     const [actualizarCostos, setActualizarCostos] = useState(false)
     const [guardando, setGuardando] = useState(false)
     const [error, setError] = useState('')
 
     const filas = items.map(i => {
-        const ref = precioRecibido(i)
+        const fac = factorFactura(i)
+        const ref = precioRecibido(i) * fac          // en la unidad que se muestra
         const nuevo = Number(precios[i.id])
         const valido = precios[i.id] !== '' && Number.isFinite(nuevo) && nuevo >= 0
+        const nuevoBase = valido ? nuevo / fac : 0  // por unidad base
         const dif = ref > 0 && valido ? (nuevo - ref) / ref : 0
         const fuera = valido && ((ref > 0 && Math.abs(dif) > TOLERANCIA_FACTURA) || (ref === 0 && nuevo > 0))
-        return { i, ref, nuevo, valido, dif, fuera }
+        return { i, fac, ref, nuevo, nuevoBase, valido, dif, fuera }
     })
     const hayFuera = filas.some(f => f.fuera)
     const nuevos = totalesDeItems(
-        filas.map(f => ({ ...f.i, precio_unitario: f.valido ? f.nuevo : 0, precio_incluye_iva: false, aplica_iva: itemAplicaIva(f.i) })),
+        filas.map(f => ({ ...f.i, precio_unitario: f.nuevoBase, precio_incluye_iva: false, aplica_iva: itemAplicaIva(f.i) })),
         { descGlobal: compra.descuento_global || 0 })
     const totalAntes = Number(compra.total || 0)
 
@@ -65,14 +77,16 @@ export default function ModalFacturaRecepcion({ compra, items, nombres = {}, onC
         setGuardando(true)
         const { error: err } = await supabase.rpc('registrar_factura_recepcion', {
             p_compra_id: compra.id, p_nro: nro.trim(), p_fecha: fecha,
-            p_items: filas.map(f => ({ id: f.i.id, precio_unitario: f.nuevo })),
+            p_items: filas.map(f => f.fac !== 1
+                ? { id: f.i.id, precio_presentacion: f.nuevo, precio_unitario: f.nuevoBase }
+                : { id: f.i.id, precio_unitario: f.nuevo }),
             p_motivo: motivo.trim() || null,
         })
         if (err) { setGuardando(false); setError(err.message); return }
         if (actualizarCostos) {
             for (const f of filas) {
                 const map = COSTO_CATALOGO[f.i.tipo_insumo]
-                if (map) await supabase.from(map.tabla).update({ [map.campo]: f.nuevo })
+                if (map) await supabase.from(map.tabla).update({ [map.campo]: f.nuevoBase })
                     .eq('id', f.i.insumo_id).eq('empresa_id', perfil.empresa_id)
             }
         }
@@ -125,17 +139,24 @@ export default function ModalFacturaRecepcion({ compra, items, nombres = {}, onC
                             {filas.map(f => (
                                 <tr key={f.i.id} style={{ borderBottom: '1px solid #f3f4f6', backgroundColor: f.fuera ? '#fef2f2' : undefined }}>
                                     <td style={{ ...td, textAlign: 'left' }}>{nombres[f.i.insumo_id] || '—'}</td>
-                                    <td style={td}>{Number(f.i.cantidad).toLocaleString('es-VE')}</td>
-                                    <td style={{ ...td, color: '#6b7280' }}>{fmtPrecio(f.ref)}</td>
                                     <td style={td}>
-                                        <input type="number" min="0" step="0.000001" value={precios[f.i.id]}
+                                        {f.fac !== 1 ? (
+                                            <>
+                                                <div>{textoPresentacionGuardada(f.i)}</div>
+                                                <div style={{ fontSize: '11px', color: '#9ca3af' }}>{Number(f.i.cantidad).toLocaleString('es-VE')}</div>
+                                            </>
+                                        ) : Number(f.i.cantidad).toLocaleString('es-VE')}
+                                    </td>
+                                    <td style={{ ...td, color: '#6b7280' }}>{fmtPrecio(f.ref)}{f.fac !== 1 && <div style={{ fontSize: '11px', color: '#9ca3af' }}>por {f.i.presentacion_nombre || 'presentación'}</div>}</td>
+                                    <td style={td}>
+                                        <input type="number" min="0" step="any" value={precios[f.i.id]}
                                             onChange={e => setPrecios(p => ({ ...p, [f.i.id]: e.target.value }))}
                                             style={{ ...inp, padding: '6px 8px', textAlign: 'right', borderColor: f.fuera ? '#fca5a5' : '#d1d5db' }} />
                                     </td>
                                     <td style={{ ...td, fontWeight: 600, color: f.fuera ? '#dc2626' : Math.abs(f.dif) > 0.00001 ? '#92400e' : '#9ca3af' }}>
                                         {f.valido ? `${f.dif > 0 ? '+' : ''}${(f.dif * 100).toFixed(1)} %` : '—'}
                                     </td>
-                                    <td style={td}>{fmt(f.valido ? Number(f.i.cantidad) * f.nuevo * (1 - Number(f.i.descuento_item || 0) / 100) : 0)}</td>
+                                    <td style={td}>{fmt(f.valido ? Number(f.i.cantidad) * f.nuevoBase * (1 - Number(f.i.descuento_item || 0) / 100) : 0)}</td>
                                 </tr>
                             ))}
                         </tbody>

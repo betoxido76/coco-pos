@@ -16,6 +16,35 @@ import AnticiposOC, { SelectorAnticipos, totalAplicaciones, aplicacionesALista, 
 import { useAltoBarra, useOrden, ordenarFilas, ThOrden, BarraFija, TopTitulos, estiloTarjetaTabla } from '../components/TablaOrdenable'
 import { conTodas, traerTodas } from '../lib/traerTodas'
 import ModalPagoRecepcion from '../components/ModalPagoRecepcion'
+import { SelectorPresentacion } from '../components/PresentacionesInsumo'
+import { fmtCosto } from '../lib/costos'
+import { presentacionesPorInsumo, aplicarPresentacion, lineaCompraBD, lineaDesdeBD, precioBaseLinea, equivalenciaLinea, textoPresentacionGuardada } from '../lib/presentaciones'
+
+// Presentaciones activas de los insumos de compra, por insumo_id ({} si falla:
+// la compra sigue funcionando por unidad base, como siempre)
+function usePresentacionesCompra(empresaId) {
+    const [mapa, setMapa] = useState({})
+    useEffect(() => {
+        if (!empresaId) return
+        presentacionesPorInsumo(empresaId, ['materia_prima', 'material_empaque', 'consumible'])
+            .then(setMapa).catch(() => setMapa({}))
+    }, [empresaId])
+    return mapa
+}
+
+// Celda "Insumo" de una línea de compra: nombre + selector de presentación (si
+// el insumo tiene) + equivalencia en unidad base
+function CeldaInsumoCompra({ item, presentaciones, onPresentacion }) {
+    const eq = equivalenciaLinea(item, item.unidad)
+    return (
+        <>
+            <div>{item.nombre}</div>
+            <SelectorPresentacion opciones={presentaciones} unidad={item.unidad} value={item.presentacion_id || ''}
+                nombreGuardado={item.presentacion_nombre} onChange={onPresentacion} />
+            {eq && <div style={{ fontSize: '11px', color: '#6b7280', marginTop: '2px' }}>{eq}</div>}
+        </>
+    )
+}
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`
 // Precio unitario: los decimales reales (hasta 6), mínimo 2 — 0,09165 no es 0,09
@@ -808,6 +837,7 @@ function NuevaOrden({ onCreada, onCancelar }) {
     const [mostrarNuevoInsumo, setMostrarNuevoInsumo] = useState(false)
     const [mostrarNuevoProveedor, setMostrarNuevoProveedor] = useState(false)
     const [borradorGuardado, setBorradorGuardado] = useState(null)
+    const presentaciones = usePresentacionesCompra(perfil.empresa_id)
 
     const DRAFT_KEY = `mipos_borrador_oc_${perfil.empresa_id}`
 
@@ -869,15 +899,19 @@ function NuevaOrden({ onCreada, onCancelar }) {
         setItems(prev => {
             const existe = prev.find(i => i.id === ins.id && i.tipo === ins.tipo)
             if (existe) return prev.map(i => (i.id === ins.id && i.tipo === ins.tipo) ? { ...i, cantidad: i.cantidad + 1 } : i)
-            return [...prev, { id: ins.id, tipo: ins.tipo, nombre: ins.nombre, codigo: ins.codigo, cantidad: 1, precio_unitario: ins.costo || 0, precio_original: ins.costo || 0, aplica_iva: ins.aplica_iva ?? true }]
+            return [...prev, { id: ins.id, tipo: ins.tipo, nombre: ins.nombre, codigo: ins.codigo, unidad: ins.unidad_medida, cantidad: 1, precio_unitario: ins.costo || 0, precio_original: ins.costo || 0, aplica_iva: ins.aplica_iva ?? true }]
         })
         setBusqueda('')
     }
 
     function cambiarCantidad(id, tipo, valor) {
-        const n = parseInt(valor)
-        if (isNaN(n) || n < 1) return
+        const n = parseFloat(valor)
+        if (isNaN(n) || n <= 0) return
         setItems(prev => prev.map(i => (i.id === id && i.tipo === tipo) ? { ...i, cantidad: n } : i))
+    }
+
+    function cambiarPresentacion(id, tipo, pres) {
+        setItems(prev => prev.map(i => (i.id === id && i.tipo === tipo) ? aplicarPresentacion(i, pres) : i))
     }
 
     function cambiarPrecio(id, tipo, valor) {
@@ -932,9 +966,10 @@ function NuevaOrden({ onCreada, onCancelar }) {
                     empresa_id: perfil.empresa_id,
                     tipo_insumo: tipoMap[i.tipo] || i.tipo,
                     insumo_id: i.id,
-                    cantidad_solicitada: i.cantidad,
+                    // Con presentación: cantidad y precio pasan a unidad base y
+                    // se guarda también lo pedido (3 × Botella 2 L a $9,50)
+                    ...lineaCompraBD(i, { campoCantidad: 'cantidad_solicitada', campoPrecio: 'precio_unitario_esperado' }),
                     cantidad_recibida: 0,
-                    precio_unitario_esperado: i.precio_unitario,
                     aplica_iva: i.aplica_iva ?? true,
                     iva_pct: (i.aplica_iva ?? true) ? IVA_PCT : 0,
                 }))
@@ -942,7 +977,8 @@ function NuevaOrden({ onCreada, onCancelar }) {
 
             if (errItems) { setError('Error al guardar los items: ' + errItems.message); setGuardando(false); return }
 
-            const cambiados = items.filter(i => Number(i.precio_unitario) !== Number(i.precio_original))
+            // El costo del catálogo es por unidad base: se compara el precio convertido
+            const cambiados = items.filter(i => Math.abs(precioBaseLinea(i) - Number(i.precio_original || 0)) > 1e-9)
             if (cambiados.length > 0) {
                 setOcPendiente({ ocObj: { ...oc, proveedores: { nombre: proveedores.find(p => p.id === proveedorId)?.nombre } }, cambiados })
                 setGuardando(false)
@@ -970,7 +1006,7 @@ function NuevaOrden({ onCreada, onCancelar }) {
                 const map = TABLA_COSTO[item.tipo]
                 if (map) {
                     await supabase.from(map.tabla)
-                        .update({ [map.campo]: item.precio_unitario })
+                        .update({ [map.campo]: precioBaseLinea(item) })
                         .eq('id', item.id)
                         .eq('empresa_id', perfil.empresa_id)
                 }
@@ -1086,13 +1122,16 @@ function NuevaOrden({ onCreada, onCancelar }) {
                                 <tbody>
                                     {items.map(item => (
                                         <tr key={`${item.id}-${item.tipo}`} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                                            <td style={{ padding: '10px 12px', fontSize: '13px', color: '#1f2937' }}>{item.nombre}</td>
+                                            <td style={{ padding: '10px 12px', fontSize: '13px', color: '#1f2937' }}>
+                                                <CeldaInsumoCompra item={item} presentaciones={presentaciones[item.id]}
+                                                    onPresentacion={p => cambiarPresentacion(item.id, item.tipo, p)} />
+                                            </td>
                                             <td style={{ padding: '10px 12px', fontSize: '11px', color: '#6b7280', textTransform: 'uppercase' }}>{item.tipo.replace('_', ' ')}</td>
                                             <td style={{ padding: '10px 12px' }}>
                                                 <input
                                                     type="number"
                                                     min="0"
-                                                    step="0.01"
+                                                    step="any"
                                                     value={item.precio_unitario}
                                                     onChange={e => cambiarPrecio(item.id, item.tipo, e.target.value)}
                                                     style={{
@@ -1105,7 +1144,7 @@ function NuevaOrden({ onCreada, onCancelar }) {
                                                     }}
                                                 />
                                             </td>
-                                            <td style={{ padding: '10px 12px' }}><input type="number" min="1" value={item.cantidad} onChange={e => cambiarCantidad(item.id, item.tipo, e.target.value)} style={{ width: '60px', padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px', textAlign: 'center' }} /></td>
+                                            <td style={{ padding: '10px 12px' }}><input type="number" min="0" step="any" value={item.cantidad} onChange={e => cambiarCantidad(item.id, item.tipo, e.target.value)} style={{ width: '60px', padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px', textAlign: 'center' }} /></td>
                                             <td style={{ padding: '10px 12px', fontSize: '13px', fontWeight: 600, color: '#1f2937' }}>{fmt(item.cantidad * item.precio_unitario)}</td>
                                             <td style={{ padding: '10px 12px' }}><button onClick={() => eliminarItem(item.id, item.tipo)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', padding: '4px' }}><Trash2 size={14} /></button></td>
                                         </tr>
@@ -1166,9 +1205,9 @@ function NuevaOrden({ onCreada, onCancelar }) {
                                         {item.codigo && <div style={{ fontSize: '11px', color: '#9ca3af', fontFamily: 'monospace' }}>{item.codigo}</div>}
                                     </div>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px' }}>
-                                        <span style={{ color: '#9ca3af', textDecoration: 'line-through' }}>{fmt(item.precio_original)}</span>
+                                        <span style={{ color: '#9ca3af', textDecoration: 'line-through' }}>{fmtCosto(item.precio_original)}</span>
                                         <span style={{ color: '#6b7280' }}>→</span>
-                                        <span style={{ fontWeight: 700, color: '#16a34a' }}>{fmt(item.precio_unitario)}</span>
+                                        <span style={{ fontWeight: 700, color: '#16a34a' }}>{fmtCosto(precioBaseLinea(item))}{item.unidad && item.presentacion_id ? ` / ${item.unidad}` : ''}</span>
                                     </div>
                                 </div>
                             ))}
@@ -1205,6 +1244,7 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
     // Recepción de contado recién guardada: se abre la ventana de pago única
     const [recepcionAPagar, setRecepcionAPagar] = useState(null)
     const [mapaNombres, setMapaNombres] = useState({})
+    const presentaciones = usePresentacionesCompra(perfil.empresa_id)
 
     const [nroDocProveedor, setNroDocProveedor] = useState('')
     // ¿Llegó con factura? (docs/plan-factura-recepcion.md). null = sin responder.
@@ -1327,14 +1367,18 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
             const insumo = insumos.find(ins => ins.id === i.insumo_id)
             // IVA del catálogo vigente al recibir; si el insumo no está, la foto de la OC
             const aplicaIva = insumo?.aplica_iva ?? i.aplica_iva ?? true
+            const pendienteBase = Number(i.cantidad_solicitada) - Number(i.cantidad_recibida || 0)
+            // Si la OC se pidió por presentación, se recibe en esa presentación
+            // (lo pendiente convertido); se puede cambiar en la línea
+            const linea = lineaDesdeBD({ ...i, cantidadBase: pendienteBase, precioBase: i.precio_unitario_esperado, cantidad_presentacion: null })
             return {
                 id: i.insumo_id,
                 tipo: tipoToPlural[i.tipo_insumo] || 'materias_primas',
                 nombre: mapaNombres[i.insumo_id] || 'Cargando...',
-                cantidad: i.cantidad_solicitada - i.cantidad_recibida,
+                unidad: insumo?.unidad_medida,
                 // La OC y la recepción trabajan ambas en base imponible
-                precio_unitario: Number(i.precio_unitario_esperado),
-                pendiente: i.cantidad_solicitada - i.cantidad_recibida,
+                ...linea,
+                pendiente: linea.cantidad,
                 orden_item_id: i.id,
                 aplica_iva: aplicaIva,
                 descuento_item: 0,
@@ -1350,6 +1394,7 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
                 id: insumo.id,
                 tipo: insumo.tipo,
                 nombre: insumo.nombre,
+                unidad: insumo.unidad_medida,
                 cantidad: 1,
                 precio_unitario: insumo.costo || 0,
                 aplica_iva: insumo.aplica_iva ?? true,
@@ -1382,30 +1427,42 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
 
     async function confirmarRecepcion({ pagarAhora = false, aplicacionesAnticipo = [], ...datosPago }) {
         setGuardando(true); setError('')
-        const { data: { user } } = await supabase.auth.getUser()
-        const { data: numeroConsecutivo } = await supabase.rpc('obtener_siguiente_recepcion_numero', {
-            p_empresa_id: perfil.empresa_id
-        })
-        const numero = numeroConsecutivo || 'REC-000001'
         const proveedorId = modo === 'contra_oc'
             ? ocsPendientes.find(o => o.id === ocSeleccionada)?.proveedor_id
             : proveedorLibreId || null
 
         const payload = {
-            proveedor_id: proveedorId, usuario_id: user.id, numero_doc: numero,
+            proveedor_id: proveedorId,
             // Sin factura: CxP la registra después (registrar_factura_recepcion)
             estado_factura: conFactura ? 'registrada' : 'pendiente',
             nro_doc_proveedor: conFactura ? nroDocProveedor.trim() || null : null,
             fecha_factura: conFactura ? hoyYMD() : null,
             nro_nota_entrega: conFactura ? null : nroNotaEntrega.trim() || null,
-            ...camposTotalesCompra(totalesRec), descuento_global: descGlobal || 0, estado: 'recibida', fecha_compra: new Date().toISOString(),
+            ...camposTotalesCompra(totalesRec), descuento_global: descGlobal || 0,
             almacen_id: almacenId,
             orden_compra_id: modo === 'contra_oc' ? ocSeleccionada : null,
             ...datosPago
         }
+        const TIPO_LINEA = { materias_primas: 'materia_prima', materiales_empaque: 'empaque', consumibles: 'consumible', productos_terminados: 'producto_terminado' }
+        // Una línea de OC ya recibida (pendiente 0) no agrega nada
+        const lineas = items.filter(i => Number(i.cantidad) > 0).map(i => ({
+            tipo_insumo: TIPO_LINEA[i.tipo] || 'materia_prima',
+            insumo_id: i.id,
+            // Con presentación: cantidad y precio en unidad base + lo recibido (3 × Botella 2 L)
+            ...lineaCompraBD(i),
+            descuento_item: i.descuento_item || 0,
+            // Precio en base y foto del IVA (src/lib/iva.js)
+            ...camposIvaLinea(i.aplica_iva ?? true),
+            base_linea: lineaConDesc(i),
+            orden_item_id: i.orden_item_id || null,
+        }))
+        if (lineas.length === 0) { setError('No hay cantidades por recibir'); setGuardando(false); return }
 
-        const { data: rec, error: err } = await supabase.from('compras').insert({ ...payload, empresa_id: perfil.empresa_id }).select().single()
+        // Encabezado, líneas, entrada al inventario y avance de la OC en una sola
+        // transacción (presentaciones_insumos_fase3.sql): si algo falla, no queda nada a medias
+        const { data: rec, error: err } = await supabase.rpc('registrar_recepcion', { p_compra: payload, p_items: lineas })
         if (err) { setError('Error: ' + err.message); setGuardando(false); return }
+        const numero = rec.numero_doc
 
         // Anticipos pagados antes de recibir (ANT-…): la RPC valida saldos y
         // recalcula estado_cobro con todo lo abonado.
@@ -1418,61 +1475,6 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
         }
         if (fallidas.length > 0) {
             alert(`La recepción ${numero} se registró, pero no se pudo aplicar el anticipo (${fallidas.join('; ')}). Aplícalo desde Cuentas por Pagar → Pagar.`)
-        }
-
-        await supabase.from('compra_items').insert(
-            items.map(i => ({
-                compra_id: rec.id,
-                empresa_id: perfil.empresa_id,  // 👈 AGREGAR ESTO
-                tipo_insumo: i.tipo === 'materias_primas' ? 'materia_prima'
-                    : i.tipo === 'materiales_empaque' ? 'empaque'
-                        : i.tipo === 'consumibles' ? 'consumible'
-                            : i.tipo === 'productos_terminados' ? 'producto_terminado'
-                                : 'materia_prima',
-                insumo_id: i.id,
-                cantidad: i.cantidad,
-                precio_unitario: i.precio_unitario,
-                descuento_item: i.descuento_item || 0,
-                // Precio en base y foto del IVA (src/lib/iva.js)
-                ...camposIvaLinea(i.aplica_iva ?? true),
-                base_linea: lineaConDesc(i),
-            }))
-        )
-
-        // Entrada al inventario por el motor: los 4 pasos en una transacción.
-        // Si el lote falla, no queda ningún insumo a medio recibir.
-        const itemsEntrada = items.map(i => ({
-            tipo_item: i.tipo,   // el motor normaliza plural -> singular
-            item_id: i.id,
-            cantidad: Number(i.cantidad),
-        })).filter(i => i.cantidad > 0)
-
-        try {
-            await moverStockLote({
-                items: itemsEntrada, tipoMovimiento: 'entrada',
-                origen: 'recepcion_compra', almacenId,
-                usuarioId: user?.id || null, notas: `Recepción ${numero}`,
-            })
-        } catch (e) {
-            setError('La recepción se registró pero el inventario NO entró: ' + e.message)
-            setGuardando(false)
-            return
-        }
-
-        for (const item of items) {
-            if (item.orden_item_id) {
-                const { data: current } = await supabase.from('orden_compra_items').select('cantidad_recibida').eq('id', item.orden_item_id).single()
-                const nuevoRecibido = (current?.cantidad_recibida || 0) + item.cantidad
-                await supabase.from('orden_compra_items').update({ cantidad_recibida: nuevoRecibido }).eq('id', item.orden_item_id)
-            }
-        }
-
-        if (modo === 'contra_oc' && ocSeleccionada) {
-            const { data: itemsOC } = await supabase.from('orden_compra_items').select('cantidad_solicitada, cantidad_recibida').eq('orden_id', ocSeleccionada)
-            const totalSolicitado = itemsOC.reduce((s, i) => s + i.cantidad_solicitada, 0)
-            const totalRecibido = itemsOC.reduce((s, i) => s + i.cantidad_recibida, 0)
-            const nuevoEstado = totalRecibido >= totalSolicitado ? 'recibida_total' : 'recibida_parcial'
-            await supabase.from('ordenes_compra').update({ estado: nuevoEstado }).eq('id', ocSeleccionada)
         }
 
         setGuardando(false); setMostrarModal(false)
@@ -1670,14 +1672,23 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
                                 <tbody>
                                     {items.map((item, idx) => (
                                         <tr key={idx} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                                            <td style={{ padding: '10px 12px', fontSize: '13px', color: '#1f2937' }}>{item.nombre}</td>
+                                            <td style={{ padding: '10px 12px', fontSize: '13px', color: '#1f2937' }}>
+                                                <CeldaInsumoCompra item={item} presentaciones={presentaciones[item.id]}
+                                                    onPresentacion={p => setItems(prev => prev.map((it, j) => {
+                                                        if (j !== idx) return it
+                                                        const nueva = aplicarPresentacion(it, p)
+                                                        // Lo pendiente de la OC sigue siendo el mismo en unidad base
+                                                        if (it.pendiente != null) nueva.pendiente = Math.round(Number(it.pendiente) * (Number(it.factor) || 1) / (Number(nueva.factor) || 1) * 10000) / 10000
+                                                        return nueva
+                                                    }))} />
+                                            </td>
                                             <td style={{ padding: '10px 12px', fontSize: '11px', color: '#6b7280' }}>
                                                 <span style={{ backgroundColor: '#f3f4f6', padding: '1px 6px', borderRadius: '10px' }}>
                                                     {TIPO_LABEL[item.tipo] || item.tipo}
                                                 </span>
                                             </td>
                                             <td style={{ padding: '10px 12px' }}>
-                                                <input type="number" min="0" step="0.01" value={item.precio_unitario}
+                                                <input type="number" min="0" step="any" value={item.precio_unitario}
                                                     onChange={e => setItems(prev => prev.map((it, j) => j === idx ? { ...it, precio_unitario: Number(e.target.value) } : it))}
                                                     style={{ width: '80px', padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px', textAlign: 'right' }} />
                                             </td>
@@ -1687,8 +1698,8 @@ function NuevaRecepcion({ onCreada, onCancelar }) {
                                                     style={{ width: '60px', padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px', textAlign: 'right' }} />
                                             </td>
                                             <td style={{ padding: '10px 12px' }}>
-                                                <input type="number" min="1" max={item.pendiente || undefined} value={item.cantidad}
-                                                    onChange={e => { const n = parseInt(e.target.value); if (n > 0) setItems(prev => prev.map((it, j) => j === idx ? { ...it, cantidad: n } : it)) }}
+                                                <input type="number" min="0" step="any" max={item.pendiente || undefined} value={item.cantidad}
+                                                    onChange={e => { const n = parseFloat(e.target.value); if (n > 0) setItems(prev => prev.map((it, j) => j === idx ? { ...it, cantidad: n } : it)) }}
                                                     style={{ width: '60px', padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px', textAlign: 'center' }} />
                                             </td>
                                             <td style={{ padding: '10px 12px', fontSize: '13px', fontWeight: 600, color: '#1f2937' }}>{fmt(lineaConDesc(item))}</td>
@@ -2607,7 +2618,14 @@ function DetalleOrden({ orden, onVolver }) {
                         <tbody>
                             {items.map((item, idx) => (
                                 <tr key={idx} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                                    <td style={{ padding: '10px 0', fontSize: '13px', color: '#1f2937' }}>{mapaNombres[item.insumo_id] || item.insumo_id}</td>
+                                    <td style={{ padding: '10px 0', fontSize: '13px', color: '#1f2937' }}>
+                                        {mapaNombres[item.insumo_id] || item.insumo_id}
+                                        {textoPresentacionGuardada(item) && (
+                                            <div style={{ fontSize: '11px', color: '#0f766e' }}>
+                                                Pedido: {textoPresentacionGuardada(item)}{item.precio_presentacion != null ? ` a ${fmtPrecio(item.precio_presentacion)}` : ''}
+                                            </div>
+                                        )}
+                                    </td>
                                     <td style={{ padding: '10px 0', fontSize: '11px', color: '#6b7280', textTransform: 'uppercase' }}>{item.tipo_insumo.replace('_', ' ')}</td>
                                     <td style={{ padding: '10px 0', fontSize: '13px', color: '#6b7280', textAlign: 'right' }}>{item.cantidad_solicitada}</td>
                                     <td style={{ padding: '10px 0', fontSize: '13px', color: item.cantidad_recibida >= item.cantidad_solicitada ? '#16a34a' : '#d97706', textAlign: 'right', fontWeight: 600 }}>{item.cantidad_recibida}</td>
@@ -2885,6 +2903,11 @@ function DetalleRecepcion({ recepcion, onVolver }) {
                                 <tr key={idx} style={{ borderBottom: '1px solid #f3f4f6' }}>
                                     <td style={{ padding: '10px 0', fontSize: '13px', color: '#1f2937' }}>
                                         {mapaNombres[item.insumo_id] || item.insumo_id}
+                                        {textoPresentacionGuardada(item) && (
+                                            <div style={{ fontSize: '11px', color: '#0f766e' }}>
+                                                {textoPresentacionGuardada(item)}{item.precio_presentacion != null ? ` a ${fmtPrecio(item.precio_presentacion)}` : ''}
+                                            </div>
+                                        )}
                                     </td>
                                     <td style={{ padding: '10px 0', fontSize: '11px', color: '#6b7280', textTransform: 'uppercase' }}>
                                         {item.tipo_insumo?.replace('_', ' ') || '—'}
@@ -3032,9 +3055,24 @@ function NuevaDevolucion({ onCreada, onCancelar }) {
     function agregarInsumo(insumo) {
         setItems(prev => {
             if (prev.find(i => i.id === insumo.id)) return prev
-            return [...prev, { id: insumo.id, tipo: insumo.tipo, nombre: insumo.nombre, cantidad: 1, precio_unitario: insumo.costo || 0, ...camposIvaLinea(insumo.aplica_iva ?? true) }]
+            return [...prev, { id: insumo.id, tipo: insumo.tipo, nombre: insumo.nombre, unidad: insumo.unidad_medida, cantidad: 1, precio_unitario: insumo.costo || 0, ...camposIvaLinea(insumo.aplica_iva ?? true) }]
         })
         setBusquedaInsumo('')
+    function cambiarCantidad(id, tipo, valor) {
+        const n = parseFloat(valor)
+        if (isNaN(n) || n <= 0) return
+        setItems(prev => prev.map(i => (i.id === id && i.tipo === tipo) ? { ...i, cantidad: n } : i))
+    }
+
+    function cambiarPresentacion(id, tipo, pres) {
+        setItems(prev => prev.map(i => (i.id === id && i.tipo === tipo) ? aplicarPresentacion(i, pres) : i))
+    }
+
+    function cambiarPrecio(id, tipo, valor) {
+        const n = parseFloat(valor)
+        if (isNaN(n) || n < 0) return
+        setItems(prev => prev.map(i => (i.id === id && i.tipo === tipo) ? { ...i, precio_unitario: n } : i))
+    }
     }
 
     const insumosFiltrados = busquedaInsumo.length >= 2
@@ -3077,8 +3115,7 @@ function NuevaDevolucion({ onCreada, onCancelar }) {
                 insumo_id: i.id,
                 tipo_insumo: tipoItemMap[i.tipo] || 'materia_prima',
                 nombre_insumo: i.nombre,
-                cantidad: Number(i.cantidad),
-                precio_unitario: Number(i.precio_unitario),
+                ...lineaCompraBD(i),
                 aplica_iva: itemAplicaIva(i),
                 iva_pct: itemAplicaIva(i) ? IVA_PCT : 0,
                 precio_incluye_iva: i.precio_incluye_iva === true,
@@ -3190,7 +3227,10 @@ function NuevaDevolucion({ onCreada, onCancelar }) {
                         <tbody>
                             {items.map((item, idx) => (
                                 <tr key={idx} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                                    <td style={{ padding: '10px 16px', fontSize: '13px', color: '#1f2937', fontWeight: 500 }}>{item.nombre}</td>
+                                    <td style={{ padding: '10px 16px' }}>
+                                        <CeldaInsumoCompra item={item} presentaciones={presentaciones[item.id]}
+                                            onPresentacion={p => cambiarPresentacion(item.id, item.tipo, p)} />
+                                    </td>
                                     <td style={{ padding: '10px 16px', fontSize: '11px', color: '#6b7280', textTransform: 'uppercase' }}>{item.tipo.replace(/_/g, ' ')}</td>
                                     <td style={{ padding: '10px 16px', textAlign: 'right' }}>
                                         <input type="number" value={item.cantidad} min="0.01" step="0.01"
@@ -3339,6 +3379,7 @@ function EditarOrden({ oc, onGuardada, onCancelar }) {
     const [guardando, setGuardando] = useState(false)
     const [error, setError] = useState('')
     const [cargando, setCargando] = useState(true)
+    const presentaciones = usePresentacionesCompra(perfil.empresa_id)
 
     useEffect(() => { cargarDatos() }, [])
 
@@ -3346,10 +3387,10 @@ function EditarOrden({ oc, onGuardada, onCancelar }) {
         setCargando(true)
         const [provRes, mpRes, meRes, conRes, ptRes, itemsRes] = await Promise.all([
             supabase.from('proveedores').select('id, nombre').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre'),
-            supabase.from('materias_primas').select('id, nombre, codigo, aplica_iva, costo_compra_promedio').eq('activo', true).eq('empresa_id', perfil.empresa_id),
-            supabase.from('materiales_empaque').select('id, nombre, codigo, aplica_iva, costo_compra_promedio').eq('activo', true).eq('empresa_id', perfil.empresa_id),
-            supabase.from('consumibles').select('id, nombre, codigo, aplica_iva, costo_compra_promedio').eq('activo', true).eq('empresa_id', perfil.empresa_id),
-            conTodas(() => supabase.from('productos_terminados').select('id, nombre, sku, aplica_iva, costo_promedio, tipo_producto').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('id')),
+            supabase.from('materias_primas').select('id, nombre, codigo, unidad_medida, aplica_iva, costo_compra_promedio').eq('activo', true).eq('empresa_id', perfil.empresa_id),
+            supabase.from('materiales_empaque').select('id, nombre, codigo, unidad_medida, aplica_iva, costo_compra_promedio').eq('activo', true).eq('empresa_id', perfil.empresa_id),
+            supabase.from('consumibles').select('id, nombre, codigo, unidad_medida, aplica_iva, costo_compra_promedio').eq('activo', true).eq('empresa_id', perfil.empresa_id),
+            conTodas(() => supabase.from('productos_terminados').select('id, nombre, sku, unidad_medida, aplica_iva, costo_promedio, tipo_producto').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('id')),
             supabase.from('orden_compra_items').select('*').eq('orden_id', oc.id),
         ])
 
@@ -3379,8 +3420,9 @@ function EditarOrden({ oc, onGuardada, onCancelar }) {
                 tipo: tipoLocal,
                 nombre: match?.nombre || '(Ítem desconocido)',
                 codigo: match?.codigo || '',
-                cantidad: Number(dbItem.cantidad_solicitada),
-                precio_unitario: Number(dbItem.precio_unitario_esperado),
+                unidad: match?.unidad_medida,
+                // En su presentación si la línea se pidió así
+                ...lineaDesdeBD({ ...dbItem, cantidadBase: dbItem.cantidad_solicitada, precioBase: dbItem.precio_unitario_esperado }),
                 aplica_iva: aplicaIva,
             }
         })
@@ -3396,7 +3438,7 @@ function EditarOrden({ oc, onGuardada, onCancelar }) {
         setItems(prev => {
             const existe = prev.find(i => i.id === ins.id && i.tipo === ins.tipo)
             if (existe) return prev.map(i => (i.id === ins.id && i.tipo === ins.tipo) ? { ...i, cantidad: i.cantidad + 1 } : i)
-            return [...prev, { id: ins.id, tipo: ins.tipo, nombre: ins.nombre, codigo: ins.codigo, cantidad: 1, precio_unitario: ins.costo || 0, aplica_iva: ins.aplica_iva ?? true }]
+            return [...prev, { id: ins.id, tipo: ins.tipo, nombre: ins.nombre, codigo: ins.codigo, unidad: ins.unidad_medida, cantidad: 1, precio_unitario: ins.costo || 0, aplica_iva: ins.aplica_iva ?? true }]
         })
         setBusqueda('')
     }
@@ -3405,6 +3447,10 @@ function EditarOrden({ oc, onGuardada, onCancelar }) {
         const n = parseFloat(valor)
         if (isNaN(n) || n < 0) return
         setItems(prev => prev.map(i => (i.id === id && i.tipo === tipo) ? { ...i, cantidad: n } : i))
+    }
+
+    function cambiarPresentacion(id, tipo, pres) {
+        setItems(prev => prev.map(i => (i.id === id && i.tipo === tipo) ? aplicarPresentacion(i, pres) : i))
     }
 
     function cambiarPrecio(id, tipo, valor) {
@@ -3448,9 +3494,8 @@ function EditarOrden({ oc, onGuardada, onCancelar }) {
                     empresa_id: perfil.empresa_id,
                     tipo_insumo: tipoMap[i.tipo] || i.tipo,
                     insumo_id: i.id,
-                    cantidad_solicitada: i.cantidad,
+                    ...lineaCompraBD(i, { campoCantidad: 'cantidad_solicitada', campoPrecio: 'precio_unitario_esperado' }),
                     cantidad_recibida: 0,
-                    precio_unitario_esperado: i.precio_unitario,
                     aplica_iva: i.aplica_iva ?? true,
                     iva_pct: (i.aplica_iva ?? true) ? IVA_PCT : 0,
                 }))
@@ -3534,15 +3579,18 @@ function EditarOrden({ oc, onGuardada, onCancelar }) {
                                 <tbody>
                                     {items.map(item => (
                                         <tr key={`${item.id}-${item.tipo}`} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                                            <td style={{ padding: '10px 12px', fontSize: '13px', color: '#1f2937' }}>{item.nombre}</td>
+                                            <td style={{ padding: '10px 12px', fontSize: '13px', color: '#1f2937' }}>
+                                                <CeldaInsumoCompra item={item} presentaciones={presentaciones[item.id]}
+                                                    onPresentacion={p => cambiarPresentacion(item.id, item.tipo, p)} />
+                                            </td>
                                             <td style={{ padding: '10px 12px', fontSize: '11px', color: '#6b7280', textTransform: 'uppercase' }}>{item.tipo.replace(/_/g, ' ')}</td>
                                             <td style={{ padding: '10px 12px' }}>
-                                                <input type="number" min="0" step="0.01" value={item.precio_unitario}
+                                                <input type="number" min="0" step="any" value={item.precio_unitario}
                                                     onChange={e => cambiarPrecio(item.id, item.tipo, e.target.value)}
                                                     style={{ width: '80px', padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px', textAlign: 'right' }} />
                                             </td>
                                             <td style={{ padding: '10px 12px' }}>
-                                                <input type="number" min="0" step="0.01" value={item.cantidad}
+                                                <input type="number" min="0" step="any" value={item.cantidad}
                                                     onChange={e => cambiarCantidad(item.id, item.tipo, e.target.value)}
                                                     style={{ width: '60px', padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px', textAlign: 'center' }} />
                                             </td>
