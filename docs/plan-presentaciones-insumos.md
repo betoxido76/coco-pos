@@ -2,7 +2,11 @@
 
 Estado: **fase 1 aplicada en producción (2026-11-21)**, `presentaciones_insumos_fase1.sql`,
 probada antes en BEGIN/ROLLBACK (21 casos: cuadre, errores, regresión Meraki, vistas
-del exportador idénticas). Fase 0 (decisiones del cliente) en curso. Primer cliente que lo usa: Daveyana (pastelería, alta
+del exportador idénticas). **Fase 2 publicada (2026-11-21)**: sección
+Presentaciones en Materias Primas / Empaques / Consumibles
+(`src/components/PresentacionesInsumo.jsx`, `src/lib/presentaciones.js`) y
+`fmtCosto` (`src/lib/costos.js`) en esos maestros e Inventario; RLS probada como
+usuario de Daveyana y de Meraki. Fase 0 (decisiones del cliente) en curso. Primer cliente que lo usa: Daveyana (pastelería, alta
 2026-11-21). Meraki no debe notar ningún cambio de comportamiento.
 
 ## Problema

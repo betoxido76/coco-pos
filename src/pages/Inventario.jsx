@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext'
 import SaludInventario from '../components/SaludInventario'
 import { Package, AlertTriangle, Search, Layers, Beaker, Truck, ArrowDownLeft, ArrowUpRight, History, Filter, Warehouse, ArrowLeftRight, Plus, ShieldCheck } from 'lucide-react'
 import { useAltoBarra, useOrden, ordenarFilas, ThOrden, BarraFija, estiloTarjetaTabla } from '../components/TablaOrdenable'
+import { fmtCosto } from '../lib/costos'
 
 const TIPOS_INVENTARIO = [
     { key: 'todos', label: 'Todo el inventario', icon: Layers },
@@ -237,7 +238,7 @@ function VistaStock() {
                                             </td>
                                             <td className="px-4 py-3 text-right"><span className="text-xs text-gray-400">{p.stock_minimo}</span></td>
                                             <td className="px-4 py-3 text-right">
-                                                <span className="text-sm text-gray-700">{p.precio != null ? `$${Number(p.precio).toFixed(2)}` : '—'}</span>
+                                                <span className="text-sm text-gray-700">{p.precio != null ? fmtCosto(p.precio) : '—'}</span>
                                             </td>
                                             <td className="px-4 py-3 text-right">
                                                 <span className="text-sm font-medium text-gray-800">

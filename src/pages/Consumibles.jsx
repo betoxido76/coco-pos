@@ -6,6 +6,9 @@ import { opcionesUnidad } from '../lib/unidades'
 import { ajustarStockMaestro } from '../lib/inventario'
 import FiltroCombo from '../components/FiltroCombo'
 import { useAltoBarra, useOrden, ordenarFilas, ThOrden, BarraFija, estiloTarjetaTabla } from '../components/TablaOrdenable'
+import PresentacionesInsumo from '../components/PresentacionesInsumo'
+import { cargarPresentaciones, presentacionesPorInsumo, aFilas, validarPresentaciones, guardarPresentaciones } from '../lib/presentaciones'
+import { fmtCosto } from '../lib/costos'
 
 const VACIO = {
     nombre: '', codigo: '', descripcion: '', unidad_medida: 'unidad',
@@ -32,6 +35,11 @@ export default function Consumibles() {
     const [almacenStock, setAlmacenStock] = useState('')
     const [stockOriginal, setStockOriginal] = useState(0)
     const [exito, setExito] = useState('')
+    // Presentaciones de compra (docs/plan-presentaciones-insumos.md)
+    const [presFilas, setPresFilas] = useState([])
+    const [presOriginales, setPresOriginales] = useState([])
+    const [unidadOriginal, setUnidadOriginal] = useState(null)
+    const [presPorInsumo, setPresPorInsumo] = useState({})
     const [barraRef, altoBarra] = useAltoBarra([vista])
     const [orden, ordenarPor] = useOrden({ col: 'nombre', dir: 'asc' }, ['costo', 'stock', 'minimo'])
 
@@ -52,17 +60,29 @@ export default function Consumibles() {
         const { data } = await supabase.from('consumibles').select('*')
             .eq('empresa_id', perfil.empresa_id).order('nombre')
         if (data) setItems(data)
+        try { setPresPorInsumo(await presentacionesPorInsumo(perfil.empresa_id, ['consumible'])) }
+        catch { setPresPorInsumo({}) }
         setLoading(false)
+    }
+
+    async function recargarPresentaciones(itemId) {
+        const lista = await cargarPresentaciones(perfil.empresa_id, 'consumible', itemId)
+        setPresOriginales(lista)
+        setPresFilas(aFilas(lista))
     }
 
     function abrirNuevo() {
         setEditando(null); setForm(VACIO); setError(''); setVista('form')
         setStockOriginal(0); setAlmacenStock('')
+        setPresFilas([]); setPresOriginales([]); setUnidadOriginal(null)
     }
 
     function abrirEditar(item) {
         setEditando(item.id)
         setStockOriginal(Number(item.stock_actual || 0))
+        setUnidadOriginal(item.unidad_medida || null)
+        setPresFilas([]); setPresOriginales([])
+        recargarPresentaciones(item.id).catch(e => setError('No se pudieron cargar las presentaciones: ' + e.message))
         // Preselecciona el almacén donde ya tiene existencias
         supabase.from('stock_ubicacion')
             .select('almacen_id, cantidad')
@@ -92,6 +112,8 @@ export default function Consumibles() {
 
     async function guardar() {
         if (!form.nombre.trim()) { setError('El nombre es obligatorio'); return }
+        const errPres = validarPresentaciones(presFilas)
+        if (errPres) { setError(errPres); return }
         setGuardando(true); setError('')
 
         const payload = {
@@ -127,6 +149,23 @@ export default function Consumibles() {
             setError(err.code === '23505' ? `El código "${payload.codigo}" ya existe en el catálogo. Por favor elige otro código.` : 'Error al guardar: ' + err.message)
             return
         }
+        // Si algo de lo que sigue falla, el formulario queda editando el
+        // consumible ya creado (volver a guardar no debe crear un duplicado)
+        if (!editando && itemId) setEditando(itemId)
+
+        try {
+            const { data: { user } } = await supabase.auth.getUser()
+            await guardarPresentaciones({
+                empresaId: perfil.empresa_id, tipoInsumo: 'consumible', insumoId: itemId,
+                filas: presFilas, originales: presOriginales, usuarioId: user?.id,
+            })
+        } catch (e) {
+            setGuardando(false)
+            setError('Los datos se guardaron, pero las presentaciones NO: ' + e.message)
+            await recargarPresentaciones(itemId).catch(() => {})
+            await cargar()
+            return
+        }
 
         if (stockCambio && itemId) {
             try {
@@ -141,6 +180,7 @@ export default function Consumibles() {
             } catch (e) {
                 setGuardando(false)
                 setError('Los datos se guardaron, pero el stock NO se ajustó: ' + e.message)
+                await recargarPresentaciones(itemId).catch(() => {})
                 await cargar()
                 return
             }
@@ -206,8 +246,8 @@ export default function Consumibles() {
                         rows={2} placeholder="Descripción opcional..." style={{ ...inputStyle, resize: 'vertical' }} />
                 </Campo>
 
-                <Campo label="Costo de compra promedio sin IVA ($)">
-                    <input type="number" min="0" step="0.01" value={form.costo_compra_promedio}
+                <Campo label={`Costo por ${form.unidad_medida || 'unidad'} sin IVA ($)`}>
+                    <input type="number" min="0" step="any" value={form.costo_compra_promedio}
                         onChange={e => campo('costo_compra_promedio', e.target.value)}
                         placeholder="0.00" style={inputStyle} />
                 </Campo>
@@ -250,6 +290,10 @@ export default function Consumibles() {
                         onChange={e => campo('stock_minimo', e.target.value)}
                         placeholder="0" style={inputStyle} />
                 </Campo>
+
+                <PresentacionesInsumo filas={presFilas} onChange={setPresFilas} unidad={form.unidad_medida}
+                    costo={form.costo_compra_promedio} proveedores={proveedores}
+                    unidadCambiada={!!unidadOriginal && unidadOriginal !== form.unidad_medida && presOriginales.length > 0} />
 
                 <div style={{ gridColumn: 'span 2' }}>
                     <p style={{ fontSize: '13px', fontWeight: 500, color: '#374151', marginBottom: '10px' }}>Clasificación</p>
@@ -391,11 +435,17 @@ export default function Consumibles() {
                                     <td style={{ padding: '12px 14px' }}>
                                         <div style={{ fontSize: '13px', fontWeight: 500, color: '#1f2937' }}>{item.nombre}</div>
                                         {item.descripcion && <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '2px', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.descripcion}</div>}
+                                        {presPorInsumo[item.id]?.length > 0 && (
+                                            <div title={presPorInsumo[item.id].map(x => x.nombre).join(' · ')}
+                                                style={{ fontSize: '11px', color: '#0f766e', marginTop: '2px' }}>
+                                                {presPorInsumo[item.id].length} {presPorInsumo[item.id].length === 1 ? 'presentación' : 'presentaciones'}
+                                            </div>
+                                        )}
                                     </td>
                                     <td style={{ padding: '12px 14px', fontSize: '12px', fontFamily: 'monospace', color: '#6b7280' }}>{item.codigo || '—'}</td>
                                     <td style={{ padding: '12px 14px', fontSize: '12px', color: '#6b7280' }}>{item.unidad_medida}</td>
                                     <td style={{ padding: '12px 14px', fontSize: '13px', color: '#6b7280' }}>
-                                        {item.costo_compra_promedio ? `$${Number(item.costo_compra_promedio).toFixed(2)}` : '—'}
+                                        {item.costo_compra_promedio ? fmtCosto(item.costo_compra_promedio) : '—'}
                                     </td>
                                     <td style={{ padding: '12px 14px' }}>
                                         <span style={{ fontSize: '13px', fontWeight: 600, color: item.stock_actual <= item.stock_minimo ? '#d97706' : '#1f2937' }}>
