@@ -6,7 +6,15 @@ del exportador idénticas). **Fase 2 publicada (2026-11-21)**: sección
 Presentaciones en Materias Primas / Empaques / Consumibles
 (`src/components/PresentacionesInsumo.jsx`, `src/lib/presentaciones.js`) y
 `fmtCosto` (`src/lib/costos.js`) en esos maestros e Inventario; RLS probada como
-usuario de Daveyana y de Meraki. Fase 0 (decisiones del cliente) en curso. Primer cliente que lo usa: Daveyana (pastelería, alta
+usuario de Daveyana y de Meraki. **Fase 3 aplicada (2026-11-21)**,
+`presentaciones_insumos_fase3.sql`: OC, recepción, factura en CxP y devolución
+por presentación; la recepción va por la RPC `registrar_recepcion` (una
+transacción; valida que cada insumo sea de la empresa y que la línea de OC sea
+del mismo insumo). Probada en BEGIN/ROLLBACK con datos de Meraki (libre,
+contra OC, con presentación, factura por presentación, rechazos);
+`app_version_minima` subida a 202611212058. La devolución revisa el stock antes
+de guardar y deshace la ND si fallan las líneas o la salida. Falta el recorrido
+de regresión en Meraki desde el navegador. Fase 0 (decisiones del cliente) en curso. Primer cliente que lo usa: Daveyana (pastelería, alta
 2026-11-21). Meraki no debe notar ningún cambio de comportamiento.
 
 ## Problema

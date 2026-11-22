@@ -118,6 +118,14 @@ BEGIN
             WHEN 'material_empaque' THEN 'material_empaque'
             WHEN 'consumible' THEN 'consumible'
             WHEN 'producto_terminado' THEN 'producto_terminado' END;
+        IF NOT COALESCE(CASE v_tipo
+            WHEN 'materia_prima'      THEN EXISTS (SELECT 1 FROM materias_primas      WHERE id = v_ci.insumo_id AND empresa_id = v_empresa)
+            WHEN 'material_empaque'   THEN EXISTS (SELECT 1 FROM materiales_empaque   WHERE id = v_ci.insumo_id AND empresa_id = v_empresa)
+            WHEN 'consumible'         THEN EXISTS (SELECT 1 FROM consumibles          WHERE id = v_ci.insumo_id AND empresa_id = v_empresa)
+            WHEN 'producto_terminado' THEN EXISTS (SELECT 1 FROM productos_terminados WHERE id = v_ci.insumo_id AND empresa_id = v_empresa)
+            END, false) THEN
+            RAISE EXCEPTION 'Hay una línea con un insumo que no existe en la empresa';
+        END IF;
         v_stock := v_stock || jsonb_build_object('tipo_item', v_tipo, 'item_id', v_ci.insumo_id, 'cantidad', v_ci.cantidad);
 
         -- Avance de la OC, en unidad base (aunque se haya recibido en otra presentación)
@@ -125,8 +133,8 @@ BEGIN
         IF v_oci IS NOT NULL THEN
             IF v_oc_id IS NULL THEN RAISE EXCEPTION 'Línea de OC en una recepción sin OC'; END IF;
             UPDATE orden_compra_items SET cantidad_recibida = COALESCE(cantidad_recibida, 0) + v_ci.cantidad
-             WHERE id = v_oci AND orden_id = v_oc_id;
-            IF NOT FOUND THEN RAISE EXCEPTION 'Una línea no pertenece a la orden de compra'; END IF;
+             WHERE id = v_oci AND orden_id = v_oc_id AND insumo_id = v_ci.insumo_id;
+            IF NOT FOUND THEN RAISE EXCEPTION 'Una línea no corresponde a la orden de compra (otra orden u otro insumo)'; END IF;
         END IF;
     END LOOP;
 

@@ -18,7 +18,7 @@ import { conTodas, traerTodas } from '../lib/traerTodas'
 import ModalPagoRecepcion from '../components/ModalPagoRecepcion'
 import { SelectorPresentacion } from '../components/PresentacionesInsumo'
 import { fmtCosto } from '../lib/costos'
-import { presentacionesPorInsumo, aplicarPresentacion, lineaCompraBD, lineaDesdeBD, precioBaseLinea, equivalenciaLinea, textoPresentacionGuardada } from '../lib/presentaciones'
+import { presentacionesPorInsumo, aplicarPresentacion, factorLinea, lineaCompraBD, lineaDesdeBD, precioBaseLinea, equivalenciaLinea, textoPresentacionGuardada } from '../lib/presentaciones'
 
 // Presentaciones activas de los insumos de compra, por insumo_id ({} si falla:
 // la compra sigue funcionando por unidad base, como siempre)
@@ -3064,21 +3064,10 @@ function NuevaDevolucion({ onCreada, onCancelar }) {
         setBusquedaInsumo('')
     }
 
-    function cambiarCantidad(id, tipo, valor) {
-        const n = parseFloat(valor)
-        if (isNaN(n) || n <= 0) return
-        setItems(prev => prev.map(i => (i.id === id && i.tipo === tipo) ? { ...i, cantidad: n } : i))
-    }
-
-    function cambiarPresentacion(id, tipo, pres) {
-        setItems(prev => prev.map(i => (i.id === id && i.tipo === tipo) ? aplicarPresentacion(i, pres) : i))
-    }
-
-    function cambiarPrecio(id, tipo, valor) {
-        const n = parseFloat(valor)
-        if (isNaN(n) || n < 0) return
-        setItems(prev => prev.map(i => (i.id === id && i.tipo === tipo) ? { ...i, precio_unitario: n } : i))
-    }
+    // Por posición: una recepción puede traer el mismo insumo en dos líneas.
+    // Se guarda el texto tal cual para poder borrar y reescribir el campo.
+    const cambiarLinea = (idx, cambios) => setItems(prev => prev.map((it, j) => j === idx ? { ...it, ...cambios } : it))
+    const cambiarPresentacion = (idx, pres) => setItems(prev => prev.map((it, j) => j === idx ? aplicarPresentacion(it, pres) : it))
 
     const insumosFiltrados = busquedaInsumo.length >= 2
         ? insumos.filter(i => i.nombre.toLowerCase().includes(busquedaInsumo.toLowerCase()) || (i.codigo || i.sku || '').toLowerCase().includes(busquedaInsumo.toLowerCase())).slice(0, 8)
@@ -3094,7 +3083,29 @@ function NuevaDevolucion({ onCreada, onCancelar }) {
         if (items.length === 0) { setError('Agrega al menos un ítem'); return }
         if (!almacenId) { setError('Selecciona el almacén de origen'); return }
         if (!motivo.trim()) { setError('Ingresa el motivo de la devolución'); return }
+        if (items.some(i => !(Number(i.cantidad) > 0))) { setError('Cada línea necesita una cantidad mayor que cero'); return }
+        if (items.some(i => i.precio_unitario === '' || !(Number(i.precio_unitario) >= 0))) { setError('Cada línea necesita un precio válido'); return }
         setGuardando(true); setError('')
+
+        // Salida del inventario en unidad base (3 × Botella 2 L = 6.000 ml)
+        const itemsDevueltos = items.map(i => ({
+            tipo_item: i.tipo,
+            item_id: i.id,
+            cantidad: Number(i.cantidad) * factorLinea(i),
+        }))
+
+        // El stock se revisa ANTES de guardar: si no alcanza no queda una ND sin salida
+        try {
+            const faltan = await verificarStock(itemsDevueltos, almacenId)
+            if (faltan.length > 0) {
+                const detalle = faltan.map(f => `${f.nombre}: hay ${f.disponible}, devuelves ${f.requerido}`).join(' · ')
+                setError(`No hay stock suficiente en el almacén para devolver. ${detalle}`)
+                setGuardando(false); return
+            }
+        } catch (e) {
+            setError('No se pudo revisar el stock: ' + e.message)
+            setGuardando(false); return
+        }
 
         const { data: { user } } = await supabase.auth.getUser()
         const { data: ndNum } = await supabase.rpc('obtener_siguiente_nd_numero', { p_empresa_id: perfil.empresa_id })
@@ -3113,7 +3124,13 @@ function NuevaDevolucion({ onCreada, onCancelar }) {
 
         if (errDev) { setError('Error: ' + errDev.message); setGuardando(false); return }
 
-        await supabase.from('devolucion_proveedor_items').insert(
+        // Si las líneas o la salida fallan, se borra la ND: no queda a medias
+        const deshacer = async () => {
+            await supabase.from('devolucion_proveedor_items').delete().eq('devolucion_proveedor_id', devDoc.id).eq('empresa_id', perfil.empresa_id)
+            await supabase.from('devoluciones_proveedor').delete().eq('id', devDoc.id).eq('empresa_id', perfil.empresa_id)
+        }
+
+        const { error: errItems } = await supabase.from('devolucion_proveedor_items').insert(
             items.map(i => ({
                 empresa_id: perfil.empresa_id,
                 devolucion_proveedor_id: devDoc.id,
@@ -3126,31 +3143,23 @@ function NuevaDevolucion({ onCreada, onCancelar }) {
                 precio_incluye_iva: i.precio_incluye_iva === true,
             }))
         )
+        if (errItems) {
+            await deshacer()
+            setError('No se pudieron guardar las líneas de la devolución: ' + errItems.message)
+            setGuardando(false); return
+        }
 
-        // Salida del inventario por el motor. Antes esto no validaba nada antes
-        // de mutar: si el almacén tenía menos de lo devuelto, stock_actual
-        // bajaba completo y la ubicación solo hasta 0, y si la fila de
-        // ubicación no existía, insertaba una en 0 y descontaba igual.
-        const itemsDevueltos = items.map(i => ({
-            tipo_item: i.tipo,
-            item_id: i.id,
-            cantidad: Number(i.cantidad) * (Number(i.factor) || 1),
-        })).filter(i => i.cantidad > 0)
-
+        // Salida por el motor: los 4 pasos en una transacción; si el stock
+        // cambió desde la revisión, falla entero y se deshace la ND
         try {
-            const faltan = await verificarStock(itemsDevueltos, almacenId)
-            if (faltan.length > 0) {
-                const detalle = faltan.map(f => `${f.nombre}: hay ${f.disponible}, devuelves ${f.requerido}`).join(' · ')
-                setError(`No hay stock suficiente en el almacén para devolver. ${detalle}`)
-                setGuardando(false); return
-            }
             await moverStockLote({
                 items: itemsDevueltos, tipoMovimiento: 'salida',
                 origen: 'devolucion_proveedor', almacenId,
                 usuarioId: user?.id || null, notas: `ND ${devDoc.numero_nd || ''}`.trim(),
             })
         } catch (e) {
-            setError('La devolución se registró pero el inventario NO se descontó: ' + e.message)
+            await deshacer()
+            setError('No se registró la devolución: el inventario no se pudo descontar (' + e.message + ')')
             setGuardando(false); return
         }
 
@@ -3234,17 +3243,17 @@ function NuevaDevolucion({ onCreada, onCancelar }) {
                                 <tr key={idx} style={{ borderBottom: '1px solid #f3f4f6' }}>
                                     <td style={{ padding: '10px 16px' }}>
                                         <CeldaInsumoCompra item={item} presentaciones={presentaciones[item.id]}
-                                            onPresentacion={p => cambiarPresentacion(item.id, item.tipo, p)} />
+                                            onPresentacion={p => cambiarPresentacion(idx, p)} />
                                     </td>
                                     <td style={{ padding: '10px 16px', fontSize: '11px', color: '#6b7280', textTransform: 'uppercase' }}>{item.tipo.replace(/_/g, ' ')}</td>
                                     <td style={{ padding: '10px 16px', textAlign: 'right' }}>
-                                        <input type="number" value={item.cantidad} min="0.01" step="0.01"
-                                            onChange={e => setItems(prev => prev.map((i, j) => j === idx ? { ...i, cantidad: e.target.value } : i))}
+                                        <input type="number" value={item.cantidad} min="0" step="any"
+                                            onChange={e => cambiarLinea(idx, { cantidad: e.target.value })}
                                             style={{ width: '80px', padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px', textAlign: 'right' }} />
                                     </td>
                                     <td style={{ padding: '10px 16px', textAlign: 'right' }}>
-                                        <input type="number" value={item.precio_unitario} min="0" step="0.01"
-                                            onChange={e => setItems(prev => prev.map((i, j) => j === idx ? { ...i, precio_unitario: e.target.value } : i))}
+                                        <input type="number" value={item.precio_unitario} min="0" step="any"
+                                            onChange={e => cambiarLinea(idx, { precio_unitario: e.target.value })}
                                             style={{ width: '90px', padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px', textAlign: 'right' }} />
                                     </td>
                                     <td style={{ padding: '10px 16px', fontSize: '13px', fontWeight: 600, color: '#1f2937', textAlign: 'right' }}>
