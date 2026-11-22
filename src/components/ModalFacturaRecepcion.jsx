@@ -11,6 +11,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { precioBaseItem, itemAplicaIva, totalesDeItems } from '../lib/iva'
 import { hoyYMD, ymdCaracas } from './SelectorFechaTasa'
 import { textoPresentacionGuardada } from '../lib/presentaciones'
+import { costeoPromedio } from '../lib/costos'
 
 // Línea recibida por presentación (3 × Botella 2 L): en esta ventana el precio
 // se lee y se corrige POR PRESENTACIÓN, como viene en la factura del proveedor.
@@ -37,6 +38,7 @@ export const precioRecibido = (item) =>
 
 export default function ModalFacturaRecepcion({ compra, items, nombres = {}, onCerrar, onListo }) {
     const { perfil } = useAuth()
+    const promedio = costeoPromedio(perfil)
     const registrar = compra.estado_factura === 'pendiente'
     const [nro, setNro] = useState(compra.nro_doc_proveedor || '')
     const [fecha, setFecha] = useState(compra.fecha_factura || (compra.fecha_compra ? ymdCaracas(compra.fecha_compra) : hoyYMD()))
@@ -83,7 +85,7 @@ export default function ModalFacturaRecepcion({ compra, items, nombres = {}, onC
             p_motivo: motivo.trim() || null,
         })
         if (err) { setGuardando(false); setError(err.message); return }
-        if (actualizarCostos) {
+        if (actualizarCostos && !promedio) {
             for (const f of filas) {
                 const map = COSTO_CATALOGO[f.i.tipo_insumo]
                 if (map) await supabase.from(map.tabla).update({ [map.campo]: f.nuevoBase })
@@ -185,10 +187,16 @@ export default function ModalFacturaRecepcion({ compra, items, nombres = {}, onC
                         style={{ ...inp, fontFamily: 'inherit', borderColor: hayFuera && !motivo.trim() ? '#fca5a5' : '#d1d5db' }} />
                 </div>
 
-                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#374151', marginBottom: '16px', cursor: 'pointer' }}>
-                    <input type="checkbox" checked={actualizarCostos} onChange={e => setActualizarCostos(e.target.checked)} />
-                    Actualizar costos en catálogo con estos precios
-                </label>
+                {promedio ? (
+                    <p style={{ fontSize: '12px', color: '#6b7280', margin: '0 0 16px' }}>
+                        El costo promedio de los insumos se ajusta solo con la diferencia entre lo recibido y lo facturado.
+                    </p>
+                ) : (
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#374151', marginBottom: '16px', cursor: 'pointer' }}>
+                        <input type="checkbox" checked={actualizarCostos} onChange={e => setActualizarCostos(e.target.checked)} />
+                        Actualizar costos en catálogo con estos precios
+                    </label>
+                )}
 
                 {error && <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', color: '#dc2626', marginBottom: '12px' }}>{error}</div>}
                 <div style={{ display: 'flex', gap: '10px' }}>

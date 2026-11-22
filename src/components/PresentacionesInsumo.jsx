@@ -3,7 +3,7 @@
 // después de guardar el insumo. docs/plan-presentaciones-insumos.md
 import { Plus, X } from 'lucide-react'
 import { filaNueva, textoFactor } from '../lib/presentaciones'
-import { fmtCosto } from '../lib/costos'
+import { fmtCosto, costeoPromedio } from '../lib/costos'
 
 export default function PresentacionesInsumo({ filas, onChange, unidad, costo, proveedores = [], unidadCambiada = false }) {
     const editar = (key, campo, valor) => onChange(filas.map(f => f._key === key ? { ...f, [campo]: valor } : f))
@@ -78,6 +78,20 @@ export default function PresentacionesInsumo({ filas, onChange, unidad, costo, p
                     })}
                 </div>
             )}
+        </div>
+    )
+}
+
+// Nota bajo el campo de costo del maestro: de dónde sale el costo y el último
+// precio pagado (costo de reposición)
+export function NotaCostoInsumo({ perfil, ultimo, fecha, unidad }) {
+    const promedio = costeoPromedio(perfil)
+    if (!promedio && ultimo == null) return null
+    const fechaTxt = fecha ? new Date(String(fecha).slice(0, 10) + 'T00:00:00').toLocaleDateString('es-VE') : ''
+    return (
+        <div style={{ fontSize: '11px', color: '#6b7280', marginTop: '4px', lineHeight: 1.4 }}>
+            {promedio && <div>Costo promedio: lo recalcula cada compra. Edítalo solo para la carga inicial.</div>}
+            {ultimo != null && <div>Última compra: {fmtCosto(ultimo)} por {unidad || 'unidad'}{fechaTxt ? ` (${fechaTxt})` : ''}</div>}
         </div>
     )
 }

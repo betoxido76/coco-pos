@@ -17,7 +17,7 @@ import { useAltoBarra, useOrden, ordenarFilas, ThOrden, BarraFija, TopTitulos, e
 import { conTodas, traerTodas } from '../lib/traerTodas'
 import ModalPagoRecepcion from '../components/ModalPagoRecepcion'
 import { SelectorPresentacion } from '../components/PresentacionesInsumo'
-import { fmtCosto } from '../lib/costos'
+import { fmtCosto, costeoPromedio } from '../lib/costos'
 import { presentacionesPorInsumo, aplicarPresentacion, factorLinea, lineaCompraBD, lineaDesdeBD, precioBaseLinea, equivalenciaLinea, textoPresentacionGuardada } from '../lib/presentaciones'
 
 // Presentaciones activas de los insumos de compra, por insumo_id ({} si falla:
@@ -978,7 +978,9 @@ function NuevaOrden({ onCreada, onCancelar }) {
             if (errItems) { setError('Error al guardar los items: ' + errItems.message); setGuardando(false); return }
 
             // El costo del catálogo es por unidad base: se compara el precio convertido
-            const cambiados = items.filter(i => Math.abs(precioBaseLinea(i) - Number(i.precio_original || 0)) > 1e-9)
+            // Con costo promedio no se pregunta: el costo lo fijan las recepciones
+            const cambiados = costeoPromedio(perfil) ? []
+                : items.filter(i => Math.abs(precioBaseLinea(i) - Number(i.precio_original || 0)) > 1e-9)
             if (cambiados.length > 0) {
                 setOcPendiente({ ocObj: { ...oc, proveedores: { nombre: proveedores.find(p => p.id === proveedorId)?.nombre } }, cambiados })
                 setGuardando(false)
@@ -2683,11 +2685,6 @@ function DetalleRecepcion({ recepcion, onVolver }) {
         materia_prima: 'materias_primas', empaque: 'materiales_empaque', material_empaque: 'materiales_empaque',
         consumible: 'consumibles', producto_terminado: 'productos_terminados',
     }
-    const TIPO_ITEM_ANULAR = {
-        materia_prima: 'materia_prima', empaque: 'material_empaque', material_empaque: 'material_empaque',
-        consumible: 'consumible', producto_terminado: 'producto_terminado',
-    }
-
     async function anularRecepcion() {
         setErrorAnular('')
         if (!motivoAnular.trim()) { setErrorAnular('Ingresa el motivo de la anulación'); return }
@@ -2703,81 +2700,19 @@ function DetalleRecepcion({ recepcion, onVolver }) {
             return
         }
         setAnulando(true)
-        // Bloqueo por pago (abonos posteriores en CxP)
-        const { count: pagosCount } = await supabase
-            .from('pagos_proveedor').select('id', { count: 'exact', head: true }).eq('compra_id', recepcion.id).eq('anulado', false)
-        if (pagosCount && pagosCount > 0) {
-            setErrorAnular('No se puede anular: la recepción tiene pagos registrados. Usa una Nota de Débito al proveedor.')
+        // Stock, OC, costo y estado en una transacción (presentaciones_insumos_fase4.sql):
+        // si a un insumo no le alcanza el stock, no se revierte nada
+        const { error: errAnular } = await supabase.rpc('anular_recepcion', {
+            p_compra_id: recepcion.id, p_motivo: motivoAnular.trim(),
+        })
+        if (errAnular) {
+            const msg = errAnular.message || ''
+            setErrorAnular(msg.startsWith('Stock insuficiente')
+                ? `No se puede anular: ${msg} (se consumió, vendió o transfirió). Usa una Nota de Débito al proveedor.`
+                : msg)
             setAnulando(false); return
         }
-
-        const { data: compraItems } = await supabase.from('compra_items').select('*')
-            .eq('compra_id', recepcion.id).eq('empresa_id', perfil.empresa_id)
-        if (!compraItems || compraItems.length === 0) {
-            setErrorAnular('No se encontraron items de la recepción'); setAnulando(false); return
-        }
-
-        // Reversa del stock: salida del almacén donde entró la recepción.
-        //
-        // Antes esto validaba a mano item por item antes de mutar, para evitar
-        // reversas parciales. Ahora la garantía la da la transacción del motor:
-        // con permitirFaltante en false, si a un solo insumo no le alcanza el
-        // stock, no se revierte ninguno. verificar_stock corre primero solo
-        // para poder dar un mensaje que nombre los insumos que faltan.
-        const itemsReversa = (compraItems || []).map(ci => ({
-            tipo_item: TIPO_ITEM_ANULAR[ci.tipo_insumo],
-            item_id: ci.insumo_id,
-            cantidad: Number(ci.cantidad),
-        })).filter(i => i.tipo_item && i.cantidad > 0)
-
-        if (itemsReversa.length !== (compraItems || []).length) {
-            setErrorAnular('Hay ítems con un tipo de insumo desconocido en esta recepción.')
-            setAnulando(false); return
-        }
-
-        const { data: { user } } = await supabase.auth.getUser()
-        try {
-            const faltan = await verificarStock(itemsReversa, recepcion.almacen_id)
-            if (faltan.length > 0) {
-                const detalle = faltan.map(f => `${f.nombre} (falta ${f.faltante})`).join(', ')
-                setErrorAnular(`No se puede anular: ${detalle} ya no tiene stock suficiente (se consumió, vendió o transfirió). Usa una Nota de Débito al proveedor.`)
-                setAnulando(false); return
-            }
-            await moverStockLote({
-                items: itemsReversa, tipoMovimiento: 'salida',
-                origen: 'anulacion_recepcion', almacenId: recepcion.almacen_id,
-                usuarioId: user?.id || null, notas: motivoAnular.trim(),
-            })
-        } catch (e) {
-            setErrorAnular('No se pudo revertir el inventario: ' + e.message)
-            setAnulando(false); return
-        }
-
-        // Revertir cantidad_recibida de la OC vinculada (match por insumo + tipo)
-        if (recepcion.orden_compra_id) {
-            for (const ci of compraItems) {
-                const { data: oci } = await supabase.from('orden_compra_items')
-                    .select('id, cantidad_recibida').eq('orden_id', recepcion.orden_compra_id)
-                    .eq('insumo_id', ci.insumo_id).eq('tipo_insumo', ci.tipo_insumo).maybeSingle()
-                if (oci) {
-                    await supabase.from('orden_compra_items')
-                        .update({ cantidad_recibida: Math.max(0, Number(oci.cantidad_recibida || 0) - Number(ci.cantidad)) }).eq('id', oci.id)
-                }
-            }
-            const { data: itemsOC } = await supabase.from('orden_compra_items')
-                .select('cantidad_solicitada, cantidad_recibida').eq('orden_id', recepcion.orden_compra_id)
-            const totalSol = (itemsOC || []).reduce((s, i) => s + Number(i.cantidad_solicitada || 0), 0)
-            const totalRec = (itemsOC || []).reduce((s, i) => s + Number(i.cantidad_recibida || 0), 0)
-            const nuevoEstado = totalRec <= 0 ? 'aprobada' : totalRec >= totalSol ? 'recibida_total' : 'recibida_parcial'
-            await supabase.from('ordenes_compra').update({ estado: nuevoEstado }).eq('id', recepcion.orden_compra_id)
-        }
-
-        // Marcar la recepción como anulada (la saca de Cuentas por Pagar vía estado_cobro='anulado')
         const fecha = new Date().toISOString()
-        await supabase.from('compras').update({
-            estado: 'anulada', estado_cobro: 'anulado',
-            motivo_anulacion: motivoAnular.trim(), anulada_por: user.id, fecha_anulacion: fecha,
-        }).eq('id', recepcion.id)
 
         setAnulando(false); setMostrarAnular(false)
         setAnulada(true); setInfoAnulacion({ motivo: motivoAnular.trim(), fecha })

@@ -14,7 +14,19 @@ del mismo insumo). Probada en BEGIN/ROLLBACK con datos de Meraki (libre,
 contra OC, con presentación, factura por presentación, rechazos);
 `app_version_minima` subida a 202611212058. La devolución revisa el stock antes
 de guardar y deshace la ND si fallan las líneas o la salida. Falta el recorrido
-de regresión en Meraki desde el navegador. Fase 0 (decisiones del cliente) en curso. Primer cliente que lo usa: Daveyana (pastelería, alta
+de regresión en Meraki desde el navegador. **Fase 4 aplicada (2026-11-21)**,
+`presentaciones_insumos_fase4.sql`: promedio móvil en `registrar_recepcion`,
+ajuste por factura en `registrar_factura_recepcion`, anulación de recepción por
+RPC (`anular_recepcion`, una transacción que revierte stock, OC, costo y estado),
+último costo en ambas modalidades y `movimientos_inventario.costo_unitario` por
+trigger (la entrada de una recepción y la salida de su anulación quedan al precio
+de compra). Precio neto = sin IVA, con descuentos de línea y global. Solo MP,
+empaques y consumibles: los PT comprados no cambian de costo. Con
+`promedio_ponderado` no se ofrece "¿actualizar costos?" (OC ni factura). Probada
+en BEGIN/ROLLBACK (recepción → factura → anulación vuelve al costo exacto; modo
+último precio no mueve el promedio). Límite: el ajuste por factura de una
+recepción hecha antes de activar el promedio corrige un valor que nunca entró al
+promedio; activar antes de la primera compra. Fase 0 (decisiones del cliente) en curso. Primer cliente que lo usa: Daveyana (pastelería, alta
 2026-11-21). Meraki no debe notar ningún cambio de comportamiento.
 
 ## Problema

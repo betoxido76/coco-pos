@@ -26,3 +26,7 @@ export function fmtCosto(n) {
     const s = numCosto(n)
     return s === '' ? '—' : `$${s}`
 }
+
+// empresas.costeo_insumos (docs/plan-presentaciones-insumos.md): con promedio
+// ponderado el costo lo calculan las compras; nadie debe pisarlo con un precio.
+export const costeoPromedio = (perfil) => perfil?.empresas?.costeo_insumos === 'promedio_ponderado'

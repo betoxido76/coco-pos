@@ -6,7 +6,7 @@ import { opcionesUnidad } from '../lib/unidades'
 import { ajustarStockMaestro } from '../lib/inventario'
 import FiltroCombo from '../components/FiltroCombo'
 import { useAltoBarra, useOrden, ordenarFilas, ThOrden, BarraFija, estiloTarjetaTabla } from '../components/TablaOrdenable'
-import PresentacionesInsumo from '../components/PresentacionesInsumo'
+import PresentacionesInsumo, { NotaCostoInsumo } from '../components/PresentacionesInsumo'
 import { cargarPresentaciones, presentacionesPorInsumo, aFilas, validarPresentaciones, guardarPresentaciones } from '../lib/presentaciones'
 import { fmtCosto } from '../lib/costos'
 
@@ -100,6 +100,7 @@ export default function MateriasPrimas({ tabInicial = 'materias_primas' }) {
             descripcion: p.descripcion || '',
             unidad_medida: p.unidad_medida || 'kg',
             costo_compra_promedio: p.costo_compra_promedio ?? '',
+            _costo_ultima_compra: p.costo_ultima_compra, _fecha_ultima_compra: p.fecha_ultima_compra,
             stock_actual: p.stock_actual ?? '',
             stock_minimo: p.stock_minimo ?? '',
             fecha_vencimiento: p.fecha_vencimiento ? p.fecha_vencimiento.split('T')[0] : '',
@@ -282,6 +283,7 @@ export default function MateriasPrimas({ tabInicial = 'materias_primas' }) {
                     <input type="number" min="0" step="any" value={form.costo_compra_promedio}
                         onChange={e => campo('costo_compra_promedio', e.target.value)}
                         placeholder="0.00" style={inputStyle} />
+                    <NotaCostoInsumo perfil={perfil} ultimo={form._costo_ultima_compra} fecha={form._fecha_ultima_compra} unidad={form.unidad_medida} />
                 </Campo>
 
                 <Campo label="Unidad de medida">

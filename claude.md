@@ -260,6 +260,16 @@ La recepción fija las **cantidades** (inventario); la factura fija los
 - **Candados**: sin factura, un trigger rechaza todo INSERT en
   `pagos_proveedor` (pago, anticipo, NC, retención) y la devolución (ND).
 
+### Costo de insumos (`docs/plan-presentaciones-insumos.md`)
+
+La recepción (`registrar_recepcion`), la factura (`registrar_factura_recepcion`)
+y la anulación (`anular_recepcion`) son RPC y llevan el costo de MP/empaques/
+consumibles: `empresas.costeo_insumos = 'promedio_ponderado'` = promedio móvil
+(ajuste por factura, reversa al anular); `'ultimo_precio'` (default, Meraki) no
+toca `costo_compra_promedio`. Siempre se guarda `costo_ultima_compra`. Un
+trigger llena `movimientos_inventario.costo_unitario`. Con promedio no escribir
+`costo_compra_promedio` desde la pantalla (solo carga inicial en el maestro).
+
 ### Anticipos a proveedor
 
 Dinero pagado a un proveedor ANTES de recibir, normalmente contra una OC
@@ -543,7 +553,7 @@ Al cerrar un ítem, borrarlo de esta tabla.
 | Precios con 2 decimales en ventas | Media | `venta_items`, `pedido_items` y `devolucion_items.precio_unitario` siguen en numeric(12,2) (compras pasó a 6 en `compra_items_precio_6dec.sql`). Revisar si los descuentos generan precios base con más decimales; cambiarlo toca `recalcular_totales_pedido` y las vistas del exportador. |
 | Recorrido de activos fijos | Alta | Nada se probó en navegador (las RPC sí, en BEGIN/ROLLBACK). Activar el módulo `activos` a Meraki y a sus usuarios; registrar un activo suelto, otro desde un gasto (2 unidades) y otro desde una recepción; trasladar, cambiar responsable y estado, mantenimiento, editar montos, dar de baja y reactivar. Revisar que un usuario no admin/finanzas no vea montos. Fases 4-7 en `docs/plan-activos-fijos.md`. |
 | Asistente de IA (piloto Meraki) | Alta | Fase 1 desplegada 2026-11-10; paquete 2 de consultas (NC, clientes, días de pago, compras, pagos, movimientos, tasas) y límite por usuario 2026-11-15; costos y márgenes de venta (solo admin/finanzas) 2026-11-17 (`docs/plan-asistente-ia.md`). Falta: revisar privacidad en OpenRouter, activar a 1–2 usuarios de Meraki y la evaluación con 20 preguntas reales (Haiku vs Sonnet). |
-| Presentaciones de insumos y costeo | Alta | Plan aprobado 2026-11-21 (`docs/plan-presentaciones-insumos.md`): SKU = ingrediente con presentaciones de compra (factor a la unidad base), costo promedio móvil opt-in por empresa + último costo, costeo de recetas. Requisito para cargar Daveyana. Fases 1-3 aplicadas 2026-11-21 (la recepción ya es una RPC, `registrar_recepcion`); falta el recorrido de regresión de compras en Meraki y las fases 4-7. Fase 0: esperando respuestas de Daveyana al Excel de propuesta. |
+| Presentaciones de insumos y costeo | Alta | Plan aprobado 2026-11-21 (`docs/plan-presentaciones-insumos.md`): SKU = ingrediente con presentaciones de compra (factor a la unidad base), costo promedio móvil opt-in por empresa + último costo, costeo de recetas. Requisito para cargar Daveyana. Fases 1-4 aplicadas 2026-11-21 (recepción, factura y anulación por RPC; costo promedio y último costo); falta activar `promedio_ponderado` en Daveyana, el recorrido de regresión de compras en Meraki (incluye anular una recepción) y las fases 5-7. Fase 0: esperando respuestas de Daveyana al Excel de propuesta. |
 
 ---
 
