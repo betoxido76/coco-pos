@@ -6,6 +6,8 @@ import SaludInventario from '../components/SaludInventario'
 import { Package, AlertTriangle, Search, Layers, Beaker, Truck, ArrowDownLeft, ArrowUpRight, History, Filter, Warehouse, ArrowLeftRight, Plus, ShieldCheck } from 'lucide-react'
 import { useAltoBarra, useOrden, ordenarFilas, ThOrden, BarraFija, estiloTarjetaTabla } from '../components/TablaOrdenable'
 import { fmtCosto } from '../lib/costos'
+import { ConteoPresentaciones } from '../components/PresentacionesInsumo'
+import { presentacionesPorInsumo } from '../lib/presentaciones'
 
 const TIPOS_INVENTARIO = [
     { key: 'todos', label: 'Todo el inventario', icon: Layers },
@@ -393,10 +395,10 @@ function VistaPorAlmacen() {
     async function abrirNuevoStock() {
         // Cargar todos los productos/insumos disponibles
         const [pt, mp, me, con] = await Promise.all([
-            conTodas(() => supabase.from('productos_terminados').select('id, nombre, sku').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre').order('id')),
-            supabase.from('materias_primas').select('id, nombre, codigo').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre'),
-            supabase.from('materiales_empaque').select('id, nombre, codigo').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre'),
-            supabase.from('consumibles').select('id, nombre, codigo').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre'),
+            conTodas(() => supabase.from('productos_terminados').select('id, nombre, sku, unidad_medida').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre').order('id')),
+            supabase.from('materias_primas').select('id, nombre, codigo, unidad_medida').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre'),
+            supabase.from('materiales_empaque').select('id, nombre, codigo, unidad_medida').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre'),
+            supabase.from('consumibles').select('id, nombre, codigo, unidad_medida').eq('activo', true).eq('empresa_id', perfil.empresa_id).order('nombre'),
         ])
         const todos = [
             ...(pt.data || []).map(i => ({ ...i, tipo_item: 'producto_terminado', codigo: i.sku, label: `[PT] ${i.nombre}` })),
@@ -474,20 +476,29 @@ function VistaPorAlmacen() {
         cargarStock(almacenId)
     }
 
+    // Presentaciones activas de los insumos: conteo "4 × Botella 2 L + 350 ml"
+    const [presMapa, setPresMapa] = useState({})
+    useEffect(() => {
+        presentacionesPorInsumo(perfil.empresa_id, ['materia_prima', 'material_empaque', 'consumible'])
+            .then(setPresMapa).catch(() => setPresMapa({}))
+    }, [])
+    // Un conteo reemplaza la nota mientras nadie la haya escrito a mano
+    const notaConteo = (actual, texto) => (!actual || actual.startsWith('Conteo: ')) ? texto : actual
+
     // Enriquecer stock con nombres de productos
     const [nombresMap, setNombresMap] = useState({})
     useEffect(() => {
         if (stock.length === 0) return
         async function cargarNombres() {
             const [pt, mp, me, con] = await Promise.all([
-                conTodas(() => supabase.from('productos_terminados').select('id, nombre, sku').eq('empresa_id', perfil.empresa_id).order('id')),
-                supabase.from('materias_primas').select('id, nombre, codigo').eq('empresa_id', perfil.empresa_id),
-                supabase.from('materiales_empaque').select('id, nombre, codigo').eq('empresa_id', perfil.empresa_id),
-                supabase.from('consumibles').select('id, nombre, codigo').eq('empresa_id', perfil.empresa_id),
+                conTodas(() => supabase.from('productos_terminados').select('id, nombre, sku, unidad_medida').eq('empresa_id', perfil.empresa_id).order('id')),
+                supabase.from('materias_primas').select('id, nombre, codigo, unidad_medida').eq('empresa_id', perfil.empresa_id),
+                supabase.from('materiales_empaque').select('id, nombre, codigo, unidad_medida').eq('empresa_id', perfil.empresa_id),
+                supabase.from('consumibles').select('id, nombre, codigo, unidad_medida').eq('empresa_id', perfil.empresa_id),
             ])
             const mapa = {}
             ;[...(pt.data || []), ...(mp.data || []), ...(me.data || []), ...(con.data || [])].forEach(i => {
-                mapa[i.id] = { nombre: i.nombre, codigo: i.sku || i.codigo }
+                mapa[i.id] = { nombre: i.nombre, codigo: i.sku || i.codigo, unidad: i.unidad_medida }
             })
             setNombresMap(mapa)
         }
@@ -498,6 +509,7 @@ function VistaPorAlmacen() {
         ...s,
         nombre: nombresMap[s.item_id]?.nombre || '...',
         codigo: nombresMap[s.item_id]?.codigo || '',
+        unidad: nombresMap[s.item_id]?.unidad || '',
         ubicacion_nombre: s.almacen_ubicaciones?.nombre || '—',
     }))
 
@@ -768,6 +780,7 @@ function VistaPorAlmacen() {
                                             <td className="px-4 py-3 text-sm text-gray-500">{s.ubicacion_nombre}</td>
                                             <td className="px-4 py-3 text-sm font-semibold text-gray-800">
                                                 {Number(s.cantidad).toLocaleString()}
+                                                {s.unidad && <span className="text-xs font-normal text-gray-400 ml-1">{s.unidad}</span>}
                                             </td>
                                             <td className="px-4 py-3">
                                                 <div className="flex gap-2">
@@ -845,12 +858,14 @@ function VistaPorAlmacen() {
                                 </div>
                             )}
                             <div>
-                                <label className="block text-xs font-medium text-gray-600 mb-1.5">Nueva cantidad total</label>
-                                <input type="number" min="0" value={cantAjuste} onChange={e => setCantAjuste(e.target.value)}
+                                <label className="block text-xs font-medium text-gray-600 mb-1.5">Nueva cantidad total{modalAjuste.unidad ? ` (${modalAjuste.unidad})` : ''}</label>
+                                <input type="number" min="0" step="any" value={cantAjuste} onChange={e => setCantAjuste(e.target.value)}
                                     className={inputCls} autoFocus />
                                 <p style={{ fontSize: '11px', color: '#9ca3af', marginTop: '4px' }}>
-                                    Cantidad actual: {Number(modalAjuste.cantidad).toLocaleString()}
+                                    Cantidad actual: {Number(modalAjuste.cantidad).toLocaleString()} {modalAjuste.unidad}
                                 </p>
+                                <ConteoPresentaciones key={modalAjuste.id} opciones={presMapa[modalAjuste.item_id]} unidad={modalAjuste.unidad}
+                                    onTotal={(total, texto) => { setCantAjuste(String(total)); setNotaAjuste(n => notaConteo(n, texto)) }} />
                             </div>
                             <div>
                                 <label className="block text-xs font-medium text-gray-600 mb-1.5">Nota <span className="font-normal text-gray-400">(opcional)</span></label>
@@ -997,9 +1012,13 @@ function VistaPorAlmacen() {
                             )}
 
                             <div>
-                                <label className="block text-xs font-medium text-gray-600 mb-1.5">Cantidad *</label>
-                                <input type="number" min="1" value={cantNuevo} onChange={e => setCantNuevo(e.target.value)}
+                                <label className="block text-xs font-medium text-gray-600 mb-1.5">Cantidad *{itemNuevo?.unidad_medida ? ` (${itemNuevo.unidad_medida})` : ''}</label>
+                                <input type="number" min="0" step="any" value={cantNuevo} onChange={e => setCantNuevo(e.target.value)}
                                     className={inputCls} placeholder="0" />
+                                {itemNuevo && itemNuevo.tipo_item !== 'producto_terminado' && (
+                                    <ConteoPresentaciones key={itemNuevo.id} opciones={presMapa[itemNuevo.id]} unidad={itemNuevo.unidad_medida}
+                                        onTotal={(total, texto) => { setCantNuevo(String(total)); setNotaNuevo(n => notaConteo(n, texto)) }} />
+                                )}
                             </div>
 
                             <div>

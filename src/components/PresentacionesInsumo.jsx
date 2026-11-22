@@ -1,6 +1,7 @@
 // Editor de presentaciones de compra de un insumo (MP, empaque, consumible).
 // Solo edita filas en memoria; el maestro las guarda con guardarPresentaciones()
 // después de guardar el insumo. docs/plan-presentaciones-insumos.md
+import { useState } from 'react'
 import { Plus, X } from 'lucide-react'
 import { filaNueva, textoFactor } from '../lib/presentaciones'
 import { fmtCosto, costeoPromedio } from '../lib/costos'
@@ -78,6 +79,56 @@ export default function PresentacionesInsumo({ filas, onChange, unidad, costo, p
                     })}
                 </div>
             )}
+        </div>
+    )
+}
+
+// Conteo físico por presentación: "4 × Botella 2 L + 350 ml" → 8.350 ml.
+// onTotal(total en unidad base, texto para la nota). Sin presentaciones no se dibuja.
+export function ConteoPresentaciones({ opciones, unidad, onTotal }) {
+    const lista = opciones || []
+    const [abierto, setAbierto] = useState(false)
+    const [cuentas, setCuentas] = useState({})
+    const [suelto, setSuelto] = useState('')
+    if (lista.length === 0) return null
+
+    function cambiar(nuevasCuentas, nuevoSuelto) {
+        setCuentas(nuevasCuentas); setSuelto(nuevoSuelto)
+        const partes = []
+        let total = 0
+        for (const p of lista) {
+            const n = Number(nuevasCuentas[p.id] || 0)
+            if (n > 0) { total += n * Number(p.factor); partes.push(`${n.toLocaleString('es-VE')} × ${p.nombre}`) }
+        }
+        const s = Number(nuevoSuelto || 0)
+        if (s > 0) { total += s; partes.push(`${s.toLocaleString('es-VE')} ${unidad || ''}`.trim()) }
+        if (partes.length === 0) return
+        onTotal(Math.round(total * 10000) / 10000, `Conteo: ${partes.join(' + ')}`)
+    }
+
+    const inp = { width: '80px', padding: '5px 8px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px', textAlign: 'right' }
+    if (!abierto) {
+        return (
+            <button type="button" onClick={() => setAbierto(true)}
+                style={{ marginTop: '6px', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: '12px', color: '#0f766e', fontWeight: 500 }}>
+                Contar por presentación
+            </button>
+        )
+    }
+    return (
+        <div style={{ marginTop: '8px', padding: '10px 12px', backgroundColor: '#f0fdfa', border: '1px solid #99f6e4', borderRadius: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            {lista.map(p => (
+                <label key={p.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', fontSize: '12px', color: '#374151' }}>
+                    <span>{p.nombre} <span style={{ color: '#9ca3af' }}>({Number(p.factor).toLocaleString('es-VE', { maximumFractionDigits: 6 })} {unidad})</span></span>
+                    <input type="number" min="0" step="any" value={cuentas[p.id] ?? ''} placeholder="0"
+                        onChange={e => cambiar({ ...cuentas, [p.id]: e.target.value }, suelto)} style={inp} />
+                </label>
+            ))}
+            <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', fontSize: '12px', color: '#374151' }}>
+                <span>Suelto ({unidad || 'unidad'})</span>
+                <input type="number" min="0" step="any" value={suelto} placeholder="0"
+                    onChange={e => cambiar(cuentas, e.target.value)} style={inp} />
+            </label>
         </div>
     )
 }

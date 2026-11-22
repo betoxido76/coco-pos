@@ -26,7 +26,15 @@ empaques y consumibles: los PT comprados no cambian de costo. Con
 en BEGIN/ROLLBACK (recepción → factura → anulación vuelve al costo exacto; modo
 último precio no mueve el promedio). Límite: el ajuste por factura de una
 recepción hecha antes de activar el promedio corrige un valor que nunca entró al
-promedio; activar antes de la primera compra. Fase 0 (decisiones del cliente) en curso. Primer cliente que lo usa: Daveyana (pastelería, alta
+promedio; activar antes de la primera compra. `promedio_ponderado` activo en
+Daveyana desde 2026-11-22. **Fase 5 publicada (2026-11-22)**, solo pantalla: el
+editor de recetas muestra la unidad del insumo (ya no se escribe; al guardar se
+graba la del insumo; nada en la base lee `receta_items.unidad`) y Inventario →
+Por almacén permite "Contar por presentación" en Ajuste y en Nuevo stock
+(`ConteoPresentaciones`: n × presentación + suelto, total en unidad base y nota
+"Conteo: …"); la unidad se ve en la tabla y los campos. La empresa demo "Empresa
+de Cocos" tiene 9 líneas de receta en g con insumos en kg (cantidades
+pensadas en g): no se tocaron. Fase 0 (decisiones del cliente) en curso. Primer cliente que lo usa: Daveyana (pastelería, alta
 2026-11-21). Meraki no debe notar ningún cambio de comportamiento.
 
 ## Problema

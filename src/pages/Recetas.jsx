@@ -394,7 +394,7 @@ function ModalReceta({ receta, tabActivo, recetas = [], onGuardada, onCerrar }) 
                 tipo_insumo: i.tipo_insumo,
                 insumo_id: i.insumo_id,
                 cantidad: Number(i.cantidad),
-                unidad: i.unidad || '',
+                unidad: getListaPorTipo(i.tipo_insumo).find(x => x.id === i.insumo_id)?.unidad_medida || i.unidad || '',
                 empresa_id: perfil.empresa_id,
             }))
 
@@ -709,16 +709,16 @@ function FilaInsumo({ item, idx, insumosMp, insumosMe, insumosC, insumosPt, onAc
             </select>
 
             {/* Cantidad */}
-            <input type="number" min="0" step="0.0001" value={item.cantidad}
+            <input type="number" min="0" step="any" value={item.cantidad}
                 onChange={e => onActualizar('cantidad', e.target.value)}
                 placeholder="Cantidad"
                 style={{ ...inputStyle, fontSize: '13px', padding: '6px 8px', textAlign: 'right' }} />
 
-            {/* Unidad */}
-            <input value={item.unidad || insumoSel?.unidad_medida || ''}
-                onChange={e => onActualizar('unidad', e.target.value)}
-                placeholder="Unidad"
-                style={{ ...inputStyle, fontSize: '13px', padding: '6px 8px' }} />
+            {/* Unidad: la del insumo (Producción descuenta en ella), no se escribe a mano */}
+            <div title="Unidad del insumo: se cambia en su maestro"
+                style={{ fontSize: '13px', color: insumoSel ? '#374151' : '#9ca3af', padding: '6px 8px' }}>
+                {insumoSel?.unidad_medida || (item.insumo_id ? item.unidad : '') || '—'}
+            </div>
 
             {/* Eliminar */}
             <button onClick={onEliminar}
