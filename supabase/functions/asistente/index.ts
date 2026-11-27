@@ -42,10 +42,10 @@ const HERRAMIENTAS: (Herramienta & { rpc: string; modulo: string | null; etiquet
   },
   {
     nombre: 'ventas_resumen', rpc: 'asistente_ventas_resumen', modulo: 'ventas', etiqueta: 'Ventas',
-    descripcion: 'Ventas facturadas (notas de entrega) en un período: totales y agrupadas. Por defecto, el mes en curso. Con producto, categoría de producto o agrupando por producto/categoría trabaja a nivel de líneas. detalle=true lista las notas. No descuenta notas de crédito.',
+    descripcion: 'Ventas facturadas (notas de entrega) en un período: totales y agrupadas. Por defecto, el mes en curso. Con producto, categoría de producto o agrupando por producto/categoría trabaja a nivel de líneas. sucursal = dirección de entrega de la nota. detalle=true lista las notas (con su sucursal). No descuenta notas de crédito.',
     parametros: { type: 'object', properties: {
       desde: fecha, hasta: fecha,
-      agrupar: { type: 'string', enum: ['ninguno', 'dia', 'semana', 'mes', 'cliente', 'vendedor', 'canal', 'ciudad', 'producto', 'categoria_producto'] },
+      agrupar: { type: 'string', enum: ['ninguno', 'dia', 'semana', 'mes', 'cliente', 'vendedor', 'canal', 'ciudad', 'sucursal', 'producto', 'categoria_producto'] },
       cliente_id: uuid('Cliente'), producto_id: uuid('Producto'), vendedor_id: uuid('Vendedor'), canal,
       categoria_cliente: { type: 'string', description: 'Categoría del cliente de cualquier nivel (nombre exacto, ver buscar categoria_cliente)' },
       categoria_producto: { type: 'string', description: 'Categoría del producto de cualquier nivel (nombre exacto, ver buscar categoria_producto)' },
@@ -157,11 +157,13 @@ const HERRAMIENTAS: (Herramienta & { rpc: string; modulo: string | null; etiquet
       + 'canal y mes, compras por proveedor e insumo, cobros por vendedor y método, cartera por canal y tramo, etc. Para comparar '
       + 'períodos agrupa por mes/trimestre/anio o llama dos veces. Los valores de filtro deben ser exactos (sácalos de buscar o de una '
       + 'consulta previa agrupada por esa dimensión).\n'
-      + 'Dimensiones por fuente — ventas: dia, semana, mes, trimestre, anio, cliente, canal, categoria_cliente_2..4, vendedor, ciudad, '
+      + 'Dimensiones por fuente — ventas: dia, semana, mes, trimestre, anio, cliente, canal, categoria_cliente_2..4, vendedor, ciudad, sucursal, '
       + 'producto, categoria_producto_1..4, tipo_producto, estado. pedidos: las de tiempo, mes_entrega, dia_entrega, cliente, canal, '
-      + 'categoria_cliente_2, vendedor, ciudad, producto, categoria_producto_1..2, tipo_producto, estado. cobros: tiempo, cliente, canal, '
+      + 'categoria_cliente_2, vendedor, ciudad, sucursal, producto, categoria_producto_1..2, tipo_producto, estado. cobros: tiempo, cliente, canal, '
       + 'vendedor, metodo, cuenta. compras: tiempo, proveedor, insumo, tipo_insumo. gastos: tiempo, tipo_gasto, categoria_gasto, '
-      + 'proveedor. cartera (saldo de hoy): mes, anio (de emisión), cliente, canal, categoria_cliente_2..4, vendedor, ciudad, tramo.\n'
+      + 'proveedor. cartera (saldo de hoy): mes, anio (de emisión), cliente, canal, categoria_cliente_2..4, vendedor, ciudad, sucursal, tramo.\n'
+      + 'sucursal = nombre de la dirección de entrega del documento (tienda o punto de entrega del cliente); combínala con cliente '
+      + 'o filtra por cliente, porque dos clientes pueden tener sucursales con el mismo nombre.\n'
       + 'Medidas — ventas: base, total, unidades, notas, clientes, productos, precio_promedio, ticket_promedio. pedidos: base, total, '
       + 'unidades, pedidos, clientes, productos. cobros: monto, cobros, clientes. compras: base, total, cantidad, recepciones, '
       + 'proveedores, insumos, precio_promedio. gastos: monto, saldo, gastos. cartera: saldo, vencido, notas, clientes.',
@@ -202,6 +204,7 @@ Reglas:
 - Costos y márgenes: este usuario no tiene permiso para verlos (solo administración o finanzas); si los pide, díselo.`}
 - Puedes hacer cuentas simples con cifras de herramientas (sumas, %, conversión a Bs. con la tasa de la fecha); di cómo lo calculaste en una línea.
 - Para filtrar por un cliente, producto, proveedor o vendedor, primero resuelve su id con "buscar". Si hay varios candidatos plausibles, pregunta cuál antes de seguir.
+- Sucursales: "sucursal", "tienda", "punto de entrega" y "dirección de entrega" son lo mismo: la dirección de entrega de cada nota o pedido. Para ventas, pedidos o deuda por sucursal de un cliente usa "analisis" con la dimensión sucursal y el filtro de cliente (o ventas_resumen agrupando por sucursal). "ciudad" es la ciudad de esa dirección. Lo que salga como "(sin dirección de entrega)" son documentos sin dirección registrada: dilo si pesa en el total. Si ves dos nombres que parecen la misma tienda (p. ej. con y sin acento), muéstralos separados y señálalo en una línea.
 - Para cruces de varias dimensiones (por ejemplo producto × canal × mes), usa "analisis" en una sola llamada en vez de muchas consultas sueltas. Para cifras de un solo tema prefiere la consulta específica (cartera_cxc, notas_credito, dias_pago, etc.), que trae reglas y notas propias.
 - Si la pregunta es ambigua en algo que cambia la respuesta (período, qué cuenta como "venta"), asume lo más razonable y dilo en una línea; pregunta solo si de verdad no puedes elegir.
 - "Este mes" = desde el día 1 hasta hoy. "El mes pasado" = el mes calendario anterior completo. Las semanas empiezan el lunes.

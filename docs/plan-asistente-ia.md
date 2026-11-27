@@ -262,3 +262,13 @@ no de los usuarios de las empresas.
   2026-10-06); antes se estima con el costo promedio actual. El resultado trae
   `totales.base_con_costo_estimado` y el asistente lo advierte. Los servicios no tienen costo.
 - Es costo de inventario, no costeo de receta: su calidad depende de los costos de MP y producción cargados.
+
+### Sucursal / dirección de entrega (2026-11-26, `asistente_ia_sucursal.sql`)
+
+- Pregunta de Meraki en la calibración: "¿principales sucursales de Gama entre julio y agosto?". Gama es un
+  solo cliente con sus tiendas como direcciones de entrega; "ciudad" no las separa.
+- Dimensión `sucursal` (= `direccion_entrega_nombre` de las vistas `v_export_*`) en `asistente_analisis`
+  (ventas, pedidos y cartera) y en `ventas_resumen` (agrupar y detalle de notas). Sin dirección =
+  "(sin dirección de entrega)". El prompt trata sucursal, tienda, punto de entrega y dirección de entrega
+  como sinónimos.
+- La migración reemplaza texto sobre la definición vigente de las funciones y verifica cada reemplazo.
